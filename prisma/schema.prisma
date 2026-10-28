@@ -1,0 +1,737 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============ ORGANISASI & AKSES ============
+
+enum Role {
+  OWNER
+  FINANCE
+  ADMIN
+  ADMIN_PRODUKSI
+  ADMIN_MARKETPLACE
+  KAPTEN_DIVISI
+  PIC_CONTENT
+  OPERATOR
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  timezone  String   @default("Asia/Jakarta")
+  currency  String   @default("IDR")
+  createdAt DateTime @default(now())
+  stores    Store[]
+}
+
+model Store {
+  id             String               @id @default(cuid())
+  code           String               @unique
+  name           String
+  organizationId String
+  organization   Organization         @relation(fields: [organizationId], references: [id])
+  active         Boolean              @default(true)
+  products       Product[]
+  journals       Journal[]
+  transactions   FinanceTransaction[]
+}
+
+model Division {
+  id          String            @id @default(cuid())
+  code        String            @unique
+  name        String
+  active      Boolean           @default(true)
+  employees   Employee[]
+  locations   Location[]
+  production  ProductionEntry[]
+  targets     ProductionTarget[]
+  reports     ShiftReport[]
+  stockReqs   StockRequest[]
+  captains    User[]            @relation("DivisionCaptain")
+}
+
+model Shift {
+  id               String   @id @default(cuid())
+  code             String   @unique
+  name             String
+  startTime        String // "07:00"
+  endTime          String // "15:00"
+  toleranceMinutes Int      @default(10)
+  active           Boolean  @default(true)
+  attendances      Attendance[]
+  schedules        ShiftSchedule[]
+  production       ProductionEntry[]
+  reports          ShiftReport[]
+}
+
+model User {
+  id             String    @id @default(cuid())
+  username       String    @unique
+  name           String
+  passwordHash   String
+  role           Role
+  active         Boolean   @default(true)
+  employeeId     String?   @unique
+  employee       Employee? @relation(fields: [employeeId], references: [id])
+  divisionId     String?
+  division       Division? @relation("DivisionCaptain", fields: [divisionId], references: [id])
+  failedLogins   Int       @default(0)
+  lockedUntil    DateTime?
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  telegram       TelegramIdentity[]
+}
+
+model RolePermission {
+  id         String  @id @default(cuid())
+  role       Role
+  permission String
+  allowed    Boolean
+  @@unique([role, permission])
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+/// Append-only: dilindungi trigger database (lihat migrasi audit_append_only)
+model AuditLog {
+  id        BigInt   @id @default(autoincrement())
+  at        DateTime @default(now())
+  actorId   String?
+  actorName String?
+  action    String
+  entity    String
+  entityId  String?
+  data      Json?
+  ip        String?
+  @@index([entity, entityId])
+  @@index([at])
+}
+
+// ============ KARYAWAN, ABSENSI, GAJI ============
+
+enum EmployeeStatus {
+  AKTIF
+  CUTI
+  NONAKTIF
+}
+
+enum WageType {
+  HARIAN
+  BORONGAN
+  CAMPURAN
+}
+
+model Employee {
+  id          String         @id @default(cuid())
+  code        String         @unique
+  name        String
+  divisionId  String
+  division    Division       @relation(fields: [divisionId], references: [id])
+  position    String
+  status      EmployeeStatus @default(AKTIF)
+  wageType    WageType       @default(HARIAN)
+  dailyRate   BigInt         @default(0)
+  phone       String?
+  joinDate    DateTime?
+  user        User?
+  attendances Attendance[]
+  schedules   ShiftSchedule[]
+  production  ProductionEntry[]
+  targets     ProductionTarget[]
+  payslips    Payslip[]
+  transportTrips TransportTrip[]
+}
+
+model ShiftSchedule {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  shiftId    String
+  shift      Shift    @relation(fields: [shiftId], references: [id])
+  date       DateTime @db.Date
+  @@unique([employeeId, date])
+}
+
+enum AttendanceStatus {
+  HADIR
+  TERLAMBAT
+  IZIN
+  SAKIT
+  ALPA
+}
+
+model Attendance {
+  id           String           @id @default(cuid())
+  employeeId   String
+  employee     Employee         @relation(fields: [employeeId], references: [id])
+  shiftId      String
+  shift        Shift            @relation(fields: [shiftId], references: [id])
+  date         DateTime         @db.Date
+  checkIn      DateTime?
+  checkOut     DateTime?
+  status       AttendanceStatus
+  lateMinutes  Int              @default(0)
+  note         String?
+  validated    Boolean          @default(false)
+  validatedBy  String?
+  validatedAt  DateTime?
+  @@unique([employeeId, date])
+}
+
+/// Tarif borongan per tahap (Filling Cat, Assembling, dll.)
+model PieceRate {
+  id        String          @id @default(cuid())
+  stage     ProductionStage @unique
+  ratePerPcs BigInt
+}
+
+model TransportTrip {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  date       DateTime @db.Date
+  amount     BigInt
+  note       String?
+}
+
+enum PayrollStatus {
+  DRAFT
+  DISETUJUI
+  DIBAYAR
+}
+
+model PayrollPeriod {
+  id         String        @id @default(cuid())
+  code       String        @unique
+  startDate  DateTime      @db.Date
+  endDate    DateTime      @db.Date
+  status     PayrollStatus @default(DRAFT)
+  approvedBy String?
+  paidAt     DateTime?
+  paidFromAccountId String?
+  journalId  String?
+  createdAt  DateTime      @default(now())
+  payslips   Payslip[]
+}
+
+model Payslip {
+  id           String        @id @default(cuid())
+  periodId     String
+  period       PayrollPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  employeeId   String
+  employee     Employee      @relation(fields: [employeeId], references: [id])
+  daysPresent  Int
+  dailyWage    BigInt
+  pieceWage    BigInt
+  pieceDetail  Json
+  transport    BigInt
+  bonus        BigInt        @default(0)
+  deduction    BigInt        @default(0)
+  total        BigInt
+  @@unique([periodId, employeeId])
+}
+
+// ============ PRODUKSI ============
+
+enum ProductionStage {
+  CETAK
+  PANEN_1
+  SORTIR_1
+  OVEN
+  PANEN_2
+  SORTIR_2
+  FILLING_CAT
+  ASSEMBLING
+  QC
+  PACKING
+  BARANG_JADI
+}
+
+model ProductionEntry {
+  id         String          @id @default(cuid())
+  date       DateTime        @db.Date
+  shiftId    String
+  shift      Shift           @relation(fields: [shiftId], references: [id])
+  divisionId String
+  division   Division        @relation(fields: [divisionId], references: [id])
+  employeeId String
+  employee   Employee        @relation(fields: [employeeId], references: [id])
+  stage      ProductionStage
+  productId  String
+  product    Product         @relation(fields: [productId], references: [id])
+  qtyGood    Int
+  qtyReject  Int             @default(0)
+  note       String?
+  createdBy  String
+  createdAt  DateTime        @default(now())
+  stockPosted Boolean        @default(false)
+  @@index([date, shiftId, divisionId])
+}
+
+model ProductionTarget {
+  id         String          @id @default(cuid())
+  divisionId String
+  division   Division        @relation(fields: [divisionId], references: [id])
+  employeeId String?
+  employee   Employee?       @relation(fields: [employeeId], references: [id])
+  stage      ProductionStage
+  dailyQty   Int
+  active     Boolean         @default(true)
+}
+
+enum ReportStatus {
+  DRAFT
+  TERKIRIM
+  DIREVISI
+}
+
+model ShiftReport {
+  id         String       @id @default(cuid())
+  date       DateTime     @db.Date
+  shiftId    String
+  shift      Shift        @relation(fields: [shiftId], references: [id])
+  divisionId String
+  division   Division     @relation(fields: [divisionId], references: [id])
+  status     ReportStatus @default(DRAFT)
+  checklist  Json         @default("[]")
+  complaints String?
+  followUp   String?
+  followUpStatus String   @default("BELUM")
+  createdBy  String
+  createdAt  DateTime     @default(now())
+  sends      ReportSend[]
+  @@unique([date, shiftId, divisionId])
+}
+
+model ReportSend {
+  id        String      @id @default(cuid())
+  reportId  String
+  report    ShiftReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  sentAt    DateTime    @default(now())
+  sentBy    String
+  channel   String
+  status    String
+  error     String?
+}
+
+// ============ STOK ============
+
+enum ItemType {
+  BAHAN_BAKU
+  BARANG_DALAM_PROSES
+  BARANG_JADI
+}
+
+model Supplier {
+  id      String  @id @default(cuid())
+  name    String
+  phone   String?
+  address String?
+  items   Item[]
+  payables Payable[]
+}
+
+model GypsumCharacter {
+  id             String  @id @default(cuid())
+  name           String
+  waterRatio     String?
+  settingMinutes Int?
+  hardness       String?
+  note           String?
+  items          Item[]
+}
+
+model Location {
+  id         String    @id @default(cuid())
+  code       String    @unique
+  name       String
+  divisionId String?
+  division   Division? @relation(fields: [divisionId], references: [id])
+  movesFrom  StockMovement[] @relation("MoveFrom")
+  movesTo    StockMovement[] @relation("MoveTo")
+}
+
+model Item {
+  id          String           @id @default(cuid())
+  sku         String           @unique
+  name        String
+  type        ItemType
+  unit        String
+  minStock    Decimal          @default(0) @db.Decimal(14, 3)
+  avgCost     BigInt           @default(0)
+  supplierId  String?
+  supplier    Supplier?        @relation(fields: [supplierId], references: [id])
+  gypsumCharacterId String?
+  gypsumCharacter   GypsumCharacter? @relation(fields: [gypsumCharacterId], references: [id])
+  active      Boolean          @default(true)
+  movements   StockMovement[]
+  bomLines    BomLine[]
+  requests    StockRequest[]
+  product     Product?         @relation("ProductFinishedItem")
+}
+
+enum MovementType {
+  PENERIMAAN
+  PENGELUARAN
+  TRANSFER
+  PENYESUAIAN
+  KONSUMSI_PRODUKSI
+  HASIL_PRODUKSI
+}
+
+model StockMovement {
+  id         String       @id @default(cuid())
+  date       DateTime     @default(now())
+  type       MovementType
+  itemId     String
+  item       Item         @relation(fields: [itemId], references: [id])
+  fromLocationId String?
+  fromLocation   Location? @relation("MoveFrom", fields: [fromLocationId], references: [id])
+  toLocationId   String?
+  toLocation     Location? @relation("MoveTo", fields: [toLocationId], references: [id])
+  qty        Decimal      @db.Decimal(14, 3)
+  unitCost   BigInt       @default(0)
+  ref        String?
+  note       String?
+  createdBy  String
+  journalId  String?
+  @@index([itemId, date])
+}
+
+enum RequestStatus {
+  DIAJUKAN
+  DISETUJUI
+  DITOLAK
+  DIPENUHI
+}
+
+model StockRequest {
+  id         String        @id @default(cuid())
+  itemId     String
+  item       Item          @relation(fields: [itemId], references: [id])
+  divisionId String
+  division   Division      @relation(fields: [divisionId], references: [id])
+  qty        Decimal       @db.Decimal(14, 3)
+  note       String?
+  status     RequestStatus @default(DIAJUKAN)
+  requestedBy String
+  decidedBy  String?
+  createdAt  DateTime      @default(now())
+}
+
+// ============ PRODUK & HPP ============
+
+enum ProductType {
+  SATUAN
+  PAKET_12
+  PAKET_24
+  PAKET_48
+  GIFTBOX
+  CUSTOM
+}
+
+enum ProductVariant {
+  COWOK
+  CEWEK
+  HEWAN
+  TRANSPORTASI
+  MIX
+}
+
+model Product {
+  id           String         @id @default(cuid())
+  sku          String         @unique
+  name         String
+  type         ProductType
+  variant      ProductVariant
+  storeId      String
+  store        Store          @relation(fields: [storeId], references: [id])
+  packQty      Int            @default(1)
+  laborCost    BigInt         @default(0)
+  overheadCost BigInt         @default(0)
+  active       Boolean        @default(true)
+  finishedItemId String?      @unique
+  finishedItem Item?          @relation("ProductFinishedItem", fields: [finishedItemId], references: [id])
+  bom          BomLine[]
+  prices       PriceHistory[]
+  production   ProductionEntry[]
+}
+
+model BomLine {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  itemId    String
+  item      Item    @relation(fields: [itemId], references: [id])
+  qty       Decimal @db.Decimal(14, 4)
+  @@unique([productId, itemId])
+}
+
+model PriceHistory {
+  id         String   @id @default(cuid())
+  productId  String
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  channel    String
+  price      BigInt
+  hpp        BigInt
+  effectiveAt DateTime @default(now())
+  createdBy  String
+}
+
+// ============ FINANCE ============
+
+model BankAccount {
+  id           String     @id @default(cuid())
+  code         String     @unique
+  name         String
+  coaAccountId String
+  coaAccount   CoaAccount @relation(fields: [coaAccountId], references: [id])
+  aliases      String     @default("")
+  active       Boolean    @default(true)
+}
+
+enum TxDirection {
+  MASUK
+  KELUAR
+  TRANSFER
+}
+
+model TxCategory {
+  id           String      @id @default(cuid())
+  name         String
+  direction    TxDirection
+  coaAccountId String
+  coaAccount   CoaAccount  @relation(fields: [coaAccountId], references: [id])
+  keywords     String      @default("")
+  active       Boolean     @default(true)
+}
+
+enum TxStatus {
+  DRAFT
+  PERLU_DITINJAU
+  MENUNGGU_KONFIRMASI
+  DIBUKUKAN
+  DITOLAK
+}
+
+enum TxSource {
+  MANUAL
+  TELEGRAM
+  AI
+}
+
+model FinanceTransaction {
+  id            String      @id @default(cuid())
+  number        String      @unique
+  source        TxSource
+  direction     TxDirection
+  amount        BigInt
+  date          DateTime
+  accountId     String?
+  toAccountId   String?
+  categoryId    String?
+  suggestedCategoryId String?
+  storeId       String?
+  store         Store?      @relation(fields: [storeId], references: [id])
+  counterparty  String?
+  note          String?
+  rawText       String?
+  proofPath     String?
+  proofMime     String?
+  aiExtraction  Json?
+  status        TxStatus    @default(DRAFT)
+  fingerprint   String
+  duplicateOfId String?
+  idempotencyKey String?    @unique
+  journalId     String?
+  createdBy     String
+  createdAt     DateTime    @default(now())
+  telegramChatId String?
+  telegramMessageId String?
+  approvals     ApprovalLog[]
+  @@index([fingerprint])
+  @@index([status])
+}
+
+model ApprovalLog {
+  id             String             @id @default(cuid())
+  transactionId  String
+  transaction    FinanceTransaction @relation(fields: [transactionId], references: [id])
+  action         String
+  fromStatus     TxStatus?
+  toStatus       TxStatus
+  actorUserId    String?
+  actorName      String
+  viaTelegramId  String?
+  note           String?
+  at             DateTime           @default(now())
+}
+
+model TelegramIdentity {
+  id             String  @id @default(cuid())
+  telegramUserId String  @unique
+  telegramName   String?
+  userId         String
+  user           User    @relation(fields: [userId], references: [id])
+  canSubmit      Boolean @default(true)
+  canConfirm     Boolean @default(false)
+  receiveRecap   Boolean @default(false)
+  chatId         String?
+  active         Boolean @default(true)
+}
+
+model ApiClient {
+  id        String   @id @default(cuid())
+  name      String
+  keyPrefix String   @unique
+  keyHash   String
+  scopes    String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  lastUsedAt DateTime?
+}
+
+model IdempotencyRecord {
+  key        String   @id
+  clientId   String
+  status     Int
+  response   Json
+  createdAt  DateTime @default(now())
+}
+
+model NotificationLog {
+  id        String   @id @default(cuid())
+  at        DateTime @default(now())
+  channel   String
+  type      String
+  target    String?
+  status    String
+  payload   String?
+  error     String?
+}
+
+// ============ AKUNTANSI ============
+
+enum AccountType {
+  ASET
+  KEWAJIBAN
+  EKUITAS
+  PENDAPATAN
+  HPP
+  BEBAN
+}
+
+model CoaAccount {
+  id        String        @id @default(cuid())
+  code      String        @unique
+  name      String
+  type      AccountType
+  isCash    Boolean       @default(false)
+  parentId  String?
+  parent    CoaAccount?   @relation("CoaTree", fields: [parentId], references: [id])
+  children  CoaAccount[]  @relation("CoaTree")
+  active    Boolean       @default(true)
+  lines     JournalLine[]
+  banks     BankAccount[]
+  categories TxCategory[]
+}
+
+model Journal {
+  id          String        @id @default(cuid())
+  number      String        @unique
+  date        DateTime
+  description String
+  storeId     String
+  store       Store         @relation(fields: [storeId], references: [id])
+  source      String
+  sourceId    String?
+  createdBy   String
+  createdAt   DateTime      @default(now())
+  reversalOfId String?
+  lines       JournalLine[]
+  @@index([date])
+  @@index([source, sourceId])
+}
+
+model JournalLine {
+  id        String     @id @default(cuid())
+  journalId String
+  journal   Journal    @relation(fields: [journalId], references: [id])
+  accountId String
+  account   CoaAccount @relation(fields: [accountId], references: [id])
+  debit     BigInt     @default(0)
+  credit    BigInt     @default(0)
+  memo      String?
+}
+
+enum PeriodStatus {
+  OPEN
+  CLOSED
+}
+
+model AccountingPeriod {
+  id       String       @id @default(cuid())
+  year     Int
+  month    Int
+  status   PeriodStatus @default(OPEN)
+  closedAt DateTime?
+  closedBy String?
+  @@unique([year, month])
+}
+
+model Receivable {
+  id        String   @id @default(cuid())
+  number    String   @unique
+  customer  String
+  storeId   String
+  date      DateTime
+  dueDate   DateTime?
+  amount    BigInt
+  paid      BigInt   @default(0)
+  note      String?
+  journalId String?
+  createdAt DateTime @default(now())
+}
+
+model Payable {
+  id         String    @id @default(cuid())
+  number     String    @unique
+  supplierId String?
+  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+  vendor     String
+  storeId    String
+  date       DateTime
+  dueDate    DateTime?
+  amount     BigInt
+  paid       BigInt    @default(0)
+  note       String?
+  journalId  String?
+  createdAt  DateTime  @default(now())
+}
+
+model FixedAsset {
+  id               String   @id @default(cuid())
+  name             String
+  storeId          String
+  acquiredAt       DateTime
+  cost             BigInt
+  usefulLifeMonths Int
+  residual         BigInt   @default(0)
+  journalId        String?
+  active           Boolean  @default(true)
+}
+
+/// Penomoran dokumen atomik (JU-202610-0001, TRX-..., dll.)
+model Counter {
+  key   String @id
+  value Int
+}
