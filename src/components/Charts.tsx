@@ -15,7 +15,7 @@ export function TrendChart({ data, series }: { data: Record<string, number | str
           <Tooltip formatter={(v: number) => v.toLocaleString("id-ID")} />
           <Legend wrapperStyle={{ fontSize: 12 }} />
           {series.map((s) => (
-            <Line key={s.key} type="monotone" dataKey={s.key} name={s.label} stroke={s.color} strokeWidth={2} dot={false} />
+            <Line key={s.key} type="monotone" dataKey={s.key} name={s.label} stroke={s.color} strokeWidth={2} dot={false} isAnimationActive={false} />
           ))}
         </LineChart>
       </ResponsiveContainer>
@@ -35,7 +35,7 @@ export function BarsChart({ data, series }: { data: Record<string, number | stri
           <Tooltip formatter={(v: number) => v.toLocaleString("id-ID")} />
           <Legend wrapperStyle={{ fontSize: 12 }} />
           {series.map((s) => (
-            <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color} radius={[4, 4, 0, 0]} />
+            <Bar key={s.key} dataKey={s.key} name={s.label} fill={s.color} radius={[4, 4, 0, 0]} isAnimationActive={false} />
           ))}
         </BarChart>
       </ResponsiveContainer>
