@@ -27,6 +27,7 @@ export const PERMISSIONS = {
   "attendance.view": "Lihat absensi",
   "attendance.self": "Absen diri sendiri",
   "attendance.manage": "Kelola jadwal & validasi absensi",
+  "attendance.location": "Atur titik lokasi kerja untuk absen (GPS)",
   "material.manage": "Kelola bahan baku divisi, limit & checklist laporan shift",
   "stock.view": "Lihat stok",
   "stock.move": "Catat mutasi stok",
@@ -69,7 +70,7 @@ export const DEFAULT_MATRIX: Record<Role, Permission[]> = {
   ],
   ADMIN: [
     "dashboard.view", "dashboard.finance", "production.view", "production.create", "production.edit",
-    "report.view", "report.create", "attendance.view", "attendance.self", "stock.view", "stock.move",
+    "report.view", "report.create", "attendance.view", "attendance.self", "attendance.location", "stock.view", "stock.move",
     "stock.request", "stock.approve", "master.manage", "product.view", "product.manage", "employee.view", "employee.manage",
     "payroll.view", "payroll.manage", "payroll.self", "finance.view", "finance.create", "finance.review", "accounting.view", "settings.manage", "audit.view",
   ],
@@ -82,17 +83,18 @@ export const DEFAULT_MATRIX: Record<Role, Permission[]> = {
   KAPTEN_DIVISI: [...OPERATOR_BASE, "report.create", "stock.view", "employee.view"],
   SUPERVISOR: [
     "dashboard.view", "production.view", "production.create", "production.edit", "production.target", "report.view", "report.create",
-    "attendance.view", "attendance.manage", "attendance.self", "stock.view", "stock.move", "stock.request", "product.view",
+    "attendance.view", "attendance.manage", "attendance.self", "attendance.location", "stock.view", "stock.move", "stock.request", "product.view",
     "employee.view", "payroll.view", "payroll.self",
   ],
   PIC_CONTENT: ["dashboard.view", "product.view", "attendance.self", "payroll.self"],
   OPERATOR: [...OPERATOR_BASE, "report.create"],
 };
 
-/** Validasi/atur absensi dan target produksi hanya untuk role ini (tidak bisa dibuka lewat override) */
+/** Validasi/atur absensi, target produksi, dan titik lokasi absen hanya untuk role ini (tidak bisa dibuka lewat override) */
 export const RESTRICTED: Partial<Record<Permission, Role[]>> = {
   "attendance.manage": ["OWNER", "SUPERVISOR", "FINANCE"],
   "production.target": ["OWNER", "SUPERVISOR", "FINANCE"],
+  "attendance.location": ["OWNER", "ADMIN", "SUPERVISOR"],
 };
 
 export type PermissionOverride = { role: Role; permission: string; allowed: boolean };

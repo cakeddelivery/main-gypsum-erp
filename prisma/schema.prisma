@@ -201,7 +201,31 @@ model Attendance {
   validated    Boolean          @default(false)
   validatedBy  String?
   validatedAt  DateTime?
+  /// Koordinat GPS saat absen masuk/pulang (diisi dari HP karyawan)
+  checkInLat      Float?
+  checkInLng      Float?
+  checkInAccuracy Float?
+  /// Jarak ke titik lokasi kerja terdekat (meter)
+  checkInDistance Int?
+  checkInSiteId   String?
+  checkInSite     WorkSite? @relation("CheckInSite", fields: [checkInSiteId], references: [id], onDelete: SetNull)
+  checkOutLat      Float?
+  checkOutLng      Float?
+  checkOutAccuracy Float?
+  checkOutDistance Int?
   @@unique([employeeId, date])
+}
+
+/// Titik lokasi kerja untuk absen (geofence). Absen hanya bisa di dalam radius salah satu titik aktif.
+model WorkSite {
+  id        String   @id @default(cuid())
+  name      String
+  latitude  Float
+  longitude Float
+  radiusM   Int      @default(100)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  checkIns  Attendance[] @relation("CheckInSite")
 }
 
 /// Tarif borongan per tahap (Filling Cat, Assembling, dll.)
