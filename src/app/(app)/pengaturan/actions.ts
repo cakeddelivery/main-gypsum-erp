@@ -63,7 +63,7 @@ export const saveCategory = action("settings.manage", async (fd, user) => {
   return "Kategori tersimpan";
 }, P);
 
-const PARAM_KEYS = ["default_store_id", "loc_raw", "loc_wip", "loc_finished", "late_deduction_per_minute", "payday_offset_days", "weekly_off_quota", "monthly_workdays", "allowance_payday", "go_live_date", "payroll_require_validated", "auto_close_enabled", "report_checklist", "company_address"];
+const PARAM_KEYS = ["default_store_id", "loc_raw", "loc_wip", "loc_finished", "late_deduction_per_minute", "payday_offset_days", "weekly_off_quota", "monthly_workdays", "allowance_payday", "go_live_date", "payroll_require_validated", "auto_close_enabled", "report_checklist", "company_address", "company_tagline", "company_phone", "company_city"];
 export const saveParams = action("settings.manage", async (fd, user) => {
   const changes: Record<string, string> = {};
   for (const k of PARAM_KEYS) {

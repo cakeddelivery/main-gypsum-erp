@@ -1,10 +1,11 @@
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { addDays, dateOnly, fmtDay, todayStr } from "@/lib/time";
+import { addDays, dateOnly, todayStr } from "@/lib/time";
 import { STAGES, STAGE_LABEL } from "@/lib/stock";
 import { FilterBar, Field, PageHeader, Tabs } from "@/components/ui";
 import { DownloadJpg } from "@/components/DownloadJpg";
-import { Paged } from "@/components/Paged";
+import { DocSheet, DocSummary, DocTable, fmtRange } from "@/components/DocSheet";
+import { letterhead } from "@/lib/letterhead";
 
 export const metadata = { title: "Rekap Produksi" };
 
@@ -39,6 +40,10 @@ export default async function RekapPage({ searchParams }: { searchParams: Promis
   const usedStages = STAGES.filter((s) => rows.some((r) => r.stage === s));
   const usedDivs = divisions.filter((d) => rows.some((r) => r.divisionId === d.id));
   const cell = (d: string, s: string) => rows.find((r) => r.divisionId === d && r.stage === s)?._sum;
+  const totalGood = rows.reduce((t, r) => t + (r._sum.qtyGood ?? 0), 0);
+  const totalReject = rows.reduce((t, r) => t + (r._sum.qtyReject ?? 0), 0);
+  const shiftName = sp.shift ? shifts.find((s) => s.id === sp.shift)?.name : null;
+  const lh = await letterhead();
   const qs = (p: string) => `/laporan/rekap?period=${p}&date=${date}${sp.shift ? `&shift=${sp.shift}` : ""}`;
   return (
     <div>
@@ -49,28 +54,26 @@ export default async function RekapPage({ searchParams }: { searchParams: Promis
         <Field label="Tanggal acuan"><input type="date" name="date" defaultValue={date} className="input" /></Field>
         <Field label="Shift"><select name="shift" defaultValue={sp.shift ?? ""} className="input"><option value="">Semua shift</option>{shifts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
       </FilterBar>
-      <div id="rekap" className="rounded-xl border border-slate-200 bg-white p-5">
-        <div className="mb-3">
-          <div className="text-xs font-semibold uppercase tracking-wide text-brand-600">Main Gypsum · Rekap {period}</div>
-          <div className="text-sm text-slate-600">{fmtDay(dateOnly(start))}{start !== end && ` — ${fmtDay(dateOnly(end))}`}{sp.shift && ` · ${shifts.find((s) => s.id === sp.shift)?.name}`}</div>
-        </div>
-        {rows.length === 0 ? <p className="py-8 text-center text-sm text-slate-400">Tidak ada data produksi pada periode ini</p> : (
-          <div className="overflow-x-auto">
-            <Paged><table className="tbl">
-              <thead><tr><th>Divisi</th>{usedStages.map((s) => <th key={s} className="num">{STAGE_LABEL[s]}</th>)}<th className="num">Total</th><th className="num">Reject</th></tr></thead>
-              <tbody>
-                {usedDivs.map((d) => {
-                  const tg = usedStages.reduce((s, st) => s + (cell(d.id, st)?.qtyGood ?? 0), 0);
-                  const tr = usedStages.reduce((s, st) => s + (cell(d.id, st)?.qtyReject ?? 0), 0);
-                  return (
-                    <tr key={d.id}><td>{d.name}</td>{usedStages.map((s) => <td key={s} className="num">{cell(d.id, s)?.qtyGood ?? "-"}</td>)}<td className="num font-semibold">{tg}</td><td className="num text-rose-600">{tr}</td></tr>
-                  );
-                })}
-              </tbody>
-            </table></Paged>
-          </div>
-        )}
-      </div>
+      <DocSheet
+        id="rekap" lh={lh} eyebrow="Laporan produksi" title={`Rekap Produksi ${period.charAt(0).toUpperCase() + period.slice(1)}`}
+        subtitle={shiftName ? `${shiftName}${fixedDivision ? ` · ${divisions.find((d) => d.id === fixedDivision)?.name}` : ""}` : fixedDivision ? divisions.find((d) => d.id === fixedDivision)?.name : "Semua divisi & shift"}
+        meta={{ label: "Periode Laporan", value: fmtRange(start, end) }} signer="Supervisor" signDate={end}
+        notes={["Angka = jumlah hasil bagus (pcs); reject dihitung terpisah.", "Laporan ini dihasilkan secara otomatis dari sistem dan dapat digunakan sebagai referensi internal."]}
+      >
+        <DocTable head={<tr><th>Divisi</th>{usedStages.map((s) => <th key={s} className="num">{STAGE_LABEL[s]}</th>)}<th className="num">Total</th><th className="num">Reject</th></tr>} empty={rows.length ? undefined : "Tidak ada data produksi pada periode ini"}>
+          {usedDivs.map((d) => {
+            const tg = usedStages.reduce((s, st) => s + (cell(d.id, st)?.qtyGood ?? 0), 0);
+            const tr = usedStages.reduce((s, st) => s + (cell(d.id, st)?.qtyReject ?? 0), 0);
+            return (
+              <tr key={d.id}><td>{d.name}</td>{usedStages.map((s) => <td key={s} className="num">{cell(d.id, s)?.qtyGood?.toLocaleString("id-ID") ?? "-"}</td>)}<td className="num font-semibold">{tg.toLocaleString("id-ID")}</td><td className="num doc-neg">{tr.toLocaleString("id-ID")}</td></tr>
+            );
+          })}
+        </DocTable>
+        <DocSummary rows={[
+          { label: "Total hasil bagus", value: `${totalGood.toLocaleString("id-ID")} pcs`, strong: true },
+          { label: "Total reject", hint: totalGood + totalReject ? `${((totalReject / (totalGood + totalReject)) * 100).toLocaleString("id-ID", { maximumFractionDigits: 1 })}% dari total produksi` : undefined, value: `${totalReject.toLocaleString("id-ID")} pcs`, negative: totalReject > 0 },
+        ]} />
+      </DocSheet>
     </div>
   );
 }

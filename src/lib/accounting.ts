@@ -190,7 +190,7 @@ export async function cashFlow(r: Range) {
     include: { lines: { include: { account: true } } },
     orderBy: { date: "asc" },
   });
-  const groups: Record<"OPERASI" | "INVESTASI" | "PENDANAAN", { description: string; amount: number }[]> = { OPERASI: [], INVESTASI: [], PENDANAAN: [] };
+  const groups: Record<"OPERASI" | "INVESTASI" | "PENDANAAN", { date: Date; number: string; memo: string; description: string; amount: number }[]> = { OPERASI: [], INVESTASI: [], PENDANAAN: [] };
   for (const j of journals) {
     const cashLines = j.lines.filter((l) => l.account.isCash);
     if (!cashLines.length) continue;
@@ -204,7 +204,7 @@ export async function cashFlow(r: Range) {
       else if (other.account.code === COA.UTANG_PINJAMAN) g = "PENDANAAN";
     }
     if (j.source === "SALDO_AWAL") continue;
-    groups[g].push({ description: `${j.number} · ${j.description}`, amount: net });
+    groups[g].push({ date: j.date, number: j.number, memo: j.description, description: `${j.number} · ${j.description}`, amount: net });
   }
   const total = (k: keyof typeof groups) => groups[k].reduce((s, x) => s + x.amount, 0);
   const opening = r.start ? await cashBalance(r.start, r.storeId) : 0;
