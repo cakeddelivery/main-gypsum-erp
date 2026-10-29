@@ -22,7 +22,7 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
     prisma.store.findMany(),
     p.journalId ? prisma.journal.findUnique({ where: { id: p.journalId } }) : null,
   ]);
-  const sum = (k: "baseSalary" | "dailyWage" | "pieceWage" | "transport" | "total") => p.payslips.reduce((s, x) => s + Number(x[k]), 0);
+  const sum = (k: "baseSalary" | "dailyWage" | "pieceWage" | "allowance" | "transport" | "total") => p.payslips.reduce((s, x) => s + Number(x[k]), 0);
   return (
     <div className="space-y-5">
       <PageHeader
@@ -51,7 +51,7 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
       />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Status" value={<Badge tone={p.status === "DIBAYAR" ? "green" : p.status === "DISETUJUI" ? "blue" : "amber"}>{p.status}</Badge>} hint={p.approvedBy ? `Disetujui ${p.approvedBy}` : undefined} />
-        {p.kind === "BULANAN" ? <Stat label="Gaji pokok" value={idr(sum("baseSalary"))} /> : <Stat label="Upah harian" value={idr(sum("dailyWage"))} />}
+        {p.kind === "BULANAN" ? <Stat label="Gaji pokok" value={idr(sum("baseSalary"))} /> : p.kind === "TUNJANGAN" ? <Stat label="Tunjangan" value={idr(sum("allowance"))} /> : <Stat label="Upah harian" value={idr(sum("dailyWage"))} />}
         <Stat label="Upah borongan" value={idr(sum("pieceWage"))} />
         <Stat label="Transport assembling" value={idr(sum("transport"))} />
         <Stat label="Total" value={idr(sum("total"))} tone="blue" hint={journal ? `Jurnal ${journal.number} · ${fmtDateTime(p.paidAt)}` : undefined} />
@@ -60,11 +60,11 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
         <Card title="Slip gaji">
           <div className="overflow-x-auto">
             <table className="tbl">
-              <thead><tr><th>Karyawan</th><th>Divisi</th><th className="num">Hadir</th>{p.kind === "BULANAN" && <><th className="num">Libur</th><th className="num">Bolos</th><th className="num">Gaji pokok</th></>}<th className="num">Harian</th><th className="num">Borongan</th><th className="num">Transport</th><th className="num">Bonus</th><th className="num">Potongan</th><th className="num">Kasbon</th><th className="num">Total</th><th /></tr></thead>
+              <thead><tr><th>Karyawan</th><th>Divisi</th><th className="num">Hadir</th>{p.kind === "BULANAN" && <><th className="num">Libur</th><th className="num">Bolos</th><th className="num">Gaji pokok</th></>}<th className="num">Harian</th><th className="num">Borongan</th>{p.kind === "TUNJANGAN" && <th className="num">Tunjangan</th>}<th className="num">Transport</th><th className="num">Bonus</th><th className="num">Potongan</th><th className="num">Kasbon</th><th className="num">Total</th><th /></tr></thead>
               <tbody>
                 {p.payslips.map((s) => (
                   <tr key={s.id}>
-                    <td>{s.employee.name}</td><td>{s.employee.division.name}</td><td className="num">{s.daysPresent}</td>{p.kind === "BULANAN" && <><td className="num">{s.offDays}</td><td className={`num ${s.absentDays ? "text-rose-600" : ""}`}>{s.absentDays}</td><td className="num">{idr(s.baseSalary)}</td></>}<td className="num">{idr(s.dailyWage)}</td><td className="num">{idr(s.pieceWage)}</td><td className="num">{idr(s.transport)}</td><td className="num">{idr(s.bonus)}</td><td className="num text-rose-600">{idr(s.deduction)}</td><td className="num text-rose-600">{idr(s.advanceDeduction)}</td><td className="num font-semibold">{idr(s.total)}{s.note && <div className="text-xs font-normal text-slate-400">{s.note}</div>}</td>
+                    <td>{s.employee.name}</td><td>{s.employee.division.name}</td><td className="num">{s.daysPresent}</td>{p.kind === "BULANAN" && <><td className="num">{s.offDays}</td><td className={`num ${s.absentDays ? "text-rose-600" : ""}`}>{s.absentDays}</td><td className="num">{idr(s.baseSalary)}</td></>}<td className="num">{idr(s.dailyWage)}</td><td className="num">{idr(s.pieceWage)}</td>{p.kind === "TUNJANGAN" && <td className="num">{idr(s.allowance)}</td>}<td className="num">{idr(s.transport)}</td><td className="num">{idr(s.bonus)}</td><td className="num text-rose-600">{idr(s.deduction)}</td><td className="num text-rose-600">{idr(s.advanceDeduction)}</td><td className="num font-semibold">{idr(s.total)}{s.note && <div className="text-xs font-normal text-slate-400">{s.note}</div>}</td>
                     <td className="flex gap-1">
                       <Link href={`/gaji/slip/${s.id}`} className="btn-secondary btn-sm">Slip</Link>
                       {p.status === "DRAFT" && user.can("payroll.manage") && (

@@ -88,6 +88,9 @@ export const saveItem = action(
       type: str(fd, "type") as ItemType,
       unit: str(fd, "unit") || "pcs",
       minStock: dec(fd, "minStock"),
+      hppUnit: optStr(fd, "hppUnit"),
+      // "18.000" ditulis dengan titik ribuan → 18000; "0,5" → 0.5
+      hppFactor: (() => { const raw = str(fd, "hppFactor"); const f = raw ? (/^\d{1,3}(\.\d{3})+$/.test(raw) ? Number(raw.replace(/\./g, "")) : dec(fd, "hppFactor", 1)) : 1; if (!(f > 0)) throw new Error("Isi satuan stok harus lebih dari 0"); return f; })(),
       supplierId: optStr(fd, "supplierId"),
       gypsumCharacterId: optStr(fd, "gypsumCharacterId"),
       active: id ? bool(fd, "active") : true,

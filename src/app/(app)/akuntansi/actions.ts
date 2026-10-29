@@ -7,6 +7,7 @@ import { closePeriod, postJournal, reverseJournal, COA, type LineInput } from "@
 import { nextNumber } from "@/lib/numbering";
 import { jakartaDateTime, todayStr } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
+import { balanceAdjustmentLines, bankBalancesAt } from "@/lib/finance";
 import type { AccountType } from "@prisma/client";
 
 const d = (fd: FormData, k = "date") => jakartaDateTime(str(fd, k) || todayStr(), "12:00");
@@ -196,4 +197,25 @@ export const reopen = action(
     return "Periode dibuka kembali";
   },
   ["/akuntansi"],
+);
+
+/** Sesuaikan saldo rekening dengan saldo asli (mis. saat mulai memakai aplikasi); selisih ke Ekuitas Saldo Awal */
+export const adjustBankBalances = action(
+  "accounting.post",
+  async (fd, user) => {
+    const date = str(fd, "date") || todayStr();
+    const banks = await bankBalancesAt(date);
+    const rows = banks.map((b) => {
+      const raw = String(fd.get(`actual_${b.id}`) ?? "").trim();
+      const actual = raw === "" ? null : Number(raw.replace(/\./g, "").replace(",", "."));
+      if (actual !== null && !Number.isFinite(actual)) throw new Error(`Saldo ${b.name} tidak valid`);
+      return { coaAccountId: b.coaAccountId, name: b.name, book: b.balance, actual: actual === null ? null : Math.round(actual) };
+    });
+    const lines = balanceAdjustmentLines(rows);
+    if (!lines.length) return "Semua saldo sudah sesuai, tidak ada penyesuaian";
+    const j = await prisma.$transaction((tx) => postJournal(tx, { date: d(fd), storeId: str(fd, "storeId"), description: "Penyesuaian saldo rekening", source: "SALDO_AWAL", actor: user, lines }));
+    await audit(user, "SALDO_REKENING_DISESUAIKAN", "Journal", j.id, { date, rows: rows.filter((r) => r.actual !== null) });
+    return `Saldo rekening disesuaikan (${j.number})`;
+  },
+  ["/akuntansi", "/finance", "/"],
 );

@@ -101,6 +101,33 @@ export function countAbsence(start: string, end: string, present: Set<string>, q
   return { offDays, absentDays, workDays };
 }
 
+/**
+ * Awal hitungan absen: hari sebelum tanggal go-live (aplikasi mulai dipakai) tidak punya data absen,
+ * jadi dianggap masuk. Mengembalikan null bila seluruh siklus sebelum go-live (gaji dibayar penuh).
+ */
+export function attendanceStart(start: string, end: string, goLive: string | null) {
+  if (!goLive || goLive <= start) return start;
+  return goLive > end ? null : goLive;
+}
+
+export type AllowanceLine = { name: string; amount: number };
+
+/** Total tunjangan aktif satu karyawan */
+export function sumAllowances(rows: { name: string; amount: number | bigint; active: boolean }[]): { total: number; detail: AllowanceLine[] } {
+  const detail = rows.filter((r) => r.active && Number(r.amount) > 0).map((r) => ({ name: r.name, amount: Number(r.amount) }));
+  return { total: detail.reduce((s, d) => s + d.amount, 0), detail };
+}
+
+/** Periode tunjangan bulan berjalan: dibuat mulai tanggal `payday` (default 15), dibayar pada tanggal itu */
+export function allowancePeriodFor(today: string, payday = 15) {
+  const [y, m] = today.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const day = String(Math.min(Math.max(1, payday), last)).padStart(2, "0");
+  const ym = `${y}-${String(m).padStart(2, "0")}`;
+  const payDate = `${ym}-${day}`;
+  return { code: `TNJ-${ym.replace("-", "")}`, start: `${ym}-01`, payDate, due: today >= payDate };
+}
+
 export type MonthlyCalcInput = {
   monthlySalary: number;
   absentDays: number;
@@ -117,6 +144,11 @@ export function calcMonthly(i: MonthlyCalcInput) {
   const perDay = Math.round(i.monthlySalary / Math.max(1, i.workdaysPerMonth));
   const deduction = Math.min(i.monthlySalary, i.absentDays * perDay + i.lateMinutes * i.lateDeductionPerMinute);
   return { baseSalary: i.monthlySalary, deduction, transport: i.transport, total: i.monthlySalary - deduction + i.transport, note: i.absentDays ? `Bolos ${i.absentDays} hari × Rp ${perDay.toLocaleString("id-ID")}` : null };
+}
+
+async function settingStr(tx: Tx, key: string) {
+  const s = await tx.setting.findUnique({ where: { key } });
+  return s?.value?.trim() || null;
 }
 
 async function settingNum(tx: Tx, key: string, def: number) {
@@ -189,6 +221,7 @@ export async function computePeriod(periodId: string, actor: Actor) {
     if (period.status !== "DRAFT") throw new PayrollError("Periode sudah disetujui; tidak bisa dihitung ulang");
     if (period.kind === "BULANAN") return computeMonthly(tx, period, actor);
     if (period.kind === "BORONGAN") return computeClaim(tx, period, actor);
+    if (period.kind === "TUNJANGAN") return computeAllowance(tx, period, actor);
     const range = { gte: period.startDate, lte: period.endDate };
     const [employees, rates, setting, onlyValidated] = await Promise.all([
       // Gaji bulanan & pekerja borongan punya alur sendiri (siklus H+7 dan klaim)
@@ -253,22 +286,24 @@ async function monthlyEmployeesFor(tx: Tx, period: Period, offset: number) {
 }
 
 async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
-  const [offset, quota, workdays, lateDed, requireValidated] = await Promise.all([
+  const [offset, quota, workdays, lateDed, requireValidated, goLive] = await Promise.all([
     settingNum(tx, "payday_offset_days", 7),
     settingNum(tx, "weekly_off_quota", 1),
     settingNum(tx, "monthly_workdays", 26),
     settingNum(tx, "late_deduction_per_minute", 0),
     tx.setting.findUnique({ where: { key: "payroll_require_validated" } }).then((s) => (s?.value ?? "true") === "true"),
+    settingStr(tx, "go_live_date"),
   ]);
   const start = dateStr(period.startDate);
   const end = dateStr(period.endDate);
+  const countFrom = attendanceStart(start, end, goLive);
   const payDate = period.payDate ? dateStr(period.payDate) : addDays(end, 1 + offset);
   const employees = await monthlyEmployeesFor(tx, period, offset);
   await tx.payslip.deleteMany({ where: { periodId: period.id } });
   for (const e of employees) {
     const att = await tx.attendance.findMany({ where: { employeeId: e.id, date: { gte: period.startDate, lte: period.endDate }, status: { in: ["HADIR", "TERLAMBAT"] }, ...(requireValidated ? { validated: true } : {}) } });
     const present = new Set(att.map((a) => dateStr(a.date)));
-    const { offDays, absentDays } = countAbsence(start, end, present, quota);
+    const { offDays, absentDays } = countFrom ? countAbsence(countFrom, end, present, quota) : { offDays: 0, absentDays: 0 };
     const trips = await tx.transportTrip.aggregate({ where: { employeeId: e.id, date: { gte: period.startDate, lte: period.endDate } }, _sum: { amount: true } });
     const calc = calcMonthly({
       monthlySalary: Number(e.monthlySalary),
@@ -280,6 +315,7 @@ async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
       resignedBeforePayday: !!e.resignDate && dateStr(e.resignDate) < payDate,
     });
     const adv = await allocateAdvances(tx, e.id, period.id, calc.total);
+    const preLive = countFrom !== start ? (countFrom ? `Absen dihitung mulai go-live ${countFrom}` : "Siklus sebelum go-live aplikasi: gaji penuh") : null;
     await tx.payslip.create({
       data: {
         periodId: period.id,
@@ -288,7 +324,7 @@ async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
         baseSalary: BigInt(calc.baseSalary),
         offDays,
         absentDays,
-        note: calc.note,
+        note: [calc.note, preLive].filter(Boolean).join(" · ") || null,
         dailyWage: BigInt(0),
         pieceWage: BigInt(0),
         pieceDetail: [],
@@ -320,6 +356,40 @@ async function computeClaim(tx: Tx, period: Period, actor: Actor) {
   const adv = await allocateAdvances(tx, period.employeeId, period.id, pieceWage);
   await tx.payslip.create({ data: { periodId: period.id, employeeId: period.employeeId, daysPresent: new Set(works.map((w) => dateStr(w.date))).size, dailyWage: BigInt(0), pieceWage: BigInt(pieceWage), pieceDetail, transport: BigInt(0), advanceDeduction: BigInt(adv.deduction), advanceDetail: adv.detail, total: BigInt(pieceWage - adv.deduction) } });
   await audit(actor, "KLAIM_BORONGAN_DIHITUNG", "PayrollPeriod", period.id, { pieceWage }, tx);
+}
+
+/** Slip tunjangan: semua karyawan aktif yang punya tunjangan; resign sebelum tanggal bayar tidak menerima */
+async function computeAllowance(tx: Tx, period: Period, actor: Actor) {
+  const payDate = period.payDate ? dateStr(period.payDate) : dateStr(period.endDate);
+  const emps = await tx.employee.findMany({ where: { allowances: { some: { active: true } } }, include: { allowances: true } });
+  await tx.payslip.deleteMany({ where: { periodId: period.id } });
+  let count = 0;
+  for (const e of emps) {
+    if (e.status === "NONAKTIF" && !e.resignDate) continue;
+    if (e.resignDate && dateStr(e.resignDate) < payDate) continue;
+    const a = sumAllowances(e.allowances);
+    if (!a.total) continue;
+    await tx.payslip.create({ data: { periodId: period.id, employeeId: e.id, daysPresent: 0, dailyWage: BigInt(0), pieceWage: BigInt(0), pieceDetail: [], transport: BigInt(0), allowance: BigInt(a.total), allowanceDetail: a.detail, total: BigInt(a.total), note: "Tunjangan bulanan" } });
+    count++;
+  }
+  await audit(actor, "TUNJANGAN_DIHITUNG", "PayrollPeriod", period.id, { employees: count }, tx);
+}
+
+/** Buat periode tunjangan bulan berjalan bila sudah tanggal bayar (default 15). Idempoten. */
+export async function generateAllowancePayroll(actor: Actor, now: Date = new Date(), force = false) {
+  const today = todayStr(now);
+  const db = prisma as unknown as Tx;
+  const payday = await settingNum(db, "allowance_payday", 15);
+  const goLive = await settingStr(db, "go_live_date");
+  const p = allowancePeriodFor(today, payday);
+  if (!p.due && !force) return { created: null };
+  if (goLive && p.payDate < goLive && !force) return { created: null };
+  if (await prisma.payrollPeriod.findUnique({ where: { code: p.code } })) return { created: null };
+  const has = await prisma.employeeAllowance.count({ where: { active: true } });
+  if (!has) return { created: null };
+  const period = await prisma.payrollPeriod.create({ data: { code: p.code, kind: "TUNJANGAN", startDate: dateOnly(p.start), endDate: dateOnly(p.payDate), payDate: dateOnly(p.payDate) } });
+  await computePeriod(period.id, actor);
+  return { created: period.code };
 }
 
 /**
@@ -412,7 +482,7 @@ export async function payPeriod(periodId: string, bankAccountId: string, storeId
     const transport = p.payslips.reduce((s, x) => s + Number(x.transport), 0);
     const net = wages + transport - advances;
     const lines = [
-      ...(wages > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, debit: wages, memo: "Gaji bulanan, upah harian & borongan" }] : []),
+      ...(wages > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, debit: wages, memo: p.kind === "TUNJANGAN" ? "Tunjangan karyawan" : "Gaji bulanan, upah harian & borongan" }] : []),
       ...(transport > 0 ? [{ accountCode: COA.BEBAN_TRANSPORT, debit: transport, memo: "Transport assembling" }] : []),
       ...(advances > 0 ? [{ accountCode: COA.PIUTANG_KARYAWAN, credit: advances, memo: "Potongan kasbon" }] : []),
       ...(net > 0 ? [{ accountId: bank.coaAccountId, credit: net }] : []),
