@@ -1,6 +1,5 @@
 import type { Letterhead } from "@/lib/letterhead";
 import { todayStr } from "@/lib/time";
-import { Paged } from "@/components/Paged";
 
 /** "2026-10-01" → "01 Oktober 2026" */
 export function fmtLong(d: string | Date): string {
@@ -18,6 +17,14 @@ const I = {
 export const DocIcon = ({ name, size = 22 }: { name: keyof typeof I; size?: number }) => (
   <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden>{I[name]}</svg>
 );
+
+/**
+ * Wadah tersembunyi untuk versi dokumen ber-kop surat. Halaman tetap menampilkan tabel biasa;
+ * versi ini hanya dipakai DownloadJpg (disalin, digambar, lalu dipratinjau sebelum diunduh).
+ */
+export function DocExport({ children }: { children: React.ReactNode }) {
+  return <div hidden aria-hidden>{children}</div>;
+}
 
 /**
  * Dokumen siap unduh JPG dengan kop surat Main Gypsum yang seragam (laporan, slip, rekap, dll).
@@ -147,12 +154,10 @@ export function DocSummary({ rows }: { rows: { label: string; hint?: string; val
 export function DocTable({ head, children, empty }: { head: React.ReactNode; children?: React.ReactNode; empty?: string }) {
   return (
     <div className="doc-table">
-      <Paged>
-        <table>
-          <thead>{head}</thead>
-          <tbody>{children}{empty && <tr><td colSpan={99} className="doc-empty">{empty}</td></tr>}</tbody>
-        </table>
-      </Paged>
+      <table>
+        <thead>{head}</thead>
+        <tbody>{children}{empty && <tr><td colSpan={99} className="doc-empty">{empty}</td></tr>}</tbody>
+      </table>
     </div>
   );
 }

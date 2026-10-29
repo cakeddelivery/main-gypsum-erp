@@ -2,7 +2,8 @@ import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { addDays, jakartaDateTime, jakartaParts, todayStr } from "@/lib/time";
 import { idr } from "@/lib/money";
-import { FilterBar, Field } from "@/components/ui";
+import { Card, FilterBar, Field } from "@/components/ui";
+import { Paged } from "@/components/Paged";
 import { DocBar, DocSection, DocTable } from "@/components/DocSheet";
 
 export type SP = Record<string, string | undefined>;
@@ -36,6 +37,24 @@ export async function ReportFilter({ sp, showFrom = true, extra }: { sp: SP; sho
 export async function storeLabel(storeId: string | null) {
   if (!storeId) return "Konsolidasi Main Gypsum & Dunia Lukis";
   return (await prisma.store.findUnique({ where: { id: storeId } }))?.name ?? "-";
+}
+
+/** Tabel akun di layar (tanpa kop surat): kartu + tabel + baris total */
+export function AccountTable({ title, rows, total, totalLabel }: { title: string; rows: { code: string; name: string; amount: number }[]; total: number; totalLabel: string }) {
+  return (
+    <Card title={title}>
+      <div className="table-wrap">
+        <Paged><table className="tbl">
+          <thead><tr><th>Kode</th><th>Akun</th><th className="num">Jumlah</th></tr></thead>
+          <tbody>
+            {rows.length === 0 && <tr><td colSpan={3} className="text-slate-400">Tidak ada saldo</td></tr>}
+            {rows.map((r) => <tr key={r.code + r.name}><td className="font-mono text-xs">{r.code}</td><td>{r.name}</td><td className={`num ${r.amount < 0 ? "text-rose-600" : ""}`}>{idr(r.amount)}</td></tr>)}
+          </tbody>
+          <tfoot><tr className="bg-slate-50 font-semibold"><td colSpan={2}>{totalLabel}</td><td className="num">{idr(total)}</td></tr></tfoot>
+        </table></Paged>
+      </div>
+    </Card>
+  );
 }
 
 /** Bagian laporan keuangan bergaya dokumen (kop surat): tabel akun + baris total */

@@ -5,8 +5,9 @@ import { idr } from "@/lib/money";
 import { fmtDateTime, jakartaDateTime, todayStr } from "@/lib/time";
 import { Empty, FilterBar, Field, PageHeader } from "@/components/ui";
 import { DownloadJpg } from "@/components/DownloadJpg";
-import { DocBar, DocSheet, DocSummary, DocTable, fmtLong, fmtRange } from "@/components/DocSheet";
+import { DocExport, DocBar, DocSheet, DocSummary, DocTable, fmtLong, fmtRange } from "@/components/DocSheet";
 import { letterhead } from "@/lib/letterhead";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Kartu Persediaan" };
 
@@ -38,19 +39,32 @@ export default async function KartuPage({ searchParams }: { searchParams: Promis
         <Field label="Dari"><input type="date" name="from" defaultValue={sp.from} className="input" /></Field>
         <Field label="Sampai"><input type="date" name="to" defaultValue={sp.to} className="input" /></Field>
       </FilterBar>
-      <DocSheet
-        id="kartu" lh={lh} eyebrow="Laporan persediaan" title="Kartu Persediaan" subtitle={`${item.sku} — ${item.name}`}
-        meta={{ label: "Periode", value: sp.from ? fmtRange(sp.from, sp.to || todayStr()) : `s.d. ${fmtLong(sp.to || todayStr())}` }}
-        notes={[`Satuan stok: ${item.unit}. Harga = harga per unit pada saat mutasi.`, "Laporan ini dihasilkan secara otomatis dari sistem dan dapat digunakan sebagai referensi internal."]}
-      >
-        <DocBar label="Saldo awal" value={`${opening.toLocaleString("id-ID")} ${item.unit}`} />
-        <DocTable head={<tr><th>Tanggal</th><th>Jenis</th><th>Lokasi</th><th>Ref</th><th className="num">Masuk</th><th className="num">Keluar</th><th className="num">Saldo</th><th className="num">Harga (Rp)</th><th className="num">Nilai saldo (Rp)</th></tr>} empty={rows.length ? undefined : "Tidak ada mutasi pada periode ini"}>
-          {rows.map(({ m, inQ, outQ, bal }) => (
-            <tr key={m.id}><td className="whitespace-nowrap">{fmtDateTime(m.date)}</td><td>{MOVEMENT_LABEL[m.type]}</td><td className="whitespace-nowrap text-xs">{m.fromLocation?.code ?? ""}{m.fromLocation && m.toLocation && " → "}{m.toLocation?.code ?? ""}</td><td className="text-xs">{m.ref}</td><td className="num doc-pos">{inQ ? inQ.toLocaleString("id-ID") : "-"}</td><td className="num doc-neg">{outQ ? outQ.toLocaleString("id-ID") : "-"}</td><td className="num font-semibold">{bal.toLocaleString("id-ID")}</td><td className="num">{Number(m.unitCost).toLocaleString("id-ID")}</td><td className="num">{Math.round(bal * Number(m.unitCost)).toLocaleString("id-ID")}</td></tr>
-          ))}
-        </DocTable>
-        <DocSummary rows={[{ label: "Saldo akhir", hint: `Nilai persediaan ${idr(Math.round(bal * Number(rows.at(-1)?.m.unitCost ?? item.avgCost)))}`, value: `${bal.toLocaleString("id-ID")} ${item.unit}`, strong: true }]} />
-      </DocSheet>
+      <div className="table-wrap bg-white">
+        <Paged><table className="tbl">
+          <thead><tr><th>Tanggal</th><th>Jenis</th><th>Lokasi</th><th>Ref</th><th className="num">Masuk</th><th className="num">Keluar</th><th className="num">Saldo</th><th className="num">Harga</th><th className="num">Nilai saldo</th></tr></thead>
+          <tbody>
+            <tr className="bg-slate-50"><td colSpan={6}>Saldo awal</td><td className="num font-semibold">{opening.toLocaleString("id-ID")}</td><td /><td /></tr>
+            {rows.map(({ m, inQ, outQ, bal }) => (
+              <tr key={m.id}><td>{fmtDateTime(m.date)}</td><td>{MOVEMENT_LABEL[m.type]}</td><td className="text-xs">{m.fromLocation?.code ?? ""}{m.fromLocation && m.toLocation && " → "}{m.toLocation?.code ?? ""}</td><td className="text-xs">{m.ref}</td><td className="num text-emerald-600">{inQ ? inQ.toLocaleString("id-ID") : ""}</td><td className="num text-rose-600">{outQ ? outQ.toLocaleString("id-ID") : ""}</td><td className="num font-semibold">{bal.toLocaleString("id-ID")}</td><td className="num">{idr(m.unitCost)}</td><td className="num">{idr(Math.round(bal * Number(m.unitCost)))}</td></tr>
+            ))}
+          </tbody>
+        </table></Paged>
+      </div>
+      <DocExport>
+        <DocSheet
+          id="kartu" lh={lh} eyebrow="Laporan persediaan" title="Kartu Persediaan" subtitle={`${item.sku} — ${item.name}`}
+          meta={{ label: "Periode", value: sp.from ? fmtRange(sp.from, sp.to || todayStr()) : `s.d. ${fmtLong(sp.to || todayStr())}` }}
+          notes={[`Satuan stok: ${item.unit}. Harga = harga per unit pada saat mutasi.`, "Laporan ini dihasilkan secara otomatis dari sistem dan dapat digunakan sebagai referensi internal."]}
+        >
+          <DocBar label="Saldo awal" value={`${opening.toLocaleString("id-ID")} ${item.unit}`} />
+          <DocTable head={<tr><th>Tanggal</th><th>Jenis</th><th>Lokasi</th><th>Ref</th><th className="num">Masuk</th><th className="num">Keluar</th><th className="num">Saldo</th><th className="num">Harga (Rp)</th><th className="num">Nilai saldo (Rp)</th></tr>} empty={rows.length ? undefined : "Tidak ada mutasi pada periode ini"}>
+            {rows.map(({ m, inQ, outQ, bal }) => (
+              <tr key={m.id}><td className="whitespace-nowrap">{fmtDateTime(m.date)}</td><td>{MOVEMENT_LABEL[m.type]}</td><td className="whitespace-nowrap text-xs">{m.fromLocation?.code ?? ""}{m.fromLocation && m.toLocation && " → "}{m.toLocation?.code ?? ""}</td><td className="text-xs">{m.ref}</td><td className="num doc-pos">{inQ ? inQ.toLocaleString("id-ID") : "-"}</td><td className="num doc-neg">{outQ ? outQ.toLocaleString("id-ID") : "-"}</td><td className="num font-semibold">{bal.toLocaleString("id-ID")}</td><td className="num">{Number(m.unitCost).toLocaleString("id-ID")}</td><td className="num">{Math.round(bal * Number(m.unitCost)).toLocaleString("id-ID")}</td></tr>
+            ))}
+          </DocTable>
+          <DocSummary rows={[{ label: "Saldo akhir", hint: `Nilai persediaan ${idr(Math.round(bal * Number(rows.at(-1)?.m.unitCost ?? item.avgCost)))}`, value: `${bal.toLocaleString("id-ID")} ${item.unit}`, strong: true }]} />
+        </DocSheet>
+      </DocExport>
     </div>
   );
 }
