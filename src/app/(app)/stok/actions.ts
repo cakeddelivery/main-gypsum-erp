@@ -93,6 +93,7 @@ export const saveItem = action(
       hppFactor: (() => { const raw = str(fd, "hppFactor"); const f = raw ? (/^\d{1,3}(\.\d{3})+$/.test(raw) ? Number(raw.replace(/\./g, "")) : dec(fd, "hppFactor", 1)) : 1; if (!(f > 0)) throw new Error("Isi satuan stok harus lebih dari 0"); return f; })(),
       supplierId: optStr(fd, "supplierId"),
       gypsumCharacterId: optStr(fd, "gypsumCharacterId"),
+      divisionId: optStr(fd, "divisionId"),
       active: id ? bool(fd, "active") : true,
       ...(id ? {} : { avgCost: BigInt(int(fd, "avgCost")) }),
     };
@@ -101,18 +102,6 @@ export const saveItem = action(
     return "Item tersimpan";
   },
   ["/stok"],
-);
-
-export const saveSupplier = action(
-  "master.manage",
-  async (fd, user) => {
-    const id = optStr(fd, "id");
-    const data = { name: z.string().min(2).parse(str(fd, "name")), phone: optStr(fd, "phone"), address: optStr(fd, "address") };
-    const s = id ? await prisma.supplier.update({ where: { id }, data }) : await prisma.supplier.create({ data });
-    await audit(user, "SUPPLIER_DISIMPAN", "Supplier", s.id, data);
-    return "Supplier tersimpan";
-  },
-  ["/stok/master"],
 );
 
 export const saveLocation = action(

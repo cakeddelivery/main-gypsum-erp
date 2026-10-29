@@ -458,9 +458,23 @@ model Supplier {
   name    String
   phone   String?
   address String?
+  note    String?
+  active  Boolean @default(true)
   items   Item[]
   payables Payable[]
   purchases Purchase[]
+}
+
+/// Pelanggan offline (pembeli langsung, bukan lewat marketplace)
+model Customer {
+  id        String   @id @default(cuid())
+  name      String
+  phone     String?
+  address   String?
+  note      String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model GypsumCharacter {

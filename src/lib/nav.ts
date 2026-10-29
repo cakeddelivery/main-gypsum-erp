@@ -11,6 +11,8 @@ export const NAV: NavItem[] = [
   { href: "/absensi", label: "Absensi", icon: "clock", perms: ["attendance.view", "attendance.self"] },
   { href: "/stok", label: "Stok & Persediaan", icon: "box", perms: ["stock.view", "stock.request"] },
   { href: "/produk", label: "Produk & HPP", icon: "tag", perms: ["product.view"] },
+  { href: "/supplier", label: "Supplier", icon: "truck", perms: ["partner.view"] },
+  { href: "/pelanggan", label: "Pelanggan", icon: "user", perms: ["partner.view"] },
   { href: "/karyawan", label: "Karyawan", icon: "users", perms: ["employee.view"] },
   { href: "/gaji", label: "Penggajian", icon: "wallet", perms: ["payroll.view", "payroll.self"] },
   { href: "/finance", label: "Finance Inbox", icon: "inbox", perms: ["finance.view"] },
