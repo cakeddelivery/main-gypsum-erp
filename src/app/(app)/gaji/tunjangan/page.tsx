@@ -6,6 +6,7 @@ import { todayStr } from "@/lib/time";
 import { allowancePeriodFor } from "@/lib/payroll";
 import { Badge, Card, Empty, Field, PageHeader, Stat } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
+import { Paged } from "@/components/Paged";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { deleteAllowance, generateAllowance, saveAllowance } from "../actions";
@@ -42,7 +43,6 @@ export default async function TunjanganPage() {
         subtitle={`Hanya untuk karyawan tertentu. Slip tunjangan dibuat otomatis dan dibayar serentak tiap tanggal ${payday}.`}
         actions={
           <>
-            <Link href="/gaji" className="btn-secondary">← Penggajian</Link>
             {can && !thisMonth && <ActionForm action={generateAllowance}><Submit className="btn-secondary" pendingText="Membuat…">Buat slip bulan ini</Submit></ActionForm>}
             {can && <Modal trigger="+ Tunjangan" title="Tunjangan baru">{form()}</Modal>}
           </>
@@ -56,7 +56,7 @@ export default async function TunjanganPage() {
       {rows.length === 0 ? <Empty title="Belum ada tunjangan" hint="Tambahkan tunjangan untuk karyawan yang berhak. Karyawan lain tidak terpengaruh." /> : (
         <Card title="Daftar tunjangan">
           <div className="table-wrap">
-            <table className="tbl">
+            <Paged><table className="tbl">
               <thead><tr><th>Karyawan</th><th>Tunjangan</th><th className="num">Per bulan</th><th>Status</th><th /></tr></thead>
               <tbody>
                 {rows.map((r) => (
@@ -72,7 +72,7 @@ export default async function TunjanganPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></Paged>
           </div>
         </Card>
       )}

@@ -5,8 +5,9 @@ import { prisma } from "@/lib/db";
 import { Badge, Card, Field, PageHeader, Tabs } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { ActionForm, Submit } from "@/components/ActionForm";
+import { Submit } from "@/components/ActionForm";
 import { saveBank, saveCategory, saveDivision, saveOrg, saveParams, saveShift, saveStore } from "./actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Pengaturan" };
 
@@ -75,17 +76,21 @@ export default async function PengaturanPage({ searchParams }: { searchParams: P
       {add[tab] && <div className="flex justify-end">{add[tab]}</div>}
       {tab === "organisasi" && (
         <div className="grid gap-5 lg:grid-cols-2">
-          <Card title="Organisasi"><ActionForm action={saveOrg} className="space-y-3"><Field label="Nama organisasi"><input name="name" defaultValue={org?.name} className="input" /></Field><p className="text-xs text-slate-500">Mata uang: IDR (tetap) · Zona waktu: Asia/Jakarta (WIB, tetap)</p><Submit>Simpan</Submit></ActionForm></Card>
-          <Card title="Toko"><table className="tbl"><tbody>{stores.map((x) => <tr key={x.id}><td className="font-mono text-xs">{x.code}</td><td>{x.name}</td><td>{active(x.active)}</td><td>{edit(storeForm(x), "Ubah toko")}</td></tr>)}</tbody></table></Card>
+          <Card title="Organisasi" actions={<Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah organisasi"><ModalForm action={saveOrg} className="space-y-3"><Field label="Nama organisasi"><input name="name" defaultValue={org?.name} className="input" /></Field><Submit>Simpan</Submit></ModalForm></Modal>}>
+            <p className="font-medium text-slate-900">{org?.name ?? "—"}</p>
+            <p className="mt-1 text-xs text-slate-500">Mata uang: IDR (tetap) · Zona waktu: Asia/Jakarta (WIB, tetap)</p>
+          </Card>
+          <Card title="Toko"><Paged><table className="tbl"><tbody>{stores.map((x) => <tr key={x.id}><td className="font-mono text-xs">{x.code}</td><td>{x.name}</td><td>{active(x.active)}</td><td>{edit(storeForm(x), "Ubah toko")}</td></tr>)}</tbody></table></Paged></Card>
         </div>
       )}
-      {tab === "divisi" && <div className="table-wrap"><table className="tbl"><thead><tr><th>Kode</th><th>Nama</th><th>Status</th><th /></tr></thead><tbody>{divisions.map((x) => <tr key={x.id}><td className="font-mono text-xs">{x.code}</td><td>{x.name}</td><td>{active(x.active)}</td><td>{edit(divForm(x), "Ubah divisi")}</td></tr>)}</tbody></table></div>}
-      {tab === "shift" && <div className="table-wrap"><table className="tbl"><thead><tr><th>Kode</th><th>Nama</th><th>Jam</th><th>Toleransi</th><th>Status</th><th /></tr></thead><tbody>{shifts.map((x) => <tr key={x.id}><td className="font-mono text-xs">{x.code}</td><td>{x.name}</td><td>{x.startTime}–{x.endTime} WIB</td><td>{x.toleranceMinutes} menit</td><td>{active(x.active)}</td><td>{edit(shiftForm(x), "Ubah shift")}</td></tr>)}</tbody></table></div>}
-      {tab === "rekening" && <div className="table-wrap"><table className="tbl"><thead><tr><th>Kode</th><th>Nama</th><th>Akun COA</th><th>Alias</th><th>Status</th><th /></tr></thead><tbody>{banks.map((x) => <tr key={x.id}><td className="font-mono text-xs">{x.code}</td><td>{x.name}</td><td>{x.coaAccount.code} {x.coaAccount.name}</td><td className="text-xs">{x.aliases}</td><td>{active(x.active)}</td><td>{edit(bankForm(x), "Ubah rekening")}</td></tr>)}</tbody></table></div>}
-      {tab === "kategori" && <div className="table-wrap"><table className="tbl"><thead><tr><th>Nama</th><th>Jenis</th><th>Akun COA</th><th>Kata kunci</th><th>Status</th><th /></tr></thead><tbody>{cats.map((x) => <tr key={x.id}><td>{x.name}</td><td><Badge tone={x.direction === "MASUK" ? "green" : "red"}>{x.direction}</Badge></td><td>{x.coaAccount.code} {x.coaAccount.name}</td><td className="max-w-xs truncate text-xs">{x.keywords}</td><td>{active(x.active)}</td><td>{edit(catForm(x), "Ubah kategori")}</td></tr>)}</tbody></table></div>}
+      {tab === "divisi" && <div className="table-wrap"><Paged><table className="tbl"><thead><tr><th>Kode</th><th>Nama</th><th>Status</th><th /></tr></thead><tbody>{divisions.map((x) => <tr key={x.id}><td className="font-mono text-xs">{x.code}</td><td>{x.name}</td><td>{active(x.active)}</td><td>{edit(divForm(x), "Ubah divisi")}</td></tr>)}</tbody></table></Paged></div>}
+      {tab === "shift" && <div className="table-wrap"><Paged><table className="tbl"><thead><tr><th>Kode</th><th>Nama</th><th>Jam</th><th>Toleransi</th><th>Status</th><th /></tr></thead><tbody>{shifts.map((x) => <tr key={x.id}><td className="font-mono text-xs">{x.code}</td><td>{x.name}</td><td>{x.startTime}–{x.endTime} WIB</td><td>{x.toleranceMinutes} menit</td><td>{active(x.active)}</td><td>{edit(shiftForm(x), "Ubah shift")}</td></tr>)}</tbody></table></Paged></div>}
+      {tab === "rekening" && <div className="table-wrap"><Paged><table className="tbl"><thead><tr><th>Kode</th><th>Nama</th><th>Akun COA</th><th>Alias</th><th>Status</th><th /></tr></thead><tbody>{banks.map((x) => <tr key={x.id}><td className="font-mono text-xs">{x.code}</td><td>{x.name}</td><td>{x.coaAccount.code} {x.coaAccount.name}</td><td className="text-xs">{x.aliases}</td><td>{active(x.active)}</td><td>{edit(bankForm(x), "Ubah rekening")}</td></tr>)}</tbody></table></Paged></div>}
+      {tab === "kategori" && <div className="table-wrap"><Paged><table className="tbl"><thead><tr><th>Nama</th><th>Jenis</th><th>Akun COA</th><th>Kata kunci</th><th>Status</th><th /></tr></thead><tbody>{cats.map((x) => <tr key={x.id}><td>{x.name}</td><td><Badge tone={x.direction === "MASUK" ? "green" : "red"}>{x.direction}</Badge></td><td>{x.coaAccount.code} {x.coaAccount.name}</td><td className="max-w-xs truncate text-xs">{x.keywords}</td><td>{active(x.active)}</td><td>{edit(catForm(x), "Ubah kategori")}</td></tr>)}</tbody></table></Paged></div>}
       {tab === "parameter" && (
-        <Card title="Parameter operasional">
-          <ActionForm action={saveParams} className="grid gap-3 md:grid-cols-2">
+        <Card title="Parameter operasional" actions={
+          <Modal trigger="Ubah parameter" triggerClass="btn-primary btn-sm" title="Ubah parameter operasional" wide>
+          <ModalForm action={saveParams} className="grid gap-3 sm:grid-cols-2">
             <Field label="Toko default transaksi"><select name="default_store_id" defaultValue={s("default_store_id")} className="input">{stores.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
             <Field label="Lokasi bahan baku (konsumsi produksi)"><select name="loc_raw" defaultValue={s("loc_raw")} className="input">{locations.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
             <Field label="Lokasi barang dalam proses"><select name="loc_wip" defaultValue={s("loc_wip")} className="input">{locations.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
@@ -99,9 +104,28 @@ export default async function PengaturanPage({ searchParams }: { searchParams: P
             <Field label="Gaji hanya dari absensi tervalidasi"><select name="payroll_require_validated" defaultValue={s("payroll_require_validated") || "true"} className="input"><option value="true">Ya</option><option value="false">Tidak</option></select></Field>
             <Field label="Tutup buku otomatis (tgl 1, 09.00 WIB)"><select name="auto_close_enabled" defaultValue={s("auto_close_enabled") || "true"} className="input"><option value="true">Aktif</option><option value="false">Nonaktif</option></select></Field>
             <Field label="Alamat perusahaan"><input name="company_address" defaultValue={s("company_address")} className="input" /></Field>
-            <Field label="Checklist laporan shift (satu per baris)" className="md:col-span-2"><textarea name="report_checklist" rows={5} defaultValue={s("report_checklist") || "Area kerja bersih & rapi\nPeralatan/cetakan dicek\nBahan cukup untuk shift berikutnya\nHasil sudah dihitung ulang\nReject dipisahkan & dicatat"} className="input" /></Field>
-            <div className="md:col-span-2"><Submit>Simpan parameter</Submit></div>
-          </ActionForm>
+            <Field label="Checklist laporan shift (satu per baris)" className="sm:col-span-2"><textarea name="report_checklist" rows={5} defaultValue={s("report_checklist") || "Area kerja bersih & rapi\nPeralatan/cetakan dicek\nBahan cukup untuk shift berikutnya\nHasil sudah dihitung ulang\nReject dipisahkan & dicatat"} className="input" /></Field>
+            <div className="sm:col-span-2"><Submit>Simpan parameter</Submit></div>
+          </ModalForm>
+          </Modal>
+        }>
+          <dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+            {[
+              ["Toko default transaksi", stores.find((x) => x.id === s("default_store_id"))?.name],
+              ["Lokasi bahan baku", locations.find((x) => x.id === s("loc_raw"))?.name],
+              ["Lokasi barang dalam proses", locations.find((x) => x.id === s("loc_wip"))?.name],
+              ["Lokasi barang jadi", locations.find((x) => x.id === s("loc_finished"))?.name],
+              ["Potongan terlambat per menit", s("late_deduction_per_minute") ? `Rp ${Number(s("late_deduction_per_minute")).toLocaleString("id-ID")}` : undefined],
+              ["Gajian setelah siklus", `H+${s("payday_offset_days") || "7"}`],
+              ["Jatah libur per minggu", `${s("weekly_off_quota") || "1"} hari`],
+              ["Hari kerja per bulan", s("monthly_workdays") || "26"],
+              ["Gaji hanya dari absensi tervalidasi", (s("payroll_require_validated") || "true") === "true" ? "Ya" : "Tidak"],
+              ["Tutup buku otomatis", (s("auto_close_enabled") || "true") === "true" ? "Aktif" : "Nonaktif"],
+              ["Alamat perusahaan", s("company_address")],
+            ].map(([k, v]) => (
+              <div key={k} className="flex justify-between gap-3 border-b border-slate-100 py-1.5"><dt className="text-slate-500">{k}</dt><dd className="text-right font-medium text-slate-800">{v || "—"}</dd></div>
+            ))}
+          </dl>
         </Card>
       )}
     </div>

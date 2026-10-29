@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { ActionForm, Submit } from "@/components/ActionForm";
+import { useCloseModal } from "@/components/Modal";
 import type { ActionResult } from "@/lib/action";
 import type { Extraction } from "@/lib/extract";
 
@@ -17,6 +18,7 @@ export function TxForm(p: {
   init: Init;
   mode: "create" | "edit";
 }) {
+  const close = useCloseModal();
   const [v, setV] = useState<Init>(p.init);
   const [hint, setHint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -24,7 +26,7 @@ export function TxForm(p: {
   const set = (k: keyof Init) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setV((o) => ({ ...o, [k]: e.target.value }));
   const cats = p.categories.filter((c) => c.direction === v.direction);
   return (
-    <ActionForm action={p.action} className="space-y-4">
+    <ActionForm action={p.action} className="space-y-4" onSuccess={() => setTimeout(close, 700)}>
       {v.id && <input type="hidden" name="id" value={v.id} />}
       {p.mode === "create" && <input type="hidden" name="formKey" value={formKey} />}
       {p.extract && (

@@ -8,6 +8,7 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { GeoSubmit, UseMyLocation } from "@/components/GeoFields";
 import { checkIn, checkOut, deleteWorkSite, saveAttendance, saveSchedule, saveWorkSite, validateAttendance } from "./actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Absensi" };
 const TONE = { HADIR: "green", TERLAMBAT: "amber", IZIN: "blue", SAKIT: "purple", ALPA: "red", LIBUR: "gray" } as const;
@@ -96,7 +97,7 @@ async function Daily({ date, divFilter, shifts }: { date: string; divFilter: obj
     <>
       <FilterBar><input type="hidden" name="tab" value="harian" /><Field label="Tanggal"><input type="date" name="date" defaultValue={date} className="input" /></Field></FilterBar>
       <div className="table-wrap">
-        <table className="tbl">
+        <Paged><table className="tbl">
           <thead><tr><th>Karyawan</th><th>Divisi</th><th>Jadwal</th><th>Status</th><th>Masuk</th><th>Pulang</th><th>Validasi</th><th /></tr></thead>
           <tbody>
             {employees.map((e) => {
@@ -126,7 +127,7 @@ async function Daily({ date, divFilter, shifts }: { date: string; divFilter: obj
               );
             })}
           </tbody>
-        </table>
+        </table></Paged>
       </div>
     </>
   );
@@ -162,14 +163,14 @@ async function Schedule({ date, divFilter, shifts }: { date: string; divFilter: 
         </div>
       </div>
       <div className="table-wrap">
-        <table className="tbl">
+        <Paged><table className="tbl">
           <thead><tr><th>Karyawan</th>{days.map((d) => <th key={d}>{fmtDay(dateOnly(d)).split(",")[0]} {d.slice(8)}</th>)}</tr></thead>
           <tbody>
             {employees.map((e) => (
               <tr key={e.id}><td>{e.name}</td>{days.map((d) => { const s = sched.find((x) => x.employeeId === e.id && x.date.toISOString().slice(0, 10) === d); return <td key={d}>{s ? <Badge tone={s.shift.code === "S1" ? "blue" : "purple"}>{s.shift.name}</Badge> : <span className="text-slate-300">—</span>}</td>; })}</tr>
             ))}
           </tbody>
-        </table>
+        </table></Paged>
       </div>
     </div>
   );
@@ -181,14 +182,14 @@ async function Validation({ divFilter }: { divFilter: object }) {
   return (
     <ActionForm action={validateAttendance}>
       <div className="table-wrap">
-        <table className="tbl">
+        <Paged><table className="tbl">
           <thead><tr><th /><th>Tanggal</th><th>Karyawan</th><th>Shift</th><th>Status</th><th>Masuk</th></tr></thead>
           <tbody>
             {rows.map((a) => (
               <tr key={a.id}><td><input type="checkbox" name="ids" value={a.id} defaultChecked className="h-4 w-4" /></td><td>{fmtDay(a.date)}</td><td>{a.employee.name}</td><td>{a.shift.name}</td><td><Badge tone={TONE[a.status]}>{ATT_LABEL[a.status]}{a.lateMinutes > 0 && ` ${a.lateMinutes}m`}</Badge></td><td>{fmtDateTime(a.checkIn)}</td></tr>
             ))}
           </tbody>
-        </table>
+        </table></Paged>
       </div>
       <div className="mt-3"><Submit>Validasi yang dipilih</Submit></div>
     </ActionForm>
@@ -241,7 +242,7 @@ async function WorkSites() {
         <Empty title="Belum ada lokasi kerja" />
       ) : (
         <div className="table-wrap">
-          <table className="tbl">
+          <Paged><table className="tbl">
             <thead><tr><th>Lokasi</th><th>Koordinat</th><th>Radius</th><th>Status</th><th>Absen tercatat</th><th /></tr></thead>
             <tbody>
               {sites.map((x) => (
@@ -251,7 +252,7 @@ async function WorkSites() {
                   <td>{x.radiusM} m</td>
                   <td>{x.active ? <Badge tone="green">Aktif</Badge> : <Badge tone="gray">Nonaktif</Badge>}</td>
                   <td>{x._count.checkIns}</td>
-                  <td className="flex gap-2">
+                  <td><div className="flex gap-2">
                     <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${x.name}`}>
                       <ModalForm action={saveWorkSite} className="grid grid-cols-2 gap-3">
                         <input type="hidden" name="id" value={x.id} />
@@ -264,11 +265,11 @@ async function WorkSites() {
                       <input type="hidden" name="id" value={x.id} />
                       <Submit className="btn-secondary btn-sm" pendingText="…">Hapus</Submit>
                     </ActionForm>
-                  </td>
+                  </div></td>
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></Paged>
         </div>
       )}
     </div>

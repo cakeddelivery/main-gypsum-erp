@@ -9,6 +9,7 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { createApiClient, revokeApiClient, saveIdentity, testRecap } from "../actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Telegram & Hermes" };
 
@@ -54,30 +55,33 @@ export default async function TelegramPage() {
       </Card>
       <Card title="Identitas Telegram berizin" actions={<Modal trigger="+ Identitas" triggerClass="btn-primary btn-sm" title="Identitas Telegram">{form()}</Modal>}>
         <div className="overflow-x-auto">
-          <table className="tbl">
+          <Paged><table className="tbl">
             <thead><tr><th>ID Telegram</th><th>Nama</th><th>Pengguna</th><th>Kirim</th><th>Konfirmasi</th><th>Rekap</th><th>Status</th><th /></tr></thead>
             <tbody>{idents.map((x) => <tr key={x.id}><td className="font-mono text-xs">{x.telegramUserId}</td><td>{x.telegramName}</td><td>{x.user.name}</td><td>{x.canSubmit ? "✓" : ""}</td><td>{x.canConfirm ? "✓" : ""}</td><td>{x.receiveRecap ? "✓" : ""}</td><td>{x.active ? <Badge tone="green">Aktif</Badge> : <Badge>Nonaktif</Badge>}</td><td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah identitas">{form(x)}</Modal></td></tr>)}</tbody>
-          </table>
+          </table></Paged>
         </div>
       </Card>
-      <Card title="API key Hermes (Finance API /api/v1)">
-        <ActionForm action={createApiClient} persist className="mb-4 flex flex-wrap items-end gap-3">
+      <Card title="API key Hermes (Finance API /api/v1)" actions={
+        <Modal trigger="+ API key" triggerClass="btn-primary btn-sm" title="API key baru">
+        <ActionForm action={createApiClient} persist className="space-y-3">
           <Field label="Nama klien"><input name="name" defaultValue="Hermes AI Agent" className="input" required /></Field>
           <div className="text-sm">{Object.entries(API_SCOPES).map(([k, v]) => <label key={k} className="flex gap-2"><input type="checkbox" name="scopes" value={k} defaultChecked /> <code className="text-xs">{k}</code> — {v}</label>)}</div>
           <Submit>Buat API key</Submit>
         </ActionForm>
+        </Modal>
+      }>
         <p className="mb-3 text-xs text-slate-500">Tidak ada scope untuk membukukan atau mengakses database: Hermes hanya bisa membuat/mengubah draft dan membaca data referensi.</p>
-        <table className="tbl">
+        <Paged><table className="tbl">
           <thead><tr><th>Nama</th><th>Prefix</th><th>Scope</th><th>Dipakai terakhir</th><th>Status</th><th /></tr></thead>
           <tbody>{clients.map((c) => <tr key={c.id}><td>{c.name}</td><td className="font-mono text-xs">mgk_{c.keyPrefix}_…</td><td className="text-xs">{c.scopes}</td><td className="text-xs">{fmtDateTime(c.lastUsedAt)}</td><td>{c.active ? <Badge tone="green">Aktif</Badge> : <Badge tone="red">Dicabut</Badge>}</td><td>{c.active && <ActionForm action={revokeApiClient} confirm="Cabut API key ini?"><input type="hidden" name="id" value={c.id} /><Submit className="btn-danger btn-sm">Cabut</Submit></ActionForm>}</td></tr>)}</tbody>
-        </table>
+        </table></Paged>
       </Card>
       <Card title="Log pengiriman & kesalahan">
         <div className="overflow-x-auto">
-          <table className="tbl">
+          <Paged><table className="tbl">
             <thead><tr><th>Waktu</th><th>Kanal</th><th>Jenis</th><th>Tujuan</th><th>Status</th><th>Kesalahan</th></tr></thead>
             <tbody>{logs.map((l) => <tr key={l.id}><td>{fmtDateTime(l.at)}</td><td>{l.channel}</td><td>{l.type}</td><td className="font-mono text-xs">{l.target}</td><td><Badge tone={l.status === "TERKIRIM" || l.status === "SELESAI" ? "green" : "red"}>{l.status}</Badge></td><td className="max-w-xs truncate text-xs text-rose-600">{l.error}</td></tr>)}</tbody>
-          </table>
+          </table></Paged>
         </div>
       </Card>
     </div>

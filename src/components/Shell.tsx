@@ -5,12 +5,26 @@ import { useEffect, useState } from "react";
 import { Icon } from "./Icon";
 import { ThemeToggle } from "./ThemeToggle";
 import { Toaster } from "./Toaster";
-import { ResponsiveTables } from "./ResponsiveTables";
 
 type Item = { href: string; label: string; icon: string };
 
 function isActive(path: string, href: string) {
   return href === "/" ? path === "/" : path === href || path.startsWith(href + "/");
+}
+
+/** Halaman induk untuk tombol kembali, mis. /gaji/tarif → Penggajian, /gaji/slip/x → Penggajian */
+const NO_PAGE = new Set(["/gaji/slip"]);
+const NO_BACK = new Set(["/gaji/saya"]);
+function backTarget(path: string, nav: Item[]) {
+  if (NO_BACK.has(path)) return null;
+  const segs = path.split("/").filter(Boolean);
+  while (segs.length > 1) {
+    segs.pop();
+    const href = "/" + segs.join("/");
+    if (NO_PAGE.has(href)) continue;
+    return { href, label: nav.find((n) => n.href === href)?.label ?? "Kembali" };
+  }
+  return null;
 }
 
 export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: Item[]; bottomNav: Item[]; user: { name: string; role: string }; env: string; children: React.ReactNode; alerts: number }) {
@@ -19,9 +33,12 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
   useEffect(() => setOpen(false), [path]);
   // Slot terakhir diisi tombol "Menu" bila menu prioritas kurang dari 5
   const showMenuSlot = bottomNav.length < 5;
-  const side = (
+  const back = backTarget(path, nav);
+  // Menu ☰ di HP hanya berisi menu yang belum ada di navigasi bawah; sidebar desktop tetap lengkap
+  const inBottom = new Set(bottomNav.map((n) => n.href));
+  const side = (items: Item[]) => (
     <nav className="flex flex-col gap-0.5 p-3">
-      {nav.map((n) => (
+      {items.map((n) => (
         <Link
           key={n.href}
           href={n.href}
@@ -44,7 +61,8 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
           <Icon name="menu" />
         </button>
         <Link href="/" className="flex min-w-0 items-center gap-2 font-semibold text-slate-900">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-brand-600 text-sm text-white">MG</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/brand/mark-96.png" alt="" width={32} height={32} className="h-8 w-8 shrink-0 rounded-lg" />
           <span className="hidden truncate sm:inline">Main Gypsum ERP</span>
         </Link>
         <div className="ml-auto flex items-center gap-1 sm:gap-2">
@@ -65,7 +83,7 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
         </div>
       </header>
       <div className="flex">
-        <aside className="no-print sticky top-14 hidden h-[calc(100vh-3.5rem)] w-60 shrink-0 overflow-y-auto border-r border-slate-200 bg-white lg:block">{side}</aside>
+        <aside className="no-print sticky top-14 hidden h-[calc(100vh-3.5rem)] w-60 shrink-0 overflow-y-auto border-r border-slate-200 bg-white lg:block">{side(nav)}</aside>
         {open && (
           <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setOpen(false)}>
             <div className="absolute inset-0 bg-slate-900/50" />
@@ -79,17 +97,25 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
                   ✕
                 </button>
               </div>
-              {side}
+              {nav.some((n) => !inBottom.has(n.href)) && <p className="px-6 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Menu lainnya</p>}
+              {side(nav.filter((n) => !inBottom.has(n.href)))}
               <div className="mt-auto border-t border-slate-200 p-3">
                 <ThemeToggle withLabel />
               </div>
             </aside>
           </div>
         )}
-        <main className="min-w-0 flex-1 px-4 pb-24 pt-5 sm:px-6 lg:px-8 lg:pb-6">{children}</main>
+        <main className="min-w-0 flex-1 px-4 pb-24 pt-5 sm:px-6 lg:px-8 lg:pb-6">
+          {back && (
+            <Link href={back.href} className="no-print -ml-1 mb-3 inline-flex items-center gap-1 rounded-lg px-1 py-1 text-sm font-medium text-brand-600 hover:bg-brand-50">
+              <Icon name="back" className="h-4 w-4" />
+              {back.label}
+            </Link>
+          )}
+          {children}
+        </main>
       </div>
       <Toaster />
-      <ResponsiveTables />
       <nav
         aria-label="Menu utama"
         style={{ gridTemplateColumns: `repeat(${bottomNav.length + (showMenuSlot ? 1 : 0)}, minmax(0,1fr))` }}

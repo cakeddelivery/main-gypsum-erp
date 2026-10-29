@@ -8,6 +8,7 @@ import { Badge, Empty, FilterBar, Field, PageHeader } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ProductForm } from "./ProductForm";
 import type { ProductType, ProductVariant } from "@prisma/client";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Produk & HPP" };
 const TYPE_LABEL: Record<ProductType, string> = { SATUAN: "Satuan", PAKET_12: "Paket 12", PAKET_24: "Paket 24", PAKET_48: "Paket 48", GIFTBOX: "Giftbox", CUSTOM: "Custom" };
@@ -33,7 +34,7 @@ export default async function ProdukPage({ searchParams }: { searchParams: Promi
       </FilterBar>
       {rows.length === 0 ? <Empty /> : (
         <div className="table-wrap">
-          <table className="tbl">
+          <Paged><table className="tbl">
             <thead><tr><th>SKU</th><th>Nama</th><th>Tipe</th><th>Varian</th><th>Toko</th>{canHpp && <th className="num">HPP</th>}<th className="num">Harga (offline)</th>{canHpp && <th className="num">Margin</th>}<th /></tr></thead>
             <tbody>
               {rows.map(({ p, cost, prices }) => {
@@ -50,7 +51,7 @@ export default async function ProdukPage({ searchParams }: { searchParams: Promi
                 );
               })}
             </tbody>
-          </table>
+          </table></Paged>
         </div>
       )}
     </div>

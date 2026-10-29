@@ -1,11 +1,13 @@
 "use client";
 import { useState } from "react";
 import { ActionForm, Submit } from "@/components/ActionForm";
+import { useCloseModal } from "@/components/Modal";
 import type { ChecklistTask } from "@/lib/shiftReport";
 import { saveChecklist } from "./actions";
 
 /** Ubah checklist penutupan shift divisi: tambah, hapus, urutkan, tandai wajib foto */
 export function ChecklistEditor({ divisionId, initial }: { divisionId: string; initial: ChecklistTask[] }) {
+  const close = useCloseModal();
   const [rows, setRows] = useState<ChecklistTask[]>(initial.length ? initial : [{ label: "", photo: true }]);
   const set = (i: number, patch: Partial<ChecklistTask>) => setRows((r) => r.map((x, j) => (j === i ? { ...x, ...patch } : x)));
   const move = (i: number, d: number) => setRows((r) => {
@@ -16,7 +18,7 @@ export function ChecklistEditor({ divisionId, initial }: { divisionId: string; i
     return c;
   });
   return (
-    <ActionForm action={saveChecklist} className="space-y-2">
+    <ActionForm action={saveChecklist} className="space-y-2" onSuccess={() => setTimeout(close, 700)}>
       <input type="hidden" name="divisionId" value={divisionId} />
       <input type="hidden" name="n" value={rows.length} />
       {rows.map((r, i) => (

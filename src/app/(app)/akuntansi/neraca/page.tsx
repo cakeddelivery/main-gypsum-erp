@@ -4,7 +4,7 @@ import { idr } from "@/lib/money";
 import { fmtDay, dateOnly } from "@/lib/time";
 import { PageHeader } from "@/components/ui";
 import { DownloadJpg } from "@/components/DownloadJpg";
-import { BackLink, parseRange, ReportFilter, Section, storeLabel, type SP } from "../shared";
+import { parseRange, ReportFilter, Section, storeLabel, type SP } from "../shared";
 
 export const metadata = { title: "Neraca" };
 
@@ -15,7 +15,7 @@ export default async function Neraca({ searchParams }: { searchParams: Promise<S
   const bs = await balanceSheet(r.end, r.storeId);
   return (
     <div>
-      <PageHeader title="Neraca" actions={<><BackLink /><DownloadJpg targetId="nr" filename={`neraca-${r.to}`} /></>} />
+      <PageHeader title="Neraca" actions={<><DownloadJpg targetId="nr" filename={`neraca-${r.to}`} /></>} />
       <ReportFilter sp={sp} showFrom={false} />
       <div id="nr" className="card p-6">
         <div className="mb-4 text-center"><div className="font-semibold">Neraca · {await storeLabel(r.storeId)}</div><div className="text-sm text-slate-500">Per {fmtDay(dateOnly(r.to))}</div></div>

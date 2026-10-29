@@ -69,7 +69,3 @@ export const REPORTS = [
   { href: "/akuntansi/coa", label: "Chart of Accounts", desc: "Bagan akun manufaktur" },
   { href: "/akuntansi/tutup-buku", label: "Tutup buku", desc: "Penutupan periode bulanan" },
 ];
-
-export function BackLink() {
-  return <Link href="/akuntansi" className="btn-secondary">← Akuntansi</Link>;
-}

@@ -8,8 +8,8 @@ import { Badge, Card, Field, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { BackLink } from "../shared";
 import { close, reopen } from "../actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Tutup Buku" };
 
@@ -32,11 +32,11 @@ export default async function TutupBuku() {
   ];
   return (
     <div className="space-y-5">
-      <PageHeader title="Tutup buku bulanan" subtitle={`Otomatis setiap tanggal 1 pukul 09.00 WIB (${(auto?.value ?? "true") === "true" ? "aktif" : "nonaktif"}) · periode tertutup menolak pembukuan baru`} actions={<BackLink />} />
+      <PageHeader title="Tutup buku bulanan" subtitle={`Otomatis setiap tanggal 1 pukul 09.00 WIB (${(auto?.value ?? "true") === "true" ? "aktif" : "nonaktif"}) · periode tertutup menolak pembukuan baru`} />
       {pending > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">Masih ada {pending} transaksi di Finance Inbox yang belum final. Selesaikan sebelum menutup periode.</div>}
       <Card title="Periode">
         <div className="overflow-x-auto">
-          <table className="tbl">
+          <Paged><table className="tbl">
             <thead><tr><th>Periode</th><th>Status</th><th>Ditutup</th><th /></tr></thead>
             <tbody>
               {months.map(({ y, m }) => {
@@ -60,14 +60,14 @@ export default async function TutupBuku() {
                 );
               })}
             </tbody>
-          </table>
+          </table></Paged>
         </div>
       </Card>
       <Card title="Rekonsiliasi persediaan: stok vs buku besar">
-        <table className="tbl">
+        <Paged><table className="tbl">
           <thead><tr><th>Jenis</th><th className="num">Nilai stok</th><th className="num">Saldo buku besar</th><th className="num">Selisih</th></tr></thead>
           <tbody>{recon.map((r) => <tr key={r.label}><td>{r.label}</td><td className="num">{idr(r.stock)}</td><td className="num">{idr(r.gl)}</td><td className={`num ${Math.abs(r.stock - r.gl) > 1000 ? "text-rose-600" : "text-emerald-600"}`}>{idr(r.stock - r.gl)}</td></tr>)}</tbody>
-        </table>
+        </table></Paged>
         <p className="mt-2 text-xs text-slate-500">Selisih wajar muncul bila pembelian belum dibukukan di Finance atau ada saldo awal persediaan yang belum diinput. Gunakan jurnal penyesuaian bila perlu.</p>
       </Card>
     </div>

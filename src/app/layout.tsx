@@ -2,9 +2,16 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { THEME_SCRIPT } from "@/components/ThemeToggle";
 
+const DESCRIPTION = "Sistem ERP terintegrasi Main Gypsum & Dunia Lukis — produksi, stok, absensi, penggajian, dan keuangan.";
+
 export const metadata: Metadata = {
+  // URL absolut untuk gambar pratinjau tautan (WhatsApp, Telegram, dll.)
+  metadataBase: new URL(process.env.APP_URL || "https://erp.maingypsum.shop"),
   title: { default: "Main Gypsum ERP", template: "%s · Main Gypsum ERP" },
-  description: "Sistem ERP terintegrasi Main Gypsum & Dunia Lukis",
+  description: DESCRIPTION,
+  applicationName: "Main Gypsum ERP",
+  openGraph: { type: "website", locale: "id_ID", siteName: "Main Gypsum ERP", title: "Main Gypsum ERP", description: DESCRIPTION },
+  twitter: { card: "summary_large_image", title: "Main Gypsum ERP", description: DESCRIPTION },
 };
 
 export const viewport: Viewport = {

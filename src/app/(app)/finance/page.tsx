@@ -2,10 +2,14 @@ import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
-import { fmtDateTime, jakartaDateTime } from "@/lib/time";
+import { fmtDateTime, jakartaDateTime, todayStr } from "@/lib/time";
 import { STATUS_LABEL } from "@/lib/finance";
 import { Badge, Empty, FilterBar, Field, PageHeader, Tabs } from "@/components/ui";
+import { Modal } from "@/components/Modal";
 import type { Prisma, TxStatus } from "@prisma/client";
+import { TxForm } from "./TxForm";
+import { createTx, extractAction } from "./actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Finance Inbox" };
 const STATUSES: TxStatus[] = ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI", "DIBUKUKAN", "DITOLAK"];
@@ -24,18 +28,24 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
     ...(sp.from || sp.to ? { date: { ...(sp.from ? { gte: jakartaDateTime(sp.from, "00:00") } : {}), ...(sp.to ? { lt: new Date(jakartaDateTime(sp.to, "00:00").getTime() + 86400000) } : {}) } } : {}),
     ...(sp.q ? { OR: [{ number: { contains: sp.q, mode: "insensitive" } }, { note: { contains: sp.q, mode: "insensitive" } }, { counterparty: { contains: sp.q, mode: "insensitive" } }] } : {}),
   };
-  const [rows, counts, banks, cats, stores] = await Promise.all([
+  const [rows, counts, banks, cats, stores, def] = await Promise.all([
     prisma.financeTransaction.findMany({ where: { ...where, ...(status ? { status } : {}) }, orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: 200 }),
     prisma.financeTransaction.groupBy({ by: ["status"], where, _count: true }),
     prisma.bankAccount.findMany(),
     prisma.txCategory.findMany(),
-    prisma.store.findMany(),
+    prisma.store.findMany({ orderBy: { code: "asc" } }),
+    prisma.setting.findUnique({ where: { key: "default_store_id" } }),
   ]);
   const name = (list: { id: string; name: string }[], id: string | null) => list.find((x) => x.id === id)?.name ?? "—";
-  const qs = (s?: string) => { const u = new URLSearchParams(Object.entries({ ...sp, status: s }).filter(([, v]) => v) as [string, string][]); return `/finance?${u}`; };
+  const qs = (s?: string) => { const u = new URLSearchParams(Object.entries({ ...sp, baru: undefined, status: s }).filter(([, v]) => v) as [string, string][]); return `/finance?${u}`; };
   return (
     <div>
-      <PageHeader title="Finance Inbox" subtitle="Transaksi dari input manual, Telegram, dan ekstraksi AI · IDR · WIB" actions={<>{user.can("finance.approve") && <Link href="/finance/sisihan" className="btn-secondary">Dana sisihan</Link>}{user.can("accounting.post") && <Link href="/akuntansi/saldo-rekening" className="btn-secondary">Atur saldo rekening</Link>}{user.can("finance.create") && <Link href="/finance/baru" className="btn-primary">+ Transaksi</Link>}</>} />
+      <PageHeader title="Finance Inbox" subtitle="Transaksi dari input manual, Telegram, dan ekstraksi AI · IDR · WIB" actions={<>{user.can("finance.approve") && <Link href="/finance/sisihan" className="btn-secondary">Dana sisihan</Link>}{user.can("accounting.post") && <Link href="/akuntansi/saldo-rekening" className="btn-secondary">Atur saldo rekening</Link>}{user.can("finance.create") && (
+        <Modal trigger="+ Transaksi" title="Transaksi baru" wide defaultOpen={sp.baru === "1"}>
+          <p className="mb-3 text-xs text-slate-500">Masuk ke Finance Inbox sebagai draft — baru dibukukan setelah disetujui pihak berwenang.</p>
+          <TxForm mode="create" action={createTx} extract={extractAction} banks={banks.filter((b) => b.active)} categories={cats.filter((c) => c.active)} stores={stores.filter((x) => x.active)} init={{ direction: "KELUAR", date: todayStr(), storeId: def?.value ?? stores[0]?.id }} />
+        </Modal>
+      )}</>} />
       <Tabs current={status ?? "ALL"} tabs={[{ key: "ALL", label: "Semua", href: qs(undefined), count: counts.reduce((s, c) => s + c._count, 0) }, ...STATUSES.map((s) => ({ key: s, label: STATUS_LABEL[s], href: qs(s), count: counts.find((c) => c.status === s)?._count ?? 0 }))]} />
       <FilterBar>
         {status && <input type="hidden" name="status" value={status} />}
@@ -63,7 +73,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
             ))}
           </ul>
           <div className="table-wrap hidden md:block">
-            <table className="tbl">
+            <Paged><table className="tbl">
               <thead><tr><th>No.</th><th>Tanggal</th><th>Jenis</th><th className="num">Nominal</th><th>Status</th><th>Rekening</th><th>Kategori</th><th>Sumber</th><th>Catatan</th></tr></thead>
               <tbody>
                 {rows.map((t) => (
@@ -79,7 +89,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></Paged>
           </div>
         </>
       )}

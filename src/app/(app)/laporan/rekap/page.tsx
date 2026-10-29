@@ -4,6 +4,7 @@ import { addDays, dateOnly, fmtDay, todayStr } from "@/lib/time";
 import { STAGES, STAGE_LABEL } from "@/lib/stock";
 import { FilterBar, Field, PageHeader, Tabs } from "@/components/ui";
 import { DownloadJpg } from "@/components/DownloadJpg";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Rekap Produksi" };
 
@@ -55,7 +56,7 @@ export default async function RekapPage({ searchParams }: { searchParams: Promis
         </div>
         {rows.length === 0 ? <p className="py-8 text-center text-sm text-slate-400">Tidak ada data produksi pada periode ini</p> : (
           <div className="overflow-x-auto">
-            <table className="tbl">
+            <Paged><table className="tbl">
               <thead><tr><th>Divisi</th>{usedStages.map((s) => <th key={s} className="num">{STAGE_LABEL[s]}</th>)}<th className="num">Total</th><th className="num">Reject</th></tr></thead>
               <tbody>
                 {usedDivs.map((d) => {
@@ -66,7 +67,7 @@ export default async function RekapPage({ searchParams }: { searchParams: Promis
                   );
                 })}
               </tbody>
-            </table>
+            </table></Paged>
           </div>
         )}
       </div>

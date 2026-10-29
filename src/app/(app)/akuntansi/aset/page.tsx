@@ -7,8 +7,8 @@ import { Empty, Field, PageHeader } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
-import { BackLink } from "../shared";
 import { createAsset } from "../actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Aset Tetap" };
 
@@ -24,7 +24,7 @@ export default async function AsetPage() {
   const accum = (id: string) => dep.filter((j) => j.sourceId?.startsWith(`${id}:`)).reduce((s, j) => s + j.lines.reduce((x, l) => x + Number(l.debit), 0), 0);
   return (
     <div>
-      <PageHeader title="Aset tetap" subtitle="Penyusutan garis lurus dibukukan otomatis saat tutup buku bulanan" actions={<><BackLink />{user.can("accounting.post") && (
+      <PageHeader title="Aset tetap" subtitle="Penyusutan garis lurus dibukukan otomatis saat tutup buku bulanan" actions={<>{user.can("accounting.post") && (
         <Modal trigger="+ Aset" title="Aset baru">
           <ModalForm action={createAsset} className="grid grid-cols-2 gap-3">
             <Field label="Nama aset" className="col-span-2"><input name="name" className="input" required /></Field>
@@ -41,10 +41,10 @@ export default async function AsetPage() {
       )}</>} />
       {assets.length === 0 ? <Empty title="Belum ada aset tetap" /> : (
         <div className="table-wrap">
-          <table className="tbl">
+          <Paged><table className="tbl">
             <thead><tr><th>Nama</th><th>Perolehan</th><th className="num">Harga</th><th className="num">Umur</th><th className="num">Penyusutan/bln</th><th className="num">Akumulasi</th><th className="num">Nilai buku</th></tr></thead>
             <tbody>{assets.map((a) => { const acc = accum(a.id); return <tr key={a.id}><td>{a.name}</td><td>{fmtDate(a.acquiredAt)}</td><td className="num">{idr(a.cost)}</td><td className="num">{a.usefulLifeMonths} bln</td><td className="num">{idr(monthlyDepreciation(Number(a.cost), Number(a.residual), a.usefulLifeMonths))}</td><td className="num">{idr(acc)}</td><td className="num font-semibold">{idr(Number(a.cost) - acc)}</td></tr>; })}</tbody>
-          </table>
+          </table></Paged>
         </div>
       )}
     </div>

@@ -4,7 +4,7 @@ import { idr } from "@/lib/money";
 import { fmtDay, dateOnly } from "@/lib/time";
 import { PageHeader } from "@/components/ui";
 import { DownloadJpg } from "@/components/DownloadJpg";
-import { BackLink, parseRange, ReportFilter, Section, storeLabel, type SP } from "../shared";
+import { parseRange, ReportFilter, Section, storeLabel, type SP } from "../shared";
 
 export const metadata = { title: "Laba Rugi" };
 
@@ -15,7 +15,7 @@ export default async function LabaRugi({ searchParams }: { searchParams: Promise
   const pl = await profitLoss({ start: r.start, end: r.end, storeId: r.storeId });
   return (
     <div>
-      <PageHeader title="Laporan laba rugi" actions={<><BackLink /><DownloadJpg targetId="lr" filename={`laba-rugi-${r.from}-${r.to}`} /></>} />
+      <PageHeader title="Laporan laba rugi" actions={<><DownloadJpg targetId="lr" filename={`laba-rugi-${r.from}-${r.to}`} /></>} />
       <ReportFilter sp={sp} />
       <div id="lr" className="card mx-auto max-w-2xl p-6">
         <div className="mb-4 text-center"><div className="font-semibold">Laba Rugi · {await storeLabel(r.storeId)}</div><div className="text-sm text-slate-500">{fmtDay(dateOnly(r.from))} – {fmtDay(dateOnly(r.to))}</div></div>

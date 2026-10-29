@@ -9,6 +9,7 @@ import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
 import { saveAccount, saveEmployee } from "./actions";
 import type { EmployeeStatus } from "@prisma/client";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Karyawan" };
 const WAGE = { BULANAN: "Bulanan (gajian H+7)", HARIAN: "Harian", BORONGAN: "Borongan (per piece, klaim)", CAMPURAN: "Harian + borongan" };
@@ -54,7 +55,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
       </FilterBar>
       {employees.length === 0 ? <Empty /> : (
         <div className="table-wrap">
-          <table className="tbl">
+          <Paged><table className="tbl">
             <thead><tr><th>Kode</th><th>Nama</th><th>Divisi</th><th>Jabatan</th><th>Status</th><th>Upah</th><th>Masuk</th><th>Akun</th>{canManage && <th />}</tr></thead>
             <tbody>
               {employees.map((e) => (
@@ -65,7 +66,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
                   <td>{fmtDay(e.joinDate)}{e.resignDate && <div className="text-xs text-rose-600">Resign {fmtDay(e.resignDate)}</div>}</td>
                   <td>{e.user ? <span className="text-xs">{e.user.username} · {ROLE_LABEL[e.user.role]}{!e.user.active && " (nonaktif)"}</span> : <span className="text-xs text-slate-400">—</span>}</td>
                   {canManage && (
-                    <td className="flex gap-1">
+                    <td><div className="flex gap-1">
                       <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah karyawan">{form(e)}</Modal>
                       <Modal trigger="Akun" triggerClass="btn-secondary btn-sm" title={`Akun login ${e.name}`}>
                         <ModalForm action={saveAccount} className="space-y-3">
@@ -77,12 +78,12 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
                           <Submit>Simpan akun</Submit>
                         </ModalForm>
                       </Modal>
-                    </td>
+                    </div></td>
                   )}
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></Paged>
         </div>
       )}
     </div>

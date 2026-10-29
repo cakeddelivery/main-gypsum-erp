@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
@@ -9,6 +8,7 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { reserveAll, reserveOne, saveFund, withdraw } from "./actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Dana Sisihan Harian" };
 
@@ -47,7 +47,6 @@ export default async function SisihanPage() {
         subtitle="Kompensasi pengelola (owner) yang dicadangkan di ShopeePay dan dana cicilan pinjaman modal"
         actions={
           <>
-            <Link href="/finance" className="btn-secondary">← Finance</Link>
             <Modal trigger="+ Dana" triggerClass="btn-secondary" title="Dana sisihan baru">{fundForm()}</Modal>
             <ActionForm action={reserveAll}><input type="hidden" name="date" value={t} /><Submit pendingText="Mencatat…">Sisihkan semua hari ini</Submit></ActionForm>
           </>
@@ -62,7 +61,7 @@ export default async function SisihanPage() {
       {funds.length === 0 ? <Empty title="Belum ada dana sisihan" /> : (
         <Card title="Dana">
           <div className="overflow-x-auto">
-            <table className="tbl">
+            <Paged><table className="tbl">
               <thead><tr><th>Dana</th><th>Alur</th><th className="num">Per hari</th><th className="num">Bulan ini</th><th className="num">Saldo</th><th>Hari ini</th><th /></tr></thead>
               <tbody>
                 {funds.map((f) => (
@@ -71,7 +70,7 @@ export default async function SisihanPage() {
                     <td className="text-xs">{bankName(f.fromBankId)} → {f.kind === "LOAN_PAYMENT" ? "cicilan pinjaman" : bankName(f.toBankId)}</td>
                     <td className="num">{idr(f.dailyAmount)}</td><td className="num">{idr(f.month)}</td><td className="num font-semibold">{f.kind === "LOAN_PAYMENT" ? "-" : idr(f.balance)}</td>
                     <td>{f.doneToday ? <Badge tone="green">Sudah</Badge> : <Badge tone="amber">Belum</Badge>}{f.missing.length > (f.doneToday ? 0 : 1) && <div className="text-xs text-rose-600">{f.missing.length} hari terlewat (7 hari)</div>}</td>
-                    <td className="flex flex-wrap gap-1">
+                    <td><div className="flex flex-wrap gap-1">
                       <Modal trigger="Sisihkan" triggerClass="btn-secondary btn-sm" title={`Sisihkan ${f.name}`}>
                         <ModalForm action={reserveOne} className="space-y-3">
                           <input type="hidden" name="fundId" value={f.id} />
@@ -93,11 +92,11 @@ export default async function SisihanPage() {
                         </Modal>
                       )}
                       <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${f.name}`}>{fundForm(f)}</Modal>
-                    </td>
+                    </div></td>
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></Paged>
           </div>
           <p className="mt-3 text-xs text-slate-500">Kompensasi owner dicatat sebagai beban (mengurangi laba) dan uangnya dipindah ke ShopeePay sebagai titipan owner sampai diambil. Tabungan cicilan hanya memindahkan uang; utang berkurang saat dibayarkan.</p>
         </Card>

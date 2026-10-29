@@ -9,6 +9,7 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { createPeriod, generateMonthly } from "./actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Penggajian" };
 const PAY_TONE = { DRAFT: "amber", DISETUJUI: "blue", DIBAYAR: "green" } as const;
@@ -49,7 +50,7 @@ export default async function GajiPage() {
       />
       {periods.length === 0 ? <Empty title="Belum ada penggajian" hint="Slip gaji bulanan dibuat otomatis setiap siklus karyawan selesai. Klaim borongan dibuat dari menu Borongan & klaim." /> : (
         <div className="table-wrap">
-          <table className="tbl">
+          <Paged><table className="tbl">
             <thead><tr><th>Kode</th><th>Jenis</th><th>Periode</th><th>Gajian</th><th className="num">Karyawan</th><th className="num">Total</th><th>Status</th><th /></tr></thead>
             <tbody>
               {periods.map((p) => (
@@ -62,7 +63,7 @@ export default async function GajiPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></Paged>
         </div>
       )}
     </div>
