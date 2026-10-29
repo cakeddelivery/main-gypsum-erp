@@ -10,6 +10,7 @@ import { DownloadJpg } from "@/components/DownloadJpg";
 import { sendReport } from "../actions";
 import { ReportForm } from "./ReportForm";
 import { ReportSheet } from "./ReportSheet";
+import { letterhead } from "@/lib/letterhead";
 
 export const metadata = { title: "Laporan Penutup Shift" };
 
@@ -34,6 +35,7 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
   const work = r.work as WorkData;
   const canEdit = user.can("report.create") && !(ownOnly && user.divisionId !== r.divisionId);
   const day = r.date.toISOString().slice(0, 10);
+  const lh = await letterhead();
   const fname = `laporan-${r.division.code}-${r.shift.code}-${day}`;
 
   return (
@@ -66,6 +68,7 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
         )}
         <div className={`space-y-5 ${canEdit ? "lg:order-2 lg:col-span-2" : "lg:col-span-3"}`}>
           <ReportSheet
+            lh={lh}
             id={r.id}
             date={day}
             division={r.division.name}

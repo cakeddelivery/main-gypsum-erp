@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { addDays, jakartaDateTime, jakartaParts, todayStr } from "@/lib/time";
 import { idr } from "@/lib/money";
 import { FilterBar, Field } from "@/components/ui";
+import { DocBar, DocSection, DocTable } from "@/components/DocSheet";
 
 export type SP = Record<string, string | undefined>;
 
@@ -37,22 +38,22 @@ export async function storeLabel(storeId: string | null) {
   return (await prisma.store.findUnique({ where: { id: storeId } }))?.name ?? "-";
 }
 
-export function Section({ title, rows, total, totalLabel }: { title: string; rows: { code: string; name: string; amount: number }[]; total: number; totalLabel: string }) {
+/** Bagian laporan keuangan bergaya dokumen (kop surat): tabel akun + baris total */
+export function Section({ no, tone, title, hint, rows, total, totalLabel }: { no?: number; tone?: "blue" | "green" | "amber" | "red"; title: string; hint?: string; rows: { code: string; name: string; amount: number }[]; total: number; totalLabel: string }) {
   return (
-    <div className="mb-4">
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
-      <table className="w-full text-sm">
-        <tbody>
-          {rows.length === 0 && <tr><td className="py-1 text-slate-400">—</td></tr>}
-          {rows.map((r) => (
-            <tr key={r.code} className="border-b border-slate-100"><td className="py-1"><span className="mr-2 font-mono text-xs text-slate-400">{r.code}</span>{r.name}</td><td className="py-1 text-right tabular-nums">{idr(r.amount)}</td></tr>
-          ))}
-          <tr className="font-semibold"><td className="py-1.5">{totalLabel}</td><td className="py-1.5 text-right tabular-nums">{idr(total)}</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <DocSection no={no} tone={tone} title={title} hint={hint}>
+      <DocTable head={<tr><th>Kode</th><th>Akun</th><th className="num">Jumlah (Rp)</th></tr>} empty={rows.length ? undefined : "Tidak ada saldo pada periode ini"}>
+        {rows.map((r) => (
+          <tr key={r.code + r.name}><td className="whitespace-nowrap">{r.code}</td><td>{r.name}</td><td className={`num ${r.amount < 0 ? "doc-neg" : ""}`}>{(r.amount < 0 ? "-" : "") + Math.abs(r.amount).toLocaleString("id-ID")}</td></tr>
+        ))}
+      </DocTable>
+      <DocBar label={totalLabel} value={idr(total)} negative={total < 0} />
+    </DocSection>
   );
 }
+
+/** Nama penanda tangan dari label toko ("Konsolidasi Main Gypsum & Dunia Lukis" → "Main Gypsum & Dunia Lukis") */
+export const signerOf = (store: string) => store.replace(/^Konsolidasi /, "");
 
 export const REPORTS = [
   { href: "/akuntansi/laba-rugi", label: "Laba rugi", desc: "Pendapatan, HPP, beban, laba bersih" },
