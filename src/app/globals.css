@@ -20,7 +20,7 @@ dialog { @apply bg-white text-slate-800; }
 .recharts-rectangle.recharts-tooltip-cursor { fill: rgb(var(--bg-slate-100)); }
 
 @layer components {
-  .input { @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-100; }
+  .input { @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-base shadow-sm sm:text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-100; }
   .label { @apply mb-1 block text-xs font-medium text-slate-600; }
   .btn { @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60; }
   .btn-primary { @apply btn bg-brand-600 text-white hover:bg-brand-700; }
@@ -36,6 +36,42 @@ dialog { @apply bg-white text-slate-800; }
   .tbl tbody tr { @apply hover:bg-slate-50; }
   .num { @apply text-right tabular-nums; }
   .link { @apply text-brand-600 hover:underline; }
+}
+
+/* ===== Tampilan HP (< 640px) ===== */
+@media (max-width: 639px) {
+  /* Form: kolom isian ditumpuk satu kolom agar tidak sempit (kecuali grid yang ditandai .keep-cols) */
+  form .grid.grid-cols-2:not(.keep-cols), form .grid.grid-cols-3:not(.keep-cols),
+  dialog .grid.grid-cols-2:not(.keep-cols), dialog .grid.grid-cols-3:not(.keep-cols) { grid-template-columns: minmax(0, 1fr); }
+  form .grid.grid-cols-2:not(.keep-cols) > .col-span-2, form .grid.grid-cols-3:not(.keep-cols) > [class*="col-span-"],
+  dialog .grid.grid-cols-2:not(.keep-cols) > .col-span-2, dialog .grid.grid-cols-3:not(.keep-cols) > [class*="col-span-"] { grid-column: auto; }
+  .btn { min-height: 2.5rem; }
+  .btn-sm { min-height: 2rem; }
+
+  /* Tabel jadi daftar kartu: tiap baris satu kartu, tiap sel diberi label kolom (lihat ResponsiveTables) */
+  .tbl:not(.tbl-keep) thead { display: none; }
+  .tbl:not(.tbl-keep), .tbl:not(.tbl-keep) > tbody, .tbl:not(.tbl-keep) > tfoot, .tbl:not(.tbl-keep) tr { display: block; width: 100%; }
+  .tbl:not(.tbl-keep) tr { @apply border-b border-slate-200 px-3 py-2.5; }
+  .tbl:not(.tbl-keep) > tbody > tr:last-child { border-bottom: 0; }
+  .tbl:not(.tbl-keep) > tfoot > tr { @apply bg-slate-50 font-semibold; }
+  .tbl:not(.tbl-keep) td { display: block; padding: 0.2rem 0; white-space: normal; text-align: right; overflow-wrap: anywhere; }
+  .tbl:not(.tbl-keep) td::after { content: ""; display: table; clear: both; }
+  .tbl:not(.tbl-keep) td::before { content: attr(data-label); float: left; @apply mr-4 pt-0.5 text-left text-xs font-medium text-slate-500; max-width: 45%; }
+  .tbl:not(.tbl-keep) td[data-label=""]::before { display: none; }
+  .tbl:not(.tbl-keep) td:first-child:not(:only-child) { @apply text-left font-semibold text-slate-900; }
+  .tbl:not(.tbl-keep) td:first-child::before { display: none; }
+  .tbl:not(.tbl-keep) td:empty { display: none; }
+  .tbl:not(.tbl-keep) td[colspan] { text-align: center; }
+
+  /* Saat diunduh JPG, kembalikan bentuk tabel asli */
+  .exporting { width: max-content; min-width: 100%; }
+  .exporting .tbl thead { display: table-header-group; }
+  .exporting .tbl { display: table; }
+  .exporting .tbl > tbody { display: table-row-group; }
+  .exporting .tbl > tfoot { display: table-footer-group; }
+  .exporting .tbl tr { display: table-row; padding: 0; }
+  .exporting .tbl td { display: table-cell; white-space: nowrap; padding: 0.5rem 0.75rem; }
+  .exporting .tbl td::before, .exporting .tbl td::after { display: none; }
 }
 
 @media print {

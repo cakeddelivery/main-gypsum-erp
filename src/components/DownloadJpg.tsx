@@ -14,8 +14,8 @@ export function DownloadJpg({ targetId, filename }: { targetId: string; filename
         const el = document.getElementById(targetId);
         if (!el) return;
         setBusy(true);
-        // JPG selalu versi terang (latar putih), juga saat mode malam aktif
-        el.classList.add("theme-light");
+        // JPG selalu versi terang (latar putih) dan bentuk tabel asli, juga saat mode malam / di HP
+        el.classList.add("theme-light", "exporting");
         try {
           const url = await toJpeg(el, { quality: 0.95, backgroundColor: "#ffffff", pixelRatio: 2 });
           const a = document.createElement("a");
@@ -23,7 +23,7 @@ export function DownloadJpg({ targetId, filename }: { targetId: string; filename
           a.download = `${filename}.jpg`;
           a.click();
         } finally {
-          el.classList.remove("theme-light");
+          el.classList.remove("theme-light", "exporting");
           setBusy(false);
         }
       }}
