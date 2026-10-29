@@ -152,6 +152,13 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
   const ident = await identityOf(cb.from.id);
   if (!ident) return answerCallback(cb.id, "ID Telegram Anda belum terdaftar");
   const actor = { id: ident.userId, name: ident.user.name, telegramId: ident.telegramUserId };
+  // Melengkapi/membatalkan draft: hanya identitas yang boleh mengirim transaksi atau peninjau/penyetuju keuangan
+  const canReview = ident.perms.has("finance.review") || ident.perms.has("finance.approve");
+  if (["acc", "to", "cat", "no"].includes(action) && !ident.canSubmit && !canReview) return answerCallback(cb.id, "Anda tidak berwenang mengubah transaksi");
+  if (action === "no" && !canReview) {
+    const own = await prisma.approvalLog.findFirst({ where: { transactionId: txId, action: "DIBUAT", actorUserId: ident.userId } });
+    if (!own) return answerCallback(cb.id, "Hanya pembuat draft atau peninjau keuangan yang dapat membatalkan");
+  }
   try {
     if (action === "acc") await updateTransaction(txId, { accountId: value }, actor);
     else if (action === "to") await updateTransaction(txId, { toAccountId: value }, actor);

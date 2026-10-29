@@ -60,7 +60,7 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
         <button className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 lg:hidden" aria-label="Semua menu" onClick={() => setOpen(true)}>
           <Icon name="menu" />
         </button>
-        <Link href="/" className="flex min-w-0 items-center gap-2 font-semibold text-slate-900">
+        <Link href="/" aria-label="Main Gypsum ERP — Beranda" className="flex min-w-0 items-center gap-2 font-semibold text-slate-900">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/brand/mark-96.png" alt="" width={32} height={32} className="h-8 w-8 shrink-0 rounded-lg" />
           <span className="hidden truncate sm:inline">Main Gypsum ERP</span>

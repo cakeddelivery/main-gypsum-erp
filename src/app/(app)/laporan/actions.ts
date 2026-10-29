@@ -151,21 +151,29 @@ export async function removeChecklistPhoto(fd: FormData): Promise<{ ok: boolean;
 /**
  * Stock opname dari laporan: stok sistem tiap bahan disesuaikan ke hasil hitung fisik
  * (selisih dicatat sebagai mutasi PENYESUAIAN di lokasi bahan baku).
+ * Laporan yang direvisi & dikirim ulang hanya menerapkan selisih hitungan baru vs hitungan yang dulu diterapkan,
+ * agar mutasi stok setelah laporan pertama (mis. pembelian) tidak tertimpa hitungan lama.
  */
-async function applyStockCount(reportId: string, rows: StockCountRow[], user: User, date: Date) {
+async function applyStockCount(report: { id: string; stockApplied: boolean; stockAppliedCount: Prisma.JsonValue | null }, rows: StockCountRow[], user: User, date: Date) {
   const { raw } = await locationSettings(prisma);
   if (!raw) return 0;
+  const prev = report.stockApplied ? (report.stockAppliedCount as StockCountRow[] | null) : null;
+  // Laporan lama yang sudah diterapkan tanpa catatan hitungan: jangan timpa stok terkini
+  if (report.stockApplied && !prev) return 0;
   let n = 0;
   await prisma.$transaction(async (tx) => {
     const totals = await itemTotals(tx);
+    const applied = new Map((prev ?? []).map((p) => [p.itemId, p.qty]));
     for (const row of rows) {
       if (row.qty == null) continue;
-      const diff = Math.round((row.qty - (totals.get(row.itemId) ?? 0)) * 1000) / 1000;
+      const before = applied.get(row.itemId);
+      const diff = Math.round((before != null ? row.qty - before : row.qty - (totals.get(row.itemId) ?? 0)) * 1000) / 1000;
       if (diff === 0) continue;
-      await recordMovement(tx, { type: "PENYESUAIAN", itemId: row.itemId, qty: Math.abs(diff), fromLocationId: raw, increase: diff > 0, allowNegative: true, ref: `LAP:${reportId}`, note: "Stock opname laporan shift", date }, user);
+      await recordMovement(tx, { type: "PENYESUAIAN", itemId: row.itemId, qty: Math.abs(diff), fromLocationId: raw, increase: diff > 0, allowNegative: true, ref: `LAP:${report.id}`, note: before != null ? "Revisi stock opname laporan shift" : "Stock opname laporan shift", date }, user);
       n++;
     }
-    await tx.shiftReport.update({ where: { id: reportId }, data: { stockApplied: true } });
+    const snapshot = [...(prev ?? []).filter((p) => !rows.some((r) => r.itemId === p.itemId && r.qty != null)), ...rows.filter((r) => r.qty != null)];
+    await tx.shiftReport.update({ where: { id: report.id }, data: { stockApplied: true, stockAppliedCount: snapshot as unknown as Prisma.InputJsonValue } });
   }, { timeout: 30000 });
   return n;
 }
@@ -225,7 +233,7 @@ export const sendReport = action(
       prisma.shiftReport.update({ where: { id }, data: { status: status === "GAGAL" ? r.status : "TERKIRIM" } }),
     ]);
     // Stok akhir shift = stock opname bahan baku divisi
-    const adjusted = await applyStockCount(id, stock, user, new Date());
+    const adjusted = await applyStockCount(r, stock, user, new Date());
     await audit(user, "LAPORAN_DIKIRIM", "ShiftReport", id, { status, channel, stockAdjusted: adjusted });
     if (status === "GAGAL") throw new Error(`Pengiriman gagal: ${error}`);
     return status === "SEBAGIAN" ? "Terkirim sebagian, cek riwayat" : "Laporan terkirim";
