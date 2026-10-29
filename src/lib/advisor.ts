@@ -1,12 +1,10 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
 import { prisma } from "./db";
 import { ruleInsights, type Snapshot } from "./analytics";
-
-const MODEL = process.env.ADVISOR_MODEL || "claude-opus-5-5";
+import { aiConfigured, aiText, modelFor } from "./ai";
 
 export function advisorConfigured() {
-  return !!process.env.ANTHROPIC_API_KEY;
+  return aiConfigured();
 }
 
 const SYSTEM = `Kamu adalah penasihat keuangan & strategi untuk UMKM "Main Gypsum" (produsen lukis gypsum, toko Main Gypsum & Dunia Lukis, jual di marketplace dan offline).
@@ -30,20 +28,9 @@ export function advisorPayload(s: Snapshot) {
 
 /** Minta saran strategis ke Claude; hasil terakhir disimpan di pengaturan agar tidak perlu diminta ulang */
 export async function askAdvisor(s: Snapshot, question?: string | null) {
-  if (!advisorConfigured()) throw new Error("ANTHROPIC_API_KEY belum diatur di server");
-  const client = new Anthropic();
+  if (!advisorConfigured()) throw new Error("AI belum diatur di server (ANTHROPIC_API_KEY atau AI_BASE_URL + AI_API_KEY)");
   const userText = `Data keuangan (IDR):\n${JSON.stringify(advisorPayload(s))}\n\n${question ? `Pertanyaan owner: ${question}` : "Berikan analisis dan saran strategis bulan ini."}`;
-  const response = await client.beta.messages.create({
-    model: MODEL,
-    max_tokens: 16000,
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
-    output_config: { effort: "medium" },
-    system: SYSTEM,
-    messages: [{ role: "user", content: userText }],
-  });
-  if (response.stop_reason === "refusal") throw new Error("Permintaan tidak dapat diproses oleh AI. Coba ubah pertanyaan.");
-  const text = response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n").trim();
+  const text = await aiText({ model: modelFor("ADVISOR_MODEL"), maxTokens: 16000, effort: "medium", system: SYSTEM, text: userText });
   if (!text) throw new Error("AI tidak mengembalikan jawaban");
   const value = JSON.stringify({ at: new Date().toISOString(), question: question ?? null, text });
   await prisma.setting.upsert({ where: { key: "advisor_last" }, create: { key: "advisor_last", value }, update: { value } });

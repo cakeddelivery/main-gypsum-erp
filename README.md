@@ -46,9 +46,10 @@ Akun uji hasil seed (password default `Gypsum#2026`, atau nilai `SEED_PASSWORD`)
 | `TELEGRAM_BOT_TOKEN` | Token bot dari @BotFather |
 | `TELEGRAM_WEBHOOK_SECRET` | Secret header webhook Telegram |
 | `HERMES_WEBHOOK_URL`, `HERMES_WEBHOOK_TOKEN` | Opsional, meneruskan pesan Telegram ke Hermes AI Agent |
-| `ANTHROPIC_API_KEY` | Opsional, mengaktifkan tombol "Minta saran AI" di menu Analitik (ringkasan angka bulanan dikirim ke Claude) dan pembacaan foto bukti transfer/nota di bot Telegram (foto + caption keterangan saja) |
-| `ADVISOR_MODEL` | Opsional, model Claude untuk AI advisor (default `claude-opus-5-5`) |
-| `RECEIPT_MODEL` | Opsional, model Claude untuk membaca foto bukti (default sama dengan `ADVISOR_MODEL`) |
+| `ANTHROPIC_API_KEY` | Opsional, akses AI langsung ke Claude API untuk AI Advisor (menu Analitik) dan pembacaan foto bukti di bot Telegram |
+| `AI_BASE_URL`, `AI_API_KEY` | Opsional, alternatif provider AI OpenAI-compatible (mis. `https://api.kelontongai.id/v1`). Bila diisi, dipakai menggantikan `ANTHROPIC_API_KEY` |
+| `AI_MODEL` | Opsional, model default untuk semua fitur AI (default `claude-opus-5-5`, atau `claude-haiku-5.5` untuk provider OpenAI-compatible) |
+| `ADVISOR_MODEL`, `RECEIPT_MODEL` | Opsional, model khusus untuk AI Advisor / baca foto bukti (menimpa `AI_MODEL`) |
 
 ## Aturan bisnis yang diterapkan
 
