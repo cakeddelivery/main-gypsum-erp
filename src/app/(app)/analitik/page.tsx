@@ -69,7 +69,7 @@ export default async function AnalitikPage() {
             <Submit pendingText="AI sedang menganalisis…">Minta saran AI</Submit>
           </ActionForm>
         ) : (
-          <p className="mb-3 text-sm text-slate-500">Saran otomatis di atas sudah berjalan tanpa biaya. Untuk analisis lebih dalam dengan AI, pasang <code>ANTHROPIC_API_KEY</code> di file .env server lalu restart aplikasi. Ringkasan angka bulanan (tanpa data pribadi karyawan) dikirim ke Anthropic setiap kali tombol ditekan.</p>
+          <p className="mb-3 text-sm text-slate-500">Saran otomatis di atas sudah berjalan tanpa biaya. Untuk analisis lebih dalam dengan AI, pasang <code>ANTHROPIC_API_KEY</code> (atau <code>AI_BASE_URL</code> + <code>AI_API_KEY</code> untuk provider OpenAI-compatible) di file .env server lalu restart aplikasi. Ringkasan angka bulanan (tanpa data pribadi karyawan) dikirim ke provider AI setiap kali tombol ditekan.</p>
         )}
         {advice && (
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm">
