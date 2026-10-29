@@ -3,6 +3,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Icon } from "./Icon";
+import { NotificationBell, ProfileMenu, type HeaderAlert } from "./HeaderMenus";
 import { ThemeToggle } from "./ThemeToggle";
 import { Toaster } from "./Toaster";
 
@@ -27,7 +28,7 @@ function backTarget(path: string, nav: Item[]) {
   return null;
 }
 
-export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: Item[]; bottomNav: Item[]; user: { name: string; role: string }; env: string; children: React.ReactNode; alerts: number }) {
+export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: Item[]; bottomNav: Item[]; user: { name: string; username: string; role: string; division?: string | null }; env: string; children: React.ReactNode; alerts: HeaderAlert[] }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [path]);
@@ -67,19 +68,8 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
         </Link>
         <div className="ml-auto flex items-center gap-1 sm:gap-2">
           <ThemeToggle />
-          <Link href="/#notifikasi" className="relative rounded-lg p-1.5 text-slate-600 hover:bg-slate-100" aria-label="Notifikasi">
-            <Icon name="bell" />
-            {alerts > 0 && <span className="absolute -right-0.5 -top-0.5 rounded-full bg-rose-600 px-1.5 text-[10px] font-bold text-white">{alerts > 99 ? "99+" : alerts}</span>}
-          </Link>
-          <div className="hidden text-right text-xs leading-tight sm:block">
-            <div className="font-medium text-slate-800">{user.name}</div>
-            <div className="text-slate-500">{user.role}</div>
-          </div>
-          <form action="/logout" method="post">
-            <button className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100" aria-label="Keluar" title="Keluar">
-              <Icon name="logout" />
-            </button>
-          </form>
+          <NotificationBell alerts={alerts} />
+          <ProfileMenu user={user} />
         </div>
       </header>
       <div className="flex">

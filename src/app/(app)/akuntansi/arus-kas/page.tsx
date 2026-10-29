@@ -3,9 +3,10 @@ import { cashFlow } from "@/lib/accounting";
 import { idr } from "@/lib/money";
 import { fmtDate } from "@/lib/time";
 import { letterhead } from "@/lib/letterhead";
-import { PageHeader } from "@/components/ui";
+import { Card, PageHeader, Stat } from "@/components/ui";
+import { Paged } from "@/components/Paged";
 import { DownloadJpg } from "@/components/DownloadJpg";
-import { DocBar, DocSection, DocSheet, DocSummary, DocTable, fmtLong, fmtRange } from "@/components/DocSheet";
+import { DocExport, DocBar, DocSection, DocSheet, DocSummary, DocTable, fmtLong, fmtRange } from "@/components/DocSheet";
 import { parseRange, ReportFilter, storeLabel, type SP } from "../shared";
 
 export const metadata = { title: "Arus Kas" };
@@ -28,52 +29,78 @@ export default async function ArusKas({ searchParams }: { searchParams: Promise<
     <div>
       <PageHeader title="Laporan arus kas" subtitle="Metode langsung; transfer antar rekening tidak dihitung" actions={<DownloadJpg targetId="ak" filename={`arus-kas-${r.from}-${r.to}`} />} />
       <ReportFilter sp={sp} />
-      <DocSheet
-        id="ak"
-        lh={lh}
-        eyebrow="Laporan keuangan"
-        title="Laporan Arus Kas"
-        subtitle={store}
-        meta={{ label: "Periode Laporan", value: fmtRange(r.from, r.to) }}
-        signerOrg={store.replace(/^Konsolidasi /, "")}
-        signDate={r.to}
-        notes={[`Laporan ini merupakan laporan arus kas ${store.charAt(0).toLowerCase() + store.slice(1)}.`, `Periode laporan: ${fmtRange(r.from, r.to)}.`, "Laporan ini dihasilkan secara otomatis dari sistem dan dapat digunakan sebagai referensi internal."]}
-      >
-        <DocBar label="Saldo kas awal" note={`Saldo kas per ${fmtLong(r.from)}`} value={idr(cf.opening)} negative={cf.opening < 0} />
-        {SECTIONS.map((s) => {
-          let bal = 0;
-          const rows = cf.groups[s.key];
-          return (
-            <DocSection key={s.key} no={s.no} tone={s.tone} title={s.title} hint={s.hint}>
-              <DocTable
-                head={<tr><th>Tanggal</th><th>No. Jurnal</th><th>Deskripsi</th><th className="num">Masuk (Rp)</th><th className="num">Keluar (Rp)</th><th className="num">Saldo (Rp)</th></tr>}
-                empty={rows.length ? undefined : "Tidak ada transaksi pada periode ini"}
-              >
-                {rows.map((x, i) => {
-                  bal += x.amount;
-                  return (
-                    <tr key={i}>
-                      <td className="whitespace-nowrap">{fmtDate(x.date)}</td>
-                      <td className="whitespace-nowrap">{x.number}</td>
-                      <td>{x.memo}</td>
-                      <td className="num">{x.amount > 0 ? num(x.amount) : "-"}</td>
-                      <td className={`num ${x.amount < 0 ? "doc-neg" : ""}`}>{x.amount < 0 ? num(x.amount) : "-"}</td>
-                      <td className={`num ${bal < 0 ? "doc-neg" : ""}`}>{signed(bal)}</td>
-                    </tr>
-                  );
-                })}
-              </DocTable>
-              <DocBar label={`Kas bersih ${s.title.toLowerCase()}`} value={idr(totals[s.key])} tone={s.tone === "amber" ? "amber" : "blue"} negative={totals[s.key] < 0} />
-            </DocSection>
-          );
-        })}
-        <DocSummary
-          rows={[
-            { label: "Kenaikan (penurunan) kas", hint: "Total perubahan kas selama periode laporan", value: idr(net), negative: net < 0 },
-            { label: "Saldo kas akhir", hint: `Saldo kas per ${fmtLong(r.to)}`, value: idr(cf.closing), negative: cf.closing < 0, strong: true },
-          ]}
-        />
-      </DocSheet>
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat label="Saldo kas awal" value={idr(cf.opening)} hint={fmtLong(r.from)} />
+        <Stat label="Kenaikan (penurunan) kas" value={idr(net)} tone={net < 0 ? "red" : "green"} />
+        <Stat label="Saldo kas akhir" value={idr(cf.closing)} hint={fmtLong(r.to)} tone={cf.closing < 0 ? "red" : "slate"} />
+        <Stat label="Toko" value={<span className="text-sm">{store}</span>} />
+      </div>
+      <div className="space-y-4">
+        {SECTIONS.map((s) => (
+          <Card key={s.key} title={`${s.no}. ${s.title}`}>
+            <div className="table-wrap">
+              <Paged><table className="tbl">
+                <thead><tr><th>Tanggal</th><th>No. jurnal</th><th>Deskripsi</th><th className="num">Masuk</th><th className="num">Keluar</th></tr></thead>
+                <tbody>
+                  {cf.groups[s.key].length === 0 && <tr><td colSpan={5} className="text-slate-400">Tidak ada transaksi pada periode ini</td></tr>}
+                  {cf.groups[s.key].map((x, i) => (
+                    <tr key={i}><td>{fmtDate(x.date)}</td><td className="font-mono text-xs">{x.number}</td><td className="max-w-xs truncate">{x.memo}</td><td className="num text-emerald-600">{x.amount > 0 ? idr(x.amount) : ""}</td><td className="num text-rose-600">{x.amount < 0 ? idr(-x.amount) : ""}</td></tr>
+                  ))}
+                </tbody>
+                <tfoot><tr className="bg-slate-50 font-semibold"><td colSpan={4}>Kas bersih {s.title.toLowerCase()}</td><td className={`num ${totals[s.key] < 0 ? "text-rose-600" : ""}`}>{idr(totals[s.key])}</td></tr></tfoot>
+              </table></Paged>
+            </div>
+          </Card>
+        ))}
+      </div>
+      <DocExport>
+        <DocSheet
+          id="ak"
+          lh={lh}
+          eyebrow="Laporan keuangan"
+          title="Laporan Arus Kas"
+          subtitle={store}
+          meta={{ label: "Periode Laporan", value: fmtRange(r.from, r.to) }}
+          signerOrg={store.replace(/^Konsolidasi /, "")}
+          signDate={r.to}
+          notes={[`Laporan ini merupakan laporan arus kas ${store.charAt(0).toLowerCase() + store.slice(1)}.`, `Periode laporan: ${fmtRange(r.from, r.to)}.`, "Laporan ini dihasilkan secara otomatis dari sistem dan dapat digunakan sebagai referensi internal."]}
+        >
+          <DocBar label="Saldo kas awal" note={`Saldo kas per ${fmtLong(r.from)}`} value={idr(cf.opening)} negative={cf.opening < 0} />
+          {SECTIONS.map((s) => {
+            let bal = 0;
+            const rows = cf.groups[s.key];
+            return (
+              <DocSection key={s.key} no={s.no} tone={s.tone} title={s.title} hint={s.hint}>
+                <DocTable
+                  head={<tr><th>Tanggal</th><th>No. Jurnal</th><th>Deskripsi</th><th className="num">Masuk (Rp)</th><th className="num">Keluar (Rp)</th><th className="num">Saldo (Rp)</th></tr>}
+                  empty={rows.length ? undefined : "Tidak ada transaksi pada periode ini"}
+                >
+                  {rows.map((x, i) => {
+                    bal += x.amount;
+                    return (
+                      <tr key={i}>
+                        <td className="whitespace-nowrap">{fmtDate(x.date)}</td>
+                        <td className="whitespace-nowrap">{x.number}</td>
+                        <td>{x.memo}</td>
+                        <td className="num">{x.amount > 0 ? num(x.amount) : "-"}</td>
+                        <td className={`num ${x.amount < 0 ? "doc-neg" : ""}`}>{x.amount < 0 ? num(x.amount) : "-"}</td>
+                        <td className={`num ${bal < 0 ? "doc-neg" : ""}`}>{signed(bal)}</td>
+                      </tr>
+                    );
+                  })}
+                </DocTable>
+                <DocBar label={`Kas bersih ${s.title.toLowerCase()}`} value={idr(totals[s.key])} tone={s.tone === "amber" ? "amber" : "blue"} negative={totals[s.key] < 0} />
+              </DocSection>
+            );
+          })}
+          <DocSummary
+            rows={[
+              { label: "Kenaikan (penurunan) kas", hint: "Total perubahan kas selama periode laporan", value: idr(net), negative: net < 0 },
+              { label: "Saldo kas akhir", hint: `Saldo kas per ${fmtLong(r.to)}`, value: idr(cf.closing), negative: cf.closing < 0, strong: true },
+            ]}
+          />
+        </DocSheet>
+      </DocExport>
     </div>
   );
 }

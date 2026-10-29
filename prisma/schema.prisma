@@ -93,6 +93,7 @@ model User {
   lastLoginAt    DateTime?
   createdAt      DateTime  @default(now())
   telegram       TelegramIdentity[]
+  alertReads     AlertRead[]
 }
 
 model RolePermission {
@@ -984,4 +985,16 @@ model EmployeeAllowance {
   createdAt  DateTime @default(now())
 
   @@index([employeeId])
+}
+
+/// Notifikasi (pekerjaan tertunda) yang sudah dibaca pengguna; muncul lagi sebagai belum dibaca bila jumlahnya bertambah
+model AlertRead {
+  id     String   @id @default(cuid())
+  userId String
+  user   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  key    String
+  count  Int
+  readAt DateTime @default(now())
+
+  @@unique([userId, key])
 }

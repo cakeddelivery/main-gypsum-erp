@@ -1,5 +1,5 @@
 import type { Letterhead } from "@/lib/letterhead";
-import { DocSheet, fmtLong } from "@/components/DocSheet";
+import { DocExport, DocSheet, fmtLong } from "@/components/DocSheet";
 import { TEMPLATES, isDone, needsOrder, summaryOf, workLines, type ChecklistEntry, type ReportTemplate, type StockCountRow, type WorkData } from "@/lib/shiftReport";
 
 type Props = {
@@ -22,7 +22,7 @@ type Props = {
 
 const fmt = (v: number) => v.toLocaleString("id-ID");
 
-/** Tampilan "Laporan Penutup Shift" (warna tetap terang agar sama saat diunduh JPG) */
+/** Tampilan "Laporan Penutup Shift" di layar, plus versi ber-kop surat (tersembunyi) untuk unduhan JPG */
 export function ReportSheet(p: Props) {
   const done = p.checklist.filter(isDone).length;
   const photos = p.checklist.filter((c) => c.photoPath).length;
@@ -30,15 +30,9 @@ export function ReportSheet(p: Props) {
   const summary = p.template ? summaryOf(p.template, p.work) : [];
   const lines = p.template ? workLines(p.template, p.work) : (p.legacyLines ?? []);
   const label = p.template ? TEMPLATES[p.template].label : p.division;
-  return (
-    <DocSheet
-      id="report-preview" lh={p.lh} exportWidth={900} eyebrow="Standar kinerja operasional" title="Laporan Penutup Shift" subtitle={`${label} • ${p.shift}`}
-      meta={{ label: `PIC Divisi: ${p.pic}`, value: fmtLong(p.date) }} signer={`PIC ${p.division}`} signDate={p.date}
-      notes={[`Dibuat dari Laporan Shift • ${photos} foto bukti.`, "Laporan ini dihasilkan secara otomatis dari sistem dan dapat digunakan sebagai referensi internal."]}
-    >
-      <div className="space-y-3 text-[#1f2937]">
-        {summary.length > 0 && <div className="text-sm text-[#4b5563]">{summary.map((s) => `${s.label}: ${fmt(s.value)}${s.unit ? ` ${s.unit}` : ""}`).join(" | ")}</div>}
-
+  const sum = summary.length > 0 && <div className="text-sm text-[#4b5563]">{summary.map((s) => `${s.label}: ${fmt(s.value)}${s.unit ? ` ${s.unit}` : ""}`).join(" | ")}</div>;
+  const body = (
+    <>
         <Heading tone="blue">Detail hasil kerja</Heading>
         <div className="space-y-0.5 px-2 text-[13px] leading-relaxed text-[#374151]">
           {lines.length ? lines.map((l, i) => <div key={i} className="break-words">{l}</div>) : <div className="text-[#9ca3af]">Belum diisi</div>}
@@ -103,8 +97,45 @@ export function ReportSheet(p: Props) {
             {p.followUp && <div className="mt-1 text-[#4b5563]"><b>Tindak lanjut ({p.followUpStatus}):</b> {p.followUp}</div>}
           </div>
         )}
+    </>
+  );
+  return (
+    <>
+      {/* Tampilan di layar (seperti semula, tanpa kop surat) */}
+      <div className="theme-light overflow-hidden rounded-xl border border-[#e5e7eb] bg-[#fffbe8] text-[#1f2937]">
+        <div className="flex items-center gap-3 bg-[#fff200] px-4 py-4 sm:gap-5 sm:px-6">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-maingypsum.png" alt="Main Gypsum" className="h-10 w-auto shrink-0 sm:h-14" />
+          <div className="min-w-0">
+            <div className="text-lg font-extrabold leading-tight tracking-wide text-[#1e3a8a] sm:text-2xl">LAPORAN PENUTUP SHIFT</div>
+            <div className="text-xs text-[#1f2937] sm:text-sm">Standar Kinerja Operasional</div>
+            <div className="mt-0.5 text-sm font-bold text-[#1f2937] sm:text-base">{label} • {p.shift}</div>
+          </div>
+        </div>
+        <div className="h-2 bg-[#2563eb]" />
+        <div className="space-y-3 px-4 py-4 sm:px-6">
+          <div>
+            <div className="text-base font-bold sm:text-lg">{p.date} | PIC Divisi: {p.pic}</div>
+            {sum}
+          </div>
+          {body}
+          <div className="pt-4 text-xs text-[#6b7280]">Dibuat dari Laporan Shift • {photos} foto bukti</div>
+        </div>
       </div>
-    </DocSheet>
+      {/* Versi ber-kop surat untuk unduhan JPG */}
+      <DocExport>
+        <DocSheet
+          id="report-preview" lh={p.lh} exportWidth={900} eyebrow="Standar kinerja operasional" title="Laporan Penutup Shift" subtitle={`${label} • ${p.shift}`}
+          meta={{ label: `PIC Divisi: ${p.pic}`, value: fmtLong(p.date) }} signer={`PIC ${p.division}`} signDate={p.date}
+          notes={[`Dibuat dari Laporan Shift • ${photos} foto bukti.`, "Laporan ini dihasilkan secara otomatis dari sistem dan dapat digunakan sebagai referensi internal."]}
+        >
+          <div className="space-y-3 text-[#1f2937]">
+            {sum}
+            {body}
+          </div>
+        </DocSheet>
+      </DocExport>
+    </>
   );
 }
 
