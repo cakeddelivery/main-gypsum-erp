@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { jwtVerify } from "jose";
+import { publicUrl } from "@/lib/public-url";
 
 const PUBLIC = ["/login", "/api/v1", "/api/telegram", "/api/cron", "/api/health", "/_next", "/favicon"];
 
@@ -17,7 +18,7 @@ export async function middleware(req: NextRequest) {
     }
   }
   if (!ok) {
-    const url = new URL("/login", req.url);
+    const url = publicUrl("/login", req);
     if (pathname !== "/") url.searchParams.set("next", pathname + search);
     return NextResponse.redirect(url);
   }
