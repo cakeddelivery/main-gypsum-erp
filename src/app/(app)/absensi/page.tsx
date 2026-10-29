@@ -36,7 +36,6 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
   const self = user.employeeId
     ? await Promise.all([
         prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(today) } }, include: { shift: true } }),
-        prisma.shiftSchedule.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(today) } }, include: { shift: true } }),
         prisma.attendance.findMany({ where: { employeeId: user.employeeId }, include: { shift: true }, orderBy: { date: "desc" }, take: 14 }),
       ])
     : null;
@@ -59,18 +58,13 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
             </div>
           ) : (
             <ActionForm action={checkIn} className="flex flex-wrap items-end gap-3">
-              {self[1] ? (
-                <p className="text-sm">Jadwal hari ini: <b>{self[1].shift.name}</b> ({self[1].shift.startTime}–{self[1].shift.endTime}, toleransi {self[1].shift.toleranceMinutes} menit)</p>
-              ) : (
-                <Field label="Shift"><select name="shiftId" className="input">{shifts.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.startTime})</option>)}</select></Field>
-              )}
               <GeoSubmit required={sites.length > 0} className="btn-primary px-6 py-3 text-base">Absen masuk sekarang</GeoSubmit>
               <div className="w-full">{siteNote}</div>
             </ActionForm>
           )}
-          {self[2].length > 0 && (
+          {self[1].length > 0 && (
             <ul className="mt-4 divide-y divide-slate-100 text-sm">
-              {self[2].map((a) => (
+              {self[1].map((a) => (
                 <li key={a.id} className="flex justify-between py-1.5"><span>{fmtDay(a.date)} · {a.shift.name}</span><span className="flex items-center gap-2">{!a.validated && <span className="text-xs text-slate-400">belum divalidasi</span>}<Badge tone={TONE[a.status]}>{ATT_LABEL[a.status]}</Badge></span></li>
               ))}
             </ul>

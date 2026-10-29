@@ -2,7 +2,7 @@
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int, bool } from "@/lib/action";
 import { audit } from "@/lib/audit";
-import { checkGeofence, evaluateCheckIn, readGeo } from "@/lib/attendance";
+import { checkGeofence, evaluateCheckIn, nearestShift, readGeo } from "@/lib/attendance";
 import { addDays, dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
 import type { AttendanceStatus } from "@prisma/client";
@@ -13,15 +13,18 @@ export const checkIn = action(
     if (!user.employeeId) throw new Error("Akun Anda belum ditautkan ke data karyawan");
     const date = todayStr();
     const sched = await prisma.shiftSchedule.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(date) } } });
-    const shiftId = sched?.shiftId ?? str(fd, "shiftId");
-    if (!shiftId) throw new Error("Pilih shift");
-    const shift = await prisma.shift.findUniqueOrThrow({ where: { id: shiftId } });
     const exists = await prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(date) } } });
     if (exists) throw new Error("Anda sudah absen masuk hari ini");
     const pos = readGeo(fd);
     const geo = checkGeofence(pos, await activeSites());
     if (!geo.ok) throw new Error(geo.error);
     const now = new Date();
+    // Jadwal dari admin dipakai bila ada; selain itu shift dikenali dari jam masuk terdekat
+    const shift = sched
+      ? await prisma.shift.findUniqueOrThrow({ where: { id: sched.shiftId } })
+      : nearestShift(await prisma.shift.findMany({ where: { active: true } }), now);
+    if (!shift) throw new Error("Belum ada shift aktif. Hubungi admin.");
+    const shiftId = shift.id;
     const ev = evaluateCheckIn(shift, now);
     const a = await prisma.attendance.create({
       data: {

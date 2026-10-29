@@ -10,6 +10,19 @@ export function evaluateCheckIn(shift: { startTime: string; toleranceMinutes: nu
   return { status: "HADIR", lateMinutes: late };
 }
 
+/** Tentukan shift otomatis: jam mulai yang paling dekat dengan jam absen (WIB, memperhitungkan lewat tengah malam). */
+export function nearestShift<T extends { startTime: string }>(shifts: T[], at: Date): T | null {
+  const p = jakartaParts(at);
+  const now = p.hour * 60 + p.minute;
+  let best: { s: T; gap: number } | null = null;
+  for (const s of shifts) {
+    const d = Math.abs(now - toMinutes(s.startTime));
+    const gap = Math.min(d, 1440 - d);
+    if (!best || gap < best.gap) best = { s, gap };
+  }
+  return best?.s ?? null;
+}
+
 export const ATT_LABEL: Record<AttendanceStatus, string> = {
   HADIR: "Hadir",
   TERLAMBAT: "Terlambat",

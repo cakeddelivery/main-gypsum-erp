@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkGeofence, distanceMeters, readGeo } from "@/lib/attendance";
+import { checkGeofence, distanceMeters, nearestShift, readGeo } from "@/lib/attendance";
 import { effectivePermissions } from "@/lib/rbac";
 
 const pabrik = { id: "s1", name: "Pabrik", latitude: -7.1167, longitude: 112.4167, radiusM: 100 };
@@ -49,5 +49,19 @@ describe("Hak akses lokasi absen", () => {
     for (const r of ["OWNER", "ADMIN", "SUPERVISOR"] as const) expect(effectivePermissions(r, []).has("attendance.location")).toBe(true);
     for (const r of ["FINANCE", "ADMIN_PRODUKSI", "KAPTEN_DIVISI", "OPERATOR"] as const)
       expect(effectivePermissions(r, [{ role: r, permission: "attendance.location", allowed: true }]).has("attendance.location")).toBe(false);
+  });
+});
+
+describe("Shift otomatis dari jam masuk", () => {
+  const shifts = [{ id: "S1", startTime: "07:00" }, { id: "S2", startTime: "15:00" }];
+  const wib = (hhmm: string) => new Date(`2026-10-29T${hhmm}:00+07:00`);
+  it("pilih jam mulai terdekat", () => {
+    expect(nearestShift(shifts, wib("06:40"))?.id).toBe("S1");
+    expect(nearestShift(shifts, wib("10:59"))?.id).toBe("S1");
+    expect(nearestShift(shifts, wib("11:01"))?.id).toBe("S2");
+    expect(nearestShift(shifts, wib("15:20"))?.id).toBe("S2");
+    expect(nearestShift(shifts, wib("22:00"))?.id).toBe("S2");
+    expect(nearestShift(shifts, wib("02:00"))?.id).toBe("S1");
+    expect(nearestShift([], wib("07:00"))).toBeNull();
   });
 });
