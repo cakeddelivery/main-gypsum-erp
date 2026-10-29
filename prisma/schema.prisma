@@ -16,6 +16,7 @@ enum Role {
   ADMIN_PRODUKSI
   ADMIN_MARKETPLACE
   KAPTEN_DIVISI
+  SUPERVISOR
   PIC_CONTENT
   OPERATOR
 }
@@ -46,6 +47,11 @@ model Division {
   code        String            @unique
   name        String
   active      Boolean           @default(true)
+  /// Format laporan penutup shift: PRODUKSI | GIFTBOX | PACKING | ASSEMBLING (null = laporan umum)
+  reportTemplate String?
+  /// Checklist penutupan shift divisi: [{label, photo}] (photo = wajib foto bukti)
+  checklist   Json              @default("[]")
+  items       Item[]
   employees   Employee[]
   locations   Location[]
   production  ProductionEntry[]
@@ -378,7 +384,16 @@ model ShiftReport {
   divisionId String
   division   Division     @relation(fields: [divisionId], references: [id])
   status     ReportStatus @default(DRAFT)
+  /// [{label, photo, done, photoPath?}]
   checklist  Json         @default("[]")
+  /// PIC divisi yang melaporkan shift ini
+  picName    String?
+  /// Detail hasil kerja sesuai format divisi (lihat src/lib/shiftReport.ts)
+  work       Json         @default("{}")
+  /// Stok akhir shift (hitung fisik): [{itemId, name, unit, limit, qty}]
+  stockCount Json         @default("[]")
+  /// Hitungan stok sudah diterapkan ke kartu stok (penyesuaian stock opname)
+  stockApplied Boolean    @default(false)
   complaints String?
   followUp   String?
   followUpStatus String   @default("BELUM")
@@ -450,6 +465,10 @@ model Item {
   gypsumCharacterId String?
   gypsumCharacter   GypsumCharacter? @relation(fields: [gypsumCharacterId], references: [id])
   active      Boolean          @default(true)
+  /// Divisi penanggung jawab stock opname bahan baku ini; minStock = limit order
+  divisionId  String?
+  division    Division?        @relation(fields: [divisionId], references: [id])
+  sortOrder   Int              @default(0)
   movements   StockMovement[]
   bomLines    BomLine[]
   requests    StockRequest[]

@@ -59,6 +59,8 @@ Akun uji hasil seed (password default `Gypsum#2026`, atau nilai `SEED_PASSWORD`)
 - **Pembelian bahan baku** (Stok › Pembelian): lunas, bertahap (DP), atau tempo; stok masuk, jurnal, dan sisa utang tercatat sekaligus.
 - **Pinjaman modal** (Akuntansi › Piutang, utang & pinjaman › Pinjaman modal), cicilan bisa dengan bunga.
 - **Dana sisihan harian** (Finance › Dana sisihan): kompensasi pengelola (owner) dibebankan dan dipindah Seabank → ShopeePay sampai diambil; tabungan atau cicilan harian pinjaman modal.
+- **Laporan penutup shift per divisi** (Produksi, Giftbox, Packing, Assembling): detail hasil kerja sesuai format divisi, checklist penutupan dengan foto bukti per tugas, stok akhir shift bahan baku divisi (jadi stock opname saat laporan dikirim), dan daftar order otomatis untuk bahan dengan stok ≤ limit (Laporan Shift › Order bahan baku). Bahan baku, limit, dan checklist tiap divisi diatur Owner di Laporan Shift › Bahan & checklist divisi. Setelah update pertama jalankan `npm run setup:divisi` (sekali) untuk membuat divisi & bahan baku dari contoh laporan dan mengganti bahan baku lama.
+- **Absensi & target produksi**: validasi/atur absensi dan target produksi hanya untuk Owner, Supervisor, dan Finance.
 - **Analitik & advisor**: 12 bulan pendapatan/beban/laba/kas, growth, kas bebas, kewajiban & proyeksi 30 hari, saran otomatis, dan AI advisor opsional.
 
 ## Produksi & staging

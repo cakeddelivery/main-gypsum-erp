@@ -32,6 +32,7 @@ export const PRIORITY_NAV: Record<Role, string[]> = {
   ADMIN_PRODUKSI: ["/", "/produksi", "/laporan", "/absensi", "/stok"],
   ADMIN_MARKETPLACE: ["/", "/finance", "/stok", "/produk", "/absensi"],
   KAPTEN_DIVISI: ["/", "/produksi", "/laporan", "/absensi", "/stok"],
+  SUPERVISOR: ["/", "/produksi", "/absensi", "/laporan", "/stok"],
   PIC_CONTENT: ["/", "/produk", "/absensi", "/gaji"],
   OPERATOR: ["/", "/produksi", "/absensi", "/laporan", "/gaji"],
 };

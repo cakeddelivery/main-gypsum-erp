@@ -9,6 +9,7 @@
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
     "scheduler": "tsx scripts/scheduler.ts",
+    "setup:divisi": "tsx scripts/bahan-baku-divisi.ts",
     "test": "bash tests/global-reset.sh && vitest run",
     "typecheck": "tsc --noEmit",
     "backup": "bash scripts/backup.sh",
