@@ -96,6 +96,3 @@ export function effectivePermissions(role: Role, overrides: PermissionOverride[]
   set.delete("telegram.manage");
   return set;
 }
-
-/** Role yang memakai navigasi bawah (mobile, operator/karyawan) */
-export const FIELD_ROLES: Role[] = ["OPERATOR", "KAPTEN_DIVISI", "PIC_CONTENT"];

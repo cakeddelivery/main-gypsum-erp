@@ -9,7 +9,7 @@ export function TrendChart({ data, series }: { data: Record<string, number | str
     <div className="h-64 w-full">
       <ResponsiveContainer>
         <LineChart data={data} margin={{ top: 8, right: 12, left: -8, bottom: 0 }}>
-          <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+          <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="label" tick={{ fontSize: 11 }} />
           <YAxis tick={{ fontSize: 11 }} tickFormatter={fmt} />
           <Tooltip formatter={(v: number) => v.toLocaleString("id-ID")} />
@@ -29,7 +29,7 @@ export function BarsChart({ data, series }: { data: Record<string, number | stri
     <div className="h-64 w-full">
       <ResponsiveContainer>
         <BarChart data={data} margin={{ top: 8, right: 12, left: -8, bottom: 0 }}>
-          <CartesianGrid stroke="#e2e8f0" strokeDasharray="3 3" />
+          <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="label" tick={{ fontSize: 11 }} />
           <YAxis tick={{ fontSize: 11 }} tickFormatter={fmt} />
           <Tooltip formatter={(v: number) => v.toLocaleString("id-ID")} />
