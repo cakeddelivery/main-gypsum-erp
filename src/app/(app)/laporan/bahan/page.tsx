@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { REPORT_TEMPLATES, TEMPLATES, toEntries } from "@/lib/shiftReport";
@@ -53,7 +52,7 @@ export default async function BahanDivisiPage({ searchParams }: { searchParams: 
       <PageHeader
         title="Bahan baku & checklist divisi"
         subtitle="Bahan baku tiap divisi untuk stock opname di laporan shift, limit order, dan checklist penutupan"
-        actions={<><Link href="/laporan" className="btn-secondary">← Laporan shift</Link><Modal trigger="+ Divisi" title="Divisi baru">{divForm()}</Modal></>}
+        actions={<><Modal trigger="+ Divisi" title="Divisi baru">{divForm()}</Modal></>}
       />
       <Tabs current={current?.id ?? ""} tabs={divisions.map((d) => ({ key: d.id, label: d.active ? d.name : `${d.name} (nonaktif)`, href: `?div=${d.id}`, count: d._count.items }))} />
       {!current ? <Empty title="Belum ada divisi" /> : (
@@ -94,8 +93,18 @@ export default async function BahanDivisiPage({ searchParams }: { searchParams: 
                 </div>
               </div>
             </Card>
-            <Card title="Checklist penutupan shift">
-              <ChecklistEditor key={current.id} divisionId={current.id} initial={toEntries(current.checklist).map(({ label, photo }) => ({ label, photo }))} />
+            <Card title="Checklist penutupan shift" actions={
+              <Modal trigger="Ubah checklist" triggerClass="btn-primary btn-sm" title={`Checklist · ${current.name}`} wide>
+                <ChecklistEditor key={current.id} divisionId={current.id} initial={toEntries(current.checklist).map(({ label, photo }) => ({ label, photo }))} />
+              </Modal>
+            }>
+              {toEntries(current.checklist).length === 0 ? <p className="text-sm text-slate-500">Belum ada checklist.</p> : (
+                <ol className="space-y-1.5 text-sm">
+                  {toEntries(current.checklist).map((c, i) => (
+                    <li key={i} className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-2"><span>{i + 1}. {c.label}</span>{c.photo && <Badge tone="blue">wajib foto</Badge>}</li>
+                  ))}
+                </ol>
+              )}
             </Card>
           </div>
         </div>

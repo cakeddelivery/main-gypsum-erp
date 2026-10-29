@@ -8,6 +8,7 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { addPieceWork, claimPieces, deletePieceWork, savePieceTask } from "../actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Borongan & Klaim" };
 
@@ -25,22 +26,31 @@ export default async function BoronganPage() {
   const activeTasks = tasks.filter((x) => x.active);
   return (
     <div className="space-y-5">
-      <PageHeader title="Borongan & klaim" subtitle="Pekerja borongan dibayar per piece; gajian kapan saja sesuai klaim pekerja" actions={<Link href="/gaji" className="btn-secondary">← Penggajian</Link>} />
-      <div className="grid gap-5 lg:grid-cols-2">
-        <Card title="Catat hasil borongan">
+      <PageHeader title="Borongan & klaim" subtitle="Pekerja borongan dibayar per piece; gajian kapan saja sesuai klaim pekerja" actions={
+        <Modal trigger="+ Hasil borongan" title="Catat hasil borongan">
           {workers.length === 0 ? <p className="text-sm text-slate-500">Belum ada karyawan dengan sistem upah Borongan. Ubah di menu Karyawan.</p> : (
-            <ActionForm action={addPieceWork} resetOnSuccess className="grid grid-cols-2 gap-3">
+            <ModalForm action={addPieceWork} className="grid grid-cols-2 gap-3">
               <Field label="Pekerja" className="col-span-2"><select name="employeeId" className="input">{workers.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></Field>
               <Field label="Tugas"><select name="taskId" className="input">{activeTasks.map((x) => <option key={x.id} value={x.id}>{x.name} ({idr(x.ratePerPcs)}/pcs)</option>)}</select></Field>
               <Field label="Jumlah (pcs)"><input name="qty" inputMode="numeric" className="input" required /></Field>
               <Field label="Tanggal"><input type="date" name="date" defaultValue={t} className="input" /></Field>
               <Field label="Catatan"><input name="note" className="input" /></Field>
               <div className="col-span-2"><Submit>Simpan</Submit></div>
-            </ActionForm>
+            </ModalForm>
           )}
-        </Card>
-        <Card title="Tarif tugas borongan">
-          <ul className="mb-4 divide-y divide-slate-100 text-sm">
+        </Modal>
+      } />
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Card title="Tarif tugas borongan" actions={
+          <Modal trigger="+ Tugas" triggerClass="btn-primary btn-sm" title="Tugas borongan baru">
+            <ModalForm action={savePieceTask} className="space-y-3">
+              <Field label="Nama tugas"><input name="name" className="input" required /></Field>
+              <Field label="Tarif/pcs (IDR)"><input name="ratePerPcs" inputMode="numeric" className="input" required /></Field>
+              <Submit>Tambah</Submit>
+            </ModalForm>
+          </Modal>
+        }>
+          <ul className="divide-y divide-slate-100 text-sm">
             {tasks.map((x) => (
               <li key={x.id} className="flex items-center justify-between py-1.5">
                 <span>{x.name}{!x.active && <Badge>nonaktif</Badge>}</span>
@@ -58,18 +68,13 @@ export default async function BoronganPage() {
               </li>
             ))}
           </ul>
-          <ActionForm action={savePieceTask} resetOnSuccess className="flex flex-wrap items-end gap-2">
-            <Field label="Tugas baru"><input name="name" className="input" required /></Field>
-            <Field label="Tarif/pcs"><input name="ratePerPcs" inputMode="numeric" className="input" required /></Field>
-            <Submit>Tambah</Submit>
-          </ActionForm>
         </Card>
       </div>
 
       <Card title="Belum diklaim">
         {unclaimed.length === 0 ? <p className="text-sm text-slate-500">Semua hasil borongan sudah diklaim.</p> : (
           <div className="overflow-x-auto">
-            <table className="tbl">
+            <Paged><table className="tbl">
               <thead><tr><th>Pekerja</th><th>Sejak</th><th className="num">Total pcs</th><th className="num">Nilai</th><th /></tr></thead>
               <tbody>
                 {unclaimed.map((u) => {
@@ -91,7 +96,7 @@ export default async function BoronganPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </table></Paged>
           </div>
         )}
       </Card>

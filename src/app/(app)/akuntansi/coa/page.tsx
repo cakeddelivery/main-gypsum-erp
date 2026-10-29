@@ -4,8 +4,8 @@ import { Badge, Field, PageHeader } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
-import { BackLink } from "../shared";
 import { saveCoa } from "../actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Chart of Accounts" };
 const TYPES = ["ASET", "KEWAJIBAN", "EKUITAS", "PENDAPATAN", "HPP", "BEBAN"] as const;
@@ -26,12 +26,12 @@ export default async function CoaPage() {
   );
   return (
     <div>
-      <PageHeader title="Chart of Accounts" subtitle="Bagan akun manufaktur" actions={<><BackLink />{user.can("accounting.post") && <Modal trigger="+ Akun" title="Akun baru">{form()}</Modal>}</>} />
+      <PageHeader title="Chart of Accounts" subtitle="Bagan akun manufaktur" actions={<>{user.can("accounting.post") && <Modal trigger="+ Akun" title="Akun baru">{form()}</Modal>}</>} />
       <div className="table-wrap">
-        <table className="tbl">
+        <Paged><table className="tbl">
           <thead><tr><th>Kode</th><th>Nama</th><th>Tipe</th><th>Kas/Bank</th><th className="num">Baris jurnal</th><th /></tr></thead>
           <tbody>{accounts.map((a) => <tr key={a.id} className={a.active ? "" : "opacity-50"}><td className="font-mono text-xs">{a.code}</td><td>{a.name}</td><td><Badge>{a.type}</Badge></td><td>{a.isCash ? "✓" : ""}</td><td className="num">{a._count.lines}</td><td>{user.can("accounting.post") && <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah akun">{form(a)}</Modal>}</td></tr>)}</tbody>
-        </table>
+        </table></Paged>
       </div>
     </div>
   );

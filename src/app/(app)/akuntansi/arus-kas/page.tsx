@@ -4,7 +4,7 @@ import { idr } from "@/lib/money";
 import { fmtDay, dateOnly } from "@/lib/time";
 import { PageHeader } from "@/components/ui";
 import { DownloadJpg } from "@/components/DownloadJpg";
-import { BackLink, parseRange, ReportFilter, storeLabel, type SP } from "../shared";
+import { parseRange, ReportFilter, storeLabel, type SP } from "../shared";
 
 export const metadata = { title: "Arus Kas" };
 const LABEL = { OPERASI: "Aktivitas operasi", INVESTASI: "Aktivitas investasi", PENDANAAN: "Aktivitas pendanaan" } as const;
@@ -17,7 +17,7 @@ export default async function ArusKas({ searchParams }: { searchParams: Promise<
   const net = cf.operating + cf.investing + cf.financing;
   return (
     <div>
-      <PageHeader title="Laporan arus kas" subtitle="Metode langsung; transfer antar rekening tidak dihitung" actions={<><BackLink /><DownloadJpg targetId="ak" filename={`arus-kas-${r.from}-${r.to}`} /></>} />
+      <PageHeader title="Laporan arus kas" subtitle="Metode langsung; transfer antar rekening tidak dihitung" actions={<><DownloadJpg targetId="ak" filename={`arus-kas-${r.from}-${r.to}`} /></>} />
       <ReportFilter sp={sp} />
       <div id="ak" className="card mx-auto max-w-2xl p-6 text-sm">
         <div className="mb-4 text-center"><div className="font-semibold">Arus Kas · {await storeLabel(r.storeId)}</div><div className="text-slate-500">{fmtDay(dateOnly(r.from))} – {fmtDay(dateOnly(r.to))}</div></div>

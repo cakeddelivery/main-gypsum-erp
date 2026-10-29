@@ -5,6 +5,7 @@ import { idr } from "@/lib/money";
 import { fmtDateTime, jakartaDateTime } from "@/lib/time";
 import { Empty, FilterBar, Field, PageHeader } from "@/components/ui";
 import { DownloadJpg } from "@/components/DownloadJpg";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Kartu Persediaan" };
 
@@ -36,7 +37,7 @@ export default async function KartuPage({ searchParams }: { searchParams: Promis
         <Field label="Sampai"><input type="date" name="to" defaultValue={sp.to} className="input" /></Field>
       </FilterBar>
       <div id="kartu" className="table-wrap bg-white">
-        <table className="tbl">
+        <Paged><table className="tbl">
           <thead><tr><th>Tanggal</th><th>Jenis</th><th>Lokasi</th><th>Ref</th><th className="num">Masuk</th><th className="num">Keluar</th><th className="num">Saldo</th><th className="num">Harga</th><th className="num">Nilai saldo</th></tr></thead>
           <tbody>
             <tr className="bg-slate-50"><td colSpan={6}>Saldo awal</td><td className="num font-semibold">{opening.toLocaleString("id-ID")}</td><td /><td /></tr>
@@ -44,7 +45,7 @@ export default async function KartuPage({ searchParams }: { searchParams: Promis
               <tr key={m.id}><td>{fmtDateTime(m.date)}</td><td>{MOVEMENT_LABEL[m.type]}</td><td className="text-xs">{m.fromLocation?.code ?? ""}{m.fromLocation && m.toLocation && " → "}{m.toLocation?.code ?? ""}</td><td className="text-xs">{m.ref}</td><td className="num text-emerald-600">{inQ ? inQ.toLocaleString("id-ID") : ""}</td><td className="num text-rose-600">{outQ ? outQ.toLocaleString("id-ID") : ""}</td><td className="num font-semibold">{bal.toLocaleString("id-ID")}</td><td className="num">{idr(m.unitCost)}</td><td className="num">{idr(Math.round(bal * Number(m.unitCost)))}</td></tr>
             ))}
           </tbody>
-        </table>
+        </table></Paged>
       </div>
     </div>
   );

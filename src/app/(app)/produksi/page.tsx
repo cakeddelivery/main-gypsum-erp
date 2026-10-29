@@ -9,6 +9,7 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { EntryForm } from "./EntryForm";
 import { deleteEntry } from "./actions";
 import type { Prisma } from "@prisma/client";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Produksi" };
 
@@ -99,7 +100,7 @@ export default async function ProduksiPage({ searchParams }: { searchParams: Pro
         <Empty title="Belum ada hasil produksi" hint="Catat hasil per karyawan, tahap, dan shift dengan tombol Input hasil." />
       ) : (
         <div className="table-wrap">
-          <table className="tbl">
+          <Paged><table className="tbl">
             <thead>
               <tr><th>Shift</th><th>Divisi</th><th>Karyawan</th><th>Tahap</th><th>Produk</th><th className="num">Hasil</th><th className="num">Reject</th><th>Catatan</th>{user.can("production.edit") && <th />}</tr>
             </thead>
@@ -128,7 +129,7 @@ export default async function ProduksiPage({ searchParams }: { searchParams: Pro
             <tfoot>
               <tr className="bg-slate-50 font-semibold"><td colSpan={5}>Total</td><td className="num">{totalGood}</td><td className="num text-rose-600">{totalReject}</td><td colSpan={2} /></tr>
             </tfoot>
-          </table>
+          </table></Paged>
         </div>
       )}
     </div>

@@ -1,5 +1,4 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { fmtDateTime, fmtDay } from "@/lib/time";
@@ -44,7 +43,6 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
         subtitle={`${r.shift.name} · ${fmtDay(r.date)}`}
         actions={
           <>
-            <Link href={`/laporan?date=${day}`} className="btn-secondary">← Kembali</Link>
             <DownloadJpg targetId="report-preview" filename={fname} />
           </>
         }

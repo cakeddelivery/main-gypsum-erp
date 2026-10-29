@@ -8,6 +8,7 @@ import { Badge, Card, PageHeader, Stat } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { BarsChart, TrendChart } from "@/components/Charts";
 import { requestAdvice } from "./actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Analitik & Advisor" };
 
@@ -81,7 +82,7 @@ export default async function AnalitikPage() {
 
       <Card title="Tabel bulanan">
         <div className="overflow-x-auto">
-          <table className="tbl">
+          <Paged><table className="tbl">
             <thead><tr><th>Bulan</th><th className="num">Pendapatan</th><th className="num">Growth</th><th className="num">HPP</th><th className="num">Beban</th><th className="num">Kompensasi owner</th><th className="num">Laba bersih</th><th className="num">Kas akhir</th></tr></thead>
             <tbody>
               {s.series.map((m, i) => (
@@ -91,7 +92,7 @@ export default async function AnalitikPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></Paged>
         </div>
       </Card>
     </div>

@@ -16,6 +16,7 @@ const PATHS: Record<string, string> = {
   moon: "M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z",
   grid: "M4 4h6v6H4zm10 0h6v6h-6zM4 14h6v6H4zm10 0h6v6h-6z",
   chart: "M4 20V10m6 10V4m6 16v-7m4 7H3",
+  back: "M15 18l-6-6 6-6",
   logout: "M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3",
 };
 

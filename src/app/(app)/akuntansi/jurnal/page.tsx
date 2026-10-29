@@ -6,7 +6,7 @@ import { Badge, Card, Field, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { BackLink, parseRange, ReportFilter, type SP } from "../shared";
+import { parseRange, ReportFilter, type SP } from "../shared";
 import { JournalLines } from "../JournalLines";
 import { manualJournal, reverse } from "../actions";
 
@@ -24,7 +24,7 @@ export default async function JurnalPage({ searchParams }: { searchParams: Promi
   const reversed = new Set(journals.map((j) => j.reversalOfId).filter(Boolean));
   return (
     <div className="space-y-5">
-      <PageHeader title="Jurnal umum" subtitle="Jurnal tidak dapat diubah; koreksi menggunakan jurnal pembalik" actions={<><BackLink />{user.can("accounting.post") && (
+      <PageHeader title="Jurnal umum" subtitle="Jurnal tidak dapat diubah; koreksi menggunakan jurnal pembalik" actions={<>{user.can("accounting.post") && (
         <Modal trigger="+ Jurnal manual" title="Jurnal manual / penyesuaian" wide>
           <ModalForm action={manualJournal} className="space-y-3">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

@@ -39,6 +39,7 @@ Akun uji hasil seed (password default `Gypsum#2026`, atau nilai `SEED_PASSWORD`)
 | Nama | Keterangan |
 |---|---|
 | `DATABASE_URL` | Koneksi PostgreSQL |
+| `APP_URL` | Alamat publik web (default `https://erp.maingypsum.shop`), dipakai untuk gambar pratinjau tautan |
 | `AUTH_SECRET` | Rahasia penandatangan sesi, min. 32 karakter, **berbeda** untuk staging & production |
 | `APP_ENV` | `staging` atau `production` (staging menampilkan banner kuning) |
 | `STORAGE_DIR` | Folder privat bukti transaksi (di luar folder publik) |

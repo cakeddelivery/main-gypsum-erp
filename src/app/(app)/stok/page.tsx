@@ -6,6 +6,7 @@ import { ITEM_TYPE_LABEL } from "@/lib/stock";
 import { idr } from "@/lib/money";
 import { Badge, Empty, FilterBar, Field, PageHeader, Stat } from "@/components/ui";
 import type { ItemType } from "@prisma/client";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Stok & Persediaan" };
 
@@ -55,7 +56,7 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
       </FilterBar>
       {rows.length === 0 ? <Empty title="Tidak ada item" /> : (
         <div className="table-wrap">
-          <table className="tbl">
+          <Paged><table className="tbl">
             <thead><tr><th>SKU</th><th>Nama</th><th>Jenis</th>{shownLocs.map((l) => <th key={l.id} className="num">{l.code}</th>)}<th className="num">Total</th><th className="num">Min</th>{user.can("stock.view") && <th className="num">Harga rata²</th>}<th /></tr></thead>
             <tbody>
               {rows.map((r) => (
@@ -71,7 +72,7 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></Paged>
         </div>
       )}
     </div>

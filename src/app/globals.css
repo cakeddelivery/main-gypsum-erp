@@ -47,34 +47,14 @@ dialog { @apply bg-white text-slate-800; }
   dialog .grid.grid-cols-2:not(.keep-cols) > .col-span-2, dialog .grid.grid-cols-3:not(.keep-cols) > [class*="col-span-"] { grid-column: auto; }
   .btn { min-height: 2.5rem; }
   .btn-sm { min-height: 2rem; }
-
-  /* Tabel jadi daftar kartu: tiap baris satu kartu, tiap sel diberi label kolom (lihat ResponsiveTables) */
-  .tbl:not(.tbl-keep) thead { display: none; }
-  .tbl:not(.tbl-keep), .tbl:not(.tbl-keep) > tbody, .tbl:not(.tbl-keep) > tfoot, .tbl:not(.tbl-keep) tr { display: block; width: 100%; }
-  .tbl:not(.tbl-keep) tr { @apply border-b border-slate-200 px-3 py-2.5; }
-  .tbl:not(.tbl-keep) > tbody > tr:last-child { border-bottom: 0; }
-  .tbl:not(.tbl-keep) > tfoot > tr { @apply bg-slate-50 font-semibold; }
-  .tbl:not(.tbl-keep) td { display: block; padding: 0.2rem 0; white-space: normal; text-align: right; overflow-wrap: anywhere; }
-  .tbl:not(.tbl-keep) td::after { content: ""; display: table; clear: both; }
-  .tbl:not(.tbl-keep) td::before { content: attr(data-label); float: left; @apply mr-4 pt-0.5 text-left text-xs font-medium text-slate-500; max-width: 45%; }
-  .tbl:not(.tbl-keep) td[data-label=""]::before { display: none; }
-  .tbl:not(.tbl-keep) td:first-child:not(:only-child) { @apply text-left font-semibold text-slate-900; }
-  .tbl:not(.tbl-keep) td:first-child::before { display: none; }
-  .tbl:not(.tbl-keep) td:empty { display: none; }
-  .tbl:not(.tbl-keep) td[colspan] { text-align: center; }
-
-  /* Saat diunduh JPG, kembalikan bentuk tabel asli */
-  .exporting { width: max-content; min-width: 100%; }
-  .exporting .tbl thead { display: table-header-group; }
-  .exporting .tbl { display: table; }
-  .exporting .tbl > tbody { display: table-row-group; }
-  .exporting .tbl > tfoot { display: table-footer-group; }
-  .exporting .tbl tr { display: table-row; padding: 0; }
-  .exporting .tbl td { display: table-cell; white-space: nowrap; padding: 0.5rem 0.75rem; }
-  .exporting .tbl td::before, .exporting .tbl td::after { display: none; }
 }
+
+/* Pagination tabel (lihat Paged); saat diunduh JPG / dicetak semua baris tampil */
+tr[data-pg-hidden] { display: none; }
+.exporting tr[data-pg-hidden] { display: table-row; }
 
 @media print {
   .no-print { display: none !important; }
+  tr[data-pg-hidden] { display: table-row; }
   body { background: white; }
 }

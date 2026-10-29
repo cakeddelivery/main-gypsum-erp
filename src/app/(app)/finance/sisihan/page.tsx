@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
@@ -9,6 +8,7 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { reserveAll, reserveOne, saveFund, withdraw } from "./actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Dana Sisihan Harian" };
 
@@ -47,7 +47,6 @@ export default async function SisihanPage() {
         subtitle="Kompensasi pengelola (owner) yang dicadangkan di ShopeePay dan dana cicilan pinjaman modal"
         actions={
           <>
-            <Link href="/finance" className="btn-secondary">← Finance</Link>
             <Modal trigger="+ Dana" triggerClass="btn-secondary" title="Dana sisihan baru">{fundForm()}</Modal>
             <ActionForm action={reserveAll}><input type="hidden" name="date" value={t} /><Submit pendingText="Mencatat…">Sisihkan semua hari ini</Submit></ActionForm>
           </>
@@ -62,7 +61,7 @@ export default async function SisihanPage() {
       {funds.length === 0 ? <Empty title="Belum ada dana sisihan" /> : (
         <Card title="Dana">
           <div className="overflow-x-auto">
-            <table className="tbl">
+            <Paged><table className="tbl">
               <thead><tr><th>Dana</th><th>Alur</th><th className="num">Per hari</th><th className="num">Bulan ini</th><th className="num">Saldo</th><th>Hari ini</th><th /></tr></thead>
               <tbody>
                 {funds.map((f) => (
@@ -97,7 +96,7 @@ export default async function SisihanPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></Paged>
           </div>
           <p className="mt-3 text-xs text-slate-500">Kompensasi owner dicatat sebagai beban (mengurangi laba) dan uangnya dipindah ke ShopeePay sebagai titipan owner sampai diambil. Tabungan cicilan hanya memindahkan uang; utang berkurang saat dibayarkan.</p>
         </Card>

@@ -7,6 +7,7 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
 import { saveGypsum, saveItem, saveLocation, saveSupplier } from "../actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Master Stok" };
 
@@ -70,7 +71,7 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
       <PageHeader title="Master data stok" subtitle="Item & SKU, supplier, lokasi, karakter gypsum" actions={add} />
       <Tabs current={tab} tabs={[{ key: "item", label: "Item & SKU", href: "?tab=item", count: items.length }, { key: "supplier", label: "Supplier", href: "?tab=supplier", count: suppliers.length }, { key: "lokasi", label: "Lokasi", href: "?tab=lokasi", count: locations.length }, { key: "gypsum", label: "Karakter gypsum", href: "?tab=gypsum", count: gypsum.length }]} />
       <div className="table-wrap">
-        <table className="tbl">
+        <Paged><table className="tbl">
           {tab === "item" && (<>
             <thead><tr><th>SKU</th><th>Nama</th><th>Jenis</th><th>Satuan</th><th className="num">Min</th><th className="num">Harga rata²</th><th>Supplier</th><th>Gypsum</th><th /></tr></thead>
             <tbody>{items.map((i) => <tr key={i.id} className={i.active ? "" : "opacity-50"}><td className="font-mono text-xs">{i.sku}</td><td>{i.name}</td><td><Badge>{ITEM_TYPE_LABEL[i.type]}</Badge></td><td>{i.unit}</td><td className="num">{Number(i.minStock)}</td><td className="num">{idr(i.avgCost)}</td><td>{i.supplier?.name}</td><td>{i.gypsumCharacter?.name}</td><td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah item">{itemForm(i)}</Modal></td></tr>)}</tbody>
@@ -87,7 +88,7 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
             <thead><tr><th>Nama</th><th>Rasio air</th><th>Waktu set</th><th>Kekerasan</th><th>Catatan</th><th /></tr></thead>
             <tbody>{gypsum.map((g) => <tr key={g.id}><td>{g.name}</td><td>{g.waterRatio}</td><td>{g.settingMinutes ? `${g.settingMinutes} menit` : "-"}</td><td>{g.hardness}</td><td>{g.note}</td><td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah karakter">{gypForm(g)}</Modal></td></tr>)}</tbody>
           </>)}
-        </table>
+        </table></Paged>
       </div>
     </div>
   );

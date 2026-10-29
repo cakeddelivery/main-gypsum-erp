@@ -6,6 +6,7 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
 import { saveTarget } from "../actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Target Produksi" };
 
@@ -39,7 +40,7 @@ export default async function TargetPage() {
       <PageHeader title="Target produksi" subtitle="Target harian per divisi atau per karyawan" actions={<Modal trigger="+ Target" title="Target baru">{form()}</Modal>} />
       {targets.length === 0 ? <Empty /> : (
         <div className="table-wrap">
-          <table className="tbl">
+          <Paged><table className="tbl">
             <thead><tr><th>Divisi</th><th>Karyawan</th><th>Tahap</th><th className="num">Target/hari</th><th>Status</th><th /></tr></thead>
             <tbody>
               {targets.map((t) => (
@@ -50,7 +51,7 @@ export default async function TargetPage() {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </table></Paged>
         </div>
       )}
     </div>

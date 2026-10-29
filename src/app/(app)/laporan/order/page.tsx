@@ -34,7 +34,7 @@ export default async function OrderBahanPage() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Order bahan baku" subtitle={`${total} bahan perlu diorder (stok akhir shift terakhir ≤ limit)`} actions={<Link href="/laporan" className="btn-secondary">← Laporan shift</Link>} />
+      <PageHeader title="Order bahan baku" subtitle={`${total} bahan perlu diorder (stok akhir shift terakhir ≤ limit)`} />
       {groups.length === 0 && <Empty title="Belum ada bahan baku divisi" />}
       <div className="grid gap-4 md:grid-cols-2">
         {groups.map(({ d, order, uncounted }) => (

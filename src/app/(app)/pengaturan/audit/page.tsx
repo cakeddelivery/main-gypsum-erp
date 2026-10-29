@@ -2,6 +2,7 @@ import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { fmtDateTime, jakartaDateTime } from "@/lib/time";
 import { FilterBar, Field, PageHeader } from "@/components/ui";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Audit Trail" };
 
@@ -30,10 +31,10 @@ export default async function AuditPage({ searchParams }: { searchParams: Promis
         <Field label="Sampai"><input type="date" name="to" defaultValue={sp.to} className="input" /></Field>
       </FilterBar>
       <div className="table-wrap">
-        <table className="tbl">
+        <Paged><table className="tbl">
           <thead><tr><th>Waktu</th><th>Pengguna</th><th>Aksi</th><th>Entitas</th><th>Data</th></tr></thead>
           <tbody>{logs.map((l) => <tr key={String(l.id)}><td>{fmtDateTime(l.at)}</td><td>{l.actorName ?? "-"}</td><td className="font-medium">{l.action}</td><td className="text-xs">{l.entity}<div className="font-mono text-slate-400">{l.entityId}</div></td><td className="max-w-md whitespace-pre-wrap break-all font-mono text-[11px] text-slate-500">{l.data ? JSON.stringify(l.data).slice(0, 300) : ""}</td></tr>)}</tbody>
-        </table>
+        </table></Paged>
       </div>
       <div className="mt-3 flex items-center justify-between text-sm">
         <span className="text-slate-500">{total.toLocaleString("id-ID")} catatan</span>

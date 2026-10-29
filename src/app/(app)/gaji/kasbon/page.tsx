@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
@@ -8,6 +7,7 @@ import { Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { createAdvance, repayAdvanceAction } from "../actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Kasbon Karyawan" };
 
@@ -30,7 +30,6 @@ export default async function KasbonPage() {
         subtitle="Kasbon dipotong otomatis dari slip gaji / klaim borongan berikutnya dan tampil di slip"
         actions={
           <>
-            <Link href="/gaji" className="btn-secondary">← Penggajian</Link>
             {canGive && (
               <Modal trigger="+ Kasbon" title="Kasbon baru">
                 <ModalForm action={createAdvance} className="grid grid-cols-2 gap-3">
@@ -55,7 +54,7 @@ export default async function KasbonPage() {
       {advances.length === 0 ? <Empty title="Belum ada kasbon" /> : (
         <Card title="Daftar kasbon">
           <div className="overflow-x-auto">
-            <table className="tbl">
+            <Paged><table className="tbl">
               <thead><tr><th>No.</th><th>Tanggal</th><th>Karyawan</th><th className="num">Nominal</th><th className="num">Cicilan</th><th className="num">Sudah dipotong</th><th className="num">Sisa</th><th>Status</th><th /></tr></thead>
               <tbody>
                 {advances.map((a) => {
@@ -81,7 +80,7 @@ export default async function KasbonPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </table></Paged>
           </div>
         </Card>
       )}

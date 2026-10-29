@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -7,6 +6,8 @@ import { dateStr, fmtDateTime, jakartaParts } from "@/lib/time";
 import { STATUS_LABEL, missingFields } from "@/lib/finance";
 import { Badge, Card, ErrorBox, Field, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
+import { Modal } from "@/components/Modal";
+import { ModalForm } from "@/components/ModalForm";
 import { TxForm } from "../TxForm";
 import { approveTx, rejectTx, submitTx, updateTx } from "../actions";
 
@@ -31,7 +32,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
   const ai = t.aiExtraction as { confidence?: number; missing?: string[] } | null;
   return (
     <div className="space-y-5">
-      <PageHeader title={`Transaksi ${t.number}`} subtitle={`${idr(t.amount)} · ${fmtDateTime(t.date)} · dibuat ${t.createdBy}`} actions={<Link href="/finance" className="btn-secondary">← Inbox</Link>} />
+      <PageHeader title={`Transaksi ${t.number}`} subtitle={`${idr(t.amount)} · ${fmtDateTime(t.date)} · dibuat ${t.createdBy}`} />
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={t.status === "DIBUKUKAN" ? "green" : t.status === "DITOLAK" ? "red" : t.status === "MENUNGGU_KONFIRMASI" ? "blue" : "amber"}>{STATUS_LABEL[t.status]}</Badge>
         <Badge>{t.source}</Badge>
@@ -43,12 +44,11 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
       {editable && missing.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">Data belum lengkap: {missing.join(", ")}</div>}
       <div className="grid gap-5 lg:grid-cols-3">
         <div className="space-y-5 lg:col-span-2">
-          {editable && user.can("finance.create") ? (
-            <Card title="Data transaksi">
+          <Card title="Data transaksi" actions={editable && user.can("finance.create") && (
+            <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah transaksi" wide>
               <TxForm mode="edit" action={updateTx} banks={banks} categories={categories} stores={stores} init={{ id: t.id, direction: t.direction, amount: Number(t.amount), date: dateStr(new Date(Date.UTC(p.year, p.month - 1, p.day))), time: `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`, accountId: t.accountId, toAccountId: t.toAccountId, categoryId: t.categoryId, storeId: t.storeId, counterparty: t.counterparty, note: t.note }} />
-            </Card>
-          ) : (
-            <Card title="Data transaksi">
+            </Modal>
+          )}>
               <dl className="grid grid-cols-2 gap-y-2 text-sm">
                 <dt className="text-slate-500">Jenis</dt><dd>{t.direction}</dd>
                 <dt className="text-slate-500">Rekening</dt><dd>{banks.find((b) => b.id === t.accountId)?.name}{t.toAccountId && ` → ${banks.find((b) => b.id === t.toAccountId)?.name}`}</dd>
@@ -56,8 +56,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
                 <dt className="text-slate-500">Pihak terkait</dt><dd>{t.counterparty ?? "—"}</dd>
                 <dt className="text-slate-500">Catatan</dt><dd>{t.note ?? "—"}</dd>
               </dl>
-            </Card>
-          )}
+          </Card>
           {t.rawText && <Card title="Pesan asli"><p className="whitespace-pre-wrap text-sm text-slate-600">{t.rawText}</p></Card>}
           {journal && (
             <Card title={`Jurnal ${journal.number}`}>
@@ -87,7 +86,9 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
                 )}
                 {t.status === "MENUNGGU_KONFIRMASI" && !user.can("finance.approve") && <p className="text-sm text-slate-500">Menunggu persetujuan pihak berwenang (Owner/Finance).</p>}
                 {(user.can("finance.review") || user.can("finance.approve")) && (
-                  <ActionForm action={rejectTx} className="space-y-2"><input type="hidden" name="id" value={t.id} /><Field label="Alasan penolakan"><input name="reason" className="input" required /></Field><Submit className="btn-danger w-full">Tolak</Submit></ActionForm>
+                  <Modal trigger="Tolak" triggerClass="btn-danger w-full" title="Tolak transaksi">
+                    <ModalForm action={rejectTx} className="space-y-3"><input type="hidden" name="id" value={t.id} /><Field label="Alasan penolakan"><input name="reason" className="input" required /></Field><Submit className="btn-danger">Tolak transaksi</Submit></ModalForm>
+                  </Modal>
                 )}
               </div>
             </Card>

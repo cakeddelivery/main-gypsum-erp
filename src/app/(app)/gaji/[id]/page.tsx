@@ -9,6 +9,7 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { adjustSlip, approve, cancelClaim, compute, pay } from "../actions";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Periode Penggajian" };
 
@@ -30,7 +31,6 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
         subtitle={`${p.kind === "BULANAN" ? "Gaji bulanan" : p.kind === "BORONGAN" ? "Klaim borongan" : "Upah harian/campuran"} · ${fmtDay(p.startDate)} – ${fmtDay(p.endDate)}${p.payDate ? ` · gajian ${fmtDay(p.payDate)}` : ""}`}
         actions={
           <>
-            <Link href="/gaji" className="btn-secondary">← Kembali</Link>
             {p.status === "DRAFT" && user.can("payroll.manage") && <ActionForm action={compute}><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary" pendingText="Menghitung…">Hitung ulang</Submit></ActionForm>}
             {p.kind === "BORONGAN" && p.status === "DRAFT" && user.can("payroll.manage") && <ActionForm action={cancelClaim} confirm="Batalkan klaim ini? Hasil borongan kembali menjadi belum diklaim."><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary">Batalkan klaim</Submit></ActionForm>}
             {p.status === "DRAFT" && user.can("payroll.approve") && p.payslips.length > 0 && <ActionForm action={approve} confirm="Setujui penggajian ini? Slip tidak bisa dihitung ulang setelah disetujui."><input type="hidden" name="id" value={p.id} /><Submit className="btn-success">Setujui</Submit></ActionForm>}
@@ -59,7 +59,7 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
       {p.payslips.length === 0 ? <Empty title="Belum ada slip" hint={p.kind === "BULANAN" ? "Belum ada karyawan bulanan yang siklusnya cocok dengan periode ini." : "Klik Hitung ulang untuk menghitung dari absensi tervalidasi, hasil borongan, dan transport."} /> : (
         <Card title="Slip gaji">
           <div className="overflow-x-auto">
-            <table className="tbl">
+            <Paged><table className="tbl">
               <thead><tr><th>Karyawan</th><th>Divisi</th><th className="num">Hadir</th>{p.kind === "BULANAN" && <><th className="num">Libur</th><th className="num">Bolos</th><th className="num">Gaji pokok</th></>}<th className="num">Harian</th><th className="num">Borongan</th><th className="num">Transport</th><th className="num">Bonus</th><th className="num">Potongan</th><th className="num">Kasbon</th><th className="num">Total</th><th /></tr></thead>
               <tbody>
                 {p.payslips.map((s) => (
@@ -81,7 +81,7 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </table></Paged>
           </div>
         </Card>
       )}
