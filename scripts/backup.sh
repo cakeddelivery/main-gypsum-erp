@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Backup database (pg_dump format custom) ke ./backups, simpan 14 hari terakhir.
 set -euo pipefail
+cd "$(dirname "$0")/.."
+# Muat .env bila DATABASE_URL belum ada di environment (mis. dijalankan dari cron)
+if [ -z "${DATABASE_URL:-}" ] && [ -f .env ]; then set -a; . ./.env; set +a; fi
 : "${DATABASE_URL:?DATABASE_URL belum diatur}"
 mkdir -p backups
 FILE="backups/mg-erp-$(date +%Y%m%d-%H%M%S).dump"
