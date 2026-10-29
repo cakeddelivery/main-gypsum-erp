@@ -21,13 +21,13 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
       <dialog
         ref={ref}
         onClose={() => setOpen(false)}
-        className={`w-[calc(100%-1.5rem)] ${wide ? "max-w-3xl" : "max-w-lg"} rounded-2xl p-0 shadow-xl backdrop:bg-slate-900/40`}
+        className={`w-[calc(100%-1.5rem)] ${wide ? "max-w-3xl" : "max-w-lg"} rounded-2xl bg-white p-0 text-slate-800 shadow-xl backdrop:bg-slate-900/50`}
       >
         {open && (
           <Ctx.Provider value={() => setOpen(false)}>
             <div className="flex items-center justify-between border-b border-slate-200 px-5 py-3">
               <h2 className="font-semibold">{title}</h2>
-              <button type="button" aria-label="Tutup" className="rounded p-1 text-slate-500 hover:bg-slate-100" onClick={() => setOpen(false)}>
+              <button type="button" aria-label="Tutup" className="rounded p-1 text-slate-600 hover:bg-slate-100" onClick={() => setOpen(false)}>
                 ✕
               </button>
             </div>

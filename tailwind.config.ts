@@ -1,12 +1,30 @@
 import type { Config } from "tailwindcss";
+import plugin from "tailwindcss/plugin";
+import { BRAND, tailwindTokens, themeVars } from "./src/lib/themePalette";
+
+const bd = tailwindTokens("bd");
+const tx = tailwindTokens("tx");
+
 export default {
   content: ["./src/**/*.{ts,tsx}"],
+  darkMode: ["selector", '[data-theme="dark"]'],
   theme: {
     extend: {
-      colors: {
-        brand: { 50: "#f0f7ff", 100: "#dcecff", 500: "#2f6fde", 600: "#2559b8", 700: "#1d4690", 900: "#13294f" },
-      },
+      colors: { brand: BRAND },
+      // Latar, teks, dan garis memakai variable yang ditukar saat mode malam, lihat src/lib/themePalette.ts
+      backgroundColor: tailwindTokens("bg"),
+      textColor: tx,
+      borderColor: bd,
+      ringColor: bd,
+      placeholderColor: tx,
     },
   },
-  plugins: [],
+  plugins: [
+    plugin(({ addBase }) => {
+      addBase({
+        ":root, .theme-light": themeVars("light"),
+        '[data-theme="dark"]': themeVars("dark"),
+      });
+    }),
+  ],
 } satisfies Config;

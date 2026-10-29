@@ -81,7 +81,7 @@ export function Tabs({ tabs, current }: { tabs: { href: string; label: string; c
           className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium ${t.key === current ? "bg-brand-600 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"}`}
         >
           {t.label}
-          {t.count !== undefined && <span className={`ml-1.5 rounded-full px-1.5 text-xs ${t.key === current ? "bg-white/20" : "bg-slate-100"}`}>{t.count}</span>}
+          {t.count !== undefined && <span className={`ml-1.5 rounded-full px-1.5 text-xs ${t.key === current ? "bg-brand-800" : "bg-slate-100"}`}>{t.count}</span>}
         </Link>
       ))}
     </div>
@@ -91,9 +91,9 @@ export function Tabs({ tabs, current }: { tabs: { href: string; label: string; c
 /** Form filter berbasis query string (GET) — tetap jalan tanpa JavaScript */
 export function FilterBar({ children }: { children: React.ReactNode }) {
   return (
-    <form className="no-print mb-4 flex flex-wrap items-end gap-2 rounded-xl border border-slate-200 bg-white p-3" method="get">
+    <form className="no-print mb-4 grid grid-cols-2 items-end gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:flex sm:flex-wrap" method="get">
       {children}
-      <button className="btn-secondary" type="submit">
+      <button className="btn-secondary col-span-2" type="submit">
         Terapkan
       </button>
     </form>

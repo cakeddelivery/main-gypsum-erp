@@ -3,8 +3,21 @@
 @tailwind utilities;
 
 :root { color-scheme: light; }
+[data-theme="dark"] { color-scheme: dark; }
 html { -webkit-tap-highlight-color: transparent; }
-body { @apply bg-slate-50 text-slate-800 antialiased; }
+body { @apply bg-page text-slate-800 antialiased; }
+/* Area yang selalu tampil terang (mis. saat diunduh sebagai JPG) */
+.theme-light { color-scheme: light; @apply text-slate-800; }
+dialog { @apply bg-white text-slate-800; }
+
+/* Grafik (Recharts) mengikuti tema */
+.recharts-cartesian-grid line { stroke: rgb(var(--bd-slate-200)); }
+.recharts-cartesian-axis-tick-value { fill: rgb(var(--tx-slate-500)); }
+.recharts-cartesian-axis-line, .recharts-cartesian-axis-tick-line { stroke: rgb(var(--bd-slate-300)); }
+.recharts-default-tooltip { background-color: rgb(var(--bg-white)) !important; border-color: rgb(var(--bd-slate-200)) !important; border-radius: 0.5rem; }
+.recharts-legend-item-text { color: rgb(var(--tx-slate-600)) !important; }
+.recharts-tooltip-label { color: rgb(var(--tx-slate-800)); }
+.recharts-rectangle.recharts-tooltip-cursor { fill: rgb(var(--bg-slate-100)); }
 
 @layer components {
   .input { @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-100; }
