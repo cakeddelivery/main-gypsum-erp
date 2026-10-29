@@ -12,6 +12,7 @@ export const saveEmployee = action(
   async (fd, user) => {
     const id = optStr(fd, "id");
     const join = str(fd, "joinDate");
+    const resign = str(fd, "resignDate");
     const data = {
       code: z.string().min(2, "Kode wajib").parse(str(fd, "code").toUpperCase()),
       name: z.string().min(2, "Nama wajib").parse(str(fd, "name")),
@@ -22,7 +23,12 @@ export const saveEmployee = action(
       dailyRate: BigInt(int(fd, "dailyRate")),
       phone: optStr(fd, "phone"),
       joinDate: join ? dateOnly(join) : null,
+      monthlySalary: BigInt(int(fd, "monthlySalary")),
+      resignDate: resign ? dateOnly(resign) : null,
     };
+    if (data.wageType === "BULANAN" && !data.joinDate) throw new Error("Karyawan bulanan wajib punya tanggal masuk (dasar tanggal gajian)");
+    if (data.wageType === "BULANAN" && data.monthlySalary <= BigInt(0)) throw new Error("Isi gaji bulanan");
+    if (resign && join && resign < join) throw new Error("Tanggal resign tidak boleh sebelum tanggal masuk");
     const e = id ? await prisma.employee.update({ where: { id }, data }) : await prisma.employee.create({ data });
     if (data.status === "NONAKTIF") await prisma.user.updateMany({ where: { employeeId: e.id }, data: { active: false } });
     await audit(user, id ? "KARYAWAN_DIUBAH" : "KARYAWAN_DIBUAT", "Employee", e.id, data);

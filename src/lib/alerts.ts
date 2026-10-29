@@ -39,6 +39,25 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
   if (can("payroll.approve")) {
     tasks.push(prisma.payrollPeriod.count({ where: { status: { in: ["DRAFT", "DISETUJUI"] }, payslips: { some: {} } } }).then((c) => void (c && out.push({ key: "payroll", label: "Penggajian menunggu persetujuan/pembayaran", count: c, href: "/gaji", tone: "blue" }))));
   }
+  if (can("finance.approve")) {
+    tasks.push(
+      (async () => {
+        const [funds, done] = await Promise.all([prisma.reserveFund.count({ where: { active: true } }), prisma.reserveEntry.count({ where: { date: dateOnly(today), type: "SISIH", fund: { active: true } } })]);
+        if (funds > done) out.push({ key: "reserve", label: "Dana sisihan hari ini belum dicatat", count: funds - done, href: "/finance/sisihan", tone: "amber" });
+      })(),
+    );
+  }
+  if (can("accounting.view")) {
+    tasks.push(
+      prisma.payable.findMany({ where: { dueDate: { lte: new Date(Date.now() + 7 * 86400000) } }, select: { amount: true, paid: true } }).then((rows) => {
+        const due = rows.filter((r) => r.paid < r.amount).length;
+        if (due) out.push({ key: "payable", label: "Utang jatuh tempo ≤ 7 hari", count: due, href: "/akuntansi/piutang-utang?tab=utang", tone: "red" });
+      }),
+    );
+  }
+  if (can("payroll.approve")) {
+    tasks.push(prisma.payrollPeriod.count({ where: { status: { not: "DIBAYAR" }, payDate: { lte: dateOnly(today) }, payslips: { some: {} } } }).then((c) => void (c && out.push({ key: "payday", label: "Gaji sudah jatuh tanggal gajian", count: c, href: "/gaji", tone: "red" }))));
+  }
   await Promise.all(tasks);
   return out;
 }

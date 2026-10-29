@@ -9,7 +9,7 @@ import { ModalForm } from "@/components/ModalForm";
 import { checkIn, checkOut, saveAttendance, saveSchedule, validateAttendance } from "./actions";
 
 export const metadata = { title: "Absensi" };
-const TONE = { HADIR: "green", TERLAMBAT: "amber", IZIN: "blue", SAKIT: "purple", ALPA: "red" } as const;
+const TONE = { HADIR: "green", TERLAMBAT: "amber", IZIN: "blue", SAKIT: "purple", ALPA: "red", LIBUR: "gray" } as const;
 
 export default async function AbsensiPage({ searchParams }: { searchParams: Promise<{ tab?: string; date?: string }> }) {
   const user = await requirePerm("attendance.view", "attendance.self");

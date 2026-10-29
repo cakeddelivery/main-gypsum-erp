@@ -173,3 +173,76 @@ describe("Penggajian → keuangan", () => {
     expect(j.number).toMatch(/^JU-/);
   });
 });
+
+describe("Aturan bisnis: gaji bulanan, kasbon, borongan, pembelian, sisihan", () => {
+  it("slip bulanan otomatis H+7, kasbon dipotong, resign = Rp0", async () => {
+    const { generateMonthlyPayroll, giveAdvance } = await import("@/lib/payroll");
+    const div = await prisma.division.findFirstOrThrow();
+    const shift = await prisma.shift.findUniqueOrThrow({ where: { code: "S1" } });
+    const a = await prisma.employee.create({ data: { code: "B001", name: "Bulanan A", divisionId: div.id, position: "Staf", wageType: "BULANAN", monthlySalary: BigInt(2_600_000), joinDate: dateOnly("2026-05-10") } });
+    const b = await prisma.employee.create({ data: { code: "B002", name: "Bulanan B", divisionId: div.id, position: "Staf", wageType: "BULANAN", monthlySalary: BigInt(2_600_000), joinDate: dateOnly("2026-05-10"), resignDate: dateOnly("2026-11-12") } });
+    // A hadir semua kecuali 2 hari di minggu pertama (1 libur + 1 bolos)
+    for (let i = 0; i < 31; i++) {
+      const day = new Date(Date.UTC(2026, 9, 10 + i)).toISOString().slice(0, 10);
+      if (i === 1 || i === 2) continue;
+      await prisma.attendance.create({ data: { employeeId: a.id, shiftId: shift.id, date: dateOnly(day), status: "HADIR", validated: true } });
+    }
+    await giveAdvance({ employeeId: a.id, amount: 500_000, installment: 200_000, bankAccountId: bank.SEABANK, storeId, date: "2026-10-20" }, actor);
+    const r = await generateMonthlyPayroll(actor, d("2026-11-10"));
+    expect(r.created).toEqual(["GJB-20261109"]);
+    expect((await generateMonthlyPayroll(actor, d("2026-11-11"))).created).toEqual([]);
+    const p = await prisma.payrollPeriod.findUniqueOrThrow({ where: { code: "GJB-20261109" }, include: { payslips: true } });
+    expect(p.payDate?.toISOString().slice(0, 10)).toBe("2026-11-17");
+    const sa = p.payslips.find((x) => x.employeeId === a.id)!;
+    expect(sa).toMatchObject({ offDays: 1, absentDays: 1 });
+    expect(Number(sa.deduction)).toBe(100_000);
+    expect(Number(sa.advanceDeduction)).toBe(200_000);
+    expect(Number(sa.total)).toBe(2_600_000 - 100_000 - 200_000);
+    expect(Number(p.payslips.find((x) => x.employeeId === b.id)!.total)).toBe(0);
+    await approvePeriod(p.id, actor);
+    await payPeriod(p.id, bank.SEABANK, storeId, actor, d("2026-11-17"));
+    const adv = await prisma.cashAdvance.findFirstOrThrow({ where: { employeeId: a.id } });
+    expect(Number(adv.repaid)).toBe(200_000);
+    const bs = await balanceSheet(new Date("2027-01-01"));
+    expect(bs.balanced).toBe(true);
+  });
+
+  it("klaim borongan per piece", async () => {
+    const { createPieceClaim } = await import("@/lib/payroll");
+    const emp = await prisma.employee.findUniqueOrThrow({ where: { code: "K003" } });
+    const task = await prisma.pieceTask.findUniqueOrThrow({ where: { code: "CAT_GIFTBOX" } });
+    const plastik = await prisma.pieceTask.findUniqueOrThrow({ where: { code: "CAT_PLASTIK" } });
+    await prisma.pieceWork.create({ data: { employeeId: emp.id, taskId: task.id, date: dateOnly("2026-10-05"), qty: 300, rate: task.ratePerPcs, amount: task.ratePerPcs * BigInt(300), createdBy: "uji" } });
+    await prisma.pieceWork.create({ data: { employeeId: emp.id, taskId: plastik.id, date: dateOnly("2026-10-06"), qty: 1000, rate: plastik.ratePerPcs, amount: plastik.ratePerPcs * BigInt(1000), createdBy: "uji" } });
+    const p = await createPieceClaim(emp.id, "2026-10-06", actor);
+    const slip = await prisma.payslip.findFirstOrThrow({ where: { periodId: p.id } });
+    expect(Number(slip.total)).toBe(300 * 100 + 1000 * 15);
+    await expect(createPieceClaim(emp.id, "2026-10-06", actor)).rejects.toThrow(/belum diklaim/);
+  });
+
+  it("pembelian bertahap: stok masuk, DP keluar, sisa jadi utang", async () => {
+    const { createPurchase } = await import("@/lib/purchase");
+    const item = await prisma.item.findUniqueOrThrow({ where: { sku: "BB-GYP" } });
+    const p = await createPurchase({ storeId, vendor: "Supplier Uji", date: d("2026-10-07"), term: "BERTAHAP", paidNow: 100_000, bankAccountId: bank.SEABANK, dueDate: d("2026-11-07"), lines: [{ itemId: item.id, qty: 100, unitCost: 4500 }] }, actor);
+    expect(Number(p.total)).toBe(450_000);
+    const pay = await prisma.payable.findUniqueOrThrow({ where: { id: p.payableId! } });
+    expect(Number(pay.amount)).toBe(350_000);
+    expect(await prisma.stockMovement.count({ where: { ref: p.number } })).toBe(1);
+  });
+
+  it("sisihan owner harian & analitik", async () => {
+    const { postAllReserves, withdrawReserve, fundBalance } = await import("@/lib/reserve");
+    const { businessSnapshot, ruleInsights } = await import("@/lib/analytics");
+    const r = await postAllReserves("2026-10-08", actor);
+    expect(r).toEqual({ count: 2, total: 200_000 });
+    expect((await postAllReserves("2026-10-08", actor)).count).toBe(0);
+    const fund = await prisma.reserveFund.findFirstOrThrow({ where: { kind: "OWNER" } });
+    await withdrawReserve(fund.id, 100_000, "2026-10-09", actor);
+    expect(await fundBalance(prisma, fund.id)).toBe(0);
+    const pl = await profitLoss({ start: monthRange(2026, 10).start, end: monthRange(2026, 10).end });
+    expect(pl.expenses.find((e) => e.code === COA.BEBAN_GAJI_OWNER)?.amount).toBe(200_000);
+    const s = await businessSnapshot(d("2026-10-15"));
+    expect(s.series).toHaveLength(12);
+    expect(ruleInsights(s).length).toBeGreaterThan(0);
+  });
+});

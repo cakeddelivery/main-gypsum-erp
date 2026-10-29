@@ -35,7 +35,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
   const qs = (s?: string) => { const u = new URLSearchParams(Object.entries({ ...sp, status: s }).filter(([, v]) => v) as [string, string][]); return `/finance?${u}`; };
   return (
     <div>
-      <PageHeader title="Finance Inbox" subtitle="Transaksi dari input manual, Telegram, dan ekstraksi AI · IDR · WIB" actions={user.can("finance.create") && <Link href="/finance/baru" className="btn-primary">+ Transaksi</Link>} />
+      <PageHeader title="Finance Inbox" subtitle="Transaksi dari input manual, Telegram, dan ekstraksi AI · IDR · WIB" actions={<>{user.can("finance.approve") && <Link href="/finance/sisihan" className="btn-secondary">Dana sisihan</Link>}{user.can("finance.create") && <Link href="/finance/baru" className="btn-primary">+ Transaksi</Link>}</>} />
       <Tabs current={status ?? "ALL"} tabs={[{ key: "ALL", label: "Semua", href: qs(undefined), count: counts.reduce((s, c) => s + c._count, 0) }, ...STATUSES.map((s) => ({ key: s, label: STATUS_LABEL[s], href: qs(s), count: counts.find((c) => c.status === s)?._count ?? 0 }))]} />
       <FilterBar>
         {status && <input type="hidden" name="status" value={status} />}

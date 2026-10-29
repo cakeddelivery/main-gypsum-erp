@@ -128,6 +128,7 @@ enum WageType {
   HARIAN
   BORONGAN
   CAMPURAN
+  BULANAN
 }
 
 model Employee {
@@ -140,8 +141,12 @@ model Employee {
   status      EmployeeStatus @default(AKTIF)
   wageType    WageType       @default(HARIAN)
   dailyRate   BigInt         @default(0)
+  /// Gaji pokok per siklus bulanan (jenis upah BULANAN)
+  monthlySalary BigInt       @default(0)
   phone       String?
   joinDate    DateTime?
+  /// Tanggal resign; resign sebelum tanggal gajian = slip siklus itu Rp0
+  resignDate  DateTime?      @db.Date
   user        User?
   attendances Attendance[]
   schedules   ShiftSchedule[]
@@ -149,6 +154,8 @@ model Employee {
   targets     ProductionTarget[]
   payslips    Payslip[]
   transportTrips TransportTrip[]
+  pieceWorks  PieceWork[]
+  advances    CashAdvance[]
 }
 
 model ShiftSchedule {
@@ -167,6 +174,7 @@ enum AttendanceStatus {
   IZIN
   SAKIT
   ALPA
+  LIBUR
 }
 
 model Attendance {
@@ -203,6 +211,60 @@ model TransportTrip {
   note       String?
 }
 
+/// PERIODE = periode manual (harian/campuran), BULANAN = siklus H+7 otomatis, BORONGAN = klaim pekerja borongan
+enum PayrollKind {
+  PERIODE
+  BULANAN
+  BORONGAN
+}
+
+/// Kasbon karyawan: dipotong dari gaji berikutnya (cicilan per slip, 0 = langsung lunas)
+model CashAdvance {
+  id                String   @id @default(cuid())
+  number            String   @unique
+  employeeId        String
+  employee          Employee @relation(fields: [employeeId], references: [id])
+  date              DateTime @db.Date
+  amount            BigInt
+  installment       BigInt   @default(0)
+  repaid            BigInt   @default(0)
+  paidFromAccountId String
+  note              String?
+  journalId         String?
+  createdBy         String
+  createdAt         DateTime @default(now())
+  @@index([employeeId])
+}
+
+/// Jenis tugas borongan (dibayar per piece), tarif bisa diubah
+model PieceTask {
+  id         String      @id @default(cuid())
+  code       String      @unique
+  name       String
+  ratePerPcs BigInt
+  active     Boolean     @default(true)
+  works      PieceWork[]
+}
+
+/// Hasil kerja borongan per pekerja; periodId terisi setelah diklaim
+model PieceWork {
+  id         String         @id @default(cuid())
+  employeeId String
+  employee   Employee       @relation(fields: [employeeId], references: [id])
+  taskId     String
+  task       PieceTask      @relation(fields: [taskId], references: [id])
+  date       DateTime       @db.Date
+  qty        Int
+  rate       BigInt
+  amount     BigInt
+  note       String?
+  periodId   String?
+  period     PayrollPeriod? @relation(fields: [periodId], references: [id], onDelete: SetNull)
+  createdBy  String
+  createdAt  DateTime       @default(now())
+  @@index([employeeId, periodId])
+}
+
 enum PayrollStatus {
   DRAFT
   DISETUJUI
@@ -215,12 +277,18 @@ model PayrollPeriod {
   startDate  DateTime      @db.Date
   endDate    DateTime      @db.Date
   status     PayrollStatus @default(DRAFT)
+  kind       PayrollKind   @default(PERIODE)
+  /// Tanggal gajian (siklus bulanan: H+7)
+  payDate    DateTime?     @db.Date
+  /// Klaim borongan: pekerja yang mengklaim
+  employeeId String?
   approvedBy String?
   paidAt     DateTime?
   paidFromAccountId String?
   journalId  String?
   createdAt  DateTime      @default(now())
   payslips   Payslip[]
+  pieceWorks PieceWork[]
 }
 
 model Payslip {
@@ -230,12 +298,20 @@ model Payslip {
   employeeId   String
   employee     Employee      @relation(fields: [employeeId], references: [id])
   daysPresent  Int
+  /// Gaji bulanan: gaji pokok, hari tidak masuk dalam jatah libur, dan hari bolos
+  baseSalary   BigInt        @default(0)
+  offDays      Int           @default(0)
+  absentDays   Int           @default(0)
+  note         String?
   dailyWage    BigInt
   pieceWage    BigInt
   pieceDetail  Json
   transport    BigInt
   bonus        BigInt        @default(0)
   deduction    BigInt        @default(0)
+  /// Potongan kasbon pada slip ini; rincian [{id, number, amount}]
+  advanceDeduction BigInt    @default(0)
+  advanceDetail    Json      @default("[]")
   total        BigInt
   @@unique([periodId, employeeId])
 }
@@ -338,6 +414,7 @@ model Supplier {
   address String?
   items   Item[]
   payables Payable[]
+  purchases Purchase[]
 }
 
 model GypsumCharacter {
@@ -377,6 +454,7 @@ model Item {
   bomLines    BomLine[]
   requests    StockRequest[]
   product     Product?         @relation("ProductFinishedItem")
+  purchaseLines PurchaseLine[]
 }
 
 enum MovementType {
@@ -702,9 +780,16 @@ model Receivable {
   createdAt DateTime @default(now())
 }
 
+enum PayableKind {
+  USAHA
+  PINJAMAN
+}
+
 model Payable {
   id         String    @id @default(cuid())
   number     String    @unique
+  /// USAHA = utang supplier, PINJAMAN = pinjaman modal
+  kind       PayableKind @default(USAHA)
   supplierId String?
   supplier   Supplier? @relation(fields: [supplierId], references: [id])
   vendor     String
@@ -734,4 +819,80 @@ model FixedAsset {
 model Counter {
   key   String @id
   value Int
+}
+
+// ============ PEMBELIAN & GAJI OWNER ============
+
+enum PaymentTerm {
+  LUNAS
+  BERTAHAP
+  TEMPO
+}
+
+/// Pembelian bahan baku: menambah stok, membayar sebagian/seluruhnya, sisa menjadi utang usaha
+model Purchase {
+  id            String         @id @default(cuid())
+  number        String         @unique
+  supplierId    String?
+  supplier      Supplier?      @relation(fields: [supplierId], references: [id])
+  vendor        String
+  storeId       String
+  date          DateTime
+  term          PaymentTerm
+  total         BigInt
+  paidNow       BigInt         @default(0)
+  bankAccountId String?
+  payableId     String?
+  journalId     String?
+  note          String?
+  createdBy     String
+  createdAt     DateTime       @default(now())
+  lines         PurchaseLine[]
+}
+
+model PurchaseLine {
+  id         String   @id @default(cuid())
+  purchaseId String
+  purchase   Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  itemId     String
+  item       Item     @relation(fields: [itemId], references: [id])
+  qty        Decimal  @db.Decimal(14, 3)
+  unitCost   BigInt
+  amount     BigInt
+}
+
+/// Dana sisihan harian: kompensasi owner (dicadangkan di ShopeePay) dan dana cicilan pinjaman modal
+enum ReserveKind {
+  OWNER
+  LOAN_SAVING
+  LOAN_PAYMENT
+}
+
+model ReserveFund {
+  id          String         @id @default(cuid())
+  name        String
+  kind        ReserveKind
+  dailyAmount BigInt
+  fromBankId  String
+  toBankId    String?
+  payableId   String?
+  storeId     String
+  active      Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  entries     ReserveEntry[]
+}
+
+/// SISIH = penyisihan harian; TARIK = owner mengambil / dana dipakai membayar pinjaman
+model ReserveEntry {
+  id        String      @id @default(cuid())
+  fundId    String
+  fund      ReserveFund @relation(fields: [fundId], references: [id])
+  date      DateTime    @db.Date
+  type      String
+  amount    BigInt
+  journalId String?
+  note      String?
+  createdBy String
+  createdAt DateTime    @default(now())
+  @@index([fundId, date])
 }
