@@ -59,3 +59,31 @@ describe("Pembelian & sisihan", () => {
     expect(growth(5, 0)).toBeNull();
   });
 });
+
+describe("Go-live, tunjangan, satuan HPP", async () => {
+  const { attendanceStart, allowancePeriodFor, sumAllowances } = await import("@/lib/payroll");
+  const u = await import("@/lib/unitcost");
+  it("go-live memotong awal hitungan absen", () => {
+    expect(attendanceStart("2026-10-10", "2026-11-09", null)).toBe("2026-10-10");
+    expect(attendanceStart("2026-10-10", "2026-11-09", "2026-10-01")).toBe("2026-10-10");
+    expect(attendanceStart("2026-10-10", "2026-11-09", "2026-10-29")).toBe("2026-10-29");
+    expect(attendanceStart("2026-10-10", "2026-11-09", "2026-11-20")).toBeNull();
+  });
+  it("periode tunjangan tanggal 15 (dan akhir bulan bila lebih pendek)", () => {
+    expect(allowancePeriodFor("2026-11-14")).toMatchObject({ code: "TNJ-202611", payDate: "2026-11-15", due: false });
+    expect(allowancePeriodFor("2026-11-15")).toMatchObject({ due: true });
+    expect(allowancePeriodFor("2027-02-28", 31)).toMatchObject({ payDate: "2027-02-28", due: true });
+    expect(sumAllowances([{ name: "A", amount: 100, active: true }, { name: "B", amount: BigInt(50), active: false }])).toEqual({ total: 100, detail: [{ name: "A", amount: 100 }] });
+  });
+  it("konversi sak → gram dan tren harga", () => {
+    const gyp = { unit: "sak", hppUnit: "gram", hppFactor: 18000, avgCost: 40000, lastCost: 43000, prevCost: 40000 };
+    expect(u.recipeUnit(gyp)).toBe("gram");
+    expect(u.bomStockQty(9000, gyp)).toBe(0.5);
+    expect(u.costPerRecipeUnit(u.latestCost(gyp), gyp)).toBeCloseTo(2.3889, 3);
+    expect(u.trendOf(43000, 40000)).toEqual({ dir: "NAIK", diff: 3000, pct: 7.5 });
+    expect(u.trendOf(40000, 43000).dir).toBe("TURUN");
+    expect(u.trendOf(1, 1).dir).toBe("TETAP");
+    const plain: import("@/lib/unitcost").CostItem = { unit: "pcs", avgCost: 150 };
+    expect([u.recipeUnit(plain), u.bomStockQty(2, plain), u.latestCost(plain), u.previousCost(plain)]).toEqual(["pcs", 2, 150, 150]);
+  });
+});

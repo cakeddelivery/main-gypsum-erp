@@ -30,19 +30,20 @@ export default async function SlipPage({ params }: { params: Promise<{ id: strin
       <div id="slip" className="mx-auto max-w-md rounded-xl border border-slate-200 bg-white p-6 text-sm">
         <div className="border-b pb-3 text-center">
           <div className="text-xs font-semibold uppercase tracking-wide text-brand-600">Main Gypsum</div>
-          <div className="text-lg font-semibold">Slip Gaji</div>
+          <div className="text-lg font-semibold">{s.period.kind === "TUNJANGAN" ? "Slip Tunjangan" : "Slip Gaji"}</div>
           <div className="text-slate-500">{fmtDay(s.period.startDate)} – {fmtDay(s.period.endDate)}</div>
         </div>
         <div className="grid grid-cols-2 gap-y-1 border-b py-3">
           <span className="text-slate-500">Nama</span><span>{s.employee.name}</span>
           <span className="text-slate-500">Kode</span><span>{s.employee.code}</span>
           <span className="text-slate-500">Divisi</span><span>{s.employee.division.name}</span>
-          <span className="text-slate-500">Hari hadir</span><span>{s.daysPresent} hari</span>
+          {s.period.kind !== "TUNJANGAN" && <><span className="text-slate-500">Hari hadir</span><span>{s.daysPresent} hari</span></>}
           {s.period.kind === "BULANAN" && <><span className="text-slate-500">Libur (jatah)</span><span>{s.offDays} hari</span><span className="text-slate-500">Bolos</span><span>{s.absentDays} hari</span></>}
-          {s.period.payDate && <><span className="text-slate-500">Tanggal gajian</span><span>{fmtDay(s.period.payDate)}</span></>}
+          {s.period.payDate && <><span className="text-slate-500">{s.period.kind === "TUNJANGAN" ? "Tanggal bayar" : "Tanggal gajian"}</span><span>{fmtDay(s.period.payDate)}</span></>}
         </div>
         <div className="border-b py-3">
           {s.period.kind === "BULANAN" ? <Row l="Gaji pokok bulanan" v={s.baseSalary} /> : s.period.kind === "PERIODE" && <Row l={`Upah harian (${s.daysPresent} × ${idr(s.employee.dailyRate)})`} v={s.dailyWage} />}
+          {(s.allowanceDetail as { name: string; amount: number }[]).map((a) => <Row key={a.name} l={a.name} v={a.amount} />)}
           {detail.map((d) => <Row key={`${d.stage}${d.rate}`} l={`Borongan ${stageLabel(d.stage)} (${d.qty.toLocaleString("id-ID")} × ${idr(d.rate)})`} v={d.amount} />)}
           {Number(s.transport) > 0 && <Row l="Transport assembling" v={s.transport} />}
           {Number(s.bonus) > 0 && <Row l="Bonus" v={s.bonus} />}

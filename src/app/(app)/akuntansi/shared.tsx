@@ -64,6 +64,7 @@ export const REPORTS = [
   { href: "/stok/kartu", label: "Kartu persediaan", desc: "Mutasi & nilai persediaan per item" },
   { href: "/akuntansi/piutang-utang", label: "Piutang & utang", desc: "Tagihan & kewajiban usaha" },
   { href: "/akuntansi/aset", label: "Aset tetap", desc: "Peralatan, cetakan, penyusutan" },
+  { href: "/akuntansi/saldo-rekening", label: "Atur saldo rekening", desc: "Samakan saldo Seabank, ShopeePay, kas" },
   { href: "/akuntansi/saldo-awal", label: "Saldo awal & penyesuaian", desc: "Input saldo pembukaan" },
   { href: "/akuntansi/coa", label: "Chart of Accounts", desc: "Bagan akun manufaktur" },
   { href: "/akuntansi/tutup-buku", label: "Tutup buku", desc: "Penutupan periode bulanan" },
