@@ -1,8 +1,8 @@
 "use server";
 import { prisma } from "@/lib/db";
-import { action, str, optStr } from "@/lib/action";
+import { action, str, optStr, int, bool } from "@/lib/action";
 import { audit } from "@/lib/audit";
-import { evaluateCheckIn } from "@/lib/attendance";
+import { checkGeofence, evaluateCheckIn, readGeo } from "@/lib/attendance";
 import { addDays, dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
 import type { AttendanceStatus } from "@prisma/client";
@@ -18,10 +18,18 @@ export const checkIn = action(
     const shift = await prisma.shift.findUniqueOrThrow({ where: { id: shiftId } });
     const exists = await prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(date) } } });
     if (exists) throw new Error("Anda sudah absen masuk hari ini");
+    const pos = readGeo(fd);
+    const geo = checkGeofence(pos, await activeSites());
+    if (!geo.ok) throw new Error(geo.error);
     const now = new Date();
     const ev = evaluateCheckIn(shift, now);
-    const a = await prisma.attendance.create({ data: { employeeId: user.employeeId, shiftId, date: dateOnly(date), checkIn: now, status: ev.status, lateMinutes: ev.lateMinutes } });
-    await audit(user, "ABSEN_MASUK", "Attendance", a.id, ev);
+    const a = await prisma.attendance.create({
+      data: {
+        employeeId: user.employeeId, shiftId, date: dateOnly(date), checkIn: now, status: ev.status, lateMinutes: ev.lateMinutes,
+        checkInLat: pos?.lat, checkInLng: pos?.lng, checkInAccuracy: pos?.accuracy, checkInDistance: geo.distance, checkInSiteId: geo.site?.id,
+      },
+    });
+    await audit(user, "ABSEN_MASUK", "Attendance", a.id, { ...ev, lat: pos?.lat, lng: pos?.lng, lokasi: geo.site?.name, jarak: geo.distance });
     return ev.status === "TERLAMBAT" ? `Absen tercatat — terlambat ${ev.lateMinutes} menit` : "Absen masuk tercatat";
   },
   ["/absensi", "/"],
@@ -29,14 +37,54 @@ export const checkIn = action(
 
 export const checkOut = action(
   "attendance.self",
-  async (_fd, user) => {
+  async (fd, user) => {
     if (!user.employeeId) throw new Error("Akun belum ditautkan ke karyawan");
     const a = await prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(todayStr()) } } });
     if (!a?.checkIn) throw new Error("Belum absen masuk");
     if (a.checkOut) throw new Error("Sudah absen pulang");
-    await prisma.attendance.update({ where: { id: a.id }, data: { checkOut: new Date() } });
-    await audit(user, "ABSEN_PULANG", "Attendance", a.id);
+    const pos = readGeo(fd);
+    const geo = checkGeofence(pos, await activeSites());
+    if (!geo.ok) throw new Error(geo.error);
+    await prisma.attendance.update({
+      where: { id: a.id },
+      data: { checkOut: new Date(), checkOutLat: pos?.lat, checkOutLng: pos?.lng, checkOutAccuracy: pos?.accuracy, checkOutDistance: geo.distance },
+    });
+    await audit(user, "ABSEN_PULANG", "Attendance", a.id, { lat: pos?.lat, lng: pos?.lng, lokasi: geo.site?.name, jarak: geo.distance });
     return "Absen pulang tercatat";
+  },
+  ["/absensi"],
+);
+
+const activeSites = () => prisma.workSite.findMany({ where: { active: true } });
+
+/** Tambah / ubah titik lokasi kerja (geofence absen) */
+export const saveWorkSite = action(
+  "attendance.location",
+  async (fd, user) => {
+    const id = optStr(fd, "id");
+    const name = str(fd, "name");
+    if (!name) throw new Error("Nama lokasi wajib diisi");
+    const latitude = Number(str(fd, "latitude").replace(",", "."));
+    const longitude = Number(str(fd, "longitude").replace(",", "."));
+    if (!str(fd, "latitude") || !Number.isFinite(latitude) || Math.abs(latitude) > 90) throw new Error("Latitude tidak valid");
+    if (!str(fd, "longitude") || !Number.isFinite(longitude) || Math.abs(longitude) > 180) throw new Error("Longitude tidak valid");
+    const radiusM = int(fd, "radiusM", 100);
+    if (radiusM < 20 || radiusM > 5000) throw new Error("Radius harus 20–5000 meter");
+    const data = { name, latitude, longitude, radiusM, active: id ? bool(fd, "active") : true };
+    const s = id ? await prisma.workSite.update({ where: { id }, data }) : await prisma.workSite.create({ data });
+    await audit(user, id ? "LOKASI_ABSEN_DIUBAH" : "LOKASI_ABSEN_DITAMBAH", "WorkSite", s.id, data);
+    return id ? "Lokasi kerja diperbarui" : "Lokasi kerja ditambahkan";
+  },
+  ["/absensi"],
+);
+
+export const deleteWorkSite = action(
+  "attendance.location",
+  async (fd, user) => {
+    const id = str(fd, "id");
+    const s = await prisma.workSite.delete({ where: { id } });
+    await audit(user, "LOKASI_ABSEN_DIHAPUS", "WorkSite", id, { name: s.name });
+    return "Lokasi kerja dihapus";
   },
   ["/absensi"],
 );
