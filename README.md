@@ -66,6 +66,8 @@ Akun uji hasil seed (password default `Gypsum#2026`, atau nilai `SEED_PASSWORD`)
 
 ## Produksi & staging
 
+Staging di VPS (tes.maingypsum.shop) untuk cek fitur baru sebelum produksi: lihat [docs/STAGING.md](docs/STAGING.md).
+
 1. Siapkan **dua** database, dua `AUTH_SECRET`, dan dua bot Telegram (staging & production).
 2. `npm ci && npm run build && npx prisma migrate deploy && npm start`.
 3. Penjadwal (pilih salah satu):
