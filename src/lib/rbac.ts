@@ -1,6 +1,6 @@
 import type { Role } from "@prisma/client";
 
-export const ROLES: Role[] = ["OWNER", "FINANCE", "ADMIN", "ADMIN_PRODUKSI", "ADMIN_MARKETPLACE", "KAPTEN_DIVISI", "PIC_CONTENT", "OPERATOR"];
+export const ROLES: Role[] = ["OWNER", "FINANCE", "ADMIN", "ADMIN_PRODUKSI", "ADMIN_MARKETPLACE", "KAPTEN_DIVISI", "SUPERVISOR", "PIC_CONTENT", "OPERATOR"];
 
 export const ROLE_LABEL: Record<Role, string> = {
   OWNER: "Owner",
@@ -9,6 +9,7 @@ export const ROLE_LABEL: Record<Role, string> = {
   ADMIN_PRODUKSI: "Admin Produksi",
   ADMIN_MARKETPLACE: "Admin Marketplace",
   KAPTEN_DIVISI: "Kapten Divisi",
+  SUPERVISOR: "Supervisor",
   PIC_CONTENT: "PIC Content Creator",
   OPERATOR: "Operator",
 };
@@ -26,6 +27,7 @@ export const PERMISSIONS = {
   "attendance.view": "Lihat absensi",
   "attendance.self": "Absen diri sendiri",
   "attendance.manage": "Kelola jadwal & validasi absensi",
+  "material.manage": "Kelola bahan baku divisi, limit & checklist laporan shift",
   "stock.view": "Lihat stok",
   "stock.move": "Catat mutasi stok",
   "stock.request": "Ajukan permintaan stok",
@@ -62,23 +64,35 @@ export const DEFAULT_MATRIX: Record<Role, Permission[]> = {
   FINANCE: [
     "dashboard.view", "dashboard.finance", "finance.view", "finance.create", "finance.review", "finance.approve",
     "accounting.view", "accounting.post", "accounting.close", "payroll.view", "payroll.approve", "payroll.self",
-    "stock.view", "product.view", "employee.view", "production.view", "report.view", "audit.view",
+    "stock.view", "product.view", "employee.view", "production.view", "production.target", "report.view", "audit.view",
+    "attendance.view", "attendance.manage",
   ],
   ADMIN: [
-    "dashboard.view", "dashboard.finance", "production.view", "production.create", "production.edit", "production.target",
-    "report.view", "report.create", "attendance.view", "attendance.manage", "attendance.self", "stock.view", "stock.move",
+    "dashboard.view", "dashboard.finance", "production.view", "production.create", "production.edit",
+    "report.view", "report.create", "attendance.view", "attendance.self", "stock.view", "stock.move",
     "stock.request", "stock.approve", "master.manage", "product.view", "product.manage", "employee.view", "employee.manage",
     "payroll.view", "payroll.manage", "payroll.self", "finance.view", "finance.create", "finance.review", "accounting.view", "settings.manage", "audit.view",
   ],
   ADMIN_PRODUKSI: [
+    "dashboard.view", "production.view", "production.create", "production.edit", "report.view", "report.create",
+    "attendance.view", "attendance.self", "stock.view", "stock.move", "stock.request", "product.view",
+    "employee.view", "payroll.view", "payroll.self",
+  ],
+  ADMIN_MARKETPLACE: ["dashboard.view", "stock.view", "product.view", "finance.view", "finance.create", "attendance.self", "payroll.self"],
+  KAPTEN_DIVISI: [...OPERATOR_BASE, "report.create", "stock.view", "employee.view"],
+  SUPERVISOR: [
     "dashboard.view", "production.view", "production.create", "production.edit", "production.target", "report.view", "report.create",
     "attendance.view", "attendance.manage", "attendance.self", "stock.view", "stock.move", "stock.request", "product.view",
     "employee.view", "payroll.view", "payroll.self",
   ],
-  ADMIN_MARKETPLACE: ["dashboard.view", "stock.view", "product.view", "finance.view", "finance.create", "attendance.self", "payroll.self"],
-  KAPTEN_DIVISI: [...OPERATOR_BASE, "report.create", "attendance.manage", "stock.view", "employee.view", "production.target"],
   PIC_CONTENT: ["dashboard.view", "product.view", "attendance.self", "payroll.self"],
-  OPERATOR: OPERATOR_BASE,
+  OPERATOR: [...OPERATOR_BASE, "report.create"],
+};
+
+/** Validasi/atur absensi dan target produksi hanya untuk role ini (tidak bisa dibuka lewat override) */
+export const RESTRICTED: Partial<Record<Permission, Role[]>> = {
+  "attendance.manage": ["OWNER", "SUPERVISOR", "FINANCE"],
+  "production.target": ["OWNER", "SUPERVISOR", "FINANCE"],
 };
 
 export type PermissionOverride = { role: Role; permission: string; allowed: boolean };
@@ -94,5 +108,6 @@ export function effectivePermissions(role: Role, overrides: PermissionOverride[]
   }
   // "telegram.manage" (menu pengelolaan bot) khusus Owner
   set.delete("telegram.manage");
+  for (const [p, roles] of Object.entries(RESTRICTED)) if (!roles.includes(role)) set.delete(p as Permission);
   return set;
 }

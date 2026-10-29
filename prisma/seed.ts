@@ -1,6 +1,7 @@
 /* Data awal Main Gypsum Unified ERP. Jalankan: npm run db:seed (aman diulang / idempoten untuk master). */
 import { PrismaClient, type AccountType, type Role, type ProductionStage } from "@prisma/client";
 import bcrypt from "bcryptjs";
+import { applyDivisionSetup } from "../src/lib/divisionSetup";
 
 const prisma = new PrismaClient();
 const PASSWORD = process.env.SEED_PASSWORD || "Gypsum#2026";
@@ -98,7 +99,7 @@ async function main() {
     ["GDG", "Gudang"],
   ];
   const div: Record<string, string> = {};
-  for (const [code, name] of divisions) div[code] = (await prisma.division.upsert({ where: { code }, create: { code, name }, update: {} })).id;
+  for (const [code, name] of divisions) div[code] = (await prisma.division.upsert({ where: { code }, create: { code, name, shiftCount: code === "CTK" || code === "OVN" ? 2 : 1 }, update: {} })).id;
 
   const s1 = await prisma.shift.upsert({ where: { code: "S1" }, create: { code: "S1", name: "Shift 1", startTime: "07:00", endTime: "15:00", toleranceMinutes: 10 }, update: {} });
   await prisma.shift.upsert({ where: { code: "S2" }, create: { code: "S2", name: "Shift 2", startTime: "15:00", endTime: "23:00", toleranceMinutes: 10 }, update: {} });
@@ -209,6 +210,8 @@ async function main() {
     const ex = await prisma.productionTarget.findFirst({ where: { divisionId: div[d], stage, employeeId: null } });
     if (!ex) await prisma.productionTarget.create({ data: { divisionId: div[d], stage, dailyQty: qty } });
   }
+  // Divisi laporan shift (Produksi, Giftbox, Packing, Assembling) + checklist & bahan baku per divisi
+  await applyDivisionSetup(prisma);
   void s1;
   console.log(`Seed selesai. Login: owner / finance / admin / adminprod / adminmp / kapten / content / operator — password: ${process.env.SEED_PASSWORD ? "(SEED_PASSWORD)" : PASSWORD}`);
 }

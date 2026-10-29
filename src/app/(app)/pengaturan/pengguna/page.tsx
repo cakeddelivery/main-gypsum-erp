@@ -1,6 +1,6 @@
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { ALL_PERMISSIONS, PERMISSIONS, ROLE_LABEL, ROLES, effectivePermissions } from "@/lib/rbac";
+import { ALL_PERMISSIONS, PERMISSIONS, RESTRICTED, ROLE_LABEL, ROLES, effectivePermissions } from "@/lib/rbac";
 import { fmtDateTime } from "@/lib/time";
 import { Badge, Card, Field, PageHeader, Tabs } from "@/components/ui";
 import { Modal } from "@/components/Modal";
@@ -59,7 +59,7 @@ export default async function PenggunaPage({ searchParams }: { searchParams: Pro
                     <fieldset key={g} className="rounded-lg border border-slate-200 p-3">
                       <legend className="px-1 text-xs font-semibold uppercase text-slate-500">{g}</legend>
                       {ALL_PERMISSIONS.filter((p) => p.startsWith(g + ".")).map((p) => (
-                        <label key={p} className="flex items-center gap-2 py-0.5 text-sm"><input type="checkbox" name="perm" value={p} defaultChecked={eff.has(p)} disabled={p === "telegram.manage"} /> {PERMISSIONS[p]}</label>
+                        <label key={p} className="flex items-center gap-2 py-0.5 text-sm"><input type="checkbox" name="perm" value={p} defaultChecked={eff.has(p)} disabled={p === "telegram.manage" || !!RESTRICTED[p] && !RESTRICTED[p]!.includes(role)} /> {PERMISSIONS[p]}</label>
                       ))}
                     </fieldset>
                   ))}
