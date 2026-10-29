@@ -40,7 +40,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
   const qs = (s?: string) => { const u = new URLSearchParams(Object.entries({ ...sp, baru: undefined, status: s }).filter(([, v]) => v) as [string, string][]); return `/finance?${u}`; };
   return (
     <div>
-      <PageHeader title="Finance Inbox" subtitle="Transaksi dari input manual, Telegram, dan ekstraksi AI · IDR · WIB" actions={<>{user.can("finance.approve") && <Link href="/finance/sisihan" className="btn-secondary">Dana sisihan</Link>}{user.can("finance.create") && (
+      <PageHeader title="Finance Inbox" subtitle="Transaksi dari input manual, Telegram, dan ekstraksi AI · IDR · WIB" actions={<>{user.can("finance.approve") && <Link href="/finance/sisihan" className="btn-secondary">Dana sisihan</Link>}{user.can("accounting.post") && <Link href="/akuntansi/saldo-rekening" className="btn-secondary">Atur saldo rekening</Link>}{user.can("finance.create") && (
         <Modal trigger="+ Transaksi" title="Transaksi baru" wide defaultOpen={sp.baru === "1"}>
           <p className="mb-3 text-xs text-slate-500">Masuk ke Finance Inbox sebagai draft — baru dibukukan setelah disetujui pihak berwenang.</p>
           <TxForm mode="create" action={createTx} extract={extractAction} banks={banks.filter((b) => b.active)} categories={cats.filter((c) => c.active)} stores={stores.filter((x) => x.active)} init={{ direction: "KELUAR", date: todayStr(), storeId: def?.value ?? stores[0]?.id }} />

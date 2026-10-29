@@ -13,7 +13,7 @@ import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Penggajian" };
 const PAY_TONE = { DRAFT: "amber", DISETUJUI: "blue", DIBAYAR: "green" } as const;
-const KIND_LABEL = { PERIODE: "Harian/campuran", BULANAN: "Bulanan", BORONGAN: "Klaim borongan" } as const;
+const KIND_LABEL = { PERIODE: "Harian/campuran", BULANAN: "Bulanan", BORONGAN: "Klaim borongan", TUNJANGAN: "Tunjangan" } as const;
 
 export default async function GajiPage() {
   const user = await requirePerm("payroll.view", "payroll.self");
@@ -24,12 +24,13 @@ export default async function GajiPage() {
     <div>
       <PageHeader
         title="Penggajian"
-        subtitle="Gaji bulanan (otomatis, gajian H+7 setelah siklus), klaim borongan, upah harian, slip & pembayaran"
+        subtitle="Gaji bulanan (otomatis, gajian H+7 setelah siklus), tunjangan tiap tanggal 15, klaim borongan, upah harian, slip & pembayaran"
         actions={
           <>
             {user.employeeId && <Link href="/gaji/saya" className="btn-secondary">Slip saya</Link>}
             <Link href="/gaji/kasbon" className="btn-secondary">Kasbon</Link>
             {user.can("payroll.manage") && <Link href="/gaji/borongan" className="btn-secondary">Borongan & klaim</Link>}
+            {user.can("payroll.manage") && <Link href="/gaji/tunjangan" className="btn-secondary">Tunjangan</Link>}
             {user.can("payroll.manage") && <Link href="/gaji/tarif" className="btn-secondary">Tarif & transport</Link>}
             {user.can("payroll.manage") && <ActionForm action={generateMonthly}><Submit className="btn-secondary" pendingText="Memeriksa…">Buat slip bulanan</Submit></ActionForm>}
             {user.can("payroll.manage") && (

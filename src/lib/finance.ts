@@ -2,9 +2,9 @@ import crypto from "node:crypto";
 import { Prisma, type TxDirection, type TxSource, type TxStatus } from "@prisma/client";
 import { prisma } from "./db";
 import { nextNumber } from "./numbering";
-import { postJournal } from "./accounting";
+import { postJournal, COA } from "./accounting";
 import { audit } from "./audit";
-import { dateStr } from "./time";
+import { addDays, dateStr, jakartaDateTime } from "./time";
 
 type Tx = Prisma.TransactionClient;
 export type Actor = { id: string | null; name: string; telegramId?: string };
@@ -257,6 +257,30 @@ export async function approveAndBook(id: string, actor: Actor & { id: string }, 
 }
 
 /** Saldo rekening = saldo akun COA terkait */
+/** Saldo buku tiap rekening sampai akhir tanggal `upTo` (WIB) */
+export async function bankBalancesAt(upTo: string) {
+  const end = jakartaDateTime(addDays(upTo, 1), "00:00");
+  const banks = await prisma.bankAccount.findMany({ where: { active: true }, orderBy: { code: "asc" } });
+  const sums = await prisma.journalLine.groupBy({ by: ["accountId"], where: { accountId: { in: banks.map((b) => b.coaAccountId) }, journal: { date: { lt: end } } }, _sum: { debit: true, credit: true } });
+  const m = new Map(sums.map((s) => [s.accountId, Number(s._sum.debit ?? 0) - Number(s._sum.credit ?? 0)]));
+  return banks.map((b) => ({ ...b, balance: m.get(b.coaAccountId) ?? 0 }));
+}
+
+/** Selisih saldo asli vs saldo buku per rekening → baris jurnal penyesuaian (lawan: Ekuitas Saldo Awal) */
+export function balanceAdjustmentLines(rows: { coaAccountId: string; name: string; book: number; actual: number | null }[]) {
+  const lines: { accountId?: string; accountCode?: string; debit?: number; credit?: number; memo?: string }[] = [];
+  let net = 0;
+  for (const r of rows) {
+    if (r.actual === null) continue;
+    const diff = r.actual - r.book;
+    if (!diff) continue;
+    lines.push({ accountId: r.coaAccountId, debit: diff > 0 ? diff : 0, credit: diff < 0 ? -diff : 0, memo: `Saldo ${r.name}: buku ${r.book} → asli ${r.actual}` });
+    net += diff;
+  }
+  if (net) lines.push({ accountCode: COA.EKUITAS_SALDO_AWAL, debit: net < 0 ? -net : 0, credit: net > 0 ? net : 0, memo: "Penyeimbang saldo rekening" });
+  return lines;
+}
+
 export async function bankBalances() {
   const banks = await prisma.bankAccount.findMany({ where: { active: true }, orderBy: { code: "asc" } });
   const sums = await prisma.journalLine.groupBy({ by: ["accountId"], where: { accountId: { in: banks.map((b) => b.coaAccountId) } }, _sum: { debit: true, credit: true } });

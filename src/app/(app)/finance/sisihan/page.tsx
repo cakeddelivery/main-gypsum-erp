@@ -70,7 +70,7 @@ export default async function SisihanPage() {
                     <td className="text-xs">{bankName(f.fromBankId)} → {f.kind === "LOAN_PAYMENT" ? "cicilan pinjaman" : bankName(f.toBankId)}</td>
                     <td className="num">{idr(f.dailyAmount)}</td><td className="num">{idr(f.month)}</td><td className="num font-semibold">{f.kind === "LOAN_PAYMENT" ? "-" : idr(f.balance)}</td>
                     <td>{f.doneToday ? <Badge tone="green">Sudah</Badge> : <Badge tone="amber">Belum</Badge>}{f.missing.length > (f.doneToday ? 0 : 1) && <div className="text-xs text-rose-600">{f.missing.length} hari terlewat (7 hari)</div>}</td>
-                    <td className="flex flex-wrap gap-1">
+                    <td><div className="flex flex-wrap gap-1">
                       <Modal trigger="Sisihkan" triggerClass="btn-secondary btn-sm" title={`Sisihkan ${f.name}`}>
                         <ModalForm action={reserveOne} className="space-y-3">
                           <input type="hidden" name="fundId" value={f.id} />
@@ -92,7 +92,7 @@ export default async function SisihanPage() {
                         </Modal>
                       )}
                       <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${f.name}`}>{fundForm(f)}</Modal>
-                    </td>
+                    </div></td>
                   </tr>
                 ))}
               </tbody>

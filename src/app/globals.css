@@ -49,6 +49,15 @@ dialog { @apply bg-white text-slate-800; }
   .btn-sm { min-height: 2rem; }
 }
 
+/* Kolom aksi (tombol) di ujung kanan tabel dibekukan agar tetap terlihat tanpa menggeser tabel */
+.tbl tr > td:last-child:has(button, .btn-primary, .btn-secondary, .btn-danger, .btn-success),
+.tbl:has(tbody td:last-child :is(button, .btn-primary, .btn-secondary, .btn-danger, .btn-success)) th:last-child {
+  position: sticky; right: 0; z-index: 1;
+  box-shadow: -6px 0 6px -6px rgb(15 23 42 / 0.25);
+}
+.tbl tr > td:last-child:has(button, .btn-primary, .btn-secondary, .btn-danger, .btn-success) { @apply bg-white; }
+.tbl tbody tr:hover > td:last-child:has(button, .btn-primary, .btn-secondary, .btn-danger, .btn-success) { @apply bg-slate-50; }
+
 /* Pagination tabel (lihat Paged); saat diunduh JPG / dicetak semua baris tampil */
 tr[data-pg-hidden] { display: none; }
 .exporting tr[data-pg-hidden] { display: table-row; }

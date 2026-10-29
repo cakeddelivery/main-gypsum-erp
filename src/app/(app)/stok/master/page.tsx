@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { ITEM_TYPE_LABEL } from "@/lib/stock";
 import { idr } from "@/lib/money";
 import { Badge, Field, PageHeader, Tabs } from "@/components/ui";
+import { TrendBadge } from "@/components/Trend";
+import { costPerRecipeUnit, fmtUnitPrice, latestCost, previousCost, recipeUnit, trendOf } from "@/lib/unitcost";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
@@ -28,6 +30,8 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
       <Field label="Satuan"><input name="unit" defaultValue={i?.unit ?? "pcs"} className="input" /></Field>
       <Field label="Nama" className="col-span-2"><input name="name" defaultValue={i?.name} className="input" required /></Field>
       <Field label="Jenis"><select name="type" defaultValue={i?.type} className="input">{Object.entries(ITEM_TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+      <Field label="Satuan resep/HPP (opsional)" hint="mis. gram, bila resep tidak memakai satuan stok"><input name="hppUnit" defaultValue={i?.hppUnit ?? ""} placeholder="sama dengan satuan" className="input" /></Field>
+      <Field label="Isi 1 satuan stok" hint="mis. 1 sak = 18000 gram"><input name="hppFactor" defaultValue={i ? Number(i.hppFactor) : 1} inputMode="decimal" className="input" /></Field>
       <Field label="Stok minimum"><input name="minStock" defaultValue={i ? Number(i.minStock) : 0} inputMode="decimal" className="input" /></Field>
       <Field label="Supplier"><select name="supplierId" defaultValue={i?.supplierId ?? ""} className="input"><option value="">—</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
       <Field label="Karakter gypsum"><select name="gypsumCharacterId" defaultValue={i?.gypsumCharacterId ?? ""} className="input"><option value="">—</option>{gypsum.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
@@ -73,8 +77,8 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
       <div className="table-wrap">
         <Paged><table className="tbl">
           {tab === "item" && (<>
-            <thead><tr><th>SKU</th><th>Nama</th><th>Jenis</th><th>Satuan</th><th className="num">Min</th><th className="num">Harga rata²</th><th>Supplier</th><th>Gypsum</th><th /></tr></thead>
-            <tbody>{items.map((i) => <tr key={i.id} className={i.active ? "" : "opacity-50"}><td className="font-mono text-xs">{i.sku}</td><td>{i.name}</td><td><Badge>{ITEM_TYPE_LABEL[i.type]}</Badge></td><td>{i.unit}</td><td className="num">{Number(i.minStock)}</td><td className="num">{idr(i.avgCost)}</td><td>{i.supplier?.name}</td><td>{i.gypsumCharacter?.name}</td><td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah item">{itemForm(i)}</Modal></td></tr>)}</tbody>
+            <thead><tr><th>SKU</th><th>Nama</th><th>Jenis</th><th>Satuan</th><th className="num">Min</th><th className="num">Harga beli terbaru</th><th className="num">Harga rata²</th><th>Supplier</th><th>Gypsum</th><th /></tr></thead>
+            <tbody>{items.map((i) => <tr key={i.id} className={i.active ? "" : "opacity-50"}><td className="font-mono text-xs">{i.sku}</td><td>{i.name}</td><td><Badge>{ITEM_TYPE_LABEL[i.type]}</Badge></td><td>{i.unit}{recipeUnit(i) !== i.unit && <div className="text-xs text-slate-400">= {Number(i.hppFactor).toLocaleString("id-ID")} {recipeUnit(i)}</div>}</td><td className="num">{Number(i.minStock)}</td><td className="num">{idr(latestCost(i))}<div className="flex justify-end gap-2"><TrendBadge t={trendOf(latestCost(i), previousCost(i))} />{recipeUnit(i) !== i.unit && <span className="text-xs text-slate-400">{fmtUnitPrice(costPerRecipeUnit(latestCost(i), i))}/{recipeUnit(i)}</span>}</div></td><td className="num">{idr(i.avgCost)}</td><td>{i.supplier?.name}</td><td>{i.gypsumCharacter?.name}</td><td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah item">{itemForm(i)}</Modal></td></tr>)}</tbody>
           </>)}
           {tab === "supplier" && (<>
             <thead><tr><th>Nama</th><th>Telepon</th><th>Alamat</th><th className="num">Item</th><th /></tr></thead>

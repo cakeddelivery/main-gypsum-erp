@@ -2,6 +2,7 @@ import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { productCosting, latestPrices, margin } from "@/lib/hpp";
+import { TrendBadge } from "@/components/Trend";
 import { idr } from "@/lib/money";
 import { Badge, Empty, FilterBar, Field, PageHeader } from "@/components/ui";
 import { Modal } from "@/components/Modal";
@@ -42,7 +43,7 @@ export default async function ProdukPage({ searchParams }: { searchParams: Promi
                 return (
                   <tr key={p.id} className={p.active ? "" : "opacity-50"}>
                     <td className="font-mono text-xs">{p.sku}</td><td>{p.name}</td><td><Badge tone="blue">{TYPE_LABEL[p.type]}</Badge></td><td>{p.variant}</td><td>{p.store.name}</td>
-                    {canHpp && <td className="num">{idr(cost.hpp)}</td>}
+                    {canHpp && <td className="num">{idr(cost.hpp)}<div><TrendBadge t={cost.trend} title="HPP dibanding harga beli bahan sebelumnya" /></div></td>}
                     <td className="num">{off ? idr(off.price) : "-"}</td>
                     {canHpp && <td className="num">{mg ? <span className={mg.value < 0 ? "text-rose-600" : "text-emerald-600"}>{mg.pct}%</span> : "-"}</td>}
                     <td><Link href={`/produk/${p.id}`} className="btn-secondary btn-sm">Detail</Link></td>

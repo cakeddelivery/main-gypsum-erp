@@ -5,7 +5,7 @@ import { bankBalances } from "./finance";
 import { closePeriod } from "./accounting";
 import { sendTelegram, telegramConfigured } from "./telegram";
 import { lowStockItems } from "./stock";
-import { generateMonthlyPayroll } from "./payroll";
+import { generateAllowancePayroll, generateMonthlyPayroll } from "./payroll";
 
 const SYSTEM_ACTOR = { id: "system", name: "Sistem (terjadwal)" };
 
@@ -83,6 +83,7 @@ export async function runDueJobs(now: Date = new Date()) {
   if (minutes >= 6 * 60 && !(await ranToday("job_monthly_payroll_last", date))) {
     await markRan("job_monthly_payroll_last", date);
     results.monthlyPayroll = await generateMonthlyPayroll(SYSTEM_ACTOR, now);
+    results.allowancePayroll = await generateAllowancePayroll(SYSTEM_ACTOR, now);
   }
   if (minutes >= 7 * 60 && !(await ranToday("job_daily_recap_last", date))) {
     await markRan("job_daily_recap_last", date);

@@ -43,7 +43,7 @@ export default async function PermintaanPage() {
                   <td>{fmtDateTime(r.createdAt)}</td><td>{r.division.name}</td><td>{r.item.name}</td><td className="num">{Number(r.qty)} {r.item.unit}</td><td>{r.requestedBy}</td>
                   <td><Badge tone={TONE[r.status]}>{r.status}</Badge>{r.decidedBy && <div className="text-xs text-slate-400">{r.decidedBy}</div>}</td><td className="text-xs">{r.note}</td>
                   {user.can("stock.approve") && (
-                    <td className="flex gap-1">
+                    <td><div className="flex gap-1">
                       {r.status === "DIAJUKAN" && (
                         <>
                           <ActionForm action={decideRequest}><input type="hidden" name="id" value={r.id} /><Submit className="btn-success btn-sm" name="decision" value="setujui" pendingText="…">Setujui</Submit></ActionForm>
@@ -60,7 +60,7 @@ export default async function PermintaanPage() {
                           </ModalForm>
                         </Modal>
                       )}
-                    </td>
+                    </div></td>
                   )}
                 </tr>
               ))}

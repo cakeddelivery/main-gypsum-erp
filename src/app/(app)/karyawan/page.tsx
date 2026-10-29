@@ -66,7 +66,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
                   <td>{fmtDay(e.joinDate)}{e.resignDate && <div className="text-xs text-rose-600">Resign {fmtDay(e.resignDate)}</div>}</td>
                   <td>{e.user ? <span className="text-xs">{e.user.username} · {ROLE_LABEL[e.user.role]}{!e.user.active && " (nonaktif)"}</span> : <span className="text-xs text-slate-400">—</span>}</td>
                   {canManage && (
-                    <td className="flex gap-1">
+                    <td><div className="flex gap-1">
                       <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah karyawan">{form(e)}</Modal>
                       <Modal trigger="Akun" triggerClass="btn-secondary btn-sm" title={`Akun login ${e.name}`}>
                         <ModalForm action={saveAccount} className="space-y-3">
@@ -78,7 +78,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
                           <Submit>Simpan akun</Submit>
                         </ModalForm>
                       </Modal>
-                    </td>
+                    </div></td>
                   )}
                 </tr>
               ))}

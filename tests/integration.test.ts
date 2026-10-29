@@ -177,6 +177,7 @@ describe("Penggajian → keuangan", () => {
 describe("Aturan bisnis: gaji bulanan, kasbon, borongan, pembelian, sisihan", () => {
   it("slip bulanan otomatis H+7, kasbon dipotong, resign = Rp0", async () => {
     const { generateMonthlyPayroll, giveAdvance } = await import("@/lib/payroll");
+    await prisma.setting.upsert({ where: { key: "go_live_date" }, create: { key: "go_live_date", value: "" }, update: { value: "" } });
     const div = await prisma.division.findFirstOrThrow();
     const shift = await prisma.shift.findUniqueOrThrow({ where: { code: "S1" } });
     const a = await prisma.employee.create({ data: { code: "B001", name: "Bulanan A", divisionId: div.id, position: "Staf", wageType: "BULANAN", monthlySalary: BigInt(2_600_000), joinDate: dateOnly("2026-05-10") } });
@@ -244,5 +245,89 @@ describe("Aturan bisnis: gaji bulanan, kasbon, borongan, pembelian, sisihan", ()
     const s = await businessSnapshot(d("2026-10-15"));
     expect(s.series).toHaveLength(12);
     expect(ruleInsights(s).length).toBeGreaterThan(0);
+  });
+});
+
+describe("Tunjangan, go-live, saldo rekening, HPP realtime", () => {
+  it("go-live: siklus pertama tanpa data absen dibayar penuh", async () => {
+    const { generateMonthlyPayroll } = await import("@/lib/payroll");
+    await prisma.setting.upsert({ where: { key: "go_live_date" }, create: { key: "go_live_date", value: "2026-12-20" }, update: { value: "2026-12-20" } });
+    const div = await prisma.division.findFirstOrThrow();
+    const e = await prisma.employee.create({ data: { code: "G001", name: "Go Live", divisionId: div.id, position: "Staf", wageType: "BULANAN", monthlySalary: BigInt(3_000_000), joinDate: dateOnly("2026-06-03") } });
+    const r = await generateMonthlyPayroll(actor, d("2026-12-03"));
+    expect(r.created).toContain("GJB-20261202");
+    const slip = await prisma.payslip.findFirstOrThrow({ where: { employeeId: e.id } });
+    expect(slip).toMatchObject({ absentDays: 0 });
+    expect(Number(slip.total)).toBe(3_000_000);
+    expect(slip.note).toMatch(/go-live/);
+    await prisma.setting.update({ where: { key: "go_live_date" }, data: { value: "" } });
+  });
+
+  it("tunjangan karyawan tertentu dibayar tiap tanggal 15", async () => {
+    const { generateAllowancePayroll } = await import("@/lib/payroll");
+    const a = await prisma.employee.findUniqueOrThrow({ where: { code: "K002" } });
+    const b = await prisma.employee.findUniqueOrThrow({ where: { code: "K003" } });
+    await prisma.employeeAllowance.createMany({ data: [{ employeeId: a.id, name: "Tunjangan jabatan", amount: BigInt(300_000) }, { employeeId: a.id, name: "Tunjangan makan", amount: BigInt(200_000) }, { employeeId: b.id, name: "Nonaktif", amount: BigInt(100_000), active: false }] });
+    expect((await generateAllowancePayroll(actor, d("2027-01-14"))).created).toBeNull();
+    expect((await generateAllowancePayroll(actor, d("2027-01-15"))).created).toBe("TNJ-202701");
+    expect((await generateAllowancePayroll(actor, d("2027-01-20"))).created).toBeNull();
+    const p = await prisma.payrollPeriod.findUniqueOrThrow({ where: { code: "TNJ-202701" }, include: { payslips: true } });
+    expect(p.kind).toBe("TUNJANGAN");
+    expect(p.payslips).toHaveLength(1);
+    expect(Number(p.payslips[0].total)).toBe(500_000);
+    expect(p.payslips[0].allowanceDetail).toHaveLength(2);
+    await approvePeriod(p.id, actor);
+    const j = await payPeriod(p.id, bank.SEABANK, storeId, actor, d("2027-01-15"));
+    const lines = await prisma.journalLine.findMany({ where: { journalId: (j as unknown as { id: string }).id } });
+    expect(lines.reduce((s, l) => s + Number(l.debit), 0)).toBe(500_000);
+  });
+
+  it("atur saldo rekening: selisih dibukukan ke ekuitas saldo awal", async () => {
+    const { bankBalancesAt, balanceAdjustmentLines } = await import("@/lib/finance");
+    const before = await bankBalancesAt("2027-01-31");
+    const sp = before.find((b) => b.code === "SHOPEEPAY")!;
+    const lines = balanceAdjustmentLines([{ coaAccountId: sp.coaAccountId, name: sp.name, book: sp.balance, actual: sp.balance + 1_234_000 }]);
+    await prisma.$transaction((tx) => postJournal(tx, { date: d("2027-01-31"), storeId, description: "Penyesuaian saldo rekening", source: "SALDO_AWAL", actor, lines }));
+    const after = await bankBalancesAt("2027-01-31");
+    expect(after.find((b) => b.code === "SHOPEEPAY")!.balance).toBe(sp.balance + 1_234_000);
+    const cf = await cashFlow({ start: monthRange(2027, 1).start, end: monthRange(2027, 1).end });
+    expect([...cf.groups.OPERASI, ...cf.groups.INVESTASI, ...cf.groups.PENDANAAN].some((x) => x.amount === 1_234_000)).toBe(false);
+    expect((await balanceSheet(new Date("2027-02-01"))).balanced).toBe(true);
+  });
+
+  it("HPP realtime: beli per sak, resep per gram, harga terbaru & tren", async () => {
+    const { createPurchase } = await import("@/lib/purchase");
+    const { productCosting } = await import("@/lib/hpp");
+    const item = await prisma.item.create({ data: { sku: "BB-UJI-SAK", name: "Gypsum uji", type: "BAHAN_BAKU", unit: "sak", hppUnit: "gram", hppFactor: 18000 } });
+    const prod = await prisma.product.findUniqueOrThrow({ where: { sku: "MG-SAT-COWOK" } });
+    await prisma.bomLine.create({ data: { productId: prod.id, itemId: item.id, qty: 90 } });
+    await createPurchase({ storeId, vendor: "Supplier Sak", date: d("2027-02-01"), term: "LUNAS", paidNow: 430_000, bankAccountId: bank.SEABANK, lines: [{ itemId: item.id, qty: 10, unitCost: 43_000 }] }, actor);
+    let it1 = await prisma.item.findUniqueOrThrow({ where: { id: item.id } });
+    expect(Number(it1.lastCost)).toBe(43_000);
+    let c = await productCosting(prod.id);
+    let line = c.lines.find((l) => l.item.id === item.id)!;
+    expect(line.unit).toBe("gram");
+    expect(line.cost).toBeCloseTo((90 / 18000) * 43_000, 6);
+    expect(line.trend.dir).toBe("TETAP");
+    await createPurchase({ storeId, vendor: "Supplier Sak", date: d("2027-02-10"), term: "LUNAS", paidNow: 450_000, bankAccountId: bank.SEABANK, lines: [{ itemId: item.id, qty: 10, unitCost: 45_000 }] }, actor);
+    it1 = await prisma.item.findUniqueOrThrow({ where: { id: item.id } });
+    expect([Number(it1.prevCost), Number(it1.lastCost)]).toEqual([43_000, 45_000]);
+    c = await productCosting(prod.id);
+    line = c.lines.find((l) => l.item.id === item.id)!;
+    expect(line.cost).toBeCloseTo(225, 6);
+    expect(line.trend.dir).toBe("NAIK");
+    expect(c.trend.dir).toBe("NAIK");
+    // pembelian mundur tanggal tidak menimpa harga terbaru
+    await createPurchase({ storeId, vendor: "Supplier Sak", date: d("2027-02-05"), term: "LUNAS", paidNow: 40_000, bankAccountId: bank.SEABANK, lines: [{ itemId: item.id, qty: 1, unitCost: 40_000 }] }, actor);
+    expect(Number((await prisma.item.findUniqueOrThrow({ where: { id: item.id } })).lastCost)).toBe(45_000);
+    // konsumsi produksi: 90 gram × 10 unit = 900 gram = 0,05 sak
+    const locs = await locationSettings(prisma);
+    const before = (await itemTotals()).get(item.id)!;
+    const emp = await prisma.employee.findUniqueOrThrow({ where: { code: "K002" } });
+    const shift = await prisma.shift.findUniqueOrThrow({ where: { code: "S1" } });
+    const e = await prisma.productionEntry.create({ data: { date: dateOnly("2027-02-11"), shiftId: shift.id, divisionId: emp.divisionId, employeeId: emp.id, productId: prod.id, stage: "CETAK", qtyGood: 10, qtyReject: 0, createdBy: "uji" } });
+    await prisma.$transaction((tx) => postProductionStock(tx, e.id, actor));
+    expect(before - (await itemTotals()).get(item.id)!).toBeCloseTo(0.05, 6);
+    expect(locs.raw).toBeTruthy();
   });
 });

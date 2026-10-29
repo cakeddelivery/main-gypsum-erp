@@ -1,4 +1,5 @@
 import { Prisma, type ItemType, type MovementType, type ProductionStage } from "@prisma/client";
+import { bomLineCost, bomStockQty } from "./unitcost";
 import { prisma } from "./db";
 import { postJournal, reverseJournal, COA } from "./accounting";
 import { audit } from "./audit";
@@ -190,7 +191,7 @@ export async function locationSettings(db: DB) {
 /** Biaya bahan per unit produk dari BOM (qty × harga rata-rata) */
 export async function bomMaterialCost(db: DB, productId: string) {
   const lines = await db.bomLine.findMany({ where: { productId }, include: { item: true } });
-  return Math.round(lines.reduce((s, l) => s + Number(l.qty) * Number(l.item.avgCost), 0));
+  return Math.round(lines.reduce((s, l) => s + bomLineCost(l.qty, l.item, Number(l.item.avgCost)), 0));
 }
 
 /**
@@ -211,7 +212,7 @@ export async function postProductionStock(tx: Tx, entryId: string, actor: Actor)
     const units = e.qtyGood + e.qtyReject;
     let total = 0;
     for (const b of e.product.bom) {
-      const q = Number(b.qty) * units;
+      const q = bomStockQty(b.qty, b.item) * units;
       if (q <= 0) continue;
       await recordMovement(tx, { type: "KONSUMSI_PRODUKSI", itemId: b.itemId, qty: q, fromLocationId: locs.raw, ref: `PRD:${e.id}`, date, allowNegative: true }, actor);
       total += Math.round(q * Number(b.item.avgCost));

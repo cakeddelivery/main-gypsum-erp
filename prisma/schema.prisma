@@ -164,6 +164,7 @@ model Employee {
   transportTrips TransportTrip[]
   pieceWorks  PieceWork[]
   advances    CashAdvance[]
+  allowances     EmployeeAllowance[]
 }
 
 model ShiftSchedule {
@@ -200,7 +201,31 @@ model Attendance {
   validated    Boolean          @default(false)
   validatedBy  String?
   validatedAt  DateTime?
+  /// Koordinat GPS saat absen masuk/pulang (diisi dari HP karyawan)
+  checkInLat      Float?
+  checkInLng      Float?
+  checkInAccuracy Float?
+  /// Jarak ke titik lokasi kerja terdekat (meter)
+  checkInDistance Int?
+  checkInSiteId   String?
+  checkInSite     WorkSite? @relation("CheckInSite", fields: [checkInSiteId], references: [id], onDelete: SetNull)
+  checkOutLat      Float?
+  checkOutLng      Float?
+  checkOutAccuracy Float?
+  checkOutDistance Int?
   @@unique([employeeId, date])
+}
+
+/// Titik lokasi kerja untuk absen (geofence). Absen hanya bisa di dalam radius salah satu titik aktif.
+model WorkSite {
+  id        String   @id @default(cuid())
+  name      String
+  latitude  Float
+  longitude Float
+  radiusM   Int      @default(100)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  checkIns  Attendance[] @relation("CheckInSite")
 }
 
 /// Tarif borongan per tahap (Filling Cat, Assembling, dll.)
@@ -224,6 +249,7 @@ enum PayrollKind {
   PERIODE
   BULANAN
   BORONGAN
+  TUNJANGAN
 }
 
 /// Kasbon karyawan: dipotong dari gaji berikutnya (cicilan per slip, 0 = langsung lunas)
@@ -320,6 +346,9 @@ model Payslip {
   /// Potongan kasbon pada slip ini; rincian [{id, number, amount}]
   advanceDeduction BigInt    @default(0)
   advanceDetail    Json      @default("[]")
+  /// Tunjangan (periode TUNJANGAN, dibayar tiap tanggal 15); rincian [{name, amount}]
+  allowance        BigInt        @default(0)
+  allowanceDetail  Json          @default("[]")
   total        BigInt
   @@unique([periodId, employeeId])
 }
@@ -462,6 +491,14 @@ model Item {
   unit        String
   minStock    Decimal          @default(0) @db.Decimal(14, 3)
   avgCost     BigInt           @default(0)
+  /// Satuan resep/HPP (mis. gram) bila berbeda dari satuan stok `unit` (mis. sak); BOM memakai satuan ini
+  hppUnit     String?
+  /// Jumlah hppUnit dalam 1 unit stok (1 sak gypsum = 18000 gram)
+  hppFactor   Decimal          @default(1) @db.Decimal(14, 4)
+  /// Harga beli terbaru & sebelumnya per unit stok, untuk HPP realtime dan indikator naik/turun
+  lastCost    BigInt           @default(0)
+  prevCost    BigInt           @default(0)
+  lastCostAt  DateTime?
   supplierId  String?
   supplier    Supplier?        @relation(fields: [supplierId], references: [id])
   gypsumCharacterId String?
@@ -916,4 +953,17 @@ model ReserveEntry {
   createdBy String
   createdAt DateTime    @default(now())
   @@index([fundId, date])
+}
+
+/// Tunjangan tetap per karyawan (tidak semua karyawan dapat), dibayar serentak tiap bulan
+model EmployeeAllowance {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  name       String
+  amount     BigInt
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  @@index([employeeId])
 }

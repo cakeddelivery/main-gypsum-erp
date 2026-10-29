@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, str, int, optStr } from "@/lib/action";
 import { audit } from "@/lib/audit";
-import { approvePeriod, giveAdvance, repayAdvance, cancelPieceClaim, computePeriod, createPieceClaim, generateMonthlyPayroll, payPeriod } from "@/lib/payroll";
+import { approvePeriod, giveAdvance, repayAdvance, cancelPieceClaim, computePeriod, createPieceClaim, generateAllowancePayroll, generateMonthlyPayroll, payPeriod } from "@/lib/payroll";
 import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 import type { ProductionStage } from "@prisma/client";
 
@@ -41,7 +41,7 @@ export const adjustSlip = action(
     const deduction = int(fd, "deduction");
     if (bonus < 0 || deduction < 0) throw new Error("Nilai tidak boleh negatif");
     // Potongan bolos/terlambat hasil hitungan tetap dipakai bila potongan tidak diubah
-    const total = Math.max(0, Number(s.baseSalary + s.dailyWage + s.pieceWage + s.transport - s.advanceDeduction) + bonus - deduction);
+    const total = Math.max(0, Number(s.baseSalary + s.dailyWage + s.pieceWage + s.allowance + s.transport - s.advanceDeduction) + bonus - deduction);
     await prisma.payslip.update({ where: { id }, data: { bonus: BigInt(bonus), deduction: BigInt(deduction), total: BigInt(total) } });
     await audit(user, "SLIP_DISESUAIKAN", "Payslip", id, { bonus, deduction });
     return "Slip diperbarui";
@@ -158,4 +158,39 @@ export const repayAdvanceAction = action(
     return "Pelunasan kasbon dibukukan";
   },
   ["/gaji/kasbon"],
+);
+
+export const saveAllowance = action(
+  "payroll.manage",
+  async (fd, user) => {
+    const id = optStr(fd, "id");
+    const name = z.string().trim().min(2, "Nama tunjangan minimal 2 huruf").parse(str(fd, "name"));
+    const amount = int(fd, "amount");
+    if (amount <= 0) throw new Error("Nominal tunjangan harus lebih dari 0");
+    const data = { name, amount: BigInt(amount), active: id ? fd.get("active") === "on" : true };
+    const row = id ? await prisma.employeeAllowance.update({ where: { id }, data }) : await prisma.employeeAllowance.create({ data: { ...data, employeeId: str(fd, "employeeId") } });
+    await audit(user, id ? "TUNJANGAN_DIUBAH" : "TUNJANGAN_DITAMBAH", "EmployeeAllowance", row.id, { name, amount });
+    return "Tunjangan disimpan";
+  },
+  ["/gaji/tunjangan"],
+);
+
+export const deleteAllowance = action(
+  "payroll.manage",
+  async (fd, user) => {
+    const id = str(fd, "id");
+    await prisma.employeeAllowance.delete({ where: { id } });
+    await audit(user, "TUNJANGAN_DIHAPUS", "EmployeeAllowance", id, null);
+    return "Tunjangan dihapus";
+  },
+  ["/gaji/tunjangan"],
+);
+
+export const generateAllowance = action(
+  "payroll.manage",
+  async (_fd, user) => {
+    const r = await generateAllowancePayroll(user, new Date(), true);
+    return r.created ? `Slip tunjangan ${r.created} dibuat` : "Slip tunjangan bulan ini sudah ada atau belum ada tunjangan aktif";
+  },
+  ["/gaji", "/gaji/tunjangan"],
 );
