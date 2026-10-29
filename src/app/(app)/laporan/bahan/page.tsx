@@ -40,6 +40,9 @@ export default async function BahanDivisiPage({ searchParams }: { searchParams: 
           {REPORT_TEMPLATES.map((t) => <option key={t} value={t}>{TEMPLATES[t].label}</option>)}
         </select>
       </Field>
+      <Field label="Jumlah shift">
+        <select name="shiftCount" defaultValue={String(d?.shiftCount ?? 1)} className="input"><option value="1">1 shift (Shift 1 saja)</option><option value="2">2 shift</option></select>
+      </Field>
       {d && <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="active" defaultChecked={d.active} className="h-4 w-4" /> Aktif (tampil di laporan shift)</label>}
       <Submit>Simpan</Submit>
     </ModalForm>
@@ -86,6 +89,7 @@ export default async function BahanDivisiPage({ searchParams }: { searchParams: 
                 <div>{current.name} <span className="font-mono text-xs text-slate-400">{current.code}</span></div>
                 <div className="flex flex-wrap gap-1.5">
                   <Badge tone={current.reportTemplate ? "blue" : "gray"}>Format: {current.reportTemplate ? TEMPLATES[current.reportTemplate as keyof typeof TEMPLATES]?.label ?? current.reportTemplate : "Umum"}</Badge>
+                  <Badge>{current.shiftCount} shift</Badge>
                   <Badge tone={current.active ? "green" : "red"}>{current.active ? "Aktif" : "Nonaktif"}</Badge>
                 </div>
               </div>

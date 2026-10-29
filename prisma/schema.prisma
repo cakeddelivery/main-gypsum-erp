@@ -49,6 +49,8 @@ model Division {
   active      Boolean           @default(true)
   /// Format laporan penutup shift: PRODUKSI | GIFTBOX | PACKING | ASSEMBLING (null = laporan umum)
   reportTemplate String?
+  /// Jumlah shift yang berlaku (1 = hanya Shift 1; Cetak & Oven/Produksi = 2)
+  shiftCount  Int               @default(1)
   /// Checklist penutupan shift divisi: [{label, photo}] (photo = wajib foto bukti)
   checklist   Json              @default("[]")
   items       Item[]

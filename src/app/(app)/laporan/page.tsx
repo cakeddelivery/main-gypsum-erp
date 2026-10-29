@@ -36,7 +36,7 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
         {divisions.map((div) => (
           <Card key={div.id} title={div.name}>
             <ul className="space-y-2">
-              {shifts.map((s) => {
+              {shifts.slice(0, Math.max(1, div.shiftCount)).map((s) => {
                 const r = reports.find((x) => x.shiftId === s.id && x.divisionId === div.id);
                 const p = prod.find((x) => x.shiftId === s.id && x.divisionId === div.id);
                 const cl = r ? toEntries(r.checklist) : [];

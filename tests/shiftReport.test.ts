@@ -59,6 +59,9 @@ describe("Bahan baku per divisi", () => {
     const asm = await prisma.division.findFirstOrThrow({ where: { reportTemplate: "ASSEMBLING" }, include: { items: true } });
     expect(asm.items).toHaveLength(DIVISION_SETUP.ASSEMBLING.materials.length);
     expect(Number(asm.items.find((i) => i.name === "Piring plastik")!.minStock)).toBe(18);
+    // Hanya cetak & oven (Produksi) yang 2 shift
+    expect(prd.shiftCount).toBe(2);
+    expect(asm.shiftCount).toBe(1);
   });
   it("ganti bahan lama: yang punya riwayat dinonaktifkan, sisanya dihapus, hanya sekali", async () => {
     const unused = await prisma.item.create({ data: { sku: "BB-TEST-LAMA", name: "Bahan lama", type: "BAHAN_BAKU", unit: "pcs" } });

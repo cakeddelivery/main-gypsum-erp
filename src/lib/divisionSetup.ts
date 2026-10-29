@@ -21,7 +21,7 @@ export async function applyDivisionSetup(db: PrismaClient, opts: { replaceOld?: 
       all.find((d) => d.code === setup.code) ??
       all.find((d) => d.name.toLowerCase().includes(setup.name.toLowerCase()));
     if (!div) {
-      div = await db.division.create({ data: { code: setup.code, name: `Divisi ${setup.name}`, reportTemplate: t, checklist: setup.checklist } });
+      div = await db.division.create({ data: { code: setup.code, name: `Divisi ${setup.name}`, reportTemplate: t, shiftCount: setup.shiftCount, checklist: setup.checklist } });
       all.push(div);
       res.divisionsCreated++;
     } else {

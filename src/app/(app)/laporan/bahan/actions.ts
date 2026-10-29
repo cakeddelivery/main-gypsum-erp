@@ -77,6 +77,7 @@ export const saveDivision = action(
     const data = {
       name: z.string().min(2, "Nama divisi wajib").parse(str(fd, "name")),
       reportTemplate: isTemplate(tpl) ? tpl : null,
+      shiftCount: Math.min(Math.max(int(fd, "shiftCount", 1), 1), 3),
       active: id ? bool(fd, "active") : true,
     };
     const d = id

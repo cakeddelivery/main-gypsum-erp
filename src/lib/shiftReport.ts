@@ -228,7 +228,7 @@ export function toEntries(tasks: unknown): ChecklistEntry[] {
 // ---------------- Data awal dari contoh laporan ----------------
 
 type Mat = [name: string, unit: string, limit: number];
-export type DivisionSetup = { code: string; name: string; checklist: ChecklistTask[]; materials: Mat[] };
+export type DivisionSetup = { code: string; name: string; shiftCount: number; checklist: ChecklistTask[]; materials: Mat[] };
 
 const photo = (label: string): ChecklistTask => ({ label, photo: true });
 const plain = (label: string): ChecklistTask => ({ label, photo: false });
@@ -237,6 +237,7 @@ export const DIVISION_SETUP: Record<ReportTemplate, DivisionSetup> = {
   PRODUKSI: {
     code: "PRD",
     name: "Produksi",
+    shiftCount: 2,
     checklist: ["Area cetak bersih", "Area oven bersih", "Area stok patung kering bersih", "Lantai sudah dipel", "Oven berfungsi selama jam operasional", "Serah terima oven sudah dilakukan", "Stok LPG sudah diperiksa"].map(photo),
     materials: [
       ["Bubuk gypsum", "sak", 15],
@@ -250,6 +251,7 @@ export const DIVISION_SETUP: Record<ReportTemplate, DivisionSetup> = {
   GIFTBOX: {
     code: "GFT",
     name: "Giftbox",
+    shiftCount: 1,
     checklist: [
       ...["Area kerja bersih", "Lantai sudah dipel", "Bahan tersusun rapi"].map(photo),
       ...["Jumlah pesanan sesuai resi", "Varian sesuai pesanan", "Catatan pelanggan sudah diperiksa", "Tidak ada resi yang terlewat"].map(plain),
@@ -269,6 +271,7 @@ export const DIVISION_SETUP: Record<ReportTemplate, DivisionSetup> = {
   PACKING: {
     code: "PCK",
     name: "Packing",
+    shiftCount: 1,
     checklist: [
       ...["Area packing bersih", "Lantai sudah dipel", "Alat dan bahan tersusun rapi"].map(photo),
       ...["Jumlah produk sesuai", "Varian sesuai", "Catatan pelanggan sudah diperiksa", "Tidak ada salah kirim", "Tidak ada kekurangan jumlah", "Seluruh resi selesai di hari yang sama", "Stok dus sudah diperiksa"].map(plain),
@@ -287,6 +290,7 @@ export const DIVISION_SETUP: Record<ReportTemplate, DivisionSetup> = {
   ASSEMBLING: {
     code: "ASM",
     name: "Assembling",
+    shiftCount: 1,
     checklist: ["Area assembling bersih", "Area stok bahan bersih", "Area stok patung bersih", "Lantai sudah dipel", "Alat dan bahan tersusun rapi", "Supply assembling luar"].map(photo),
     materials: [
       ["Background cowok", "gendel", 20],

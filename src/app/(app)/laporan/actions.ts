@@ -38,6 +38,8 @@ export async function openReport(fd: FormData) {
   const divisionId = str(fd, "divisionId");
   guardDivision(user, divisionId);
   const division = await prisma.division.findUniqueOrThrow({ where: { id: divisionId } });
+  const allowed = (await prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, take: Math.max(1, division.shiftCount) })).map((s) => s.id);
+  if (!allowed.includes(shiftId)) throw new Error(`${division.name} hanya punya ${division.shiftCount} shift`);
   let checklist = toEntries(division.checklist);
   if (!checklist.length) {
     const setting = await prisma.setting.findUnique({ where: { key: "report_checklist" } });

@@ -3,7 +3,11 @@ ALTER TYPE "Role" ADD VALUE 'SUPERVISOR';
 
 -- AlterTable
 ALTER TABLE "Division" ADD COLUMN     "checklist" JSONB NOT NULL DEFAULT '[]',
-ADD COLUMN     "reportTemplate" TEXT;
+ADD COLUMN     "reportTemplate" TEXT,
+ADD COLUMN     "shiftCount" INTEGER NOT NULL DEFAULT 1;
+
+-- Saat ini hanya divisi cetak & oven (Produksi) yang punya 2 shift
+UPDATE "Division" SET "shiftCount" = 2 WHERE "code" IN ('CTK', 'OVN', 'PRD') OR "name" ILIKE '%cetak%' OR "name" ILIKE '%oven%' OR "name" ILIKE '%produksi%';
 
 -- AlterTable
 ALTER TABLE "Item" ADD COLUMN     "divisionId" TEXT,
