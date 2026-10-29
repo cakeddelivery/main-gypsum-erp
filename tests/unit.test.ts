@@ -67,6 +67,15 @@ describe("Ekstraksi transaksi", () => {
     expect(e).toMatchObject({ amount: 275000, direction: "KELUAR", accountId: "sea", categoryId: "bahan", date: "2026-10-28", missing: [] });
     expect(e.note).toBe("beli cat supplier (Toko Warna Jaya)");
   });
+  it("withdraw saldo penjual ke seabank = transfer internal, nama usaha tidak memicu kategori", () => {
+    const text = "Withdraw shopee Main Gypsum";
+    const ex = extractTransaction(text, accounts, cats);
+    expect(ex.direction).toBe("TRANSFER");
+    const e = mergeReceipt(ex, text, { amount: 3386734, date: "2026-10-27", direction: "TRANSFER", account: "Saldo Penjual Shopee", toAccount: "Seabank", counterparty: "NUR ANJOLA HIDAYAT D... (SeaBank *5984)" }, accounts, cats);
+    expect(e).toMatchObject({ direction: "TRANSFER", amount: 3386734, accountId: "sps", toAccountId: "sea", categoryId: null, missing: [] });
+    expect(suggestCategory("bayar listrik main gypsum", "KELUAR", cats)).toBe("listrik");
+    expect(suggestCategory("setoran main gypsum", "KELUAR", cats)).toBeNull();
+  });
   it("angka di caption diutamakan dari foto", () => {
     const text = "bayar listrik 350rb dari shopeepay 12/10/2026";
     const e = mergeReceipt(extractTransaction(text, accounts, cats), text, { amount: 351500, date: "2026-10-13", direction: "KELUAR", account: "Seabank", counterparty: null }, accounts, cats);
