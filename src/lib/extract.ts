@@ -80,8 +80,11 @@ function matchAccount(segment: string, accounts: ExtractAccount[]): string | nul
 }
 
 /** Rekomendasi kategori berbasis kata kunci; mengembalikan id kategori dengan skor tertinggi */
+// Nama usaha/toko sering ikut ditulis di keterangan dan tidak boleh memicu kata kunci kategori (mis. "gypsum")
+const BUSINESS_NAMES = /\b(main\s*gypsum|dunia\s*lukis)\b/g;
+
 export function suggestCategory(text: string, direction: string | null, categories: ExtractCategory[]): string | null {
-  const t = text.toLowerCase();
+  const t = text.toLowerCase().replace(BUSINESS_NAMES, " ");
   let best: { id: string; score: number } | null = null;
   for (const c of categories) {
     if (direction && c.direction !== direction) continue;
@@ -97,7 +100,7 @@ export function suggestCategory(text: string, direction: string | null, categori
 export function extractTransaction(text: string, accounts: ExtractAccount[], categories: ExtractCategory[], now: Date = new Date()): Extraction {
   const t = text.toLowerCase();
   let direction: Extraction["direction"] = null;
-  if (/\b(transfer internal|pindah dana|pindah saldo|tarik saldo|pindahkan)\b/.test(t)) direction = "TRANSFER";
+  if (/\b(transfer internal|pindah dana|pindah saldo|tarik saldo|tarik dana|pindahkan|withdraw|wd|penarikan)\b/.test(t)) direction = "TRANSFER";
   else if (/\b(masuk|terima|diterima|pemasukan|pendapatan|penjualan|cair|pencairan|dp dari)\b/.test(t)) direction = "MASUK";
   else if (/\b(keluar|bayar|beli|pembelian|biaya|pengeluaran|belanja|ongkir|gaji|upah)\b/.test(t)) direction = "KELUAR";
 
@@ -128,7 +131,7 @@ export function extractTransaction(text: string, accounts: ExtractAccount[], cat
   return { amount, date: date ?? todayStr(now), direction, accountId, toAccountId, categoryId, note: text.trim().slice(0, 500), confidence, missing };
 }
 
-export type ReceiptHint = { amount: number | null; date: string | null; direction: "MASUK" | "KELUAR" | null; account: string | null; counterparty: string | null };
+export type ReceiptHint = { amount: number | null; date: string | null; direction: "MASUK" | "KELUAR" | "TRANSFER" | null; account: string | null; toAccount?: string | null; counterparty: string | null };
 
 /**
  * Gabungkan hasil baca foto bukti dengan caption. Nominal/tanggal/rekening yang ditulis di caption
@@ -139,15 +142,20 @@ export function mergeReceipt(ex: Extraction, text: string, rx: ReceiptHint | nul
   const direction = ex.direction ?? rx.direction;
   const amount = ex.amount ?? rx.amount;
   const date = extractDate(text, now) ?? rx.date ?? ex.date;
-  const accountId = ex.accountId ?? (rx.account ? matchAccount(rx.account, accounts) : null);
+  const fromRx = rx.account ? matchAccount(rx.account, accounts) : null;
+  const toRx = rx.toAccount ? matchAccount(rx.toAccount, accounts) : null;
+  // Transfer internal: rekening asal/tujuan dari foto lebih tepat daripada kata acak di caption
+  const transferFromPhoto = direction === "TRANSFER" && ex.direction !== "TRANSFER";
+  const accountId = transferFromPhoto ? fromRx ?? ex.accountId : ex.accountId ?? fromRx;
+  const toAccountId = direction === "TRANSFER" ? ex.toAccountId ?? toRx : null;
   const basis = [text, rx.counterparty].filter(Boolean).join(" ");
   const categoryId = direction === "TRANSFER" ? null : ex.direction === direction && ex.categoryId ? ex.categoryId : suggestCategory(basis, direction, categories);
   const missing: string[] = [];
   if (!amount) missing.push("nominal");
   if (!direction) missing.push("jenis transaksi");
   if (!accountId) missing.push("rekening");
-  if (direction === "TRANSFER" && !ex.toAccountId) missing.push("rekening tujuan");
+  if (direction === "TRANSFER" && !toAccountId) missing.push("rekening tujuan");
   if (direction !== "TRANSFER" && !categoryId) missing.push("kategori");
   const note = [text.trim(), rx.counterparty && !text.toLowerCase().includes(rx.counterparty.toLowerCase()) ? `(${rx.counterparty})` : ""].filter(Boolean).join(" ").slice(0, 500);
-  return { ...ex, amount, date, direction, accountId, categoryId, note, confidence: Math.round(((5 - missing.length) / 5) * 100) / 100, missing };
+  return { ...ex, amount, date, direction, accountId, toAccountId, categoryId, note, confidence: Math.round(((5 - missing.length) / 5) * 100) / 100, missing };
 }
