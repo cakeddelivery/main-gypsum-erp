@@ -1,6 +1,7 @@
 import { prisma } from "./db";
 import { effectivePermissions } from "./rbac";
-import { extractTransaction } from "./extract";
+import { extractTransaction, mergeReceipt } from "./extract";
+import { readReceipt } from "./receipt";
 import { approveAndBook, createTransaction, FinanceError, rejectTransaction, STATUS_LABEL, submitForConfirmation, updateTransaction, missingFields } from "./finance";
 import { answerCallback, downloadTelegramFile, editTelegram, esc, sendTelegram, type InlineButton } from "./telegram";
 import { saveProof } from "./storage";
@@ -95,7 +96,7 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     return;
   }
   if (text === "/bantuan" || text === "/help") {
-    await sendTelegram(chatId, "Kirim pesan atau foto bukti transaksi, contoh:\n<i>bayar listrik 350rb dari seabank hari ini</i>\n<i>terima pencairan shopee 1,2jt ke saldo penjual</i>\n<i>transfer internal dari saldo penjual ke seabank 500rb</i>\n\nSaya akan membuat DRAFT dan meminta konfirmasi. /rekap untuk rekap hari ini.");
+    await sendTelegram(chatId, "Kirim pesan atau foto bukti transaksi, contoh:\n<i>bayar listrik 350rb dari seabank hari ini</i>\n<i>terima pencairan shopee 1,2jt ke saldo penjual</i>\n<i>transfer internal dari saldo penjual ke seabank 500rb</i>\n\nAtau kirim <b>foto bukti transfer/nota</b> dengan caption keterangan saja, misal <i>beli cat supplier A</i>. Nominal, tanggal & rekening dibaca dari foto.\n\nSaya akan membuat DRAFT dan meminta konfirmasi. /rekap untuk rekap hari ini.");
     return;
   }
   if (!ident.canSubmit) {
@@ -105,15 +106,19 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   if (!text && !msg.photo) return;
 
   let proofPath: string | null = null;
+  let photo: Buffer | null = null;
   if (msg.photo?.length) {
     const largest = msg.photo[msg.photo.length - 1];
-    const buf = await downloadTelegramFile(largest.file_id);
-    if (buf) proofPath = await saveProof(buf, "image/jpeg").catch(() => null);
+    photo = await downloadTelegramFile(largest.file_id);
+    if (photo) proofPath = await saveProof(photo, "image/jpeg").catch(() => null);
   }
   const [banks, cats] = await Promise.all([prisma.bankAccount.findMany({ where: { active: true } }), prisma.txCategory.findMany({ where: { active: true } })]);
-  const ex = extractTransaction(text || "foto bukti", banks, cats);
+  let ex = extractTransaction(text || "foto bukti", banks, cats);
+  // Foto bukti + caption keterangan: nominal, tanggal & rekening dibaca dari foto
+  const receipt = photo && (!ex.amount || !ex.direction || !ex.accountId) ? await readReceipt(photo, text, banks).catch(() => null) : null;
+  ex = mergeReceipt(ex, text, receipt, banks, cats);
   if (!ex.amount || !ex.direction) {
-    await sendTelegram(chatId, `Saya belum bisa membaca ${!ex.amount ? "nominal" : "jenis transaksi (masuk/keluar/transfer)"} dari pesan ini. Tulis ulang dengan lebih lengkap, misal: <i>bayar gypsum 2jt dari seabank</i>.`);
+    await sendTelegram(chatId, `Saya belum bisa membaca ${!ex.amount ? "nominal" : "jenis transaksi (masuk/keluar/transfer)"} dari ${photo ? "foto & keterangan" : "pesan"} ini. Tulis ulang dengan lebih lengkap, misal: <i>bayar gypsum 2jt dari seabank</i>.`);
     return;
   }
   const { transaction } = await createTransaction(
@@ -125,11 +130,11 @@ export async function handleTelegramUpdate(u: TgUpdate) {
       toAccountId: ex.toAccountId,
       categoryId: ex.categoryId,
       suggestedCategoryId: ex.categoryId,
-      note: text.slice(0, 500) || null,
+      note: (text ? ex.note : (receipt?.counterparty ?? "")).slice(0, 500) || null,
       rawText: text,
       proofPath,
       proofMime: proofPath ? "image/jpeg" : null,
-      aiExtraction: ex,
+      aiExtraction: receipt ? { ...ex, receipt } : ex,
       idempotencyKey: `tg:${chatId}:${msg.message_id}`,
       telegramChatId: chatId,
       telegramMessageId: String(msg.message_id),
