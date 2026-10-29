@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseIDR, idr } from "@/lib/money";
-import { extractAmount, extractDate, extractTransaction, suggestCategory } from "@/lib/extract";
+import { extractAmount, extractDate, extractTransaction, mergeReceipt, suggestCategory } from "@/lib/extract";
 import { validateLines, monthlyDepreciation } from "@/lib/accounting";
 import { evaluateCheckIn } from "@/lib/attendance";
 import { calcPayslip } from "@/lib/payroll";
@@ -58,6 +58,19 @@ describe("Ekstraksi transaksi", () => {
     expect(extractDate("5 Okt 2026")).toBe("2026-10-05");
     expect(extractAmount("Total: Rp 1.234.500")).toBe(1234500);
     expect(suggestCategory("beli gypsum 10 sak", "KELUAR", cats)).toBe("bahan");
+  });
+  it("foto bukti + caption keterangan saja", () => {
+    const text = "beli cat supplier";
+    const ex = extractTransaction(text, accounts, cats);
+    expect(ex.amount).toBeNull();
+    const e = mergeReceipt(ex, text, { amount: 275000, date: "2026-10-28", direction: "KELUAR", account: "Seabank", counterparty: "Toko Warna Jaya" }, accounts, cats);
+    expect(e).toMatchObject({ amount: 275000, direction: "KELUAR", accountId: "sea", categoryId: "bahan", date: "2026-10-28", missing: [] });
+    expect(e.note).toBe("beli cat supplier (Toko Warna Jaya)");
+  });
+  it("angka di caption diutamakan dari foto", () => {
+    const text = "bayar listrik 350rb dari shopeepay 12/10/2026";
+    const e = mergeReceipt(extractTransaction(text, accounts, cats), text, { amount: 351500, date: "2026-10-13", direction: "KELUAR", account: "Seabank", counterparty: null }, accounts, cats);
+    expect(e).toMatchObject({ amount: 350000, accountId: "spay", date: "2026-10-12", categoryId: "listrik" });
   });
 });
 

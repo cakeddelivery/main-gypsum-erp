@@ -127,3 +127,27 @@ export function extractTransaction(text: string, accounts: ExtractAccount[], cat
 
   return { amount, date: date ?? todayStr(now), direction, accountId, toAccountId, categoryId, note: text.trim().slice(0, 500), confidence, missing };
 }
+
+export type ReceiptHint = { amount: number | null; date: string | null; direction: "MASUK" | "KELUAR" | null; account: string | null; counterparty: string | null };
+
+/**
+ * Gabungkan hasil baca foto bukti dengan caption. Nominal/tanggal/rekening yang ditulis di caption
+ * tetap diutamakan; caption tanpa angka (hanya keterangan) dilengkapi dari foto.
+ */
+export function mergeReceipt(ex: Extraction, text: string, rx: ReceiptHint | null, accounts: ExtractAccount[], categories: ExtractCategory[], now: Date = new Date()): Extraction {
+  if (!rx) return ex;
+  const direction = ex.direction ?? rx.direction;
+  const amount = ex.amount ?? rx.amount;
+  const date = extractDate(text, now) ?? rx.date ?? ex.date;
+  const accountId = ex.accountId ?? (rx.account ? matchAccount(rx.account, accounts) : null);
+  const basis = [text, rx.counterparty].filter(Boolean).join(" ");
+  const categoryId = direction === "TRANSFER" ? null : ex.direction === direction && ex.categoryId ? ex.categoryId : suggestCategory(basis, direction, categories);
+  const missing: string[] = [];
+  if (!amount) missing.push("nominal");
+  if (!direction) missing.push("jenis transaksi");
+  if (!accountId) missing.push("rekening");
+  if (direction === "TRANSFER" && !ex.toAccountId) missing.push("rekening tujuan");
+  if (direction !== "TRANSFER" && !categoryId) missing.push("kategori");
+  const note = [text.trim(), rx.counterparty && !text.toLowerCase().includes(rx.counterparty.toLowerCase()) ? `(${rx.counterparty})` : ""].filter(Boolean).join(" ").slice(0, 500);
+  return { ...ex, amount, date, direction, accountId, categoryId, note, confidence: Math.round(((5 - missing.length) / 5) * 100) / 100, missing };
+}
