@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Icon } from "./Icon";
 import { ThemeToggle } from "./ThemeToggle";
 import { Toaster } from "./Toaster";
+import { ResponsiveTables } from "./ResponsiveTables";
 
 type Item = { href: string; label: string; icon: string };
 
@@ -88,6 +89,7 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
         <main className="min-w-0 flex-1 px-4 pb-24 pt-5 sm:px-6 lg:px-8 lg:pb-6">{children}</main>
       </div>
       <Toaster />
+      <ResponsiveTables />
       <nav
         aria-label="Menu utama"
         style={{ gridTemplateColumns: `repeat(${bottomNav.length + (showMenuSlot ? 1 : 0)}, minmax(0,1fr))` }}
