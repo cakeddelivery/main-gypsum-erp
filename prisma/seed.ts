@@ -11,6 +11,7 @@ const COA: [string, string, AccountType, boolean?][] = [
   ["1-1202", "ShopeePay", "ASET", true],
   ["1-1203", "Saldo Penjual Shopee", "ASET", true],
   ["1-1300", "Piutang Usaha", "ASET"],
+  ["1-1310", "Piutang Karyawan (Kasbon)", "ASET"],
   ["1-1401", "Persediaan Bahan Baku", "ASET"],
   ["1-1402", "Persediaan Barang Dalam Proses", "ASET"],
   ["1-1403", "Persediaan Barang Jadi", "ASET"],
@@ -20,7 +21,9 @@ const COA: [string, string, AccountType, boolean?][] = [
   ["1-2900", "Akumulasi Penyusutan", "ASET"],
   ["2-1100", "Utang Usaha", "KEWAJIBAN"],
   ["2-1200", "Utang Gaji & Upah", "KEWAJIBAN"],
+  ["2-1210", "Utang Kompensasi Pengelola (Owner)", "KEWAJIBAN"],
   ["2-1300", "Utang Lain-lain", "KEWAJIBAN"],
+  ["2-1400", "Utang Pinjaman Modal", "KEWAJIBAN"],
   ["3-1000", "Modal Pemilik", "EKUITAS"],
   ["3-2000", "Laba Ditahan", "EKUITAS"],
   ["3-3000", "Prive Pemilik", "EKUITAS"],
@@ -30,6 +33,7 @@ const COA: [string, string, AccountType, boolean?][] = [
   ["4-9000", "Pendapatan Lain-lain", "PENDAPATAN"],
   ["5-1000", "Harga Pokok Penjualan", "HPP"],
   ["6-1100", "Beban Gaji & Upah Produksi", "BEBAN"],
+  ["6-1150", "Beban Kompensasi Pengelola (Owner)", "BEBAN"],
   ["6-1200", "Beban Transport", "BEBAN"],
   ["6-1300", "Beban Listrik, Air & Gas", "BEBAN"],
   ["6-1400", "Beban Packing & Operasional", "BEBAN"],
@@ -58,8 +62,9 @@ async function main() {
     ["SHOPEEPAY", "ShopeePay", "1-1202", "shopeepay,spay,shopee pay"],
     ["SALDO_SHOPEE", "Saldo Penjual Shopee", "1-1203", "saldo penjual,saldo shopee,penjual shopee"],
   ];
+  const bank: Record<string, string> = {};
   for (const [code, name, coa, aliases] of banks) {
-    await prisma.bankAccount.upsert({ where: { code }, create: { code, name, coaAccountId: acc[coa], aliases }, update: {} });
+    bank[code] = (await prisma.bankAccount.upsert({ where: { code }, create: { code, name, coaAccountId: acc[coa], aliases }, update: {} })).id;
   }
 
   const cats: [string, "MASUK" | "KELUAR", string, string][] = [
@@ -179,6 +184,9 @@ async function main() {
     loc_finished: loc.GBJ,
     late_deduction_per_minute: "0",
     payroll_require_validated: "true",
+    payday_offset_days: "7",
+    weekly_off_quota: "1",
+    monthly_workdays: "26",
     auto_close_enabled: "true",
     daily_recap_time: "07:00",
     month_close_time: "09:00",
@@ -186,6 +194,15 @@ async function main() {
     company_address: "",
   };
   for (const [key, value] of Object.entries(settings)) await prisma.setting.upsert({ where: { key }, create: { key, value }, update: {} });
+
+  // Sisihan harian kompensasi owner (Rp100 rb/hari per owner = ±Rp3 jt/bulan), Seabank -> ShopeePay
+  if (!(await prisma.reserveFund.count({ where: { kind: "OWNER" } }))) {
+    for (const name of ["Kompensasi Pengelola - Cak Ed", "Kompensasi Pengelola - Jojo"]) {
+      await prisma.reserveFund.create({ data: { name, kind: "OWNER", dailyAmount: BigInt(100000), fromBankId: bank.SEABANK, toBankId: bank.SHOPEEPAY, storeId: mg.id } });
+    }
+  }
+  const tasks: [string, string, number][] = [["CAT_GIFTBOX", "Cat giftbox", 100], ["CAT_PLASTIK", "Cat plastik", 15], ["ASSEMBLING", "Assembling", 60]];
+  for (const [code, name, rate] of tasks) await prisma.pieceTask.upsert({ where: { code }, create: { code, name, ratePerPcs: BigInt(rate) }, update: {} });
 
   const targets: [string, ProductionStage, number][] = [["CTK", "CETAK", 600], ["FIL", "FILLING_CAT", 400], ["ASM", "ASSEMBLING", 300], ["QCP", "PACKING", 300]];
   for (const [d, stage, qty] of targets) {

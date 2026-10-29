@@ -11,7 +11,7 @@ import { saveAccount, saveEmployee } from "./actions";
 import type { EmployeeStatus } from "@prisma/client";
 
 export const metadata = { title: "Karyawan" };
-const WAGE = { HARIAN: "Harian", BORONGAN: "Borongan", CAMPURAN: "Harian + borongan" };
+const WAGE = { BULANAN: "Bulanan (gajian H+7)", HARIAN: "Harian", BORONGAN: "Borongan (per piece, klaim)", CAMPURAN: "Harian + borongan" };
 
 export default async function KaryawanPage({ searchParams }: { searchParams: Promise<{ q?: string; division?: string; status?: string }> }) {
   const user = await requirePerm("employee.view");
@@ -36,9 +36,11 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
       <Field label="Jabatan"><input name="position" defaultValue={e?.position} className="input" required /></Field>
       <Field label="Status"><select name="status" defaultValue={e?.status ?? "AKTIF"} className="input"><option value="AKTIF">Aktif</option><option value="CUTI">Cuti</option><option value="NONAKTIF">Nonaktif</option></select></Field>
       <Field label="Sistem upah"><select name="wageType" defaultValue={e?.wageType ?? "HARIAN"} className="input">{Object.entries(WAGE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
-      <Field label="Upah harian (IDR)"><input name="dailyRate" inputMode="numeric" defaultValue={e ? Number(e.dailyRate) : 0} className="input" /></Field>
+      <Field label="Gaji bulanan (IDR)" hint="Untuk sistem upah Bulanan"><input name="monthlySalary" inputMode="numeric" defaultValue={e ? Number(e.monthlySalary) : 0} className="input" /></Field>
+      <Field label="Upah harian (IDR)" hint="Untuk Harian / Campuran"><input name="dailyRate" inputMode="numeric" defaultValue={e ? Number(e.dailyRate) : 0} className="input" /></Field>
       <Field label="Telepon"><input name="phone" defaultValue={e?.phone ?? ""} className="input" /></Field>
-      <Field label="Tanggal masuk"><input type="date" name="joinDate" defaultValue={e?.joinDate?.toISOString().slice(0, 10)} className="input" /></Field>
+      <Field label="Tanggal masuk" hint="Menentukan siklus & tanggal gajian"><input type="date" name="joinDate" defaultValue={e?.joinDate?.toISOString().slice(0, 10)} className="input" /></Field>
+      <Field label="Tanggal resign" hint="Resign sebelum gajian = tidak digaji"><input type="date" name="resignDate" defaultValue={e?.resignDate?.toISOString().slice(0, 10)} className="input" /></Field>
       <div className="col-span-2 flex justify-end"><Submit>Simpan</Submit></div>
     </ModalForm>
   );
@@ -59,8 +61,8 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
                 <tr key={e.id}>
                   <td className="font-mono text-xs">{e.code}</td><td>{e.name}</td><td>{e.division.name}</td><td>{e.position}</td>
                   <td><Badge tone={e.status === "AKTIF" ? "green" : e.status === "CUTI" ? "amber" : "gray"}>{e.status}</Badge></td>
-                  <td>{WAGE[e.wageType]}{Number(e.dailyRate) > 0 && <div className="text-xs text-slate-400">{idr(e.dailyRate)}/hari</div>}</td>
-                  <td>{fmtDay(e.joinDate)}</td>
+                  <td>{WAGE[e.wageType]}{e.wageType === "BULANAN" ? <div className="text-xs text-slate-400">{idr(e.monthlySalary)}/bulan</div> : Number(e.dailyRate) > 0 && <div className="text-xs text-slate-400">{idr(e.dailyRate)}/hari</div>}</td>
+                  <td>{fmtDay(e.joinDate)}{e.resignDate && <div className="text-xs text-rose-600">Resign {fmtDay(e.resignDate)}</div>}</td>
                   <td>{e.user ? <span className="text-xs">{e.user.username} · {ROLE_LABEL[e.user.role]}{!e.user.active && " (nonaktif)"}</span> : <span className="text-xs text-slate-400">—</span>}</td>
                   {canManage && (
                     <td className="flex gap-1">

@@ -107,6 +107,24 @@ export const createPayable = action(
   ["/akuntansi/piutang-utang"],
 );
 
+/** Pinjaman modal: uang pinjaman masuk ke rekening (Dr Rekening / Cr Utang Pinjaman Modal) */
+export const createLoan = action(
+  "accounting.post",
+  async (fd, user) => {
+    const amount = int(fd, "amount");
+    if (amount <= 0) throw new Error("Nominal harus > 0");
+    const lender = z.string().min(2, "Pemberi pinjaman wajib").parse(str(fd, "vendor"));
+    const bank = await prisma.bankAccount.findUniqueOrThrow({ where: { id: str(fd, "bankAccountId") } });
+    await prisma.$transaction(async (tx) => {
+      const number = await nextNumber(tx, "PJM");
+      const j = await postJournal(tx, { date: d(fd), storeId: str(fd, "storeId"), description: `Pinjaman modal ${number} ${lender}`, source: "PINJAMAN", sourceId: number, actor: user, lines: [{ accountId: bank.coaAccountId, debit: amount }, { accountCode: COA.UTANG_PINJAMAN, credit: amount }] });
+      await tx.payable.create({ data: { number, kind: "PINJAMAN", vendor: lender, storeId: str(fd, "storeId"), date: d(fd), dueDate: optStr(fd, "dueDate") ? d(fd, "dueDate") : null, amount: BigInt(amount), note: optStr(fd, "note"), journalId: j.id } });
+    });
+    return "Pinjaman modal dicatat";
+  },
+  ["/akuntansi/piutang-utang"],
+);
+
 export const settle = action(
   "accounting.post",
   async (fd, user) => {
@@ -118,8 +136,13 @@ export const settle = action(
       const doc = kind === "piutang" ? await tx.receivable.findUniqueOrThrow({ where: { id } }) : await tx.payable.findUniqueOrThrow({ where: { id } });
       const remaining = Number(doc.amount - doc.paid);
       if (amount <= 0 || amount > remaining) throw new Error(`Nominal harus 1 – ${remaining}`);
-      const lines: LineInput[] = kind === "piutang" ? [{ accountId: bank.coaAccountId, debit: amount }, { accountCode: COA.PIUTANG, credit: amount }] : [{ accountCode: COA.UTANG_USAHA, debit: amount }, { accountId: bank.coaAccountId, credit: amount }];
-      await postJournal(tx, { date: d(fd), storeId: doc.storeId, description: `${kind === "piutang" ? "Pelunasan piutang" : "Pembayaran utang"} ${doc.number}`, source: kind === "piutang" ? "PIUTANG" : "UTANG", sourceId: doc.number, actor: user, lines });
+      const interest = kind === "piutang" ? 0 : int(fd, "interest");
+      if (interest < 0) throw new Error("Bunga tidak boleh negatif");
+      const liability = "kind" in doc && doc.kind === "PINJAMAN" ? COA.UTANG_PINJAMAN : COA.UTANG_USAHA;
+      const lines: LineInput[] = kind === "piutang"
+        ? [{ accountId: bank.coaAccountId, debit: amount }, { accountCode: COA.PIUTANG, credit: amount }]
+        : [{ accountCode: liability, debit: amount }, ...(interest > 0 ? [{ accountCode: COA.BEBAN_LAIN, debit: interest, memo: "Bunga / biaya pinjaman" }] : []), { accountId: bank.coaAccountId, credit: amount + interest }];
+      await postJournal(tx, { date: d(fd), storeId: doc.storeId, description: `${kind === "piutang" ? "Pelunasan piutang" : liability === COA.UTANG_PINJAMAN ? "Cicilan pinjaman" : "Pembayaran utang"} ${doc.number}`, source: kind === "piutang" ? "PIUTANG" : "UTANG", sourceId: doc.number, actor: user, lines });
       if (kind === "piutang") await tx.receivable.update({ where: { id }, data: { paid: { increment: BigInt(amount) } } });
       else await tx.payable.update({ where: { id }, data: { paid: { increment: BigInt(amount) } } });
     });

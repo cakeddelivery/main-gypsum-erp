@@ -31,7 +31,8 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
         subtitle="Bahan baku, barang dalam proses, dan barang jadi per lokasi"
         actions={
           <>
-            {user.can("stock.move") && <Link href="/stok/mutasi" className="btn-primary">Mutasi stok</Link>}
+            {(user.can("finance.approve") || user.can("accounting.view")) && <Link href="/stok/pembelian" className="btn-primary">Pembelian</Link>}
+            {user.can("stock.move") && <Link href="/stok/mutasi" className="btn-secondary">Mutasi stok</Link>}
             {(user.can("stock.request") || user.can("stock.approve")) && <Link href="/stok/permintaan" className="btn-secondary">Permintaan</Link>}
             {user.can("stock.view") && <Link href="/stok/kartu" className="btn-secondary">Kartu persediaan</Link>}
             {user.can("master.manage") && <Link href="/stok/master" className="btn-secondary">Master data</Link>}

@@ -5,6 +5,7 @@ import { bankBalances } from "./finance";
 import { closePeriod } from "./accounting";
 import { sendTelegram, telegramConfigured } from "./telegram";
 import { lowStockItems } from "./stock";
+import { generateMonthlyPayroll } from "./payroll";
 
 const SYSTEM_ACTOR = { id: "system", name: "Sistem (terjadwal)" };
 
@@ -70,6 +71,7 @@ async function markRan(key: string, date: string) {
 
 /**
  * Jalankan job yang jatuh tempo (dipanggil tiap menit oleh scheduler / cron):
+ * - 06.00 WIB: slip gaji bulanan untuk siklus karyawan yang selesai (gajian H+7)
  * - 07.00 WIB: rekap harian Telegram
  * - Tanggal 1 pukul 09.00 WIB: tutup buku bulan sebelumnya
  */
@@ -78,6 +80,10 @@ export async function runDueJobs(now: Date = new Date()) {
   const date = todayStr(now);
   const results: Record<string, unknown> = {};
   const minutes = p.hour * 60 + p.minute;
+  if (minutes >= 6 * 60 && !(await ranToday("job_monthly_payroll_last", date))) {
+    await markRan("job_monthly_payroll_last", date);
+    results.monthlyPayroll = await generateMonthlyPayroll(SYSTEM_ACTOR, now);
+  }
   if (minutes >= 7 * 60 && !(await ranToday("job_daily_recap_last", date))) {
     await markRan("job_daily_recap_last", date);
     results.dailyRecap = await sendDailyRecap(now);

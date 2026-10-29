@@ -4,6 +4,7 @@ export type NavItem = { href: string; label: string; icon: string; perms: Permis
 
 export const NAV: NavItem[] = [
   { href: "/", label: "Dashboard", icon: "home", perms: ["dashboard.view"] },
+  { href: "/analitik", label: "Analitik & Advisor", icon: "report", perms: ["accounting.view"] },
   { href: "/produksi", label: "Produksi", icon: "factory", perms: ["production.view"] },
   { href: "/laporan", label: "Laporan Shift", icon: "report", perms: ["report.view"] },
   { href: "/absensi", label: "Absensi", icon: "clock", perms: ["attendance.view", "attendance.self"] },

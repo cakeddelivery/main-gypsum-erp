@@ -8,7 +8,7 @@ import { Badge, Card, Empty, Field, PageHeader, Stat } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { adjustSlip, approve, compute, pay } from "../actions";
+import { adjustSlip, approve, cancelClaim, compute, pay } from "../actions";
 
 export const metadata = { title: "Periode Penggajian" };
 
@@ -22,16 +22,17 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
     prisma.store.findMany(),
     p.journalId ? prisma.journal.findUnique({ where: { id: p.journalId } }) : null,
   ]);
-  const sum = (k: "dailyWage" | "pieceWage" | "transport" | "total") => p.payslips.reduce((s, x) => s + Number(x[k]), 0);
+  const sum = (k: "baseSalary" | "dailyWage" | "pieceWage" | "transport" | "total") => p.payslips.reduce((s, x) => s + Number(x[k]), 0);
   return (
     <div className="space-y-5">
       <PageHeader
         title={`Penggajian ${p.code}`}
-        subtitle={`${fmtDay(p.startDate)} – ${fmtDay(p.endDate)}`}
+        subtitle={`${p.kind === "BULANAN" ? "Gaji bulanan" : p.kind === "BORONGAN" ? "Klaim borongan" : "Upah harian/campuran"} · ${fmtDay(p.startDate)} – ${fmtDay(p.endDate)}${p.payDate ? ` · gajian ${fmtDay(p.payDate)}` : ""}`}
         actions={
           <>
             <Link href="/gaji" className="btn-secondary">← Kembali</Link>
             {p.status === "DRAFT" && user.can("payroll.manage") && <ActionForm action={compute}><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary" pendingText="Menghitung…">Hitung ulang</Submit></ActionForm>}
+            {p.kind === "BORONGAN" && p.status === "DRAFT" && user.can("payroll.manage") && <ActionForm action={cancelClaim} confirm="Batalkan klaim ini? Hasil borongan kembali menjadi belum diklaim."><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary">Batalkan klaim</Submit></ActionForm>}
             {p.status === "DRAFT" && user.can("payroll.approve") && p.payslips.length > 0 && <ActionForm action={approve} confirm="Setujui penggajian ini? Slip tidak bisa dihitung ulang setelah disetujui."><input type="hidden" name="id" value={p.id} /><Submit className="btn-success">Setujui</Submit></ActionForm>}
             {p.status === "DISETUJUI" && user.can("payroll.approve") && (
               <Modal trigger="Bayar gaji" title="Pembayaran gaji">
@@ -50,20 +51,20 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
       />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Status" value={<Badge tone={p.status === "DIBAYAR" ? "green" : p.status === "DISETUJUI" ? "blue" : "amber"}>{p.status}</Badge>} hint={p.approvedBy ? `Disetujui ${p.approvedBy}` : undefined} />
-        <Stat label="Upah harian" value={idr(sum("dailyWage"))} />
+        {p.kind === "BULANAN" ? <Stat label="Gaji pokok" value={idr(sum("baseSalary"))} /> : <Stat label="Upah harian" value={idr(sum("dailyWage"))} />}
         <Stat label="Upah borongan" value={idr(sum("pieceWage"))} />
         <Stat label="Transport assembling" value={idr(sum("transport"))} />
         <Stat label="Total" value={idr(sum("total"))} tone="blue" hint={journal ? `Jurnal ${journal.number} · ${fmtDateTime(p.paidAt)}` : undefined} />
       </div>
-      {p.payslips.length === 0 ? <Empty title="Belum ada slip" hint="Klik Hitung ulang untuk menghitung dari absensi tervalidasi, hasil borongan, dan transport." /> : (
+      {p.payslips.length === 0 ? <Empty title="Belum ada slip" hint={p.kind === "BULANAN" ? "Belum ada karyawan bulanan yang siklusnya cocok dengan periode ini." : "Klik Hitung ulang untuk menghitung dari absensi tervalidasi, hasil borongan, dan transport."} /> : (
         <Card title="Slip gaji">
           <div className="overflow-x-auto">
             <table className="tbl">
-              <thead><tr><th>Karyawan</th><th>Divisi</th><th className="num">Hari</th><th className="num">Harian</th><th className="num">Borongan</th><th className="num">Transport</th><th className="num">Bonus</th><th className="num">Potongan</th><th className="num">Total</th><th /></tr></thead>
+              <thead><tr><th>Karyawan</th><th>Divisi</th><th className="num">Hadir</th>{p.kind === "BULANAN" && <><th className="num">Libur</th><th className="num">Bolos</th><th className="num">Gaji pokok</th></>}<th className="num">Harian</th><th className="num">Borongan</th><th className="num">Transport</th><th className="num">Bonus</th><th className="num">Potongan</th><th className="num">Kasbon</th><th className="num">Total</th><th /></tr></thead>
               <tbody>
                 {p.payslips.map((s) => (
                   <tr key={s.id}>
-                    <td>{s.employee.name}</td><td>{s.employee.division.name}</td><td className="num">{s.daysPresent}</td><td className="num">{idr(s.dailyWage)}</td><td className="num">{idr(s.pieceWage)}</td><td className="num">{idr(s.transport)}</td><td className="num">{idr(s.bonus)}</td><td className="num text-rose-600">{idr(s.deduction)}</td><td className="num font-semibold">{idr(s.total)}</td>
+                    <td>{s.employee.name}</td><td>{s.employee.division.name}</td><td className="num">{s.daysPresent}</td>{p.kind === "BULANAN" && <><td className="num">{s.offDays}</td><td className={`num ${s.absentDays ? "text-rose-600" : ""}`}>{s.absentDays}</td><td className="num">{idr(s.baseSalary)}</td></>}<td className="num">{idr(s.dailyWage)}</td><td className="num">{idr(s.pieceWage)}</td><td className="num">{idr(s.transport)}</td><td className="num">{idr(s.bonus)}</td><td className="num text-rose-600">{idr(s.deduction)}</td><td className="num text-rose-600">{idr(s.advanceDeduction)}</td><td className="num font-semibold">{idr(s.total)}{s.note && <div className="text-xs font-normal text-slate-400">{s.note}</div>}</td>
                     <td className="flex gap-1">
                       <Link href={`/gaji/slip/${s.id}`} className="btn-secondary btn-sm">Slip</Link>
                       {p.status === "DRAFT" && user.can("payroll.manage") && (

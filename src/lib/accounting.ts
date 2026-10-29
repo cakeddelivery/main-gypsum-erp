@@ -10,6 +10,7 @@ type Tx = Prisma.TransactionClient;
 export const COA = {
   KAS: "1-1100",
   PIUTANG: "1-1300",
+  PIUTANG_KARYAWAN: "1-1310",
   PERSEDIAAN_BAHAN: "1-1401",
   PERSEDIAAN_BDP: "1-1402",
   PERSEDIAAN_JADI: "1-1403",
@@ -17,15 +18,19 @@ export const COA = {
   AKUM_PENYUSUTAN: "1-2900",
   UTANG_USAHA: "2-1100",
   UTANG_GAJI: "2-1200",
+  UTANG_GAJI_OWNER: "2-1210",
+  UTANG_PINJAMAN: "2-1400",
   MODAL: "3-1000",
   LABA_DITAHAN: "3-2000",
   EKUITAS_SALDO_AWAL: "3-9000",
   PENJUALAN: "4-1000",
   HPP: "5-1000",
   BEBAN_GAJI_PRODUKSI: "6-1100",
+  BEBAN_GAJI_OWNER: "6-1150",
   BEBAN_TRANSPORT: "6-1200",
   BEBAN_PENYUSUTAN: "6-1700",
   BEBAN_SELISIH_PERSEDIAAN: "6-1800",
+  BEBAN_LAIN: "6-9000",
 } as const;
 
 export type LineInput = { accountId?: string; accountCode?: string; debit?: number; credit?: number; memo?: string };
@@ -196,6 +201,7 @@ export async function cashFlow(r: Range) {
     if (other) {
       if (other.account.type === "ASET" && other.account.code.startsWith("1-2")) g = "INVESTASI";
       else if (other.account.type === "EKUITAS" && other.account.code !== COA.EKUITAS_SALDO_AWAL) g = "PENDANAAN";
+      else if (other.account.code === COA.UTANG_PINJAMAN) g = "PENDANAAN";
     }
     if (j.source === "SALDO_AWAL") continue;
     groups[g].push({ description: `${j.number} · ${j.description}`, amount: net });

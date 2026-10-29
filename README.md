@@ -46,6 +46,18 @@ Akun uji hasil seed (password default `Gypsum#2026`, atau nilai `SEED_PASSWORD`)
 | `TELEGRAM_BOT_TOKEN` | Token bot dari @BotFather |
 | `TELEGRAM_WEBHOOK_SECRET` | Secret header webhook Telegram |
 | `HERMES_WEBHOOK_URL`, `HERMES_WEBHOOK_TOKEN` | Opsional, meneruskan pesan Telegram ke Hermes AI Agent |
+| `ANTHROPIC_API_KEY` | Opsional, mengaktifkan tombol "Minta saran AI" di menu Analitik (ringkasan angka bulanan dikirim ke Claude) |
+| `ADVISOR_MODEL` | Opsional, model Claude untuk AI advisor (default `claude-opus-5-5`) |
+
+## Aturan bisnis yang diterapkan
+
+- **Gaji bulanan H+7**: siklus dari tanggal masuk s/d sehari sebelum tanggal yang sama bulan berikutnya; slip dibuat otomatis (06.00 WIB) saat siklus selesai, gajian 7 hari kemudian. Jatah libur 1 hari per 7 hari siklus, kelebihan = bolos (potong gaji ÷ 26/hari). Resign sebelum tanggal gajian = slip Rp0. Parameter di Pengaturan.
+- **Borongan**: tugas per piece (Cat giftbox Rp100, Cat plastik Rp15, Assembling Rp60, bisa diubah), dicatat per pekerja dan dibayar saat pekerja klaim (Penggajian › Borongan & klaim).
+- **Kasbon**: Dr Piutang Karyawan / Cr rekening; dipotong otomatis dari slip berikutnya (penuh atau cicilan) dan tampil di slip JPG.
+- **Pembelian bahan baku** (Stok › Pembelian): lunas, bertahap (DP), atau tempo; stok masuk, jurnal, dan sisa utang tercatat sekaligus.
+- **Pinjaman modal** (Akuntansi › Piutang, utang & pinjaman › Pinjaman modal), cicilan bisa dengan bunga.
+- **Dana sisihan harian** (Finance › Dana sisihan): kompensasi pengelola (owner) dibebankan dan dipindah Seabank → ShopeePay sampai diambil; tabungan atau cicilan harian pinjaman modal.
+- **Analitik & advisor**: 12 bulan pendapatan/beban/laba/kas, growth, kas bebas, kewajiban & proyeksi 30 hari, saran otomatis, dan AI advisor opsional.
 
 ## Produksi & staging
 

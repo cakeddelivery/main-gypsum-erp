@@ -16,4 +16,5 @@ export const ATT_LABEL: Record<AttendanceStatus, string> = {
   IZIN: "Izin",
   SAKIT: "Sakit",
   ALPA: "Alpa",
+  LIBUR: "Libur",
 };
