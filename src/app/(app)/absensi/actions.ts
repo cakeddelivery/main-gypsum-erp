@@ -92,7 +92,9 @@ export const deleteWorkSite = action(
   ["/absensi"],
 );
 
-async function guardEmployee(employeeId: string, user: { role: string; divisionId: string | null }) {
+async function guardEmployee(employeeId: string, user: { role: string; divisionId: string | null; employeeId: string | null }) {
+  // Absensi sendiri tidak boleh diatur/divalidasi sendiri (dasar potongan gaji), kecuali Owner
+  if (user.role !== "OWNER" && user.employeeId && employeeId === user.employeeId) throw new Error("Absensi Anda sendiri harus diatur/divalidasi oleh atasan lain");
   if (user.role !== "KAPTEN_DIVISI" || !user.divisionId) return;
   const e = await prisma.employee.findUniqueOrThrow({ where: { id: employeeId } });
   if (e.divisionId !== user.divisionId) throw new ForbiddenError();
@@ -130,10 +132,10 @@ export const validateAttendance = action(
   async (fd, user) => {
     const ids = fd.getAll("ids").map(String);
     if (!ids.length) throw new Error("Pilih minimal satu absensi");
-    const where = { id: { in: ids }, ...(user.role === "KAPTEN_DIVISI" && user.divisionId ? { employee: { divisionId: user.divisionId } } : {}) };
+    const where = { id: { in: ids }, ...(user.role !== "OWNER" && user.employeeId ? { employeeId: { not: user.employeeId } } : {}), ...(user.role === "KAPTEN_DIVISI" && user.divisionId ? { employee: { divisionId: user.divisionId } } : {}) };
     const r = await prisma.attendance.updateMany({ where, data: { validated: true, validatedBy: user.name, validatedAt: new Date() } });
     await audit(user, "ABSENSI_DIVALIDASI", "Attendance", null, { ids });
-    return `${r.count} absensi divalidasi`;
+    return r.count < ids.length ? `${r.count} absensi divalidasi (${ids.length - r.count} dilewati: absensi sendiri / di luar divisi)` : `${r.count} absensi divalidasi`;
   },
   ["/absensi", "/"],
 );

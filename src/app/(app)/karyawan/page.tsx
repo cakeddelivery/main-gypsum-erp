@@ -27,6 +27,8 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
     prisma.division.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
   ]);
   const canManage = user.can("employee.manage");
+  // Nominal gaji rahasia: hanya pengelola karyawan & penggajian (bukan kapten/supervisor)
+  const canSeePay = canManage || user.can("payroll.manage") || user.can("payroll.approve");
   const roles = user.can("users.manage") ? ROLES.filter((r) => r !== "OWNER" || user.role === "OWNER") : (["OPERATOR", "KAPTEN_DIVISI", "PIC_CONTENT", "ADMIN_PRODUKSI", "ADMIN_MARKETPLACE"] as const);
   const form = (e?: (typeof employees)[number]) => (
     <ModalForm action={saveEmployee} className="grid grid-cols-2 gap-3">
@@ -62,7 +64,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
                 <tr key={e.id}>
                   <td className="font-mono text-xs">{e.code}</td><td>{e.name}</td><td>{e.division.name}</td><td>{e.position}</td>
                   <td><Badge tone={e.status === "AKTIF" ? "green" : e.status === "CUTI" ? "amber" : "gray"}>{e.status}</Badge></td>
-                  <td>{WAGE[e.wageType]}{e.wageType === "BULANAN" ? <div className="text-xs text-slate-400">{idr(e.monthlySalary)}/bulan</div> : Number(e.dailyRate) > 0 && <div className="text-xs text-slate-400">{idr(e.dailyRate)}/hari</div>}</td>
+                  <td>{WAGE[e.wageType]}{!canSeePay ? null : e.wageType === "BULANAN" ? <div className="text-xs text-slate-400">{idr(e.monthlySalary)}/bulan</div> : Number(e.dailyRate) > 0 && <div className="text-xs text-slate-400">{idr(e.dailyRate)}/hari</div>}</td>
                   <td>{fmtDay(e.joinDate)}{e.resignDate && <div className="text-xs text-rose-600">Resign {fmtDay(e.resignDate)}</div>}</td>
                   <td>{e.user ? <span className="text-xs">{e.user.username} · {ROLE_LABEL[e.user.role]}{!e.user.active && " (nonaktif)"}</span> : <span className="text-xs text-slate-400">—</span>}</td>
                   {canManage && (

@@ -168,9 +168,7 @@ async function allocateAdvances(tx: Tx, employeeId: string, periodId: string, av
   if (available <= 0) return none;
   const advances = (await tx.cashAdvance.findMany({ where: { employeeId }, orderBy: { date: "asc" } })).filter((a) => a.repaid < a.amount);
   if (!advances.length) return none;
-  const pending = await tx.payslip.findMany({ where: { employeeId, periodId: { not: periodId }, advanceDeduction: { gt: 0 }, period: { status: { not: "DIBAYAR" } } } });
-  const reserved = new Map<string, number>();
-  for (const p of pending) for (const d of p.advanceDetail as AdvanceAlloc[]) reserved.set(d.id, (reserved.get(d.id) ?? 0) + d.amount);
+  const reserved = await reservedAdvances(tx, employeeId, periodId);
   let left = available;
   const detail: AdvanceAlloc[] = [];
   for (const a of advances) {
@@ -182,6 +180,14 @@ async function allocateAdvances(tx: Tx, employeeId: string, periodId: string, av
     if (left <= 0) break;
   }
   return { deduction: available - left, detail };
+}
+
+/** Potongan kasbon yang sudah dialokasikan di slip lain yang belum dibayar (per id kasbon) */
+async function reservedAdvances(tx: Tx, employeeId: string, exceptPeriodId?: string) {
+  const pending = await tx.payslip.findMany({ where: { employeeId, ...(exceptPeriodId ? { periodId: { not: exceptPeriodId } } : {}), advanceDeduction: { gt: 0 }, period: { status: { not: "DIBAYAR" } } } });
+  const reserved = new Map<string, number>();
+  for (const p of pending) for (const d of p.advanceDetail as AdvanceAlloc[]) reserved.set(d.id, (reserved.get(d.id) ?? 0) + d.amount);
+  return reserved;
 }
 
 /** Beri kasbon: Dr Piutang Karyawan / Cr rekening; dipotong otomatis dari slip gaji berikutnya */
@@ -204,8 +210,11 @@ export async function repayAdvance(advanceId: string, amount: number, bankAccoun
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "CashAdvance" WHERE id = ${advanceId} FOR UPDATE`;
     const a = await tx.cashAdvance.findUniqueOrThrow({ where: { id: advanceId }, include: { employee: true } });
-    const remaining = Number(a.amount - a.repaid);
-    if (!(amount > 0) || amount > remaining) throw new PayrollError(`Nominal pelunasan harus 1 – ${remaining}`);
+    // Bagian kasbon yang sudah dijadwalkan dipotong di slip gaji yang belum dibayar tidak boleh dilunasi lagi (potong ganda)
+    const reserved = (await reservedAdvances(tx, a.employeeId)).get(a.id) ?? 0;
+    const remaining = Number(a.amount - a.repaid) - reserved;
+    if (remaining <= 0) throw new PayrollError(`Sisa kasbon ${a.number} sudah dijadwalkan dipotong dari slip gaji yang belum dibayar. Hitung ulang slip tersebut dahulu bila ingin dilunasi tunai.`);
+    if (!(amount > 0) || amount > remaining) throw new PayrollError(`Nominal pelunasan harus 1 – ${remaining}${reserved ? ` (Rp ${reserved.toLocaleString("id-ID")} sudah dijadwalkan dipotong dari slip gaji)` : ""}`);
     const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: bankAccountId } });
     const storeId = (await tx.setting.findUnique({ where: { key: "default_store_id" } }))?.value ?? (await tx.store.findFirstOrThrow()).id;
     await postJournal(tx, { date: jakartaDateTime(date, "12:00"), storeId, description: `Pelunasan kasbon ${a.number} ${a.employee.name}`, source: "KASBON", sourceId: a.number, actor, lines: [{ accountId: bank.coaAccountId, debit: amount }, { accountCode: COA.PIUTANG_KARYAWAN, credit: amount }] });
@@ -412,7 +421,10 @@ export async function generateMonthlyPayroll(actor: Actor, now: Date = new Date(
   for (const c of cycles.values()) {
     const exists = await prisma.payrollPeriod.findFirst({ where: { kind: "BULANAN", startDate: dateOnly(c.start), endDate: dateOnly(c.end) } });
     if (exists) continue;
-    const p = await prisma.payrollPeriod.create({ data: { code: `GJB-${c.end.replace(/-/g, "")}`, kind: "BULANAN", startDate: dateOnly(c.start), endDate: dateOnly(c.end), payDate: dateOnly(c.payDate) } });
+    // Tanggal masuk 29–31 bisa berakhir di tanggal yang sama (Februari) dengan awal siklus berbeda: kode dibedakan
+    const base = `GJB-${c.end.replace(/-/g, "")}`;
+    const code = (await prisma.payrollPeriod.findUnique({ where: { code: base } })) ? `${base}-${c.start.slice(8, 10)}` : base;
+    const p = await prisma.payrollPeriod.create({ data: { code, kind: "BULANAN", startDate: dateOnly(c.start), endDate: dateOnly(c.end), payDate: dateOnly(c.payDate) } });
     await computePeriod(p.id, actor);
     created.push(p.code);
   }
@@ -487,7 +499,13 @@ export async function payPeriod(periodId: string, bankAccountId: string, storeId
       ...(advances > 0 ? [{ accountCode: COA.PIUTANG_KARYAWAN, credit: advances, memo: "Potongan kasbon" }] : []),
       ...(net > 0 ? [{ accountId: bank.coaAccountId, credit: net }] : []),
     ];
-    for (const x of p.payslips) for (const d of x.advanceDetail as AdvanceAlloc[]) await tx.cashAdvance.update({ where: { id: d.id }, data: { repaid: { increment: BigInt(d.amount) } } });
+    for (const x of p.payslips)
+      for (const d of x.advanceDetail as AdvanceAlloc[]) {
+        await tx.$queryRaw`SELECT id FROM "CashAdvance" WHERE id = ${d.id} FOR UPDATE`;
+        const a = await tx.cashAdvance.findUniqueOrThrow({ where: { id: d.id } });
+        if (a.repaid + BigInt(d.amount) > a.amount) throw new PayrollError(`Potongan kasbon ${a.number} melebihi sisa kasbon (sudah dilunasi di luar gaji). Hitung ulang periode ini sebelum dibayar.`);
+        await tx.cashAdvance.update({ where: { id: d.id }, data: { repaid: { increment: BigInt(d.amount) } } });
+      }
     if (wages + transport === 0) {
       await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DIBAYAR", paidAt, paidFromAccountId: bankAccountId } });
       await audit(actor, "GAJI_DIBAYAR", "PayrollPeriod", periodId, { total: 0 }, tx);

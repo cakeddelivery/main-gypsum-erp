@@ -208,6 +208,19 @@ describe("Aturan bisnis: gaji bulanan, kasbon, borongan, pembelian, sisihan", ()
     expect(bs.balanced).toBe(true);
   });
 
+  it("kasbon yang sudah dijadwalkan di slip belum dibayar tidak bisa dilunasi tunai (cegah potong ganda)", async () => {
+    const { generateMonthlyPayroll, giveAdvance, repayAdvance } = await import("@/lib/payroll");
+    await prisma.setting.upsert({ where: { key: "go_live_date" }, create: { key: "go_live_date", value: "2026-12-01" }, update: { value: "2026-12-01" } });
+    const div = await prisma.division.findFirstOrThrow();
+    const c = await prisma.employee.create({ data: { code: "B003", name: "Bulanan C", divisionId: div.id, position: "Staf", wageType: "BULANAN", monthlySalary: BigInt(2_000_000), joinDate: dateOnly("2026-06-12") } });
+    const adv = await giveAdvance({ employeeId: c.id, amount: 300_000, installment: 0, bankAccountId: bank.SEABANK, storeId, date: "2026-10-20" }, actor);
+    await generateMonthlyPayroll(actor, d("2026-11-12"));
+    const slip = await prisma.payslip.findFirstOrThrow({ where: { employeeId: c.id } });
+    expect(Number(slip.advanceDeduction)).toBe(300_000);
+    await expect(repayAdvance(adv.id, 300_000, bank.SEABANK, "2026-11-13", actor)).rejects.toThrow(/dijadwalkan/);
+    await prisma.setting.update({ where: { key: "go_live_date" }, data: { value: "" } });
+  });
+
   it("klaim borongan per piece", async () => {
     const { createPieceClaim } = await import("@/lib/payroll");
     const emp = await prisma.employee.findUniqueOrThrow({ where: { code: "K003" } });

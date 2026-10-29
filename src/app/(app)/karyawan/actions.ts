@@ -50,6 +50,10 @@ export const saveAccount = action(
     if (role === "OWNER" && user.role !== "OWNER") throw new ForbiddenError();
     const emp = await prisma.employee.findUniqueOrThrow({ where: { id: employeeId } });
     const existing = await prisma.user.findUnique({ where: { employeeId } });
+    // Akun yang sudah ber-role di atas role lapangan (Finance/Admin/Owner…) hanya boleh diubah pengelola pengguna;
+    // tanpa ini Admin bisa mengganti password akun Finance/Owner yang tertaut ke data karyawan
+    if (existing && !user.can("users.manage") && !FIELD_ROLES.includes(existing.role)) throw new ForbiddenError();
+    if (existing?.role === "OWNER" && user.role !== "OWNER") throw new ForbiddenError();
     const password = str(fd, "password");
     const username = z.string().regex(/^[a-z0-9._-]{3,30}$/, "Username 3-30 huruf kecil/angka").parse(str(fd, "username").toLowerCase());
     if (existing) {

@@ -425,6 +425,8 @@ model ShiftReport {
   stockCount Json         @default("[]")
   /// Hitungan stok sudah diterapkan ke kartu stok (penyesuaian stock opname)
   stockApplied Boolean    @default(false)
+  /// Hitungan stok yang terakhir diterapkan; revisi laporan hanya menerapkan selisihnya
+  stockAppliedCount Json?
   complaints String?
   followUp   String?
   followUpStatus String   @default("BELUM")
@@ -821,6 +823,8 @@ model JournalLine {
   debit     BigInt     @default(0)
   credit    BigInt     @default(0)
   memo      String?
+  @@index([journalId])
+  @@index([accountId])
 }
 
 enum PeriodStatus {
