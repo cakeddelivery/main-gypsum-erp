@@ -40,8 +40,8 @@ export const deleteMaterial = action(
   "material.manage",
   async (fd, user) => {
     const id = str(fd, "id");
-    const it = await prisma.item.findUniqueOrThrow({ where: { id }, include: { _count: { select: { movements: true, bomLines: true, requests: true, purchaseLines: true } } } });
-    const used = it._count.movements + it._count.bomLines + it._count.requests + it._count.purchaseLines > 0;
+    const it = await prisma.item.findUniqueOrThrow({ where: { id }, include: { _count: { select: { movements: true, bomLines: true, requests: true, purchaseLines: true, usedInRecipes: true, recipe: true, pieceInputs: true, pieceOutputs: true, handoverLines: true } } } });
+    const used = Object.values(it._count).some((n) => n > 0);
     if (used) await prisma.item.update({ where: { id }, data: { active: false } });
     else await prisma.item.delete({ where: { id } });
     await audit(user, used ? "BAHAN_DINONAKTIFKAN" : "BAHAN_DIHAPUS", "Item", id, { name: it.name });

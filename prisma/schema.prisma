@@ -295,6 +295,7 @@ model PieceTask {
   works           PieceWork[]
   inputs          PieceTaskInput[]
   results         BoronganResult[]
+  recipeLabor     RecipeLabor[]
 }
 
 /// Bahan yang terpakai per 1 pcs hasil tugas borongan (satuan resep/HPP bila ada, seperti BOM)
@@ -695,9 +696,14 @@ model Item {
   requests          StockRequest[]
   product           Product?               @relation("ProductFinishedItem")
   purchaseLines     PurchaseLine[]
+  /// Resep barang setengah jadi: komponen, tenaga kerja & overhead per 1 unit stok
+  recipe            ItemRecipeLine[]       @relation("RecipeOf")
+  usedInRecipes     ItemRecipeLine[]       @relation("RecipeComponent")
   pieceInputs       PieceTaskInput[]
   pieceOutputs      PieceTask[]
   handoverLines     BoronganHandoverLine[]
+  recipeLabor       RecipeLabor[]
+  recipeOverhead    RecipeOverhead[]
 }
 
 enum MovementType {
@@ -780,12 +786,80 @@ model Product {
   packQty        Int               @default(1)
   laborCost      BigInt            @default(0)
   overheadCost   BigInt            @default(0)
+  /// Target margin (% dari harga jual), affiliate & iklan (% harga) untuk saran harga
+  targetMargin   Decimal           @default(30) @db.Decimal(5, 2)
+  affiliatePct   Decimal           @default(0) @db.Decimal(5, 2)
+  adsPct         Decimal           @default(0) @db.Decimal(5, 2)
+  /// Rata-rata jumlah produk per pesanan marketplace (biaya pesanan flat dibagi ke tiap produk)
+  itemsPerOrder  Decimal           @default(1) @db.Decimal(6, 2)
+  /// Tambahan biaya kemasan lain per produk (opsional)
+  extraPackaging BigInt            @default(0)
+  category       String?
+  note           String?
+  recipeLabor    RecipeLabor[]
+  recipeOverhead RecipeOverhead[]
   active         Boolean           @default(true)
   finishedItemId String?           @unique
   finishedItem   Item?             @relation("ProductFinishedItem", fields: [finishedItemId], references: [id])
   bom            BomLine[]
   prices         PriceHistory[]
   production     ProductionEntry[]
+}
+
+/// Komponen resep barang setengah jadi (bahan baku atau setengah jadi lain), qty dalam satuan resep komponen
+model ItemRecipeLine {
+  id          String  @id @default(cuid())
+  itemId      String
+  item        Item    @relation("RecipeOf", fields: [itemId], references: [id], onDelete: Cascade)
+  componentId String
+  component   Item    @relation("RecipeComponent", fields: [componentId], references: [id])
+  qty         Decimal @db.Decimal(14, 4)
+  /// Satuan pakai yang dipilih di form (qty tetap disimpan dalam satuan resep komponen)
+  useUnit     String?
+
+  @@unique([itemId, componentId])
+}
+
+/// Biaya overhead bulanan (listrik, LPG, penyusutan, sewa, dll.) yang dibebankan per pcs produksi
+model Overhead {
+  id             String           @id @default(cuid())
+  category       String
+  name           String
+  /// Biaya per bulan; untuk penyusutan = harga aset / umur (bulan)
+  monthlyAmount  BigInt
+  assetCost      BigInt?
+  lifeMonths     Int?
+  /// Estimasi output per bulan (pcs); beban per pcs = biaya per bulan / output
+  outputPerMonth Int              @default(0)
+  note           String?
+  usages         RecipeOverhead[]
+  active         Boolean          @default(true)
+  createdAt      DateTime         @default(now())
+}
+
+/// Tenaga kerja dalam resep (barang setengah jadi atau produk): dari tarif borongan atau tarif custom, per 1 unit
+model RecipeLabor {
+  id        String     @id @default(cuid())
+  itemId    String?
+  item      Item?      @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  productId String?
+  product   Product?   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  taskId    String?
+  task      PieceTask? @relation(fields: [taskId], references: [id])
+  name      String
+  rate      BigInt
+}
+
+/// Overhead dalam resep: beban per pcs overhead master × faktor
+model RecipeOverhead {
+  id         String   @id @default(cuid())
+  itemId     String?
+  item       Item?    @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  productId  String?
+  product    Product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  overheadId String
+  overhead   Overhead @relation(fields: [overheadId], references: [id])
+  factor     Decimal  @default(1) @db.Decimal(10, 4)
 }
 
 model BomLine {
@@ -795,6 +869,7 @@ model BomLine {
   itemId    String
   item      Item    @relation(fields: [itemId], references: [id])
   qty       Decimal @db.Decimal(14, 4)
+  useUnit   String?
 
   @@unique([productId, itemId])
 }

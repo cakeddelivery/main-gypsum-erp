@@ -10,7 +10,8 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Paged } from "@/components/Paged";
-import { ItemLines, ResultRows } from "./BoronganForms";
+import { ItemLines } from "@/components/ItemLines";
+import { ResultRows } from "./BoronganForms";
 import { addResults, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, saveTask, sendHandover, voidHandover } from "./actions";
 
 export const metadata = { title: "Borongan" };

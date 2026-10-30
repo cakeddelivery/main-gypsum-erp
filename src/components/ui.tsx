@@ -32,7 +32,7 @@ export function Stat({ label, value, hint, tone = "slate", href }: { label: stri
     <div className="card h-full p-4 transition hover:border-brand-200">
       <p className="text-xs font-medium capitalize text-slate-500">{label}</p>
       <p className={`mt-1 text-lg font-semibold tabular-nums sm:text-xl ${tones[tone]}`}>{value}</p>
-      {hint && <p className="mt-0.5 text-xs text-slate-400">{hint}</p>}
+      {hint && <div className="mt-0.5 text-xs text-slate-400">{hint}</div>}
     </div>
   );
   return href ? <Link href={href}>{body}</Link> : body;
