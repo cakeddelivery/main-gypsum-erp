@@ -24,6 +24,11 @@ export async function readReceipt(image: Buffer, caption: string, accounts: Extr
     maxTokens: 4000,
     effort: "low",
     image: { data: image, mime },
+    // Jawaban tanpa nominal (mis. model yang tidak bisa membaca gambar) → coba model cadangan
+    accept: (t) => {
+      const o = parseJsonObject<{ amount?: unknown }>(t);
+      return !!o && Number(String(o.amount ?? "").replace(/[^\d]/g, "")) > 0;
+    },
     text: `Foto ini dikirim admin usaha "Main Gypsum" sebagai bukti transaksi. Rekening milik usaha: ${ours}.
 Keterangan dari admin: "${caption || "-"}"
 Balas HANYA satu objek JSON tanpa teks lain, dengan kunci:
