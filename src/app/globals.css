@@ -21,7 +21,9 @@ dialog { @apply bg-white text-slate-800; }
 
 @layer components {
   .input { @apply w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-base shadow-sm sm:text-sm outline-none transition focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-slate-100; }
-  .label { @apply mb-1 block text-xs font-medium text-slate-600; }
+  /* iPhone: kolom tanggal kosong tidak menyusut */
+  .input[type="date"], .input[type="time"] { @apply block min-h-[2.625rem] appearance-none text-left; }
+  .label { @apply mb-1 block text-xs font-medium capitalize text-slate-600; }
   .btn { @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60; }
   .btn-primary { @apply btn bg-brand-600 text-white hover:bg-brand-700; }
   .btn-secondary { @apply btn border border-slate-300 bg-white text-slate-700 hover:bg-slate-50; }
@@ -31,7 +33,7 @@ dialog { @apply bg-white text-slate-800; }
   .card { @apply rounded-xl border border-slate-200 bg-white shadow-sm; }
   .table-wrap { @apply overflow-x-auto rounded-xl border border-slate-200 bg-white; }
   .tbl { @apply min-w-full divide-y divide-slate-200 text-sm; }
-  .tbl th { @apply whitespace-nowrap bg-slate-50 px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-slate-500; }
+  .tbl th { @apply whitespace-nowrap bg-slate-50 px-3 py-2 text-left text-xs font-semibold capitalize text-slate-500; }
   .tbl td { @apply whitespace-nowrap px-3 py-2 align-top; }
   .tbl tbody tr { @apply hover:bg-slate-50; }
   .num { @apply text-right tabular-nums; }

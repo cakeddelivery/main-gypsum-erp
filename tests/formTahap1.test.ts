@@ -92,3 +92,20 @@ describe("Master item & pembelian (database)", () => {
     expect(await prisma.supplier.count({ where: { name: { equals: "UD Supplier Baru Uji", mode: "insensitive" } } })).toBe(1);
   });
 });
+
+describe("Huruf kapital tiap kata", async () => {
+  const { capitalizeWords, shouldCapitalize } = await import("@/lib/choice");
+  it("kapitalkan awal kata tanpa merusak singkatan", () => {
+    expect(capitalizeWords("bubuk gypsum super casting")).toBe("Bubuk Gypsum Super Casting");
+    expect(capitalizeWords("CV gypsum jaya (kemasan 40kg)")).toBe("CV Gypsum Jaya (Kemasan 40kg)");
+    expect(capitalizeWords("cat merah/biru")).toBe("Cat Merah/Biru");
+  });
+  it("lewati kolom login, kode, dan angka", () => {
+    expect(shouldCapitalize({ tagName: "INPUT", type: "text", name: "name" })).toBe(true);
+    expect(shouldCapitalize({ tagName: "TEXTAREA", name: "note" })).toBe(true);
+    expect(shouldCapitalize({ tagName: "INPUT", type: "text", name: "username" })).toBe(false);
+    expect(shouldCapitalize({ tagName: "INPUT", type: "password", name: "password" })).toBe(false);
+    expect(shouldCapitalize({ tagName: "INPUT", type: "text", name: "qty", inputMode: "decimal" })).toBe(false);
+    expect(shouldCapitalize({ tagName: "INPUT", type: "text", name: "sku" })).toBe(false);
+  });
+});

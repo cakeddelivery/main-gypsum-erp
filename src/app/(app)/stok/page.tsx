@@ -13,7 +13,7 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
   const user = await requirePerm("stock.view", "stock.request");
   const sp = await searchParams;
   const [items, locations, balances] = await Promise.all([
-    prisma.item.findMany({ where: { active: true, ...(sp.q ? { OR: [{ name: { contains: sp.q, mode: "insensitive" } }, { sku: { contains: sp.q, mode: "insensitive" } }] } : {}) }, include: { supplier: true }, orderBy: [{ type: "asc" }, { sku: "asc" }] }),
+    prisma.item.findMany({ where: { active: true, ...(sp.q ? { OR: [{ name: { contains: sp.q, mode: "insensitive" } }, { sku: { contains: sp.q, mode: "insensitive" } }] } : {}) }, include: { supplier: true }, orderBy: [{ type: "asc" }, { name: "asc" }] }),
     prisma.location.findMany({ orderBy: { code: "asc" }, include: { division: true } }),
     stockBalances(),
   ]);
@@ -69,17 +69,16 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
       <FilterBar>
         {sp.type && <input type="hidden" name="type" value={sp.type} />}
         {sp.filter && <input type="hidden" name="filter" value={sp.filter} />}
-        <Field label="Cari"><input name="q" defaultValue={sp.q} className="input" placeholder="Kode / nama" /></Field>
+        <Field label="Cari"><input name="q" defaultValue={sp.q} className="input" placeholder="Nama item" /></Field>
         <Field label="Lokasi"><select name="loc" defaultValue={sp.loc ?? ""} className="input"><option value="">Semua lokasi</option>{locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
       </FilterBar>
       {rows.length === 0 ? <Empty title={tab === "reorder" ? "Tidak ada item yang perlu reorder" : "Tidak ada item"} /> : (
         <div className="table-wrap">
           <Paged><table className="tbl">
-            <thead><tr><th>Kode</th><th>Nama</th><th>Jenis</th>{shownLocs.map((l) => <th key={l.id} className="num">{l.code}</th>)}<th className="num">Total</th><th className="num">Batas min</th>{user.can("stock.view") && <th className="num">Harga rata²</th>}<th /></tr></thead>
+            <thead><tr><th>Nama</th><th>Jenis</th>{shownLocs.map((l) => <th key={l.id} className="num">{l.code}</th>)}<th className="num">Total</th><th className="num">Batas min</th>{user.can("stock.view") && <th className="num">Harga rata²</th>}<th /></tr></thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id}>
-                  <td className="font-mono text-xs">{r.sku}</td>
                   <td>{r.name}{r.supplier && <div className="text-xs text-slate-400">{r.supplier.name}</div>}</td>
                   <td><Badge tone={r.type === "BARANG_JADI" ? "blue" : r.type === "BAHAN_BAKU" ? "gray" : "purple"}>{ITEM_TYPE_LABEL[r.type]}</Badge></td>
                   {shownLocs.map((l) => <td key={l.id} className="num">{fmtQty(qty(r.id, l.id))}</td>)}

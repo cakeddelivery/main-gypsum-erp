@@ -7,13 +7,29 @@ type Item = { id: string; sku: string; name: string; unit: string; lastCost: num
 type Opt = { id: string; name: string };
 
 const num = (s: string) => Number(s.replace(/\./g, "").replace(",", ".")) || 0;
+/** Perkecil foto HP (sisi terpanjang 1600 px, JPEG) agar cepat diunggah & mudah dibaca AI */
+async function shrinkImage(f: File): Promise<File> {
+  try {
+    const bmp = await createImageBitmap(f);
+    const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * scale);
+    c.height = Math.round(bmp.height * scale);
+    c.getContext("2d")!.drawImage(bmp, 0, 0, c.width, c.height);
+    const blob = await new Promise<Blob | null>((r) => c.toBlob(r, "image/jpeg", 0.85));
+    return blob ? new File([blob], "bukti.jpg", { type: "image/jpeg" }) : f;
+  } catch {
+    return f;
+  }
+}
+
 const rp = (n: number) => `Rp ${Math.round(n).toLocaleString("id-ID")}`;
 
 /**
  * Form pembelian: satu supplier di atas, banyak item di bawahnya (isi jumlah & total harga per item,
  * harga per satuan dihitung otomatis). Tagihan vs nominal dibayar menentukan status Lunas / Hutang.
  */
-export function PurchaseFields({ items, suppliers, banks, stores, today, defaultBank, defaultStore }: { items: Item[]; suppliers: Opt[]; banks: Opt[]; stores: Opt[]; today: string; defaultBank?: string; defaultStore?: string }) {
+export function PurchaseFields({ items, suppliers, banks, today, defaultBank }: { items: Item[]; suppliers: Opt[]; banks: Opt[]; today: string; defaultBank?: string }) {
   const [rows, setRows] = useState([{ k: 0, itemId: "", qty: "", total: "" }]);
   const [newSupplier, setNewSupplier] = useState(false);
   const [paid, setPaid] = useState("");
@@ -26,14 +42,24 @@ export function PurchaseFields({ items, suppliers, banks, stores, today, default
   const debt = bill - paidN;
   const set = (i: number, patch: Partial<(typeof rows)[number]>) => setRows((x) => x.map((y, j) => (j === i ? { ...y, ...patch } : y)));
 
+  // Langsung dibaca begitu foto dipilih (tanpa tombol)
   const readProof = async () => {
     const f = proofRef.current?.files?.[0];
-    if (!f) return setHint({ ok: false, text: "Pilih foto bukti transfer dulu" });
+    if (!f) return setHint(null);
     setReading(true);
     setHint(null);
     try {
       const fd = new FormData();
-      fd.set("proof", f);
+      const small = await shrinkImage(f);
+      // Foto yang dikirim saat simpan juga versi kecil (batas 5 MB)
+      if (small !== f) {
+        try {
+          const dt = new DataTransfer();
+          dt.items.add(small);
+          proofRef.current!.files = dt.files;
+        } catch {}
+      }
+      fd.set("proof", small);
       const r = await readPaymentProof(fd);
       if (!r.ok) return setHint({ ok: false, text: r.error ?? "Gagal membaca foto" });
       if (r.amount) setPaid(String(r.amount));
@@ -76,7 +102,7 @@ export function PurchaseFields({ items, suppliers, banks, stores, today, default
               <div className="col-span-12 sm:col-span-5">
                 <select name="itemId" value={r.itemId} className="input" required onChange={(e) => set(i, { itemId: e.target.value })}>
                   <option value="" disabled>— pilih bahan baku —</option>
-                  {items.map((x) => <option key={x.id} value={x.id}>{x.sku} {x.name} ({x.unit})</option>)}
+                  {items.map((x) => <option key={x.id} value={x.id}>{x.name} ({x.unit})</option>)}
                 </select>
                 {it && it.lastCost > 0 && <p className="mt-1 text-xs text-slate-500">Harga terakhir {rp(it.lastCost)}/{it.unit}</p>}
               </div>
@@ -95,10 +121,10 @@ export function PurchaseFields({ items, suppliers, banks, stores, today, default
         <div className="flex items-center justify-between text-sm"><span className="text-slate-600">Tagihan</span><b className="text-lg">{rp(bill)}</b></div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <span className="label">Foto bukti transfer (opsional, untuk isi nominal otomatis)</span>
+            <span className="label">Foto bukti transfer (opsional, nominal terisi otomatis)</span>
             <div className="flex flex-wrap items-center gap-2">
-              <input ref={proofRef} type="file" name="proof" accept="image/jpeg,image/png,image/webp" className="min-w-0 flex-1 text-sm" onChange={() => setHint(null)} />
-              <button type="button" className="btn-secondary btn-sm" disabled={reading} onClick={readProof}>{reading ? "Membaca…" : "✨ Baca nominal"}</button>
+              <input ref={proofRef} type="file" name="proof" accept="image/jpeg,image/png,image/webp" className="min-w-0 flex-1 text-base" onChange={readProof} />
+              {reading && <span className="text-sm text-slate-500">✨ Membaca nominal…</span>}
             </div>
             {hint && <p className={`mt-1 text-xs ${hint.ok ? "text-emerald-700" : "text-rose-600"}`}>{hint.text}</p>}
           </div>
@@ -106,7 +132,7 @@ export function PurchaseFields({ items, suppliers, banks, stores, today, default
             <span className="label">Nominal pembayaran (Rp)</span>
             <div className="flex gap-2">
               <input name="paidAmount" inputMode="numeric" value={paid} onChange={(e) => setPaid(e.target.value)} className="input" placeholder="0 = belum dibayar" />
-              <button type="button" className="btn-secondary btn-sm shrink-0" disabled={!bill} onClick={() => setPaid(String(bill))}>= Tagihan</button>
+              <button type="button" className="btn-success btn-sm shrink-0" disabled={!bill} onClick={() => setPaid(String(bill))}>Bayar Lunas</button>
             </div>
           </label>
           <div>
@@ -121,8 +147,7 @@ export function PurchaseFields({ items, suppliers, banks, stores, today, default
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <label><span className="label">Toko</span><select name="storeId" defaultValue={defaultStore} className="input">{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
-        <label className="sm:col-span-2"><span className="label">Catatan</span><input name="note" className="input" placeholder="cth: beli 5 sak gypsum super casting" /></label>
+        <label className="sm:col-span-3"><span className="label">Catatan</span><input name="note" className="input" placeholder="cth: beli 5 sak gypsum super casting" /></label>
       </div>
       <p className="text-xs text-amber-700">Pembelian di sini sudah menambah stok dan membukukan pembayarannya. Jangan dicatat lagi di Finance Inbox agar tidak dobel. Sisa hutang dibayar lewat Akuntansi › Piutang, utang & pinjaman.</p>
     </div>

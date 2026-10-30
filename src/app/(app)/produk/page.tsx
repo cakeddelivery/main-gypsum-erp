@@ -19,7 +19,7 @@ export default async function ProdukPage({ searchParams }: { searchParams: Promi
   const [products, stores, items] = await Promise.all([
     prisma.product.findMany({ where: { ...(sp.type ? { type: sp.type as ProductType } : {}), ...(sp.variant ? { variant: sp.variant as ProductVariant } : {}), ...(sp.store ? { storeId: sp.store } : {}), ...(sp.q ? { OR: [{ name: { contains: sp.q, mode: "insensitive" } }, { sku: { contains: sp.q, mode: "insensitive" } }] } : {}) }, include: { store: true }, orderBy: [{ active: "desc" }, { sku: "asc" }] }),
     prisma.store.findMany(),
-    prisma.item.findMany({ where: { type: "BARANG_JADI" }, orderBy: { sku: "asc" } }),
+    prisma.item.findMany({ where: { type: "BARANG_JADI" }, orderBy: { name: "asc" } }),
   ]);
   const rows = await Promise.all(products.map(async (p) => ({ p, cost: await productCosting(p.id), prices: (await latestPrices(p.id)).latest })));
   const canHpp = user.can("product.manage") || user.can("accounting.view") || user.role === "OWNER";

@@ -16,7 +16,7 @@ export default async function PermintaanPage() {
   const own = !user.can("stock.approve") && user.divisionId ? { divisionId: user.divisionId } : {};
   const [reqs, items, divisions, locations] = await Promise.all([
     prisma.stockRequest.findMany({ where: own, include: { item: true, division: true }, orderBy: { createdAt: "desc" }, take: 200 }),
-    prisma.item.findMany({ where: { active: true }, orderBy: { sku: "asc" } }),
+    prisma.item.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     prisma.division.findMany({ where: { active: true } }),
     prisma.location.findMany({ orderBy: { code: "asc" } }),
   ]);
@@ -25,7 +25,7 @@ export default async function PermintaanPage() {
       <PageHeader title="Permintaan stok" subtitle="Divisi mengajukan kebutuhan bahan; gudang menyetujui & memenuhi" actions={user.can("stock.request") && (
         <Modal trigger="+ Permintaan" title="Ajukan permintaan stok">
           <ModalForm action={createRequest} className="grid grid-cols-2 gap-3">
-            <Field label="Item" className="col-span-2"><select name="itemId" className="input">{items.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}</select></Field>
+            <Field label="Item" className="col-span-2"><select name="itemId" className="input">{items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}</select></Field>
             <Field label="Divisi"><select name="divisionId" defaultValue={user.divisionId ?? ""} className="input">{divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
             <Field label="Jumlah"><input name="qty" inputMode="decimal" className="input" required /></Field>
             <Field label="Catatan" className="col-span-2"><input name="note" className="input" /></Field>

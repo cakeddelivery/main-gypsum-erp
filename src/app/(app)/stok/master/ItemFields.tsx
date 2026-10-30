@@ -38,10 +38,9 @@ export function ItemFields({ i, suppliers, divisions, gypsum }: { i?: ItemInit; 
           {(Object.keys(TYPE_LABEL) as ItemType[]).map((t) => <option key={t} value={t}>{TYPE_LABEL[t]}</option>)}
         </select>
       </Field>
-      <Field label="Kategori"><select name="category" value={category} onChange={(e) => setCategory(e.target.value)} className="input">{cats.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}</select></Field>
-      <Field label="Kode item" hint={i ? undefined : `Kosongkan = otomatis (${cats.find((c) => c.name === category)?.prefix ?? "BB"}-001 dst.)`}>
-        <input name="sku" defaultValue={i?.sku} className="input" placeholder={i ? undefined : "Otomatis"} required={!!i} />
-      </Field>
+      <Field label="Kategori" className="col-span-2"><select name="category" value={category} onChange={(e) => setCategory(e.target.value)} className="input">{cats.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}</select></Field>
+      {/* Kode item dibuat otomatis per kategori dan tidak ditampilkan (permintaan owner) */}
+      {i && <input type="hidden" name="sku" value={i.sku} />}
       <Field label="Nama item" className="col-span-2"><input name="name" defaultValue={i?.name} className="input" placeholder={raw ? "cth: Bubuk Gypsum Super Casting" : "cth: Patung Mentah Dinosaurus"} required /></Field>
       <Field label="Supplier / pemasok" className="col-span-2">
         {newSupplier ? (

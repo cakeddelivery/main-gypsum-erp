@@ -33,9 +33,14 @@ direction: TRANSFER bila uang hanya berpindah antar rekening milik usaha (mis. p
 is_receipt = false bila foto bukan bukti transaksi/nota. Jangan menebak angka yang tidak terbaca.`,
   });
   const out = parseJsonObject<{ is_receipt?: boolean; amount?: unknown; date?: unknown; direction?: unknown; account?: unknown; to_account?: unknown; counterparty?: unknown }>(text);
-  if (!out || !out.is_receipt) return null;
+  if (!out) {
+    console.error("readReceipt: jawaban AI bukan JSON", text.slice(0, 300));
+    return null;
+  }
   const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
   const amount = typeof out.amount === "number" ? out.amount : typeof out.amount === "string" ? Number(out.amount.replace(/[^\d]/g, "")) : 0;
+  // Nominal yang terbaca jelas tetap dipakai walau AI ragu menyebutnya bukti transaksi
+  if (!out.is_receipt && !(amount > 0)) return null;
   const date = str(out.date);
   return {
     amount: amount > 0 ? Math.round(amount) : null,

@@ -14,7 +14,7 @@ export const metadata = { title: "Kartu Persediaan" };
 export default async function KartuPage({ searchParams }: { searchParams: Promise<{ item?: string; from?: string; to?: string }> }) {
   await requirePerm("stock.view", "accounting.view");
   const sp = await searchParams;
-  const items = await prisma.item.findMany({ orderBy: { sku: "asc" } });
+  const items = await prisma.item.findMany({ orderBy: { name: "asc" } });
   const item = items.find((i) => i.id === sp.item) ?? items[0];
   if (!item) return <Empty />;
   const from = sp.from ? jakartaDateTime(sp.from, "00:00") : null;
@@ -33,9 +33,9 @@ export default async function KartuPage({ searchParams }: { searchParams: Promis
   const lh = await letterhead();
   return (
     <div>
-      <PageHeader title="Kartu persediaan" subtitle={`${item.sku} — ${item.name}`} actions={<DownloadJpg targetId="kartu" filename={`kartu-${item.sku}`} />} />
+      <PageHeader title="Kartu persediaan" subtitle={item.name} actions={<DownloadJpg targetId="kartu" filename={`kartu-${item.sku}`} />} />
       <FilterBar>
-        <Field label="Item"><select name="item" defaultValue={item.id} className="input">{items.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name}</option>)}</select></Field>
+        <Field label="Item"><select name="item" defaultValue={item.id} className="input">{items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}</select></Field>
         <Field label="Dari"><input type="date" name="from" defaultValue={sp.from} className="input" /></Field>
         <Field label="Sampai"><input type="date" name="to" defaultValue={sp.to} className="input" /></Field>
       </FilterBar>
@@ -52,7 +52,7 @@ export default async function KartuPage({ searchParams }: { searchParams: Promis
       </div>
       <DocExport>
         <DocSheet
-          id="kartu" lh={lh} eyebrow="Laporan persediaan" title="Kartu Persediaan" subtitle={`${item.sku} — ${item.name}`}
+          id="kartu" lh={lh} eyebrow="Laporan persediaan" title="Kartu Persediaan" subtitle={item.name}
           meta={{ label: "Periode", value: sp.from ? fmtRange(sp.from, sp.to || todayStr()) : `s.d. ${fmtLong(sp.to || todayStr())}` }}
           notes={[`Satuan stok: ${item.unit}. Harga = harga per unit pada saat mutasi.`, "Laporan ini dihasilkan secara otomatis dari sistem dan dapat digunakan sebagai referensi internal."]}
         >

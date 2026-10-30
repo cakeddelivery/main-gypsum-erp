@@ -32,7 +32,8 @@ export const savePurchase = action(
       {
         supplierId: optStr(fd, "supplierId"),
         newSupplierName: optStr(fd, "newSupplierName"),
-        storeId: str(fd, "storeId"),
+        // Toko hanya untuk penarikan saldo penjual; bahan baku satu gudang → pakai toko default
+        storeId: (await prisma.setting.findUniqueOrThrow({ where: { key: "default_store_id" } })).value,
         date: jakartaDateTime(str(fd, "date") || todayStr(), "12:00"),
         term,
         lines,
@@ -61,7 +62,10 @@ export async function readPaymentProof(fd: FormData): Promise<ProofRead> {
   if (file.size > MAX_PROOF_BYTES) return { ok: false, error: "Ukuran foto maksimal 5 MB" };
   if (!receiptReaderConfigured()) return { ok: false, error: "Pembaca foto (AI) belum diatur di server. Isi nominal manual." };
   const banks = await prisma.bankAccount.findMany({ where: { active: true } });
-  const r = await readReceipt(Buffer.from(await file.arrayBuffer()), "bukti bayar pembelian bahan baku ke supplier", banks, file.type).catch(() => null);
+  const r = await readReceipt(Buffer.from(await file.arrayBuffer()), "bukti bayar pembelian bahan baku ke supplier", banks, file.type).catch((e) => {
+    console.error("readPaymentProof gagal:", e);
+    return null;
+  });
   if (!r || !r.amount) return { ok: false, error: "Nominal tidak terbaca dari foto. Isi manual ya." };
   return { ok: true, amount: r.amount, date: r.date, bankAccountId: r.account ? matchAccount(r.account, banks) : null, counterparty: r.counterparty };
 }

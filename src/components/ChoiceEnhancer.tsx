@@ -1,6 +1,6 @@
 "use client";
 import { useEffect } from "react";
-import { choiceMode, matchesQuery, type ChoiceMode } from "@/lib/choice";
+import { capitalizeWords, choiceMode, matchesQuery, shouldCapitalize, type ChoiceMode } from "@/lib/choice";
 
 /**
  * Mengubah setiap <select> di aplikasi tanpa menyentuh form-nya satu per satu:
@@ -181,6 +181,19 @@ function scan() {
   document.querySelectorAll<HTMLSelectElement>("select").forEach(enhance);
 }
 
+const inputSetter = typeof window !== "undefined" ? Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set : undefined;
+const areaSetter = typeof window !== "undefined" ? Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set : undefined;
+
+/** Kapitalkan huruf pertama tiap kata pada isian teks (saat keluar dari kolom & sebelum form dikirim) */
+function capitalizeField(el: EventTarget | null) {
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) return;
+  if (!shouldCapitalize(el)) return;
+  const next = capitalizeWords(el.value);
+  if (next === el.value) return;
+  (el instanceof HTMLInputElement ? inputSetter : areaSetter)?.call(el, next);
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 export function ChoiceEnhancer() {
   useEffect(() => {
     let queued = false;
@@ -204,6 +217,12 @@ export function ChoiceEnhancer() {
     };
     document.addEventListener("change", onChange);
     const onReset = () => setTimeout(scan, 0);
+    const onBlur = (e: FocusEvent) => capitalizeField(e.target);
+    const onSubmit = (e: Event) => {
+      if (e.target instanceof HTMLFormElement) Array.from(e.target.elements).forEach(capitalizeField);
+    };
+    document.addEventListener("focusout", onBlur, true);
+    document.addEventListener("submit", onSubmit, true);
     document.addEventListener("reset", onReset, true);
     // Nilai yang diubah React lewat state (tanpa event) tetap tersinkron
     const timer = setInterval(scan, 600);
@@ -212,6 +231,8 @@ export function ChoiceEnhancer() {
       clearInterval(timer);
       document.removeEventListener("change", onChange);
       document.removeEventListener("reset", onReset, true);
+      document.removeEventListener("focusout", onBlur, true);
+      document.removeEventListener("submit", onSubmit, true);
     };
   }, []);
   return null;

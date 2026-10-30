@@ -46,12 +46,12 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
           <Ctx.Provider value={forceClose}>
             <div className="relative" onInput={() => setDirty(true)} onChange={() => setDirty(true)}>
               <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-3">
-                <h2 className="font-semibold text-slate-900">{title}</h2>
+                <h2 className="font-semibold capitalize text-slate-900">{title}</h2>
                 <button type="button" aria-label="Tutup" className="rounded p-1 text-slate-600 hover:bg-slate-100" onClick={requestClose}>
                   ✕
                 </button>
               </div>
-              <div className="max-h-[75vh] overflow-y-auto px-5 py-4">{children}</div>
+              <div className="max-h-[75vh] overflow-y-auto overscroll-contain px-5 py-4 supports-[height:100dvh]:max-h-[75dvh]">{children}</div>
               {asking && (
                 <div role="alertdialog" aria-labelledby="tutup-judul" className="absolute inset-0 z-10 grid place-items-center rounded-2xl bg-slate-900/50 p-4">
                   <div className="w-full max-w-sm rounded-xl border border-slate-300 bg-white p-4 shadow-2xl">

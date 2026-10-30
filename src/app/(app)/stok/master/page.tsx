@@ -19,7 +19,7 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
   await requirePerm("master.manage");
   const { tab = "item" } = await searchParams;
   const [items, suppliers, locations, gypsum, divisions] = await Promise.all([
-    prisma.item.findMany({ include: { supplier: true, gypsumCharacter: true }, orderBy: { sku: "asc" } }),
+    prisma.item.findMany({ include: { supplier: true, gypsumCharacter: true }, orderBy: { name: "asc" } }),
     prisma.supplier.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     prisma.location.findMany({ include: { division: true }, orderBy: { code: "asc" } }),
     prisma.gypsumCharacter.findMany({ orderBy: { name: "asc" } }),
@@ -85,8 +85,8 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
               </summary>
               <div className="table-wrap border-t border-slate-200">
                 <Paged><table className="tbl">
-                  <thead><tr><th>Kode</th><th>Nama</th><th>Kategori</th><th>Satuan</th><th className="num">Reorder</th><th className="num">Harga beli terbaru</th><th className="num">Harga rata²</th><th>Supplier</th><th>Gypsum</th><th /></tr></thead>
-                  <tbody>{g.items.map((i) => <tr key={i.id} className={i.active ? "" : "opacity-50"}><td className="font-mono text-xs">{i.sku}</td><td>{i.name}{i.note && <div className="text-xs text-slate-400">{i.note}</div>}</td><td>{i.category ?? "-"}</td><td>{i.unit}{recipeUnit(i) !== i.unit && <div className="text-xs text-slate-400">= {Number(i.hppFactor).toLocaleString("id-ID")} {recipeUnit(i)}</div>}</td><td className="num">{Number(i.minStock)}</td><td className="num">{idr(latestCost(i))}<div className="flex justify-end gap-2"><TrendBadge t={trendOf(latestCost(i), previousCost(i))} />{recipeUnit(i) !== i.unit && <span className="text-xs text-slate-400">{fmtUnitPrice(costPerRecipeUnit(latestCost(i), i))}/{recipeUnit(i)}</span>}</div></td><td className="num">{idr(i.avgCost)}</td><td>{i.supplier?.name}</td><td>{i.gypsumCharacter?.name}</td><td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah item" wide>{itemForm(i)}</Modal></td></tr>)}</tbody>
+                  <thead><tr><th>Nama</th><th>Kategori</th><th>Satuan</th><th className="num">Reorder</th><th className="num">Harga beli terbaru</th><th className="num">Harga rata²</th><th>Supplier</th><th>Gypsum</th><th /></tr></thead>
+                  <tbody>{g.items.map((i) => <tr key={i.id} className={i.active ? "" : "opacity-50"}><td>{i.name}{i.note && <div className="text-xs text-slate-400">{i.note}</div>}</td><td>{i.category ?? "-"}</td><td>{i.unit}{recipeUnit(i) !== i.unit && <div className="text-xs text-slate-400">= {Number(i.hppFactor).toLocaleString("id-ID")} {recipeUnit(i)}</div>}</td><td className="num">{Number(i.minStock)}</td><td className="num">{idr(latestCost(i))}<div className="flex justify-end gap-2"><TrendBadge t={trendOf(latestCost(i), previousCost(i))} />{recipeUnit(i) !== i.unit && <span className="text-xs text-slate-400">{fmtUnitPrice(costPerRecipeUnit(latestCost(i), i))}/{recipeUnit(i)}</span>}</div></td><td className="num">{idr(i.avgCost)}</td><td>{i.supplier?.name}</td><td>{i.gypsumCharacter?.name}</td><td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah item" wide>{itemForm(i)}</Modal></td></tr>)}</tbody>
                 </table></Paged>
               </div>
             </details>
@@ -96,7 +96,7 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
       {tab !== "item" && <div className="table-wrap">
         <Paged><table className="tbl">
           {tab === "lokasi" && (<>
-            <thead><tr><th>Kode</th><th>Nama</th><th>Divisi</th><th /></tr></thead>
+            <thead><tr><th>Nama</th><th>Divisi</th><th /></tr></thead>
             <tbody>{locations.map((l) => <tr key={l.id}><td className="font-mono text-xs">{l.code}</td><td>{l.name}</td><td>{l.division?.name}</td><td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah lokasi">{locForm(l)}</Modal></td></tr>)}</tbody>
           </>)}
           {tab === "gypsum" && (<>
