@@ -43,7 +43,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
       <PageHeader title="Finance Inbox" subtitle="Transaksi dari input manual, Telegram, dan ekstraksi AI · IDR · WIB" actions={<>{user.can("finance.approve") && <Link href="/finance/sisihan" className="btn-secondary">Dana sisihan</Link>}{user.can("accounting.post") && <Link href="/akuntansi/saldo-rekening" className="btn-secondary">Atur saldo rekening</Link>}{user.can("finance.create") && (
         <Modal trigger="+ Transaksi" title="Transaksi baru" wide defaultOpen={sp.baru === "1"}>
           <p className="mb-3 text-xs text-slate-500">Masuk ke Finance Inbox sebagai draft — baru dibukukan setelah disetujui pihak berwenang.</p>
-          <TxForm mode="create" action={createTx} extract={extractAction} banks={banks.filter((b) => b.active)} categories={cats.filter((c) => c.active)} stores={stores.filter((x) => x.active)} init={{ direction: "KELUAR", date: todayStr(), storeId: def?.value ?? stores[0]?.id }} />
+          <TxForm mode="create" action={createTx} extract={extractAction} banks={banks.filter((b) => b.active)} categories={cats.filter((c) => c.active)} stores={stores.filter((x) => x.active)} defaultStoreId={def?.value} init={{ direction: "KELUAR", date: todayStr(), storeId: def?.value ?? stores[0]?.id }} />
         </Modal>
       )}</>} />
       <Tabs current={status ?? "ALL"} tabs={[{ key: "ALL", label: "Semua", href: qs(undefined), count: counts.reduce((s, c) => s + c._count, 0) }, ...STATUSES.map((s) => ({ key: s, label: STATUS_LABEL[s], href: qs(s), count: counts.find((c) => c.status === s)?._count ?? 0 }))]} />
@@ -53,7 +53,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
         <Field label="Sumber"><select name="source" defaultValue={sp.source ?? ""} className="input"><option value="">Semua</option>{Object.entries(SOURCE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
         <Field label="Jenis"><select name="direction" defaultValue={sp.direction ?? ""} className="input"><option value="">Semua</option><option value="MASUK">Masuk</option><option value="KELUAR">Keluar</option><option value="TRANSFER">Transfer</option></select></Field>
         <Field label="Rekening"><select name="account" defaultValue={sp.account ?? ""} className="input"><option value="">Semua</option>{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
-        <Field label="Toko"><select name="store" defaultValue={sp.store ?? ""} className="input"><option value="">Semua</option>{stores.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
+        <Field label="Toko (withdraw)"><select name="store" defaultValue={sp.store ?? ""} className="input"><option value="">Semua</option>{stores.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
         <Field label="Dari"><input type="date" name="from" defaultValue={sp.from} className="input" /></Field>
         <Field label="Sampai"><input type="date" name="to" defaultValue={sp.to} className="input" /></Field>
       </FilterBar>

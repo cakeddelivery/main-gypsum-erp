@@ -14,10 +14,9 @@ export const metadata = { title: "Dana Sisihan Harian" };
 
 export default async function SisihanPage() {
   await requirePerm("finance.approve");
-  const [funds, banks, stores, loans, recent] = await Promise.all([
+  const [funds, banks, loans, recent] = await Promise.all([
     reserveSummary(),
     prisma.bankAccount.findMany({ where: { active: true } }),
-    prisma.store.findMany({ orderBy: { code: "asc" } }),
     prisma.payable.findMany({ where: { kind: "PINJAMAN" }, orderBy: { date: "desc" } }),
     prisma.reserveEntry.findMany({ include: { fund: true }, orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: 40 }),
   ]);
@@ -32,7 +31,6 @@ export default async function SisihanPage() {
       <Field label="Nama dana" className="col-span-2"><input name="name" defaultValue={f?.name} className="input" required /></Field>
       <Field label="Jenis" className="col-span-2"><select name="kind" defaultValue={f?.kind ?? "OWNER"} className="input">{Object.entries(RESERVE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
       <Field label="Nominal per hari (IDR)"><input name="dailyAmount" defaultValue={f ? Number(f.dailyAmount) : ""} inputMode="numeric" className="input" required /></Field>
-      <Field label="Toko"><select name="storeId" defaultValue={f?.storeId} className="input">{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
       <Field label="Dari rekening"><select name="fromBankId" defaultValue={f?.fromBankId ?? banks.find((b) => b.code === "SEABANK")?.id} className="input">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
       <Field label="Ke rekening simpanan" hint="Tidak dipakai untuk cicilan harian"><select name="toBankId" defaultValue={f?.toBankId ?? banks.find((b) => b.code === "SHOPEEPAY")?.id} className="input">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
       <Field label="Pinjaman modal (untuk dana cicilan)" className="col-span-2"><select name="payableId" defaultValue={f?.payableId ?? ""} className="input"><option value="">—</option>{loans.map((l) => <option key={l.id} value={l.id}>{l.number} · {l.vendor} · sisa {idr(l.amount - l.paid)}</option>)}</select></Field>

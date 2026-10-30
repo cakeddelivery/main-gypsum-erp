@@ -8,27 +8,21 @@ import { DocBar, DocSection, DocTable } from "@/components/DocSheet";
 
 export type SP = Record<string, string | undefined>;
 
-/** Rentang laporan (default: bulan berjalan WIB) + filter toko (kosong = konsolidasi) */
+/** Rentang laporan (default: bulan berjalan WIB). Laporan selalu konsolidasi: operasional & bahan baku dipakai bersama,
+ *  toko hanya membedakan withdraw saldo marketplace. */
 export function parseRange(sp: SP) {
   const p = jakartaParts();
   const from = sp.from && /^\d{4}-\d{2}-\d{2}$/.test(sp.from) ? sp.from : `${p.year}-${String(p.month).padStart(2, "0")}-01`;
   const to = sp.to && /^\d{4}-\d{2}-\d{2}$/.test(sp.to) ? sp.to : todayStr();
-  return { from, to, start: jakartaDateTime(from, "00:00"), end: jakartaDateTime(addDays(to, 1), "00:00"), storeId: sp.store || null };
+  return { from, to, start: jakartaDateTime(from, "00:00"), end: jakartaDateTime(addDays(to, 1), "00:00"), storeId: null as string | null };
 }
 
 export async function ReportFilter({ sp, showFrom = true, extra }: { sp: SP; showFrom?: boolean; extra?: React.ReactNode }) {
   const r = parseRange(sp);
-  const stores = await prisma.store.findMany({ orderBy: { code: "asc" } });
   return (
     <FilterBar>
       {showFrom && <Field label="Dari"><input type="date" name="from" defaultValue={r.from} className="input" /></Field>}
       <Field label={showFrom ? "Sampai" : "Per tanggal"}><input type="date" name="to" defaultValue={r.to} className="input" /></Field>
-      <Field label="Toko">
-        <select name="store" defaultValue={r.storeId ?? ""} className="input">
-          <option value="">Konsolidasi (semua toko)</option>
-          {stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-      </Field>
       {extra}
     </FilterBar>
   );

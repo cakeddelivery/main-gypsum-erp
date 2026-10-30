@@ -18,9 +18,8 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
   const { id } = await params;
   const p = await prisma.payrollPeriod.findUnique({ where: { id }, include: { payslips: { include: { employee: { include: { division: true } } }, orderBy: { employee: { name: "asc" } } } } });
   if (!p) notFound();
-  const [banks, stores, journal] = await Promise.all([
+  const [banks, journal] = await Promise.all([
     prisma.bankAccount.findMany({ where: { active: true } }),
-    prisma.store.findMany(),
     p.journalId ? prisma.journal.findUnique({ where: { id: p.journalId } }) : null,
   ]);
   const sum = (k: "baseSalary" | "dailyWage" | "pieceWage" | "allowance" | "transport" | "total") => p.payslips.reduce((s, x) => s + Number(x[k]), 0);
@@ -39,7 +38,6 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
                 <ModalForm action={pay} className="space-y-3">
                   <input type="hidden" name="id" value={p.id} />
                   <Field label="Dibayar dari rekening"><select name="bankAccountId" className="input">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
-                  <Field label="Toko (pembebanan)"><select name="storeId" className="input">{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
                   <Field label="Tanggal bayar"><input type="date" name="date" defaultValue={todayStr()} className="input" /></Field>
                   <p className="text-sm">Total dibayar: <b>{idr(sum("total"))}</b>. Jurnal beban gaji & transport dibuat otomatis.</p>
                   <Submit className="btn-success">Bayar & bukukan</Submit>

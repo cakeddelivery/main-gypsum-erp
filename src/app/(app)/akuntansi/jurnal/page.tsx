@@ -16,10 +16,9 @@ export default async function JurnalPage({ searchParams }: { searchParams: Promi
   const user = await requirePerm("accounting.view");
   const sp = await searchParams;
   const r = parseRange(sp);
-  const [journals, accounts, stores] = await Promise.all([
+  const [journals, accounts] = await Promise.all([
     prisma.journal.findMany({ where: { date: { gte: r.start, lt: r.end }, ...(r.storeId ? { storeId: r.storeId } : {}), ...(sp.source ? { source: sp.source } : {}) }, include: { lines: { include: { account: true } }, store: true }, orderBy: [{ date: "desc" }, { number: "desc" }], take: 300 }),
     prisma.coaAccount.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
-    prisma.store.findMany({ orderBy: { code: "asc" } }),
   ]);
   const reversed = new Set(journals.map((j) => j.reversalOfId).filter(Boolean));
   return (
@@ -29,7 +28,6 @@ export default async function JurnalPage({ searchParams }: { searchParams: Promi
           <ModalForm action={manualJournal} className="space-y-3">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
               <Field label="Tanggal"><input type="date" name="date" defaultValue={todayStr()} className="input" /></Field>
-              <Field label="Toko"><select name="storeId" className="input">{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
               <Field label="Jenis"><select name="source" className="input"><option value="MANUAL">Jurnal umum</option><option value="PENYESUAIAN">Penyesuaian</option></select></Field>
               <Field label="Keterangan" className="col-span-2 md:col-span-1"><input name="description" className="input" required /></Field>
             </div>

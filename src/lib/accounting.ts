@@ -36,7 +36,8 @@ export const COA = {
 export type LineInput = { accountId?: string; accountCode?: string; debit?: number; credit?: number; memo?: string };
 export type JournalInput = {
   date: Date;
-  storeId: string;
+  /** Kosong = toko default. Toko hanya membedakan withdraw saldo marketplace; beban & bahan baku dipakai bersama. */
+  storeId?: string | null;
   description: string;
   source: string;
   sourceId?: string | null;
@@ -46,6 +47,12 @@ export type JournalInput = {
 };
 
 export class AccountingError extends Error {}
+
+/** Toko default (Pengaturan → Toko default transaksi), dipakai untuk semua transaksi selain withdraw marketplace */
+export async function defaultStoreId(db: Pick<Tx, "setting" | "store"> = prisma): Promise<string> {
+  const s = await db.setting.findUnique({ where: { key: "default_store_id" } });
+  return s?.value ?? (await db.store.findFirstOrThrow({ orderBy: { code: "asc" } })).id;
+}
 
 export async function assertPeriodOpen(tx: Tx | typeof prisma, date: Date) {
   const p = jakartaParts(date);
@@ -91,7 +98,7 @@ export async function postJournal(tx: Tx, input: JournalInput) {
     data: {
       number,
       date: input.date,
-      storeId: input.storeId,
+      storeId: input.storeId || (await defaultStoreId(tx)),
       description: input.description,
       source: input.source,
       sourceId: input.sourceId ?? null,

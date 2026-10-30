@@ -78,13 +78,18 @@ export async function financeTrend(days: number, storeId?: string | null) {
   });
 }
 
-/** Ringkasan penjualan per toko dari pemasukan kategori penjualan yang sudah dibukukan (tanpa impor marketplace) */
+/** Rekening saldo penjual marketplace (sumber withdraw), dikenali dari nama/alias rekening */
+const MARKETPLACE = /penjual|seller|saldo shopee|tiktok|tokopedia|lazada|marketplace/i;
+
+/** Withdraw saldo penjual marketplace per toko bulan ini (transfer internal yang sudah dibukukan).
+ *  Toko hanya membedakan withdraw; pemasukan lain, beban, dan bahan baku dipakai bersama. */
 export async function salesByStore() {
   const p = jakartaParts();
   const { start, end } = monthRange(p.year, p.month);
-  const cats = await prisma.txCategory.findMany({ where: { direction: "MASUK", coaAccount: { type: "PENDAPATAN" } } });
-  const rows = await prisma.financeTransaction.groupBy({ by: ["storeId"], where: { status: "DIBUKUKAN", direction: "MASUK", categoryId: { in: cats.map((c) => c.id) }, date: { gte: start, lt: end } }, _sum: { amount: true }, _count: true });
-  const stores = await prisma.store.findMany();
+  const banks = await prisma.bankAccount.findMany();
+  const mp = banks.filter((b) => MARKETPLACE.test(`${b.name} ${b.aliases}`)).map((b) => b.id);
+  const rows = await prisma.financeTransaction.groupBy({ by: ["storeId"], where: { status: "DIBUKUKAN", direction: "TRANSFER", accountId: { in: mp }, date: { gte: start, lt: end } }, _sum: { amount: true }, _count: true });
+  const stores = await prisma.store.findMany({ where: { active: true }, orderBy: { code: "asc" } });
   return stores.map((s) => {
     const r = rows.find((x) => x.storeId === s.id);
     return { store: s.name, amount: Number(r?._sum.amount ?? 0), count: r?._count ?? 0 };

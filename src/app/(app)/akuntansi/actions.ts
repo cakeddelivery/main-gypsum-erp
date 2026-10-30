@@ -21,7 +21,7 @@ export const manualJournal = action(
     const memo = fd.getAll("memo").map(String);
     const lines: LineInput[] = acc.map((a, i) => ({ accountId: a, debit: deb[i] || 0, credit: cre[i] || 0, memo: memo[i] || undefined })).filter((l) => l.accountId && (l.debit || l.credit));
     const j = await prisma.$transaction((tx) =>
-      postJournal(tx, { date: d(fd), storeId: str(fd, "storeId"), description: z.string().min(3, "Keterangan wajib").parse(str(fd, "description")), source: str(fd, "source") === "PENYESUAIAN" ? "PENYESUAIAN" : "MANUAL", actor: user, lines }),
+      postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: z.string().min(3, "Keterangan wajib").parse(str(fd, "description")), source: str(fd, "source") === "PENYESUAIAN" ? "PENYESUAIAN" : "MANUAL", actor: user, lines }),
     );
     return `Jurnal ${j.number} dibukukan`;
   },
@@ -69,7 +69,7 @@ export const openingBalance = action(
     });
     if (!lines.length) throw new Error("Isi minimal satu saldo");
     if (net !== 0) lines.push({ accountCode: COA.EKUITAS_SALDO_AWAL, debit: net < 0 ? -net : 0, credit: net > 0 ? net : 0, memo: "Penyeimbang saldo awal" });
-    const j = await prisma.$transaction((tx) => postJournal(tx, { date: d(fd), storeId: str(fd, "storeId"), description: "Saldo awal", source: "SALDO_AWAL", actor: user, lines }));
+    const j = await prisma.$transaction((tx) => postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: "Saldo awal", source: "SALDO_AWAL", actor: user, lines }));
     return `Saldo awal dibukukan (${j.number})`;
   },
   ["/akuntansi"],
@@ -82,8 +82,8 @@ export const createReceivable = action(
     if (amount <= 0) throw new Error("Nominal harus > 0");
     await prisma.$transaction(async (tx) => {
       const number = await nextNumber(tx, "PIU");
-      const j = await postJournal(tx, { date: d(fd), storeId: str(fd, "storeId"), description: `Piutang ${number} ${str(fd, "customer")}`, source: "PIUTANG", sourceId: number, actor: user, lines: [{ accountCode: COA.PIUTANG, debit: amount }, { accountId: str(fd, "revenueAccountId"), credit: amount }] });
-      await tx.receivable.create({ data: { number, customer: z.string().min(2, "Pelanggan wajib").parse(str(fd, "customer")), storeId: str(fd, "storeId"), date: d(fd), dueDate: optStr(fd, "dueDate") ? d(fd, "dueDate") : null, amount: BigInt(amount), note: optStr(fd, "note"), journalId: j.id } });
+      const j = await postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: `Piutang ${number} ${str(fd, "customer")}`, source: "PIUTANG", sourceId: number, actor: user, lines: [{ accountCode: COA.PIUTANG, debit: amount }, { accountId: str(fd, "revenueAccountId"), credit: amount }] });
+      await tx.receivable.create({ data: { number, customer: z.string().min(2, "Pelanggan wajib").parse(str(fd, "customer")), storeId: j.storeId, date: d(fd), dueDate: optStr(fd, "dueDate") ? d(fd, "dueDate") : null, amount: BigInt(amount), note: optStr(fd, "note"), journalId: j.id } });
     });
     return "Piutang dicatat";
   },
@@ -100,8 +100,8 @@ export const createPayable = action(
       const supplierId = optStr(fd, "supplierId");
       const vendor = str(fd, "vendor") || (supplierId ? (await tx.supplier.findUnique({ where: { id: supplierId } }))?.name : "") || "";
       if (!vendor) throw new Error("Pemasok wajib diisi");
-      const j = await postJournal(tx, { date: d(fd), storeId: str(fd, "storeId"), description: `Utang ${number} ${vendor}`, source: "UTANG", sourceId: number, actor: user, lines: [{ accountId: str(fd, "debitAccountId"), debit: amount }, { accountCode: COA.UTANG_USAHA, credit: amount }] });
-      await tx.payable.create({ data: { number, vendor, supplierId, storeId: str(fd, "storeId"), date: d(fd), dueDate: optStr(fd, "dueDate") ? d(fd, "dueDate") : null, amount: BigInt(amount), note: optStr(fd, "note"), journalId: j.id } });
+      const j = await postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: `Utang ${number} ${vendor}`, source: "UTANG", sourceId: number, actor: user, lines: [{ accountId: str(fd, "debitAccountId"), debit: amount }, { accountCode: COA.UTANG_USAHA, credit: amount }] });
+      await tx.payable.create({ data: { number, vendor, supplierId, storeId: j.storeId, date: d(fd), dueDate: optStr(fd, "dueDate") ? d(fd, "dueDate") : null, amount: BigInt(amount), note: optStr(fd, "note"), journalId: j.id } });
     });
     return "Utang dicatat";
   },
@@ -118,8 +118,8 @@ export const createLoan = action(
     const bank = await prisma.bankAccount.findUniqueOrThrow({ where: { id: str(fd, "bankAccountId") } });
     await prisma.$transaction(async (tx) => {
       const number = await nextNumber(tx, "PJM");
-      const j = await postJournal(tx, { date: d(fd), storeId: str(fd, "storeId"), description: `Pinjaman modal ${number} ${lender}`, source: "PINJAMAN", sourceId: number, actor: user, lines: [{ accountId: bank.coaAccountId, debit: amount }, { accountCode: COA.UTANG_PINJAMAN, credit: amount }] });
-      await tx.payable.create({ data: { number, kind: "PINJAMAN", vendor: lender, storeId: str(fd, "storeId"), date: d(fd), dueDate: optStr(fd, "dueDate") ? d(fd, "dueDate") : null, amount: BigInt(amount), note: optStr(fd, "note"), journalId: j.id } });
+      const j = await postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: `Pinjaman modal ${number} ${lender}`, source: "PINJAMAN", sourceId: number, actor: user, lines: [{ accountId: bank.coaAccountId, debit: amount }, { accountCode: COA.UTANG_PINJAMAN, credit: amount }] });
+      await tx.payable.create({ data: { number, kind: "PINJAMAN", vendor: lender, storeId: j.storeId, date: d(fd), dueDate: optStr(fd, "dueDate") ? d(fd, "dueDate") : null, amount: BigInt(amount), note: optStr(fd, "note"), journalId: j.id } });
     });
     return "Pinjaman modal dicatat";
   },
@@ -165,8 +165,8 @@ export const createAsset = action(
       else if (funding === "UTANG") credit = { accountCode: COA.UTANG_USAHA, credit: cost };
       else credit = { accountId: (await tx.bankAccount.findUniqueOrThrow({ where: { id: funding } })).coaAccountId, credit: cost };
       const name = z.string().min(2, "Nama aset wajib").parse(str(fd, "name"));
-      const j = await postJournal(tx, { date: d(fd), storeId: str(fd, "storeId"), description: `Perolehan aset ${name}`, source: "ASET", actor: user, lines: [{ accountId: str(fd, "assetAccountId"), debit: cost }, credit] });
-      await tx.fixedAsset.create({ data: { name, storeId: str(fd, "storeId"), acquiredAt: d(fd), cost: BigInt(cost), usefulLifeMonths: life, residual: BigInt(int(fd, "residual")), journalId: j.id } });
+      const j = await postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: `Perolehan aset ${name}`, source: "ASET", actor: user, lines: [{ accountId: str(fd, "assetAccountId"), debit: cost }, credit] });
+      await tx.fixedAsset.create({ data: { name, storeId: j.storeId, acquiredAt: d(fd), cost: BigInt(cost), usefulLifeMonths: life, residual: BigInt(int(fd, "residual")), journalId: j.id } });
     });
     return "Aset dicatat";
   },
@@ -213,7 +213,7 @@ export const adjustBankBalances = action(
     });
     const lines = balanceAdjustmentLines(rows);
     if (!lines.length) return "Semua saldo sudah sesuai, tidak ada penyesuaian";
-    const j = await prisma.$transaction((tx) => postJournal(tx, { date: d(fd), storeId: str(fd, "storeId"), description: "Penyesuaian saldo rekening", source: "SALDO_AWAL", actor: user, lines }));
+    const j = await prisma.$transaction((tx) => postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: "Penyesuaian saldo rekening", source: "SALDO_AWAL", actor: user, lines }));
     await audit(user, "SALDO_REKENING_DISESUAIKAN", "Journal", j.id, { date, rows: rows.filter((r) => r.actual !== null) });
     return `Saldo rekening disesuaikan (${j.number})`;
   },

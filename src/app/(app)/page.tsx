@@ -109,7 +109,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           </Card>
         )}
         {sales && (
-          <Card title="Ringkasan penjualan bulan ini">
+          <Card title="Withdraw marketplace bulan ini">
             <ul className="divide-y divide-slate-100 text-sm">
               {sales.map((s) => (
                 <li key={s.store} className="flex justify-between py-2">
@@ -118,7 +118,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                 </li>
               ))}
             </ul>
-            <p className="mt-2 text-xs text-slate-400">Dari pemasukan kategori penjualan yang sudah dibukukan.</p>
+            <p className="mt-2 text-xs text-slate-400">Dari withdraw saldo penjual (transfer internal) yang sudah dibukukan, per toko.</p>
           </Card>
         )}
         {prod && prod.byStage.length > 0 && (

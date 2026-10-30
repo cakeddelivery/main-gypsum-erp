@@ -130,6 +130,10 @@ tr[data-pg-hidden] { display: none; }
 .doc-table .doc-empty { text-align: center; color: #475569; border-left: 0; padding: 12px; }
 .doc-table tr[data-pg-hidden] { display: none; }
 .exporting .doc-table tr[data-pg-hidden] { display: table-row; }
+/* Saat diunduh: tabel tampil utuh tanpa bar geser (scrollbar Windows ikut tergambar di JPG) */
+.exporting .doc-table, .exporting .table-wrap, .exporting .overflow-x-auto, .exporting .overflow-y-auto, .exporting .overflow-auto { overflow: visible !important; max-height: none !important; }
+.exporting, .exporting * { scrollbar-width: none; }
+.exporting ::-webkit-scrollbar { display: none; }
 .doc-neg { color: #c81e1e !important; }
 .doc-pos { color: #047857; }
 .doc-bar { display: flex; align-items: center; gap: 16px; border-radius: 10px; padding: 14px 18px; font-size: 17px; color: #0b1a47; }

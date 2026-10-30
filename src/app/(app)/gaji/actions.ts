@@ -25,7 +25,7 @@ export const approve = action("payroll.approve", async (fd, user) => { await app
 export const pay = action(
   "payroll.approve",
   async (fd, user) => {
-    const j = await payPeriod(str(fd, "id"), str(fd, "bankAccountId"), str(fd, "storeId"), user, jakartaDateTime(str(fd, "date"), "12:00"));
+    const j = await payPeriod(str(fd, "id"), str(fd, "bankAccountId"), optStr(fd, "storeId"), user, jakartaDateTime(str(fd, "date"), "12:00"));
     return `Gaji dibayar, jurnal ${j.number}`;
   },
   ["/gaji", "/"],
@@ -145,7 +145,7 @@ export const cancelClaim = action(
 export const createAdvance = action(
   "payroll.approve",
   async (fd, user) => {
-    const a = await giveAdvance({ employeeId: str(fd, "employeeId"), amount: int(fd, "amount"), installment: int(fd, "installment"), bankAccountId: str(fd, "bankAccountId"), storeId: str(fd, "storeId"), date: str(fd, "date") || todayStr(), note: optStr(fd, "note") }, user);
+    const a = await giveAdvance({ employeeId: str(fd, "employeeId"), amount: int(fd, "amount"), installment: int(fd, "installment"), bankAccountId: str(fd, "bankAccountId"), storeId: optStr(fd, "storeId"), date: str(fd, "date") || todayStr(), note: optStr(fd, "note") }, user);
     return `Kasbon ${a.number} dicatat, dipotong otomatis dari gaji berikutnya`;
   },
   ["/gaji/kasbon"],
