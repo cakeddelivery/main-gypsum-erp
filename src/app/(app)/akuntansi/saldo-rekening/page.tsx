@@ -16,7 +16,7 @@ export default async function SaldoRekening({ searchParams }: { searchParams: Pr
   await requirePerm("accounting.post");
   const sp = await searchParams;
   const date = sp.date && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : todayStr();
-  const [banks, stores, def] = await Promise.all([bankBalancesAt(date), prisma.store.findMany({ orderBy: { code: "asc" } }), prisma.setting.findUnique({ where: { key: "default_store_id" } })]);
+  const banks = await bankBalancesAt(date);
   return (
     <div className="space-y-5">
       <PageHeader title="Atur saldo rekening" subtitle="Samakan saldo di aplikasi dengan saldo asli di bank / e-wallet. Selisihnya dibukukan otomatis sebagai penyesuaian saldo awal (tidak masuk laba rugi maupun arus kas)." />
@@ -44,7 +44,6 @@ export default async function SaldoRekening({ searchParams }: { searchParams: Pr
               </tbody>
             </table>
           </div>
-          <div><Field label="Toko (untuk jurnal)"><select name="storeId" defaultValue={def?.value} className="input">{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field></div>
           <p className="text-xs text-slate-500">Isi saldo asli hanya untuk rekening yang ingin disesuaikan. Bisa diulang kapan saja; yang dibukukan hanya selisihnya.</p>
           <Submit>Simpan saldo</Submit>
         </ModalForm>

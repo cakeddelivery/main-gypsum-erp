@@ -191,7 +191,7 @@ async function reservedAdvances(tx: Tx, employeeId: string, exceptPeriodId?: str
 }
 
 /** Beri kasbon: Dr Piutang Karyawan / Cr rekening; dipotong otomatis dari slip gaji berikutnya */
-export async function giveAdvance(input: { employeeId: string; amount: number; installment: number; bankAccountId: string; storeId: string; date: string; note?: string | null }, actor: Actor) {
+export async function giveAdvance(input: { employeeId: string; amount: number; installment: number; bankAccountId: string; storeId?: string | null; date: string; note?: string | null }, actor: Actor) {
   if (!(input.amount > 0)) throw new PayrollError("Nominal kasbon harus > 0");
   if (input.installment < 0 || input.installment > input.amount) throw new PayrollError("Cicilan per gajian harus 0 – nominal kasbon");
   return prisma.$transaction(async (tx) => {
@@ -216,8 +216,7 @@ export async function repayAdvance(advanceId: string, amount: number, bankAccoun
     if (remaining <= 0) throw new PayrollError(`Sisa kasbon ${a.number} sudah dijadwalkan dipotong dari slip gaji yang belum dibayar. Hitung ulang slip tersebut dahulu bila ingin dilunasi tunai.`);
     if (!(amount > 0) || amount > remaining) throw new PayrollError(`Nominal pelunasan harus 1 – ${remaining}${reserved ? ` (Rp ${reserved.toLocaleString("id-ID")} sudah dijadwalkan dipotong dari slip gaji)` : ""}`);
     const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: bankAccountId } });
-    const storeId = (await tx.setting.findUnique({ where: { key: "default_store_id" } }))?.value ?? (await tx.store.findFirstOrThrow()).id;
-    await postJournal(tx, { date: jakartaDateTime(date, "12:00"), storeId, description: `Pelunasan kasbon ${a.number} ${a.employee.name}`, source: "KASBON", sourceId: a.number, actor, lines: [{ accountId: bank.coaAccountId, debit: amount }, { accountCode: COA.PIUTANG_KARYAWAN, credit: amount }] });
+    await postJournal(tx, { date: jakartaDateTime(date, "12:00"), description: `Pelunasan kasbon ${a.number} ${a.employee.name}`, source: "KASBON", sourceId: a.number, actor, lines: [{ accountId: bank.coaAccountId, debit: amount }, { accountCode: COA.PIUTANG_KARYAWAN, credit: amount }] });
     await tx.cashAdvance.update({ where: { id: a.id }, data: { repaid: { increment: BigInt(amount) } } });
     await audit(actor, "KASBON_DILUNASI", "CashAdvance", a.id, { amount }, tx);
   });
@@ -468,7 +467,7 @@ export async function approvePeriod(periodId: string, actor: Actor) {
 }
 
 /** Bayar gaji: integrasi biaya tenaga kerja ke keuangan (jurnal beban gaji & transport). */
-export async function payPeriod(periodId: string, bankAccountId: string, storeId: string, actor: Actor, paidAt: Date = new Date()) {
+export async function payPeriod(periodId: string, bankAccountId: string, storeId: string | null, actor: Actor, paidAt: Date = new Date()) {
   return prisma.$transaction(async (tx: Tx) => {
     await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
     const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId }, include: { payslips: true } });

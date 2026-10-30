@@ -18,12 +18,13 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
   const { id } = await params;
   const t = await prisma.financeTransaction.findUnique({ where: { id }, include: { approvals: { orderBy: { at: "asc" } }, store: true } });
   if (!t) notFound();
-  const [banks, categories, stores, dup, journal] = await Promise.all([
+  const [banks, categories, stores, dup, journal, def] = await Promise.all([
     prisma.bankAccount.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
     prisma.txCategory.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     prisma.store.findMany({ where: { active: true } }),
     t.duplicateOfId ? prisma.financeTransaction.findUnique({ where: { id: t.duplicateOfId } }) : null,
     t.journalId ? prisma.journal.findUnique({ where: { id: t.journalId }, include: { lines: { include: { account: true } } } }) : null,
+    prisma.setting.findUnique({ where: { key: "default_store_id" } }),
   ]);
   const editable = ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"].includes(t.status);
   const missing = missingFields(t);
@@ -36,7 +37,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={t.status === "DIBUKUKAN" ? "green" : t.status === "DITOLAK" ? "red" : t.status === "MENUNGGU_KONFIRMASI" ? "blue" : "amber"}>{STATUS_LABEL[t.status]}</Badge>
         <Badge>{t.source}</Badge>
-        {t.store && <Badge tone="purple">{t.store.name}</Badge>}
+        {t.store && t.direction === "TRANSFER" && <Badge tone="purple">{t.store.name}</Badge>}
         {suggested && <span className="text-xs text-slate-500">Rekomendasi kategori: <b>{suggested.name}</b></span>}
         {ai?.confidence !== undefined && <span className="text-xs text-slate-500">Keyakinan ekstraksi {Math.round(ai.confidence * 100)}%</span>}
       </div>
@@ -46,7 +47,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
         <div className="space-y-5 lg:col-span-2">
           <Card title="Data transaksi" actions={editable && user.can("finance.create") && (
             <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah transaksi" wide>
-              <TxForm mode="edit" action={updateTx} banks={banks} categories={categories} stores={stores} init={{ id: t.id, direction: t.direction, amount: Number(t.amount), date: dateStr(new Date(Date.UTC(p.year, p.month - 1, p.day))), time: `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`, accountId: t.accountId, toAccountId: t.toAccountId, categoryId: t.categoryId, storeId: t.storeId, counterparty: t.counterparty, note: t.note }} />
+              <TxForm mode="edit" action={updateTx} banks={banks} categories={categories} stores={stores} defaultStoreId={def?.value} init={{ id: t.id, direction: t.direction, amount: Number(t.amount), date: dateStr(new Date(Date.UTC(p.year, p.month - 1, p.day))), time: `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`, accountId: t.accountId, toAccountId: t.toAccountId, categoryId: t.categoryId, storeId: t.storeId, counterparty: t.counterparty, note: t.note }} />
             </Modal>
           )}>
               <dl className="grid grid-cols-2 gap-y-2 text-sm">

@@ -14,19 +14,16 @@ export const metadata = { title: "Piutang, Utang & Pinjaman" };
 export default async function PiutangUtang({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const user = await requirePerm("accounting.view");
   const { tab = "piutang" } = await searchParams;
-  const [recv, pay, stores, banks, revenueAcc, debitAcc, suppliers] = await Promise.all([
+  const [recv, pay, banks, revenueAcc, debitAcc, suppliers] = await Promise.all([
     prisma.receivable.findMany({ orderBy: { date: "desc" } }),
     prisma.payable.findMany({ orderBy: { date: "desc" } }),
-    prisma.store.findMany(),
     prisma.bankAccount.findMany({ where: { active: true } }),
     prisma.coaAccount.findMany({ where: { type: "PENDAPATAN", active: true }, orderBy: { code: "asc" } }),
     prisma.coaAccount.findMany({ where: { type: { in: ["BEBAN", "ASET", "HPP"] }, active: true, isCash: false }, orderBy: { code: "asc" } }),
     prisma.supplier.findMany({ orderBy: { name: "asc" } }),
   ]);
-  const storeName = (id: string) => stores.find((s) => s.id === id)?.name;
   const common = (
     <>
-      <Field label="Toko"><select name="storeId" className="input">{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
       <Field label="Tanggal"><input type="date" name="date" defaultValue={todayStr()} className="input" /></Field>
       <Field label="Jatuh tempo"><input type="date" name="dueDate" className="input" /></Field>
       <Field label="Nominal (IDR)"><input name="amount" inputMode="numeric" className="input" required /></Field>
@@ -69,14 +66,14 @@ export default async function PiutangUtang({ searchParams }: { searchParams: Pro
         <div className="mb-3 text-sm">Total outstanding: <b>{idr(rows.reduce((s, r) => s + Number(r.amount - r.paid), 0))}</b></div>
         <div className="overflow-x-auto">
           <Paged><table className="tbl">
-            <thead><tr><th>No.</th><th>{tab === "piutang" ? "Pelanggan" : tab === "pinjaman" ? "Pemberi pinjaman" : "Pemasok"}</th><th>Toko</th><th>Tanggal</th><th>Jatuh tempo</th><th className="num">Nominal</th><th className="num">Dibayar</th><th>Status</th><th /></tr></thead>
+            <thead><tr><th>No.</th><th>{tab === "piutang" ? "Pelanggan" : tab === "pinjaman" ? "Pemberi pinjaman" : "Pemasok"}</th><th>Tanggal</th><th>Jatuh tempo</th><th className="num">Nominal</th><th className="num">Dibayar</th><th>Status</th><th /></tr></thead>
             <tbody>
               {rows.map((r) => {
                 const rem = Number(r.amount - r.paid);
                 const overdue = rem > 0 && r.dueDate && r.dueDate < new Date();
                 return (
                   <tr key={r.id}>
-                    <td className="font-mono text-xs">{r.number}</td><td>{r.party}</td><td>{storeName(r.storeId)}</td><td>{fmtDate(r.date)}</td><td>{fmtDate(r.dueDate)}</td><td className="num">{idr(r.amount)}</td><td className="num">{idr(r.paid)}</td>
+                    <td className="font-mono text-xs">{r.number}</td><td>{r.party}</td><td>{fmtDate(r.date)}</td><td>{fmtDate(r.dueDate)}</td><td className="num">{idr(r.amount)}</td><td className="num">{idr(r.paid)}</td>
                     <td>{rem === 0 ? <Badge tone="green">Lunas</Badge> : overdue ? <Badge tone="red">Jatuh tempo</Badge> : <Badge tone="amber">Belum lunas</Badge>}</td>
                     <td>{rem > 0 && user.can("accounting.post") && (
                       <Modal trigger={tab === "piutang" ? "Terima" : "Bayar"} triggerClass="btn-secondary btn-sm" title={`${tab === "piutang" ? "Pelunasan" : "Pembayaran"} ${r.number}`}>

@@ -13,11 +13,10 @@ export const metadata = { title: "Kasbon Karyawan" };
 
 export default async function KasbonPage() {
   const user = await requirePerm("payroll.view");
-  const [advances, employees, banks, stores] = await Promise.all([
+  const [advances, employees, banks] = await Promise.all([
     prisma.cashAdvance.findMany({ include: { employee: true }, orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: 200 }),
     prisma.employee.findMany({ where: { status: { not: "NONAKTIF" } }, orderBy: { name: "asc" } }),
     prisma.bankAccount.findMany({ where: { active: true } }),
-    prisma.store.findMany({ orderBy: { code: "asc" } }),
   ]);
   const open = advances.filter((a) => a.repaid < a.amount);
   const outstanding = open.reduce((s, a) => s + Number(a.amount - a.repaid), 0);
@@ -37,7 +36,6 @@ export default async function KasbonPage() {
                   <Field label="Nominal (IDR)"><input name="amount" inputMode="numeric" className="input" required /></Field>
                   <Field label="Cicilan per gajian" hint="0 = dipotong penuh di gajian berikutnya"><input name="installment" inputMode="numeric" defaultValue={0} className="input" /></Field>
                   <Field label="Dibayar dari"><select name="bankAccountId" defaultValue={banks.find((b) => b.code === "SEABANK")?.id} className="input">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
-                  <Field label="Toko"><select name="storeId" defaultValue={stores.find((s) => s.code === "MG")?.id} className="input">{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
                   <Field label="Tanggal"><input type="date" name="date" defaultValue={t} className="input" /></Field>
                   <Field label="Keperluan"><input name="note" className="input" /></Field>
                   <div className="col-span-2"><Submit>Simpan kasbon</Submit></div>

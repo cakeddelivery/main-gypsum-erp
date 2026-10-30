@@ -29,11 +29,10 @@ export default async function ArusKas({ searchParams }: { searchParams: Promise<
     <div>
       <PageHeader title="Laporan arus kas" subtitle="Metode langsung; transfer antar rekening tidak dihitung" actions={<DownloadJpg targetId="ak" filename={`arus-kas-${r.from}-${r.to}`} />} />
       <ReportFilter sp={sp} />
-      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
         <Stat label="Saldo kas awal" value={idr(cf.opening)} hint={fmtLong(r.from)} />
         <Stat label="Kenaikan (penurunan) kas" value={idr(net)} tone={net < 0 ? "red" : "green"} />
         <Stat label="Saldo kas akhir" value={idr(cf.closing)} hint={fmtLong(r.to)} tone={cf.closing < 0 ? "red" : "slate"} />
-        <Stat label="Toko" value={<span className="text-sm">{store}</span>} />
       </div>
       <div className="space-y-4">
         {SECTIONS.map((s) => (

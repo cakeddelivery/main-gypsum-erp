@@ -14,9 +14,8 @@ export const metadata = { title: "Aset Tetap" };
 
 export default async function AsetPage() {
   const user = await requirePerm("accounting.view");
-  const [assets, stores, banks, assetAcc, dep] = await Promise.all([
+  const [assets, banks, assetAcc, dep] = await Promise.all([
     prisma.fixedAsset.findMany({ orderBy: { acquiredAt: "desc" } }),
-    prisma.store.findMany(),
     prisma.bankAccount.findMany({ where: { active: true } }),
     prisma.coaAccount.findMany({ where: { code: { startsWith: "1-2" }, NOT: { code: "1-2900" } }, orderBy: { code: "asc" } }),
     prisma.journal.findMany({ where: { source: "PENYUSUTAN" }, include: { lines: true } }),
@@ -29,7 +28,6 @@ export default async function AsetPage() {
           <ModalForm action={createAsset} className="grid grid-cols-2 gap-3">
             <Field label="Nama aset" className="col-span-2"><input name="name" className="input" required /></Field>
             <Field label="Akun aset"><select name="assetAccountId" className="input">{assetAcc.map((a) => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}</select></Field>
-            <Field label="Toko"><select name="storeId" className="input">{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
             <Field label="Tanggal perolehan"><input type="date" name="date" defaultValue={todayStr()} className="input" /></Field>
             <Field label="Harga perolehan (IDR)"><input name="cost" inputMode="numeric" className="input" required /></Field>
             <Field label="Umur manfaat (bulan)"><input name="usefulLifeMonths" inputMode="numeric" defaultValue="48" className="input" /></Field>

@@ -15,6 +15,8 @@ export function TxForm(p: {
   banks: Opt[];
   categories: Cat[];
   stores: Opt[];
+  /** Toko default; dipakai untuk semua transaksi selain withdraw (operasional & bahan baku dipakai bersama) */
+  defaultStoreId?: string | null;
   init: Init;
   mode: "create" | "edit";
 }) {
@@ -25,6 +27,9 @@ export function TxForm(p: {
   const [formKey] = useState(() => Math.random().toString(36).slice(2) + Date.now().toString(36));
   const set = (k: keyof Init) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setV((o) => ({ ...o, [k]: e.target.value }));
   const cats = p.categories.filter((c) => c.direction === v.direction);
+  // Toko hanya membedakan withdraw saldo penjual marketplace (transfer internal); selain itu selalu toko default.
+  const isTransfer = v.direction === "TRANSFER";
+  const storeIn = (text?: string | null) => p.stores.find((s) => text?.toLowerCase().includes(s.name.toLowerCase()))?.id;
   return (
     <ActionForm action={p.action} className="space-y-4" onSuccess={() => setTimeout(close, 700)}>
       {v.id && <input type="hidden" name="id" value={v.id} />}
@@ -50,6 +55,7 @@ export function TxForm(p: {
                   toAccountId: ex.toAccountId ?? o.toAccountId,
                   categoryId: ex.categoryId ?? o.categoryId,
                   note: o.note || ex.note,
+                  storeId: storeIn(v.rawText) ?? o.storeId,
                 }));
                 setHint(ex.missing.length ? `Terisi otomatis. Periksa: ${ex.missing.join(", ")}` : "Semua kolom terisi otomatis — periksa sebelum menyimpan.");
               } finally {
@@ -69,7 +75,11 @@ export function TxForm(p: {
           </select>
         </label>
         <label><span className="label">Nominal (IDR)</span><input name="amount" inputMode="numeric" value={v.amount ?? ""} onChange={set("amount")} className="input" required placeholder="0" /></label>
-        <label><span className="label">Toko</span><select name="storeId" value={v.storeId ?? ""} onChange={set("storeId")} className="input">{p.stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+        {isTransfer ? (
+          <label><span className="label">Toko (withdraw)</span><select name="storeId" value={v.storeId ?? p.defaultStoreId ?? ""} onChange={set("storeId")} className="input">{p.stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+        ) : (
+          <input type="hidden" name="storeId" value={p.defaultStoreId ?? v.storeId ?? ""} />
+        )}
         <label><span className="label">Tanggal</span><input type="date" name="date" value={v.date ?? ""} onChange={set("date")} className="input" required /></label>
         <label><span className="label">Jam (WIB)</span><input type="time" name="time" value={v.time ?? "12:00"} onChange={set("time")} className="input" /></label>
         <label><span className="label">{v.direction === "TRANSFER" ? "Dari rekening" : "Rekening"}</span>
@@ -88,7 +98,7 @@ export function TxForm(p: {
         <label className="col-span-2 md:col-span-1"><span className="label">Bukti (JPG/PNG/PDF, maks 5 MB)</span><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></label>
         <label className="col-span-2 md:col-span-3"><span className="label">Catatan</span><textarea name="note" value={v.note ?? ""} onChange={set("note")} rows={2} className="input" /></label>
       </div>
-      {v.direction === "TRANSFER" && <p className="rounded-lg bg-slate-50 p-2 text-xs text-slate-600">Transfer internal hanya memindahkan saldo antar rekening — tidak dicatat sebagai pendapatan atau beban.</p>}
+      {isTransfer && <p className="rounded-lg bg-slate-50 p-2 text-xs text-slate-600">Transfer internal hanya memindahkan saldo antar rekening — tidak dicatat sebagai pendapatan atau beban. Pilih toko bila ini withdraw saldo penjual marketplace.</p>}
       <div className="flex flex-wrap justify-end gap-2">
         {p.mode === "create" ? (
           <>

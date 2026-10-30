@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { action, str, optStr, int } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { postAllReserves, postReserve, withdrawReserve } from "@/lib/reserve";
+import { defaultStoreId } from "@/lib/accounting";
 import { todayStr } from "@/lib/time";
 import type { ReserveKind } from "@prisma/client";
 
@@ -49,7 +50,7 @@ export const saveFund = action(
       fromBankId: z.string().min(1, "Rekening asal wajib").parse(str(fd, "fromBankId")),
       toBankId: kind === "LOAN_PAYMENT" ? null : z.string().min(1, "Rekening tujuan wajib").parse(str(fd, "toBankId")),
       payableId: kind === "OWNER" ? null : optStr(fd, "payableId"),
-      storeId: str(fd, "storeId"),
+      storeId: optStr(fd, "storeId") ?? (id ? (await prisma.reserveFund.findUniqueOrThrow({ where: { id } })).storeId : await defaultStoreId()),
       active: fd.get("active") !== "off",
     };
     if (data.dailyAmount <= BigInt(0)) throw new Error("Nominal harian harus > 0");
