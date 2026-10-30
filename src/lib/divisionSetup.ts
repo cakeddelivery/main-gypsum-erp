@@ -40,10 +40,10 @@ export async function applyDivisionSetup(db: PrismaClient, opts: { replaceOld?: 
   if (opts.replaceOld && !(await db.setting.findUnique({ where: { key: REPLACED_FLAG } }))) {
     const old = await db.item.findMany({
       where: { type: "BAHAN_BAKU", divisionId: null },
-      include: { _count: { select: { movements: true, bomLines: true, requests: true, purchaseLines: true } } },
+      include: { _count: { select: { movements: true, bomLines: true, requests: true, purchaseLines: true, usedInRecipes: true, recipe: true, pieceInputs: true, pieceOutputs: true, handoverLines: true } } },
     });
     for (const it of old) {
-      const used = it._count.movements + it._count.bomLines + it._count.requests + it._count.purchaseLines > 0;
+      const used = Object.values(it._count).some((n) => n > 0);
       if (used) {
         await db.item.update({ where: { id: it.id }, data: { active: false } });
         res.archived++;
