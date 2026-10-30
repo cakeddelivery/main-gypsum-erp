@@ -132,7 +132,7 @@ export async function reverseJournal(tx: Tx, journalId: string, date: Date, acto
 
 export type Range = { start?: Date; end?: Date; storeId?: string | null };
 
-function normalSign(type: AccountType, code: string) {
+export function normalSign(type: AccountType, code: string) {
   // Akumulasi penyusutan = kontra aset (saldo normal kredit)
   if (code === COA.AKUM_PENYUSUTAN) return -1;
   return type === "ASET" || type === "HPP" || type === "BEBAN" ? 1 : -1;
@@ -190,21 +190,19 @@ export async function balanceSheet(asOf: Date, storeId?: string | null) {
   return { assets, liabilities, equity, currentEarnings: pl.netProfit, totalAssets, totalLiabilities, totalEquity, balanced: totalAssets === totalLiabilities + totalEquity };
 }
 
-/** Arus kas metode langsung dari akun kas/bank. Transfer antar rekening saling meniadakan. */
-export async function cashFlow(r: Range) {
-  const journals = await prisma.journal.findMany({
-    where: { date: { ...(r.start ? { gte: r.start } : {}), ...(r.end ? { lt: r.end } : {}) }, ...(r.storeId ? { storeId: r.storeId } : {}) },
-    include: { lines: { include: { account: true } } },
-    orderBy: { date: "asc" },
-  });
-  const groups: Record<"OPERASI" | "INVESTASI" | "PENDANAAN", { date: Date; number: string; memo: string; description: string; amount: number }[]> = { OPERASI: [], INVESTASI: [], PENDANAAN: [] };
+type CashJournal = { date: Date; number: string; description: string; source: string | null; lines: { debit: bigint; credit: bigint; account: { isCash: boolean; type: AccountType; code: string } }[] };
+export type CashGroups = Record<"OPERASI" | "INVESTASI" | "PENDANAAN", { date: Date; number: string; memo: string; description: string; amount: number }[]>;
+
+/** Kelompokkan jurnal yang menyentuh kas ke operasi/investasi/pendanaan. Transfer antar rekening saling meniadakan. */
+export function classifyCashJournals(journals: CashJournal[]): CashGroups {
+  const groups: CashGroups = { OPERASI: [], INVESTASI: [], PENDANAAN: [] };
   for (const j of journals) {
     const cashLines = j.lines.filter((l) => l.account.isCash);
     if (!cashLines.length) continue;
     const net = cashLines.reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0);
     if (net === 0) continue; // transfer internal
-    const other = j.lines.filter((l) => !l.account.isCash).sort((a, b) => Number(b.debit + b.credit) - Number(a.debit + a.credit))[0];
-    let g: keyof typeof groups = "OPERASI";
+    const other = j.lines.filter((l) => !l.account.isCash).sort((a, b) => Number(b.debit) + Number(b.credit) - (Number(a.debit) + Number(a.credit)))[0];
+    let g: keyof CashGroups = "OPERASI";
     if (other) {
       if (other.account.type === "ASET" && other.account.code.startsWith("1-2")) g = "INVESTASI";
       else if (other.account.type === "EKUITAS" && other.account.code !== COA.EKUITAS_SALDO_AWAL) g = "PENDANAAN";
@@ -213,6 +211,17 @@ export async function cashFlow(r: Range) {
     if (j.source === "SALDO_AWAL") continue;
     groups[g].push({ date: j.date, number: j.number, memo: j.description, description: `${j.number} · ${j.description}`, amount: net });
   }
+  return groups;
+}
+
+/** Arus kas metode langsung dari akun kas/bank. Transfer antar rekening saling meniadakan. */
+export async function cashFlow(r: Range) {
+  const journals = await prisma.journal.findMany({
+    where: { date: { ...(r.start ? { gte: r.start } : {}), ...(r.end ? { lt: r.end } : {}) }, ...(r.storeId ? { storeId: r.storeId } : {}) },
+    include: { lines: { include: { account: true } } },
+    orderBy: { date: "asc" },
+  });
+  const groups = classifyCashJournals(journals);
   const total = (k: keyof typeof groups) => groups[k].reduce((s, x) => s + x.amount, 0);
   const opening = r.start ? await cashBalance(r.start, r.storeId) : 0;
   const closing = r.end ? await cashBalance(r.end, r.storeId) : await cashBalance(new Date(8.64e15), r.storeId);
