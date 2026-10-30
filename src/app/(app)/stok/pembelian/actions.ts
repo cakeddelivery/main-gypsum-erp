@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { createPurchase, termFor, lineAmounts } from "@/lib/purchase";
 import { matchAccount } from "@/lib/extract";
 import { readReceipt, receiptReaderConfigured } from "@/lib/receipt";
+import { isModelUnavailable } from "@/lib/ai";
 import { MAX_PROOF_BYTES, saveProof } from "@/lib/storage";
 import { jakartaDateTime, todayStr } from "@/lib/time";
 
@@ -62,10 +63,13 @@ export async function readPaymentProof(fd: FormData): Promise<ProofRead> {
   if (file.size > MAX_PROOF_BYTES) return { ok: false, error: "Ukuran foto maksimal 5 MB" };
   if (!receiptReaderConfigured()) return { ok: false, error: "Pembaca foto (AI) belum diatur di server. Isi nominal manual." };
   const banks = await prisma.bankAccount.findMany({ where: { active: true } });
+  let quota = false;
   const r = await readReceipt(Buffer.from(await file.arrayBuffer()), "bukti bayar pembelian bahan baku ke supplier", banks, file.type).catch((e) => {
     console.error("readPaymentProof gagal:", e);
+    quota = e instanceof Error && isModelUnavailable(0, e.message);
     return null;
   });
+  if (quota) return { ok: false, error: "Kuota model AI di penyedia sedang habis, jadi foto belum bisa dibaca. Isi nominal manual dulu ya." };
   if (!r || !r.amount) return { ok: false, error: "Nominal tidak terbaca dari foto. Isi manual ya." };
   return { ok: true, amount: r.amount, date: r.date, bankAccountId: r.account ? matchAccount(r.account, banks) : null, counterparty: r.counterparty };
 }

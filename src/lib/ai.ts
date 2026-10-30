@@ -37,13 +37,22 @@ export async function aiText(opts: { model: string; system?: string; text: strin
     if (opts.image) content.push({ type: "image_url", image_url: { url: `data:${opts.image.mime};base64,${opts.image.data.toString("base64")}` } });
     content.push({ type: "text", text: opts.text });
     const messages = [...(opts.system ? [{ role: "system", content: opts.system }] : []), { role: "user", content: opts.image ? content : opts.text }];
-    const res = await fetch(`${process.env.AI_BASE_URL!.replace(/\/+$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${process.env.AI_API_KEY}` },
-      body: JSON.stringify({ model: opts.model, max_tokens: opts.maxTokens, messages }),
-      signal: AbortSignal.timeout(90_000),
-    });
-    if (!res.ok) throw new Error(`Provider AI HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    // Model cadangan (AI_MODEL_FALLBACK, dipisah koma) dicoba bila model utama sedang tidak tersedia / kuota habis
+    const models = [opts.model, ...(process.env.AI_MODEL_FALLBACK ?? "").split(",").map((m) => m.trim()).filter((m) => m && m !== opts.model)];
+    let res: Response | null = null;
+    let lastError = "";
+    for (const model of models) {
+      res = await fetch(`${process.env.AI_BASE_URL!.replace(/\/+$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${process.env.AI_API_KEY}` },
+        body: JSON.stringify({ model, max_tokens: opts.maxTokens, messages }),
+        signal: AbortSignal.timeout(90_000),
+      });
+      if (res.ok) break;
+      lastError = `Provider AI HTTP ${res.status} (${model}): ${(await res.text()).slice(0, 200)}`;
+      if (!isModelUnavailable(res.status, lastError)) break;
+    }
+    if (!res?.ok) throw new Error(lastError);
     const json = (await res.json()) as { choices?: { message?: { content?: string | { type: string; text?: string }[] }; finish_reason?: string }[] };
     const c = json.choices?.[0]?.message?.content;
     const text = typeof c === "string" ? c : Array.isArray(c) ? c.map((x) => x.text ?? "").join("") : "";
@@ -67,6 +76,11 @@ export async function aiText(opts: { model: string; system?: string; text: strin
   });
   if (response.stop_reason === "refusal") throw new Error("Permintaan tidak dapat diproses oleh AI");
   return response.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("\n").trim();
+}
+
+/** Error karena model tidak tersedia / kuota model habis (bukan salah permintaan) */
+export function isModelUnavailable(status: number, message: string) {
+  return [404, 429, 503].includes(status) || /model_unavailable|tokens_exhausted|tidak tersedia|kuota|quota/i.test(message);
 }
 
 /** Ambil objek JSON pertama dari jawaban model (toleran terhadap ```json ... ``` atau teks pembuka) */

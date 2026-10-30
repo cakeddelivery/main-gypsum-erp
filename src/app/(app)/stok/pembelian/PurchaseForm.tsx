@@ -98,7 +98,7 @@ export function PurchaseFields({ items, suppliers, banks, today, defaultBank }: 
           const it = items.find((x) => x.id === r.itemId);
           const per = num(r.qty) > 0 ? num(r.total) / num(r.qty) : 0;
           return (
-            <div key={r.k} className="grid grid-cols-12 items-start gap-2 border-b border-slate-100 pb-2 last:border-0">
+            <div key={r.k} className="grid grid-cols-12 items-start gap-2 border-b border-slate-100 pb-2 last:border-0 [&>*]:min-w-0">
               <div className="col-span-12 sm:col-span-5">
                 <select name="itemId" value={r.itemId} className="input" required onChange={(e) => set(i, { itemId: e.target.value })}>
                   <option value="" disabled>— pilih bahan baku —</option>
@@ -119,18 +119,18 @@ export function PurchaseFields({ items, suppliers, banks, today, defaultBank }: 
 
       <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
         <div className="flex items-center justify-between text-sm"><span className="text-slate-600">Tagihan</span><b className="text-lg">{rp(bill)}</b></div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 [&>*]:min-w-0">
           <div className="sm:col-span-2">
             <span className="label">Foto bukti transfer (opsional, nominal terisi otomatis)</span>
-            <div className="flex flex-wrap items-center gap-2">
-              <input ref={proofRef} type="file" name="proof" accept="image/jpeg,image/png,image/webp" className="min-w-0 flex-1 text-base" onChange={readProof} />
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <input ref={proofRef} type="file" name="proof" accept="image/jpeg,image/png,image/webp" className="block w-full min-w-0 max-w-full text-base" onChange={readProof} />
               {reading && <span className="text-sm text-slate-500">✨ Membaca nominal…</span>}
             </div>
             {hint && <p className={`mt-1 text-xs ${hint.ok ? "text-emerald-700" : "text-rose-600"}`}>{hint.text}</p>}
           </div>
           <label>
             <span className="label">Nominal pembayaran (Rp)</span>
-            <div className="flex gap-2">
+            <div className="flex min-w-0 gap-2">
               <input name="paidAmount" inputMode="numeric" value={paid} onChange={(e) => setPaid(e.target.value)} className="input" placeholder="0 = belum dibayar" />
               <button type="button" className="btn-success btn-sm shrink-0" disabled={!bill} onClick={() => setPaid(String(bill))}>Bayar Lunas</button>
             </div>
