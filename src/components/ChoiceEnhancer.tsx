@@ -98,6 +98,10 @@ function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
   const open = () => {
     search.value = "";
     fill();
+    // Buka ke atas bila ruang di bawah tidak cukup (mis. kolom di dekat dasar layar/popup)
+    const r = trigger.getBoundingClientRect();
+    const below = window.innerHeight - r.bottom;
+    host.classList.toggle("choice-up", below < 300 && r.top > below);
     panel.hidden = false;
     trigger.setAttribute("aria-expanded", "true");
     document.addEventListener("pointerdown", onOutside, true);

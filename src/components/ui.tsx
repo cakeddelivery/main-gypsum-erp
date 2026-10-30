@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LinkPending } from "./LinkPending";
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: React.ReactNode; actions?: React.ReactNode }) {
   return (
@@ -78,10 +79,11 @@ export function Tabs({ tabs, current }: { tabs: { href: string; label: string; c
         <Link
           key={t.key}
           href={t.href}
-          className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium ${t.key === current ? "bg-brand-600 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"}`}
+          className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${t.key === current ? "bg-brand-600 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"}`}
         >
           {t.label}
           {t.count !== undefined && <span className={`ml-1.5 rounded-full px-1.5 text-xs ${t.key === current ? "bg-brand-800" : "bg-slate-100"}`}>{t.count}</span>}
+          <LinkPending className="ml-1.5 align-[-2px]" />
         </Link>
       ))}
     </div>

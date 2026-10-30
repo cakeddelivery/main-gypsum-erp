@@ -1,36 +1,61 @@
 import { prisma } from "./db";
-import { accountBalances, cashBalance, cashFlow, profitLoss, COA } from "./accounting";
+import { accountBalances, cashBalance, classifyCashJournals, normalSign, COA } from "./accounting";
 import { inventoryValuation } from "./stock";
 import { reserveSummary } from "./reserve";
 import { addDays, dateOnly, jakartaParts, monthRange, todayStr, MONTHS } from "./time";
 
 export type MonthRow = { key: string; label: string; revenue: number; cogs: number; expenses: number; ownerComp: number; net: number; cashIn: number; cashOut: number; cashEnd: number };
 
-/** Ringkasan per bulan (laba rugi + arus kas) untuk `months` bulan terakhir, termasuk bulan berjalan */
+/**
+ * Ringkasan per bulan (laba rugi + arus kas) untuk `months` bulan terakhir, termasuk bulan berjalan.
+ * Semua jurnal dalam rentang diambil sekali lalu dihitung per bulan di memori (dulu 12 bulan × beberapa query
+ * berurutan, membuat halaman Analitik lambat).
+ */
 export async function monthlySeries(months = 12, now: Date = new Date()): Promise<MonthRow[]> {
   const p = jakartaParts(now);
-  const out: MonthRow[] = [];
-  for (let i = months - 1; i >= 0; i--) {
-    const idx = p.year * 12 + (p.month - 1) - i;
+  const ranges = Array.from({ length: months }, (_, k) => {
+    const idx = p.year * 12 + (p.month - 1) - (months - 1 - k);
     const year = Math.floor(idx / 12);
     const month = (idx % 12) + 1;
-    const { start, end } = monthRange(year, month);
-    const [pl, cf, cashEnd] = await Promise.all([profitLoss({ start, end }), cashFlow({ start, end }), cashBalance(end)]);
-    const all = [...cf.groups.OPERASI, ...cf.groups.INVESTASI, ...cf.groups.PENDANAAN];
-    out.push({
+    return { year, month, ...monthRange(year, month) };
+  });
+  const first = ranges[0].start;
+  const last = ranges[ranges.length - 1].end;
+  const [accounts, journals, opening] = await Promise.all([
+    prisma.coaAccount.findMany(),
+    prisma.journal.findMany({ where: { date: { gte: first, lt: last } }, include: { lines: true }, orderBy: { date: "asc" } }),
+    cashBalance(first),
+  ]);
+  const accById = new Map(accounts.map((a) => [a.id, a]));
+  let cashEnd = opening;
+  return ranges.map(({ year, month, start, end }) => {
+    const js = journals
+      .filter((j) => j.date >= start && j.date < end)
+      .map((j) => ({ ...j, lines: j.lines.map((l) => ({ ...l, account: accById.get(l.accountId)! })) }));
+    const byType = { PENDAPATAN: 0, HPP: 0, BEBAN: 0 } as Record<string, number>;
+    let ownerComp = 0;
+    for (const j of js)
+      for (const l of j.lines) {
+        const amt = (Number(l.debit) - Number(l.credit)) * normalSign(l.account.type, l.account.code);
+        if (l.account.type in byType) byType[l.account.type] += amt;
+        if (l.account.code === COA.BEBAN_GAJI_OWNER) ownerComp += amt;
+        if (l.account.isCash) cashEnd += Number(l.debit) - Number(l.credit);
+      }
+    const cf = classifyCashJournals(js);
+    const all = [...cf.OPERASI, ...cf.INVESTASI, ...cf.PENDANAAN];
+    return {
       key: `${year}-${String(month).padStart(2, "0")}`,
       label: `${MONTHS[month - 1].slice(0, 3)} ${String(year).slice(2)}`,
-      revenue: pl.totalRevenue,
-      cogs: pl.totalCogs,
-      expenses: pl.totalExpenses,
-      ownerComp: pl.expenses.find((e) => e.code === COA.BEBAN_GAJI_OWNER)?.amount ?? 0,
-      net: pl.netProfit,
+      revenue: byType.PENDAPATAN,
+      cogs: byType.HPP,
+      expenses: byType.BEBAN,
+      ownerComp,
+      net: byType.PENDAPATAN - byType.HPP - byType.BEBAN,
       cashIn: all.filter((x) => x.amount > 0).reduce((s, x) => s + x.amount, 0),
       cashOut: -all.filter((x) => x.amount < 0).reduce((s, x) => s + x.amount, 0),
       cashEnd,
-    });
-  }
-  return out;
+    };
+  });
 }
 
 /** Pertumbuhan dalam persen; null bila pembanding nol */
