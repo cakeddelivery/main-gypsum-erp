@@ -1,12 +1,14 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { Icon } from "./Icon";
 import { NotificationBell, ProfileMenu, type HeaderAlert } from "./HeaderMenus";
 import { ThemeToggle } from "./ThemeToggle";
 import { Toaster } from "./Toaster";
 import { ChoiceEnhancer } from "./ChoiceEnhancer";
+import { NavProgress } from "./NavProgress";
+import { LinkPending } from "./LinkPending";
 
 type Item = { href: string; label: string; icon: string };
 
@@ -45,16 +47,20 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
           key={n.href}
           href={n.href}
           onClick={() => setOpen(false)}
-          className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium ${isActive(path, n.href) ? "bg-brand-50 text-brand-700" : "text-slate-600 hover:bg-slate-100"}`}
+          className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${isActive(path, n.href) ? "bg-brand-50 text-brand-700" : "text-slate-600 hover:bg-slate-100"}`}
         >
           <Icon name={n.icon} />
           {n.label}
+          <LinkPending className="ml-auto" />
         </Link>
       ))}
     </nav>
   );
   return (
     <div className="min-h-screen">
+      <Suspense fallback={null}>
+        <NavProgress />
+      </Suspense>
       {env !== "production" && (
         <div className="theme-light no-print bg-amber-400 px-4 py-1 text-center text-xs font-semibold text-amber-950">LINGKUNGAN {env.toUpperCase()} — data uji, bukan produksi</div>
       )}
@@ -77,8 +83,8 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
         <aside className="no-print sticky top-14 hidden h-[calc(100vh-3.5rem)] w-60 shrink-0 overflow-y-auto border-r border-slate-200 bg-white lg:block">{side(nav)}</aside>
         {open && (
           <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setOpen(false)}>
-            <div className="absolute inset-0 bg-slate-900/50" />
-            <aside className="absolute left-0 top-0 flex h-full w-72 max-w-[85vw] flex-col overflow-y-auto bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="anim-fade absolute inset-0 bg-slate-900/50" />
+            <aside className="anim-drawer absolute left-0 top-0 flex h-full w-72 max-w-[85vw] flex-col overflow-y-auto bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 text-sm">
                 <div className="min-w-0">
                   <div className="truncate font-semibold text-slate-900">{user.name}</div>
@@ -97,13 +103,16 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
           </div>
         )}
         <main className="min-w-0 flex-1 px-4 pb-24 pt-5 sm:px-6 lg:px-8 lg:pb-6">
-          {back && (
-            <Link href={back.href} className="no-print -ml-1 mb-3 inline-flex items-center gap-1 rounded-lg px-1 py-1 text-sm font-medium text-brand-600 hover:bg-brand-50">
-              <Icon name="back" className="h-4 w-4" />
-              {back.label}
-            </Link>
-          )}
-          {children}
+          {/* Dipasang ulang tiap pindah halaman agar konten baru muncul dengan transisi halus */}
+          <div key={path} className="page-enter">
+            {back && (
+              <Link href={back.href} className="no-print -ml-1 mb-3 inline-flex items-center gap-1 rounded-lg px-1 py-1 text-sm font-medium text-brand-600 hover:bg-brand-50">
+                <Icon name="back" className="h-4 w-4" />
+                {back.label}
+              </Link>
+            )}
+            {children}
+          </div>
         </main>
       </div>
       <Toaster />
@@ -116,9 +125,10 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
         {bottomNav.map((n) => {
           const active = isActive(path, n.href);
           return (
-            <Link key={n.href} href={n.href} aria-current={active ? "page" : undefined} className={`flex min-w-0 flex-col items-center gap-0.5 px-1 pb-1.5 pt-2 text-[11px] font-medium ${active ? "text-brand-600" : "text-slate-500"}`}>
-              <span className={`grid h-7 w-12 place-items-center rounded-full transition ${active ? "bg-brand-50" : ""}`}>
+            <Link key={n.href} href={n.href} aria-current={active ? "page" : undefined} className={`flex min-w-0 flex-col items-center gap-0.5 px-1 pb-1.5 pt-2 text-[11px] font-medium transition-colors active:text-brand-600 ${active ? "text-brand-600" : "text-slate-500"}`}>
+              <span className={`relative grid h-7 w-12 place-items-center rounded-full transition ${active ? "bg-brand-50" : ""}`}>
                 <Icon name={n.icon} />
+                <LinkPending className="absolute -right-0.5 -top-0.5 !h-3 !w-3" />
               </span>
               <span className="w-full truncate text-center">{n.label}</span>
             </Link>

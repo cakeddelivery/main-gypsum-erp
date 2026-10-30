@@ -4,6 +4,9 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 const Ctx = createContext<() => void>(() => {});
 export const useCloseModal = () => useContext(Ctx);
 
+/** Lama animasi tutup popup, samakan dengan dialog.modal[data-closing] di globals.css */
+export const CLOSE_MS = 160;
+
 /**
  * Popup form. Bila isian sudah diubah, menutup (✕, Esc, ketuk di luar popup) meminta konfirmasi dulu
  * agar isian tidak hilang tanpa sengaja. Setelah tersimpan, popup ditutup tanpa konfirmasi.
@@ -12,6 +15,7 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
   const [open, setOpen] = useState(defaultOpen);
   const [dirty, setDirty] = useState(false);
   const [asking, setAsking] = useState(false);
+  const [closing, setClosing] = useState(false);
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const d = ref.current;
@@ -21,10 +25,15 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
     if (!open) {
       setDirty(false);
       setAsking(false);
+      setClosing(false);
     }
   }, [open]);
-  const forceClose = useCallback(() => setOpen(false), []);
-  const requestClose = () => (dirty ? setAsking(true) : setOpen(false));
+  // Tutup dengan animasi singkat dulu, baru dialog benar-benar ditutup
+  const forceClose = useCallback(() => {
+    setClosing(true);
+    window.setTimeout(() => setOpen(false), CLOSE_MS);
+  }, []);
+  const requestClose = () => (dirty ? setAsking(true) : forceClose());
   return (
     <>
       <button type="button" className={triggerClass} onClick={() => setOpen(true)}>
@@ -32,6 +41,7 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
       </button>
       <dialog
         ref={ref}
+        data-closing={closing || undefined}
         onClose={() => setOpen(false)}
         onCancel={(e) => {
           e.preventDefault();
@@ -40,7 +50,7 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
         onClick={(e) => {
           if (e.target === e.currentTarget) requestClose();
         }}
-        className={`w-[calc(100%-1.5rem)] ${wide ? "max-w-3xl" : "max-w-lg"} rounded-2xl bg-white p-0 text-slate-800 shadow-xl backdrop:bg-slate-900/50`}
+        className={`modal w-[calc(100%-1.5rem)] ${wide ? "max-w-3xl" : "max-w-lg"} rounded-2xl bg-white p-0 text-slate-800 shadow-xl backdrop:bg-slate-900/50`}
       >
         {open && (
           <Ctx.Provider value={forceClose}>
@@ -53,8 +63,8 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
               </div>
               <div className="max-h-[75vh] overflow-y-auto overflow-x-hidden overscroll-contain px-5 py-4 supports-[height:100dvh]:max-h-[75dvh]">{children}</div>
               {asking && (
-                <div role="alertdialog" aria-labelledby="tutup-judul" className="absolute inset-0 z-10 grid place-items-center rounded-2xl bg-slate-900/50 p-4">
-                  <div className="w-full max-w-sm rounded-xl border border-slate-300 bg-white p-4 shadow-2xl">
+                <div role="alertdialog" aria-labelledby="tutup-judul" className="anim-fade absolute inset-0 z-10 grid place-items-center rounded-2xl bg-slate-900/50 p-4">
+                  <div className="anim-pop w-full max-w-sm rounded-xl border border-slate-300 bg-white p-4 shadow-2xl">
                     <p id="tutup-judul" className="font-semibold text-slate-900">⚠️ Tutup form?</p>
                     <p className="mt-1 text-sm text-slate-600">Isian yang belum disimpan akan hilang.</p>
                     <div className="mt-4 flex justify-end gap-2">

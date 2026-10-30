@@ -5,6 +5,7 @@ import { useEffect, useState, useTransition } from "react";
 import { markAlertsRead } from "@/app/(app)/profil/actions";
 import { initials } from "@/lib/initials";
 import { Icon } from "./Icon";
+import { startNavProgress } from "./NavProgress";
 
 export type HeaderAlert = { key: string; label: string; count: number; href: string; tone: "red" | "amber" | "blue"; read: boolean };
 
@@ -22,7 +23,7 @@ function Popover({ open, onClose, label, children }: { open: boolean; onClose: (
   return (
     <>
       <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden />
-      <div role="dialog" aria-label={label} className="fixed inset-x-2 top-14 z-50 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-96">
+      <div role="dialog" aria-label={label} className="anim-pop origin-top-right fixed inset-x-2 top-14 z-50 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:w-96">
         {children}
       </div>
     </>
@@ -49,6 +50,7 @@ export function NotificationBell({ alerts }: { alerts: HeaderAlert[] }) {
   const openAlert = (a: HeaderAlert) => {
     setOpen(false);
     if (!a.read) mark([a]);
+    startNavProgress();
     router.push(a.href);
   };
   return (

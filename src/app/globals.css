@@ -201,3 +201,56 @@ tr[data-pg-hidden] { display: none; }
   .doc:not(.exporting) .doc-foot { flex-direction: column; gap: 18px; }
   .doc:not(.exporting) .doc-sign { width: auto; border-left: 0; padding-left: 0; }
 }
+
+/* ===== Transisi & umpan balik klik ===== */
+/* Bilah progres pindah halaman (NavProgress) */
+.nav-progress {
+  position: fixed; inset: 0 0 auto 0; z-index: 60; height: 3px; pointer-events: none;
+  background: linear-gradient(90deg, theme("colors.brand.400"), theme("colors.brand.600"));
+  box-shadow: 0 0 8px theme("colors.brand.400");
+  transform-origin: left; transform: scaleX(0); opacity: 0;
+}
+.nav-progress[data-state="loading"] { opacity: 1; animation: nav-grow 10s cubic-bezier(0.08, 0.8, 0.2, 1) forwards; }
+.nav-progress[data-state="done"] { opacity: 0; transform: scaleX(1); transition: transform 0.2s ease-out, opacity 0.25s ease 0.15s; }
+@keyframes nav-grow { 0% { transform: scaleX(0); } 8% { transform: scaleX(0.35); } 100% { transform: scaleX(0.92); } }
+
+/* Halaman baru muncul halus. fill-mode backwards: transform hilang setelah selesai agar elemen fixed/sticky di halaman tetap normal */
+.page-enter { animation: page-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+@keyframes page-in { from { opacity: 0; transform: translateY(6px); } }
+
+/* Popup (Modal & pratinjau JPG): muncul membesar halus, menutup mengecil & memudar */
+dialog.modal[open] { animation: modal-in 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.05); }
+dialog.modal[open]::backdrop { animation: fade-in 0.22s ease-out; }
+dialog.modal[data-closing] { animation: modal-out 0.16s ease-in forwards; }
+dialog.modal[data-closing]::backdrop { animation: fade-out 0.16s ease-in forwards; }
+@keyframes modal-in { from { opacity: 0; transform: translateY(12px) scale(0.96); } }
+@keyframes modal-out { to { opacity: 0; transform: translateY(8px) scale(0.97); } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes fade-out { to { opacity: 0; } }
+@media (max-width: 639px) {
+  dialog.modal[open] { animation-name: modal-up; }
+  @keyframes modal-up { from { opacity: 0; transform: translateY(32px); } }
+}
+.anim-fade { animation: fade-in 0.2s ease-out; }
+.anim-pop { animation: modal-in 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.05); }
+.anim-drawer { animation: drawer-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1); }
+@keyframes drawer-in { from { transform: translateX(-100%); } }
+
+/* Tombol terasa "ditekan" saat diklik */
+:is(.btn, .btn-primary, .btn-secondary, .btn-danger, .btn-success) { transition-property: color, background-color, border-color, opacity, box-shadow, transform; transition-duration: 0.15s; }
+:is(.btn, .btn-primary, .btn-secondary, .btn-danger, .btn-success):not(:disabled):active { transform: scale(0.97); }
+/* Skeleton memuat muncul halus (tanpa kedip bila server cepat) */
+.loading-skeleton { animation: fade-in 0.3s ease-out 0.08s backwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter, dialog.modal[open], dialog.modal[open]::backdrop, dialog.modal[data-closing], dialog.modal[data-closing]::backdrop,
+  .anim-fade, .anim-pop, .anim-drawer, .loading-skeleton { animation: none !important; }
+  .nav-progress[data-state="loading"] { animation-duration: 0.01s; }
+}
+/* Pemutar di tautan menu/tab yang sedang dimuat (LinkPending); muncul setelah jeda singkat agar tidak berkedip */
+.link-pending {
+  display: inline-block; width: 0.875rem; height: 0.875rem; flex-shrink: 0;
+  border: 2px solid currentColor; border-top-color: transparent; border-radius: 9999px;
+  animation: fade-in 0.15s ease-out 0.1s backwards, spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
