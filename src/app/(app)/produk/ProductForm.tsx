@@ -16,7 +16,7 @@ export function ProductForm({ p, stores, items }: { p?: Product; stores: { id: s
       <Field label="Tipe"><select name="type" defaultValue={p?.type} className="input">{Object.entries(TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
       <Field label="Varian"><select name="variant" defaultValue={p?.variant} className="input">{["COWOK", "CEWEK", "HEWAN", "TRANSPORTASI", "MIX"].map((v) => <option key={v} value={v}>{v}</option>)}</select></Field>
       <Field label="Isi per kemasan (pcs)"><input name="packQty" defaultValue={p?.packQty} inputMode="numeric" className="input" placeholder="otomatis dari tipe" /></Field>
-      <Field label="Item barang jadi (stok)"><select name="finishedItemId" defaultValue={p?.finishedItemId ?? ""} className="input"><option value="">—</option>{items.map((i) => <option key={i.id} value={i.id}>{i.sku}</option>)}</select></Field>
+      <Field label="Item barang jadi (stok)"><select name="finishedItemId" defaultValue={p?.finishedItemId ?? ""} className="input"><option value="">—</option>{items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}</select></Field>
       <Field label="Biaya tenaga kerja / unit"><input name="laborCost" defaultValue={p ? Number(p.laborCost) : 0} inputMode="numeric" className="input" /></Field>
       <Field label="Overhead / unit"><input name="overheadCost" defaultValue={p ? Number(p.overheadCost) : 0} inputMode="numeric" className="input" /></Field>
       {p && <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="active" defaultChecked={p.active} /> Aktif</label>}

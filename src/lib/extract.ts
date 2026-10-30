@@ -67,7 +67,7 @@ export function extractAmount(text: string): number | null {
   return null;
 }
 
-function matchAccount(segment: string, accounts: ExtractAccount[]): string | null {
+export function matchAccount(segment: string, accounts: ExtractAccount[]): string | null {
   const s = segment.toLowerCase();
   let best: { id: string; len: number } | null = null;
   for (const a of accounts) {

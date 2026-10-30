@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { action, str, optStr, int, dec, bool } from "@/lib/action";
 import { recordMovement } from "@/lib/stock";
 import { audit } from "@/lib/audit";
+import { saveItemRecord } from "@/lib/items";
 import { ForbiddenError } from "@/lib/auth";
 import { jakartaDateTime, todayStr } from "@/lib/time";
 import type { ItemType, MovementType } from "@prisma/client";
@@ -82,26 +83,34 @@ export const saveItem = action(
   "master.manage",
   async (fd, user) => {
     const id = optStr(fd, "id");
-    const data = {
-      sku: z.string().min(2, "SKU wajib").parse(str(fd, "sku").toUpperCase()),
-      name: z.string().min(2, "Nama wajib").parse(str(fd, "name")),
-      type: str(fd, "type") as ItemType,
-      unit: str(fd, "unit") || "pcs",
-      minStock: dec(fd, "minStock"),
-      hppUnit: optStr(fd, "hppUnit"),
-      // "18.000" ditulis dengan titik ribuan → 18000; "0,5" → 0.5
-      hppFactor: (() => { const raw = str(fd, "hppFactor"); const f = raw ? (/^\d{1,3}(\.\d{3})+$/.test(raw) ? Number(raw.replace(/\./g, "")) : dec(fd, "hppFactor", 1)) : 1; if (!(f > 0)) throw new Error("Isi satuan stok harus lebih dari 0"); return f; })(),
-      supplierId: optStr(fd, "supplierId"),
-      gypsumCharacterId: optStr(fd, "gypsumCharacterId"),
-      divisionId: optStr(fd, "divisionId"),
-      active: id ? bool(fd, "active") : true,
-      ...(id ? {} : { avgCost: BigInt(int(fd, "avgCost")) }),
-    };
-    const it = id ? await prisma.item.update({ where: { id }, data }) : await prisma.item.create({ data });
-    await audit(user, id ? "ITEM_DIUBAH" : "ITEM_DIBUAT", "Item", it.id, data);
-    return "Item tersimpan";
+    // "18.000" ditulis dengan titik ribuan → 18000; "0,5" → 0.5
+    const raw = str(fd, "hppFactor");
+    const hppFactor = raw ? (/^\d{1,3}(\.\d{3})+$/.test(raw) ? Number(raw.replace(/\./g, "")) : dec(fd, "hppFactor", 1)) : 1;
+    const it = await saveItemRecord(
+      {
+        id,
+        sku: optStr(fd, "sku"),
+        name: str(fd, "name"),
+        type: z.enum(["BAHAN_BAKU", "BARANG_DALAM_PROSES", "BARANG_JADI"]).parse(str(fd, "type")) as ItemType,
+        category: optStr(fd, "category"),
+        unit: str(fd, "unit"),
+        hppUnit: optStr(fd, "hppUnit"),
+        hppFactor,
+        minStock: dec(fd, "minStock"),
+        supplierId: optStr(fd, "supplierId"),
+        newSupplierName: optStr(fd, "newSupplierName"),
+        gypsumCharacterId: optStr(fd, "gypsumCharacterId"),
+        divisionId: optStr(fd, "divisionId"),
+        note: optStr(fd, "note"),
+        active: id ? bool(fd, "active") : true,
+        price: id ? undefined : int(fd, "price"),
+        openingQty: id ? undefined : dec(fd, "openingQty"),
+      },
+      user,
+    );
+    return `Item ${it.sku} tersimpan`;
   },
-  ["/stok"],
+  ["/stok", "/supplier"],
 );
 
 export const saveLocation = action(

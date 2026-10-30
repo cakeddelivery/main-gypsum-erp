@@ -525,6 +525,9 @@ model Item {
   divisionId  String?
   division    Division?        @relation(fields: [divisionId], references: [id])
   sortOrder   Int              @default(0)
+  /// Klasifikasi item (mis. Bahan Utama); menentukan awalan kode otomatis
+  category    String?
+  note        String?
   movements   StockMovement[]
   bomLines    BomLine[]
   requests    StockRequest[]
@@ -922,6 +925,9 @@ model Purchase {
   payableId     String?
   journalId     String?
   note          String?
+  /// Foto bukti transfer (penyimpanan privat)
+  proofPath     String?
+  proofMime     String?
   createdBy     String
   createdAt     DateTime       @default(now())
   lines         PurchaseLine[]

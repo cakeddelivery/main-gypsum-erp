@@ -6,6 +6,7 @@ import { Icon } from "./Icon";
 import { NotificationBell, ProfileMenu, type HeaderAlert } from "./HeaderMenus";
 import { ThemeToggle } from "./ThemeToggle";
 import { Toaster } from "./Toaster";
+import { ChoiceEnhancer } from "./ChoiceEnhancer";
 
 type Item = { href: string; label: string; icon: string };
 
@@ -106,6 +107,7 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
         </main>
       </div>
       <Toaster />
+      <ChoiceEnhancer />
       <nav
         aria-label="Menu utama"
         style={{ gridTemplateColumns: `repeat(${bottomNav.length + (showMenuSlot ? 1 : 0)}, minmax(0,1fr))` }}

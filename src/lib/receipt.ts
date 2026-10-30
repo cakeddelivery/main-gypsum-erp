@@ -16,14 +16,19 @@ export function receiptReaderConfigured() {
 }
 
 /** Baca nominal, tanggal, arah & rekening dari foto bukti transfer/nota. Null bila gagal atau bukan bukti transaksi. */
-export async function readReceipt(image: Buffer, caption: string, accounts: ExtractAccount[]): Promise<ReceiptRead | null> {
+export async function readReceipt(image: Buffer, caption: string, accounts: ExtractAccount[], mime = "image/jpeg"): Promise<ReceiptRead | null> {
   if (!receiptReaderConfigured()) return null;
   const ours = accounts.map((a) => `${a.name} (${a.code})`).join(", ");
   const text = await aiText({
     model: modelFor("RECEIPT_MODEL"),
     maxTokens: 4000,
     effort: "low",
-    image: { data: image, mime: "image/jpeg" },
+    image: { data: image, mime },
+    // Jawaban tanpa nominal (mis. model yang tidak bisa membaca gambar) → coba model cadangan
+    accept: (t) => {
+      const o = parseJsonObject<{ amount?: unknown }>(t);
+      return !!o && Number(String(o.amount ?? "").replace(/[^\d]/g, "")) > 0;
+    },
     text: `Foto ini dikirim admin usaha "Main Gypsum" sebagai bukti transaksi. Rekening milik usaha: ${ours}.
 Keterangan dari admin: "${caption || "-"}"
 Balas HANYA satu objek JSON tanpa teks lain, dengan kunci:
@@ -33,9 +38,14 @@ direction: TRANSFER bila uang hanya berpindah antar rekening milik usaha (mis. p
 is_receipt = false bila foto bukan bukti transaksi/nota. Jangan menebak angka yang tidak terbaca.`,
   });
   const out = parseJsonObject<{ is_receipt?: boolean; amount?: unknown; date?: unknown; direction?: unknown; account?: unknown; to_account?: unknown; counterparty?: unknown }>(text);
-  if (!out || !out.is_receipt) return null;
+  if (!out) {
+    console.error("readReceipt: jawaban AI bukan JSON", text.slice(0, 300));
+    return null;
+  }
   const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
   const amount = typeof out.amount === "number" ? out.amount : typeof out.amount === "string" ? Number(out.amount.replace(/[^\d]/g, "")) : 0;
+  // Nominal yang terbaca jelas tetap dipakai walau AI ragu menyebutnya bukti transaksi
+  if (!out.is_receipt && !(amount > 0)) return null;
   const date = str(out.date);
   return {
     amount: amount > 0 ? Math.round(amount) : null,

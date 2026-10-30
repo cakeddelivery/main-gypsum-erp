@@ -18,8 +18,8 @@ export const INVENTORY_COA: Record<ItemType, string> = {
 
 export const ITEM_TYPE_LABEL: Record<ItemType, string> = {
   BAHAN_BAKU: "Bahan Baku",
-  BARANG_DALAM_PROSES: "Barang Dalam Proses",
-  BARANG_JADI: "Barang Jadi",
+  BARANG_DALAM_PROSES: "Barang Setengah Jadi",
+  BARANG_JADI: "Produk Jadi",
 };
 
 export const MOVEMENT_LABEL: Record<MovementType, string> = {
@@ -60,7 +60,12 @@ export async function lowStockItems(db: DB = prisma) {
   const totals = await itemTotals(db);
   return items
     .map((i) => ({ ...i, qty: totals.get(i.id) ?? 0, min: Number(i.minStock) }))
-    .filter((i) => i.min > 0 && i.qty < i.min);
+    .filter((i) => needsReorder(i.qty, i.min));
+}
+
+/** Perlu reorder bila stok menyentuh atau di bawah batas minimum (sama dengan Laporan Shift) */
+export function needsReorder(qty: number, min: number) {
+  return min > 0 && qty <= min;
 }
 
 /** Nilai persediaan (qty × harga rata-rata) per jenis, untuk dicocokkan dengan buku besar */

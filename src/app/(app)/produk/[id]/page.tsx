@@ -24,9 +24,9 @@ export default async function ProductDetail({ params }: { params: Promise<{ id: 
   const [cost, prices, items, stores, finItems] = await Promise.all([
     productCosting(id),
     latestPrices(id),
-    prisma.item.findMany({ where: { active: true }, orderBy: { sku: "asc" } }),
+    prisma.item.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     prisma.store.findMany(),
-    prisma.item.findMany({ where: { type: "BARANG_JADI" }, orderBy: { sku: "asc" } }),
+    prisma.item.findMany({ where: { type: "BARANG_JADI" }, orderBy: { name: "asc" } }),
   ]);
   const manage = user.can("product.manage");
   return (
@@ -43,7 +43,7 @@ export default async function ProductDetail({ params }: { params: Promise<{ id: 
           <Modal trigger="Atur bahan" triggerClass="btn-primary btn-sm" title="Atur bahan BOM">
             <ModalForm action={saveBom} className="space-y-3">
               <input type="hidden" name="productId" value={p.id} />
-              <Field label="Bahan"><select name="itemId" className="input">{items.map((i) => <option key={i.id} value={i.id}>{i.sku} — {i.name} ({recipeUnit(i)})</option>)}</select></Field>
+              <Field label="Bahan"><select name="itemId" className="input">{items.map((i) => <option key={i.id} value={i.id}>{i.name} ({recipeUnit(i)})</option>)}</select></Field>
               <Field label="Qty per unit, dalam satuan resep" hint="Isi 0 untuk menghapus bahan dari BOM"><input name="qty" inputMode="decimal" className="input" required /></Field>
               <Submit>Simpan</Submit>
             </ModalForm>
@@ -51,7 +51,7 @@ export default async function ProductDetail({ params }: { params: Promise<{ id: 
         )}>
           <Paged><table className="tbl">
             <thead><tr><th>Bahan</th><th className="num">Qty/unit</th><th className="num">Harga terbaru</th><th>Tren</th><th className="num">Biaya</th></tr></thead>
-            <tbody>{cost.lines.map((b) => <tr key={b.id}><td>{b.item.sku} — {b.item.name}{b.unit !== b.item.unit && <div className="text-xs text-slate-400">1 {b.item.unit} = {Number(b.item.hppFactor).toLocaleString("id-ID")} {b.unit}</div>}</td><td className="num">{b.qty.toLocaleString("id-ID")} {b.unit}</td><td className="num">{fmtUnitPrice(b.unitPrice)}/{b.unit}</td><td><TrendBadge t={b.trend} /></td><td className="num">{idr(Math.round(b.cost))}</td></tr>)}</tbody>
+            <tbody>{cost.lines.map((b) => <tr key={b.id}><td>{b.item.name}{b.unit !== b.item.unit && <div className="text-xs text-slate-400">1 {b.item.unit} = {Number(b.item.hppFactor).toLocaleString("id-ID")} {b.unit}</div>}</td><td className="num">{b.qty.toLocaleString("id-ID")} {b.unit}</td><td className="num">{fmtUnitPrice(b.unitPrice)}/{b.unit}</td><td><TrendBadge t={b.trend} /></td><td className="num">{idr(Math.round(b.cost))}</td></tr>)}</tbody>
           </table></Paged>
         </Card>
         <Card title="Harga & margin per kanal" actions={manage && (

@@ -7,3 +7,4 @@ storage/
 backups/
 *.tsbuildinfo
 next-env.d.ts
+public/ocr/

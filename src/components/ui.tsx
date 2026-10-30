@@ -4,7 +4,7 @@ export function PageHeader({ title, subtitle, actions }: { title: string; subtit
   return (
     <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div>
-        <h1 className="text-xl font-semibold text-slate-900 sm:text-2xl">{title}</h1>
+        <h1 className="text-xl font-semibold capitalize text-slate-900 sm:text-2xl">{title}</h1>
         {subtitle && <p className="mt-0.5 text-sm text-slate-500">{subtitle}</p>}
       </div>
       {actions && <div className="no-print flex flex-wrap gap-2">{actions}</div>}
@@ -17,7 +17,7 @@ export function Card({ title, children, actions, className = "" }: { title?: str
     <section className={`card ${className}`}>
       {(title || actions) && (
         <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
-          {title && <h2 className="text-sm font-semibold text-slate-700">{title}</h2>}
+          {title && <h2 className="text-sm font-semibold capitalize text-slate-700">{title}</h2>}
           {actions}
         </div>
       )}
@@ -30,7 +30,7 @@ export function Stat({ label, value, hint, tone = "slate", href }: { label: stri
   const tones = { slate: "text-slate-900", green: "text-emerald-600", red: "text-rose-600", amber: "text-amber-600", blue: "text-brand-600" };
   const body = (
     <div className="card h-full p-4 transition hover:border-brand-200">
-      <p className="text-xs font-medium text-slate-500">{label}</p>
+      <p className="text-xs font-medium capitalize text-slate-500">{label}</p>
       <p className={`mt-1 text-lg font-semibold tabular-nums sm:text-xl ${tones[tone]}`}>{value}</p>
       {hint && <p className="mt-0.5 text-xs text-slate-400">{hint}</p>}
     </div>

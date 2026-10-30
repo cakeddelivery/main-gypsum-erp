@@ -17,6 +17,8 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
+  // Cegah iPhone memperbesar (zoom) halaman saat kolom isian disentuh
+  maximumScale: 1,
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#2559b8" },
     { media: "(prefers-color-scheme: dark)", color: "#0b1120" },
