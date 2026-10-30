@@ -10,6 +10,7 @@ import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
 import Link from "next/link";
 import { saveGypsum, saveItem, saveLocation } from "../actions";
+import { ItemFields } from "./ItemFields";
 import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Master Stok" };
@@ -24,22 +25,15 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
     prisma.gypsumCharacter.findMany({ orderBy: { name: "asc" } }),
     prisma.division.findMany({ orderBy: { code: "asc" } }),
   ]);
+  const opt = (x: { id: string; name: string }) => ({ id: x.id, name: x.name });
   const itemForm = (i?: (typeof items)[number]) => (
-    <ModalForm action={saveItem} className="grid grid-cols-2 gap-3">
-      {i && <input type="hidden" name="id" value={i.id} />}
-      <Field label="SKU"><input name="sku" defaultValue={i?.sku} className="input" required /></Field>
-      <Field label="Satuan"><input name="unit" defaultValue={i?.unit ?? "pcs"} className="input" /></Field>
-      <Field label="Nama" className="col-span-2"><input name="name" defaultValue={i?.name} className="input" required /></Field>
-      <Field label="Jenis"><select name="type" defaultValue={i?.type} className="input">{Object.entries(ITEM_TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
-      <Field label="Satuan resep/HPP (opsional)" hint="mis. gram, bila resep tidak memakai satuan stok"><input name="hppUnit" defaultValue={i?.hppUnit ?? ""} placeholder="sama dengan satuan" className="input" /></Field>
-      <Field label="Isi 1 satuan stok" hint="mis. 1 sak = 18000 gram"><input name="hppFactor" defaultValue={i ? Number(i.hppFactor) : 1} inputMode="decimal" className="input" /></Field>
-      <Field label="Stok minimum"><input name="minStock" defaultValue={i ? Number(i.minStock) : 0} inputMode="decimal" className="input" /></Field>
-      <Field label="Supplier"><select name="supplierId" defaultValue={i?.supplierId ?? ""} className="input"><option value="">—</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
-      <Field label="Divisi (bahan baku)" hint="Divisi yang memakai & menghitung stoknya"><select name="divisionId" defaultValue={i?.divisionId ?? ""} className="input"><option value="">—</option>{divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
-      <Field label="Karakter gypsum"><select name="gypsumCharacterId" defaultValue={i?.gypsumCharacterId ?? ""} className="input"><option value="">—</option>{gypsum.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
-      {!i && <Field label="Harga awal / unit (IDR)"><input name="avgCost" inputMode="numeric" className="input" defaultValue="0" /></Field>}
-      {i && <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="active" defaultChecked={i.active} /> Aktif</label>}
-      <div className="col-span-2 flex justify-end"><Submit>Simpan</Submit></div>
+    <ModalForm action={saveItem}>
+      <ItemFields
+        i={i && { id: i.id, sku: i.sku, name: i.name, type: i.type, category: i.category, unit: i.unit, hppUnit: i.hppUnit, hppFactor: Number(i.hppFactor), minStock: Number(i.minStock), supplierId: i.supplierId, divisionId: i.divisionId, gypsumCharacterId: i.gypsumCharacterId, note: i.note, active: i.active, lastCost: latestCost(i) }}
+        suppliers={suppliers.map(opt)}
+        divisions={divisions.map(opt)}
+        gypsum={gypsum.map(opt)}
+      />
     </ModalForm>
   );
   const locForm = (l?: (typeof locations)[number]) => (
@@ -67,13 +61,13 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
   const groups = [
     ...divisions.map((d) => ({ key: d.id, label: `Bahan baku · ${d.name}`, hint: d.code, items: raw.filter((i) => i.divisionId === d.id) })),
     { key: "raw-none", label: "Bahan baku · tanpa divisi", hint: "atur divisinya lewat Ubah", items: raw.filter((i) => !i.divisionId) },
-    { key: "wip", label: ITEM_TYPE_LABEL.BARANG_DALAM_PROSES, hint: "setengah jadi", items: items.filter((i) => i.type === "BARANG_DALAM_PROSES") },
+    { key: "wip", label: ITEM_TYPE_LABEL.BARANG_DALAM_PROSES, hint: "hasil cetak / borongan sebelum jadi produk", items: items.filter((i) => i.type === "BARANG_DALAM_PROSES") },
     { key: "fg", label: ITEM_TYPE_LABEL.BARANG_JADI, hint: "produk jadi, terhubung ke menu Produk", items: items.filter((i) => i.type === "BARANG_JADI") },
   ].filter((g) => g.items.length > 0);
-  const add = { item: <Modal trigger="+ Item" title="Item baru">{itemForm()}</Modal>, lokasi: <Modal trigger="+ Lokasi" title="Lokasi baru">{locForm()}</Modal>, gypsum: <Modal trigger="+ Karakter" title="Karakter gypsum baru">{gypForm()}</Modal> }[tab];
+  const add = { item: <Modal trigger="+ Item" title="Tambah item" wide>{itemForm()}</Modal>, lokasi: <Modal trigger="+ Lokasi" title="Lokasi baru">{locForm()}</Modal>, gypsum: <Modal trigger="+ Karakter" title="Karakter gypsum baru">{gypForm()}</Modal> }[tab];
   return (
     <div>
-      <PageHeader title="Master data stok" subtitle={<>Item & SKU (bahan baku, barang dalam proses, barang jadi), lokasi, karakter gypsum. Data supplier ada di menu <Link href="/supplier" className="underline">Supplier</Link>.</>} actions={add} />
+      <PageHeader title="Master data stok" subtitle={<>Item & kode (bahan baku, barang setengah jadi, produk jadi), lokasi, karakter gypsum. Data supplier ada di menu <Link href="/supplier" className="underline">Supplier</Link>.</>} actions={add} />
       <Tabs current={tab} tabs={[{ key: "item", label: "Item & SKU", href: "?tab=item", count: items.length }, { key: "lokasi", label: "Lokasi", href: "?tab=lokasi", count: locations.length }, { key: "gypsum", label: "Karakter gypsum", href: "?tab=gypsum", count: gypsum.length }]} />
       {tab === "item" && (items.length === 0 ? <Empty title="Belum ada item" /> : (
         <div className="space-y-3">
@@ -91,8 +85,8 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
               </summary>
               <div className="table-wrap border-t border-slate-200">
                 <Paged><table className="tbl">
-                  <thead><tr><th>SKU</th><th>Nama</th><th>Satuan</th><th className="num">Min</th><th className="num">Harga beli terbaru</th><th className="num">Harga rata²</th><th>Supplier</th><th>Gypsum</th><th /></tr></thead>
-                  <tbody>{g.items.map((i) => <tr key={i.id} className={i.active ? "" : "opacity-50"}><td className="font-mono text-xs">{i.sku}</td><td>{i.name}</td><td>{i.unit}{recipeUnit(i) !== i.unit && <div className="text-xs text-slate-400">= {Number(i.hppFactor).toLocaleString("id-ID")} {recipeUnit(i)}</div>}</td><td className="num">{Number(i.minStock)}</td><td className="num">{idr(latestCost(i))}<div className="flex justify-end gap-2"><TrendBadge t={trendOf(latestCost(i), previousCost(i))} />{recipeUnit(i) !== i.unit && <span className="text-xs text-slate-400">{fmtUnitPrice(costPerRecipeUnit(latestCost(i), i))}/{recipeUnit(i)}</span>}</div></td><td className="num">{idr(i.avgCost)}</td><td>{i.supplier?.name}</td><td>{i.gypsumCharacter?.name}</td><td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah item">{itemForm(i)}</Modal></td></tr>)}</tbody>
+                  <thead><tr><th>Kode</th><th>Nama</th><th>Kategori</th><th>Satuan</th><th className="num">Reorder</th><th className="num">Harga beli terbaru</th><th className="num">Harga rata²</th><th>Supplier</th><th>Gypsum</th><th /></tr></thead>
+                  <tbody>{g.items.map((i) => <tr key={i.id} className={i.active ? "" : "opacity-50"}><td className="font-mono text-xs">{i.sku}</td><td>{i.name}{i.note && <div className="text-xs text-slate-400">{i.note}</div>}</td><td>{i.category ?? "-"}</td><td>{i.unit}{recipeUnit(i) !== i.unit && <div className="text-xs text-slate-400">= {Number(i.hppFactor).toLocaleString("id-ID")} {recipeUnit(i)}</div>}</td><td className="num">{Number(i.minStock)}</td><td className="num">{idr(latestCost(i))}<div className="flex justify-end gap-2"><TrendBadge t={trendOf(latestCost(i), previousCost(i))} />{recipeUnit(i) !== i.unit && <span className="text-xs text-slate-400">{fmtUnitPrice(costPerRecipeUnit(latestCost(i), i))}/{recipeUnit(i)}</span>}</div></td><td className="num">{idr(i.avgCost)}</td><td>{i.supplier?.name}</td><td>{i.gypsumCharacter?.name}</td><td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah item" wide>{itemForm(i)}</Modal></td></tr>)}</tbody>
                 </table></Paged>
               </div>
             </details>

@@ -16,14 +16,14 @@ export function receiptReaderConfigured() {
 }
 
 /** Baca nominal, tanggal, arah & rekening dari foto bukti transfer/nota. Null bila gagal atau bukan bukti transaksi. */
-export async function readReceipt(image: Buffer, caption: string, accounts: ExtractAccount[]): Promise<ReceiptRead | null> {
+export async function readReceipt(image: Buffer, caption: string, accounts: ExtractAccount[], mime = "image/jpeg"): Promise<ReceiptRead | null> {
   if (!receiptReaderConfigured()) return null;
   const ours = accounts.map((a) => `${a.name} (${a.code})`).join(", ");
   const text = await aiText({
     model: modelFor("RECEIPT_MODEL"),
     maxTokens: 4000,
     effort: "low",
-    image: { data: image, mime: "image/jpeg" },
+    image: { data: image, mime },
     text: `Foto ini dikirim admin usaha "Main Gypsum" sebagai bukti transaksi. Rekening milik usaha: ${ours}.
 Keterangan dari admin: "${caption || "-"}"
 Balas HANYA satu objek JSON tanpa teks lain, dengan kunci:
