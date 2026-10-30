@@ -1,6 +1,7 @@
 "use client";
 import { useRef, useState } from "react";
 import { Badge } from "@/components/ui";
+import { amountFromOcrText, bankFromOcrText } from "@/lib/ocrAmount";
 import { readPaymentProof } from "./actions";
 
 type Item = { id: string; sku: string; name: string; unit: string; lastCost: number };
@@ -20,6 +21,24 @@ async function shrinkImage(f: File): Promise<File> {
     return blob ? new File([blob], "bukti.jpg", { type: "image/jpeg" }) : f;
   } catch {
     return f;
+  }
+}
+
+/** Baca teks foto langsung di browser (Tesseract). Gagal → null, nanti jatuh ke AI */
+async function ocrProof(f: File): Promise<string | null> {
+  try {
+    const { createWorker } = await import("tesseract.js");
+    // Mesin & data bahasa disajikan dari server sendiri (public/ocr, disalin saat build)
+    const worker = await createWorker("eng", 1, { workerPath: "/ocr/worker.min.js", corePath: "/ocr", langPath: "/ocr" });
+    try {
+      const { data } = await worker.recognize(f);
+      return data.text;
+    } finally {
+      await worker.terminate();
+    }
+  } catch (e) {
+    console.warn("OCR gagal", e);
+    return null;
   }
 }
 
@@ -58,6 +77,15 @@ export function PurchaseFields({ items, suppliers, banks, today, defaultBank }: 
           dt.items.add(small);
           proofRef.current!.files = dt.files;
         } catch {}
+      }
+      // 1) OCR di HP (tanpa AI, ±2–4 detik); 2) kalau nominal tidak ketemu baru tanya AI
+      const ocr = await ocrProof(small);
+      const amount = ocr ? amountFromOcrText(ocr) : null;
+      if (amount) {
+        setPaid(String(amount));
+        const b = bankFromOcrText(ocr!, banks);
+        if (b) setBank(b);
+        return setHint({ ok: true, text: `Terbaca ${rp(amount)} dari foto. Periksa sebelum menyimpan.` });
       }
       fd.set("proof", small);
       const r = await readPaymentProof(fd);
@@ -124,7 +152,7 @@ export function PurchaseFields({ items, suppliers, banks, today, defaultBank }: 
             <span className="label">Foto bukti transfer (opsional, nominal terisi otomatis)</span>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
               <input ref={proofRef} type="file" name="proof" accept="image/jpeg,image/png,image/webp" className="block w-full min-w-0 max-w-full text-base" onChange={readProof} />
-              {reading && <span className="text-sm text-slate-500">✨ Membaca nominal…</span>}
+              {reading && <span className="text-sm text-slate-500">🔎 Membaca nominal…</span>}
             </div>
             {hint && <p className={`mt-1 text-xs ${hint.ok ? "text-emerald-700" : "text-rose-600"}`}>{hint.text}</p>}
           </div>
