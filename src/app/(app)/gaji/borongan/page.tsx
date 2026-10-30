@@ -7,7 +7,7 @@ import { Badge, Card, Empty, Field, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { addPieceWork, claimPieces, deletePieceWork, savePieceTask } from "../actions";
+import { addPieceWork, claimPieces, deletePieceWork } from "../actions";
 import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Borongan & Klaim" };
@@ -41,33 +41,16 @@ export default async function BoronganPage() {
         </Modal>
       } />
       <div className="grid gap-5 lg:grid-cols-2">
-        <Card title="Tarif tugas borongan" actions={
-          <Modal trigger="+ Tugas" triggerClass="btn-primary btn-sm" title="Tugas borongan baru">
-            <ModalForm action={savePieceTask} className="space-y-3">
-              <Field label="Nama tugas"><input name="name" className="input" required /></Field>
-              <Field label="Tarif/pcs (IDR)"><input name="ratePerPcs" inputMode="numeric" className="input" required /></Field>
-              <Submit>Tambah</Submit>
-            </ModalForm>
-          </Modal>
-        }>
+        <Card title="Tarif tugas borongan" actions={<Link href="/borongan?tab=tugas" className="btn-secondary btn-sm">Atur Di Menu Borongan</Link>}>
           <ul className="divide-y divide-slate-100 text-sm">
             {tasks.map((x) => (
               <li key={x.id} className="flex items-center justify-between py-1.5">
                 <span>{x.name}{!x.active && <Badge>nonaktif</Badge>}</span>
-                <span className="flex items-center gap-2"><span className="tabular-nums">{idr(x.ratePerPcs)}/pcs</span>
-                  <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${x.name}`}>
-                    <ModalForm action={savePieceTask} className="space-y-3">
-                      <input type="hidden" name="id" value={x.id} />
-                      <Field label="Nama"><input name="name" defaultValue={x.name} className="input" /></Field>
-                      <Field label="Tarif/pcs (IDR)" hint="Tarif baru berlaku untuk input berikutnya"><input name="ratePerPcs" defaultValue={Number(x.ratePerPcs)} inputMode="numeric" className="input" /></Field>
-                      <Field label="Status"><select name="active" defaultValue={x.active ? "on" : "off"} className="input"><option value="on">Aktif</option><option value="off">Nonaktif</option></select></Field>
-                      <Submit>Simpan</Submit>
-                    </ModalForm>
-                  </Modal>
-                </span>
+                <span className="tabular-nums">{idr(x.ratePerPcs)}/pcs</span>
               </li>
             ))}
           </ul>
+          <p className="mt-2 text-xs text-slate-500">Borongan tetangga (pekerja, koordinator, driver) dicatat di menu Borongan. Halaman ini untuk karyawan bersistem upah borongan.</p>
         </Card>
       </div>
 

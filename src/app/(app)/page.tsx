@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { requirePerm } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { requirePerm, requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { alertsFor } from "@/lib/alerts";
 import { productionSummary, productionTrend, productivity, financeMonth, financeTrend, salesByStore } from "@/lib/dashboard";
@@ -15,6 +16,8 @@ import { BarsChart, TrendChart } from "@/components/Charts";
 export const metadata = { title: "Dashboard" };
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ store?: string }> }) {
+  // Koordinator borongan langsung ke halaman titiknya
+  if ((await requireUser()).role === "KOORDINATOR") redirect("/borongan");
   const user = await requirePerm("dashboard.view");
   const sp = await searchParams;
   const today = todayStr();

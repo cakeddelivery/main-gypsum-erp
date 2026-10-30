@@ -19,6 +19,7 @@ enum Role {
   SUPERVISOR
   PIC_CONTENT
   OPERATOR
+  KOORDINATOR
 }
 
 model Organization {
@@ -43,34 +44,34 @@ model Store {
 }
 
 model Division {
-  id          String            @id @default(cuid())
-  code        String            @unique
-  name        String
-  active      Boolean           @default(true)
+  id             String             @id @default(cuid())
+  code           String             @unique
+  name           String
+  active         Boolean            @default(true)
   /// Format laporan penutup shift: PRODUKSI | GIFTBOX | PACKING | ASSEMBLING (null = laporan umum)
   reportTemplate String?
   /// Jumlah shift yang berlaku (1 = hanya Shift 1; Cetak & Oven/Produksi = 2)
-  shiftCount  Int               @default(1)
+  shiftCount     Int                @default(1)
   /// Checklist penutupan shift divisi: [{label, photo}] (photo = wajib foto bukti)
-  checklist   Json              @default("[]")
-  items       Item[]
-  employees   Employee[]
-  locations   Location[]
-  production  ProductionEntry[]
-  targets     ProductionTarget[]
-  reports     ShiftReport[]
-  stockReqs   StockRequest[]
-  captains    User[]            @relation("DivisionCaptain")
+  checklist      Json               @default("[]")
+  items          Item[]
+  employees      Employee[]
+  locations      Location[]
+  production     ProductionEntry[]
+  targets        ProductionTarget[]
+  reports        ShiftReport[]
+  stockReqs      StockRequest[]
+  captains       User[]             @relation("DivisionCaptain")
 }
 
 model Shift {
-  id               String   @id @default(cuid())
-  code             String   @unique
+  id               String            @id @default(cuid())
+  code             String            @unique
   name             String
   startTime        String // "07:00"
   endTime          String // "15:00"
-  toleranceMinutes Int      @default(10)
-  active           Boolean  @default(true)
+  toleranceMinutes Int               @default(10)
+  active           Boolean           @default(true)
   attendances      Attendance[]
   schedules        ShiftSchedule[]
   production       ProductionEntry[]
@@ -78,22 +79,23 @@ model Shift {
 }
 
 model User {
-  id             String    @id @default(cuid())
-  username       String    @unique
+  id             String             @id @default(cuid())
+  username       String             @unique
   name           String
   passwordHash   String
   role           Role
-  active         Boolean   @default(true)
-  employeeId     String?   @unique
-  employee       Employee? @relation(fields: [employeeId], references: [id])
+  active         Boolean            @default(true)
+  employeeId     String?            @unique
+  employee       Employee?          @relation(fields: [employeeId], references: [id])
   divisionId     String?
-  division       Division? @relation("DivisionCaptain", fields: [divisionId], references: [id])
-  failedLogins   Int       @default(0)
+  division       Division?          @relation("DivisionCaptain", fields: [divisionId], references: [id])
+  failedLogins   Int                @default(0)
   lockedUntil    DateTime?
   lastLoginAt    DateTime?
-  createdAt      DateTime  @default(now())
+  createdAt      DateTime           @default(now())
   telegram       TelegramIdentity[]
   alertReads     AlertRead[]
+  boronganPerson BoronganPerson?
 }
 
 model RolePermission {
@@ -101,6 +103,7 @@ model RolePermission {
   role       Role
   permission String
   allowed    Boolean
+
   @@unique([role, permission])
 }
 
@@ -121,6 +124,7 @@ model AuditLog {
   entityId  String?
   data      Json?
   ip        String?
+
   @@index([entity, entityId])
   @@index([at])
 }
@@ -141,30 +145,30 @@ enum WageType {
 }
 
 model Employee {
-  id          String         @id @default(cuid())
-  code        String         @unique
-  name        String
-  divisionId  String
-  division    Division       @relation(fields: [divisionId], references: [id])
-  position    String
-  status      EmployeeStatus @default(AKTIF)
-  wageType    WageType       @default(HARIAN)
-  dailyRate   BigInt         @default(0)
+  id             String              @id @default(cuid())
+  code           String              @unique
+  name           String
+  divisionId     String
+  division       Division            @relation(fields: [divisionId], references: [id])
+  position       String
+  status         EmployeeStatus      @default(AKTIF)
+  wageType       WageType            @default(HARIAN)
+  dailyRate      BigInt              @default(0)
   /// Gaji pokok per siklus bulanan (jenis upah BULANAN)
-  monthlySalary BigInt       @default(0)
-  phone       String?
-  joinDate    DateTime?
+  monthlySalary  BigInt              @default(0)
+  phone          String?
+  joinDate       DateTime?
   /// Tanggal resign; resign sebelum tanggal gajian = slip siklus itu Rp0
-  resignDate  DateTime?      @db.Date
-  user        User?
-  attendances Attendance[]
-  schedules   ShiftSchedule[]
-  production  ProductionEntry[]
-  targets     ProductionTarget[]
-  payslips    Payslip[]
+  resignDate     DateTime?           @db.Date
+  user           User?
+  attendances    Attendance[]
+  schedules      ShiftSchedule[]
+  production     ProductionEntry[]
+  targets        ProductionTarget[]
+  payslips       Payslip[]
   transportTrips TransportTrip[]
-  pieceWorks  PieceWork[]
-  advances    CashAdvance[]
+  pieceWorks     PieceWork[]
+  advances       CashAdvance[]
   allowances     EmployeeAllowance[]
 }
 
@@ -175,6 +179,7 @@ model ShiftSchedule {
   shiftId    String
   shift      Shift    @relation(fields: [shiftId], references: [id])
   date       DateTime @db.Date
+
   @@unique([employeeId, date])
 }
 
@@ -188,51 +193,52 @@ enum AttendanceStatus {
 }
 
 model Attendance {
-  id           String           @id @default(cuid())
-  employeeId   String
-  employee     Employee         @relation(fields: [employeeId], references: [id])
-  shiftId      String
-  shift        Shift            @relation(fields: [shiftId], references: [id])
-  date         DateTime         @db.Date
-  checkIn      DateTime?
-  checkOut     DateTime?
-  status       AttendanceStatus
-  lateMinutes  Int              @default(0)
-  note         String?
-  validated    Boolean          @default(false)
-  validatedBy  String?
-  validatedAt  DateTime?
+  id               String           @id @default(cuid())
+  employeeId       String
+  employee         Employee         @relation(fields: [employeeId], references: [id])
+  shiftId          String
+  shift            Shift            @relation(fields: [shiftId], references: [id])
+  date             DateTime         @db.Date
+  checkIn          DateTime?
+  checkOut         DateTime?
+  status           AttendanceStatus
+  lateMinutes      Int              @default(0)
+  note             String?
+  validated        Boolean          @default(false)
+  validatedBy      String?
+  validatedAt      DateTime?
   /// Koordinat GPS saat absen masuk/pulang (diisi dari HP karyawan)
-  checkInLat      Float?
-  checkInLng      Float?
-  checkInAccuracy Float?
+  checkInLat       Float?
+  checkInLng       Float?
+  checkInAccuracy  Float?
   /// Jarak ke titik lokasi kerja terdekat (meter)
-  checkInDistance Int?
-  checkInSiteId   String?
-  checkInSite     WorkSite? @relation("CheckInSite", fields: [checkInSiteId], references: [id], onDelete: SetNull)
+  checkInDistance  Int?
+  checkInSiteId    String?
+  checkInSite      WorkSite?        @relation("CheckInSite", fields: [checkInSiteId], references: [id], onDelete: SetNull)
   checkOutLat      Float?
   checkOutLng      Float?
   checkOutAccuracy Float?
   checkOutDistance Int?
+
   @@unique([employeeId, date])
 }
 
 /// Titik lokasi kerja untuk absen (geofence). Absen hanya bisa di dalam radius salah satu titik aktif.
 model WorkSite {
-  id        String   @id @default(cuid())
+  id        String       @id @default(cuid())
   name      String
   latitude  Float
   longitude Float
-  radiusM   Int      @default(100)
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
+  radiusM   Int          @default(100)
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now())
   checkIns  Attendance[] @relation("CheckInSite")
 }
 
 /// Tarif borongan per tahap (Filling Cat, Assembling, dll.)
 model PieceRate {
-  id        String          @id @default(cuid())
-  stage     ProductionStage @unique
+  id         String          @id @default(cuid())
+  stage      ProductionStage @unique
   ratePerPcs BigInt
 }
 
@@ -268,17 +274,168 @@ model CashAdvance {
   journalId         String?
   createdBy         String
   createdAt         DateTime @default(now())
+
   @@index([employeeId])
 }
 
-/// Jenis tugas borongan (dibayar per piece), tarif bisa diubah
+/// Jenis tugas borongan (dibayar per piece), tarif bisa diubah.
+/// ratePerPcs = budget total per pcs, dibagi ke pekerja, koordinator, dan driver.
 model PieceTask {
-  id         String      @id @default(cuid())
-  code       String      @unique
-  name       String
-  ratePerPcs BigInt
-  active     Boolean     @default(true)
-  works      PieceWork[]
+  id              String           @id @default(cuid())
+  code            String           @unique
+  name            String
+  ratePerPcs      BigInt
+  workerRate      BigInt           @default(0)
+  coordinatorRate BigInt           @default(0)
+  driverRate      BigInt           @default(0)
+  /// Barang hasil kerja (mis. Giftbox Sudah Dicat) yang bertambah di stok titik
+  outputItemId    String?
+  outputItem      Item?            @relation(fields: [outputItemId], references: [id])
+  active          Boolean          @default(true)
+  works           PieceWork[]
+  inputs          PieceTaskInput[]
+  results         BoronganResult[]
+}
+
+/// Bahan yang terpakai per 1 pcs hasil tugas borongan (satuan resep/HPP bila ada, seperti BOM)
+model PieceTaskInput {
+  id     String    @id @default(cuid())
+  taskId String
+  task   PieceTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  itemId String
+  item   Item      @relation(fields: [itemId], references: [id])
+  qty    Decimal   @db.Decimal(14, 4)
+}
+
+// ============ BORONGAN TETANGGA ============
+
+enum BoronganRole {
+  PEKERJA
+  KOORDINATOR
+  DRIVER
+}
+
+enum HandoverKind {
+  KIRIM
+  KEMBALI
+}
+
+enum HandoverStatus {
+  DIKIRIM
+  DITERIMA
+  DIBATALKAN
+}
+
+/// Titik kerja borongan (BMR, Mastrip); stok bahan & hasil di titik memakai lokasi stok sendiri
+model BoronganPoint {
+  id          String               @id @default(cuid())
+  code        String               @unique
+  name        String
+  locationId  String               @unique
+  location    Location             @relation(fields: [locationId], references: [id])
+  active      Boolean              @default(true)
+  createdAt   DateTime             @default(now())
+  people      BoronganPerson[]
+  handovers   BoronganHandover[]
+  results     BoronganResult[]
+  settlements BoronganSettlement[]
+}
+
+/// Tetangga yang bekerja borongan (bukan karyawan): pekerja & koordinator per titik, driver tanpa titik
+model BoronganPerson {
+  id            String             @id @default(cuid())
+  name          String
+  phone         String?
+  role          BoronganRole
+  pointId       String?
+  point         BoronganPoint?     @relation(fields: [pointId], references: [id])
+  /// Akun login koordinator (role KOORDINATOR)
+  userId        String?            @unique
+  user          User?              @relation(fields: [userId], references: [id])
+  active        Boolean            @default(true)
+  note          String?
+  createdAt     DateTime           @default(now())
+  works         BoronganResult[]   @relation("ResultWorker")
+  coordinated   BoronganResult[]   @relation("ResultCoordinator")
+  drivenResults BoronganResult[]   @relation("ResultDriver")
+  drives        BoronganHandover[]
+}
+
+/// Serah terima lewat driver: KIRIM = bahan gudang → titik, KEMBALI = hasil titik → gudang.
+/// Saat dibuat barang pindah ke lokasi driver; saat dikonfirmasi diterima pindah ke tujuan.
+model BoronganHandover {
+  id         String                 @id @default(cuid())
+  number     String                 @unique
+  kind       HandoverKind
+  status     HandoverStatus         @default(DIKIRIM)
+  pointId    String
+  point      BoronganPoint          @relation(fields: [pointId], references: [id])
+  driverId   String?
+  driver     BoronganPerson?        @relation(fields: [driverId], references: [id])
+  date       DateTime
+  receivedAt DateTime?
+  receivedBy String?
+  note       String?
+  createdBy  String
+  createdAt  DateTime               @default(now())
+  lines      BoronganHandoverLine[]
+
+  @@index([pointId, status])
+}
+
+model BoronganHandoverLine {
+  id          String           @id @default(cuid())
+  handoverId  String
+  handover    BoronganHandover @relation(fields: [handoverId], references: [id], onDelete: Cascade)
+  itemId      String
+  item        Item             @relation(fields: [itemId], references: [id])
+  /// Lokasi gudang asal (KIRIM) atau tujuan (KEMBALI)
+  warehouseId String
+  qty         Decimal          @db.Decimal(14, 3)
+}
+
+/// Setoran hasil kerja per pekerja; upah dibagi pekerja/koordinator/driver sesuai tarif saat dicatat
+model BoronganResult {
+  id              String              @id @default(cuid())
+  number          String              @unique
+  pointId         String
+  point           BoronganPoint       @relation(fields: [pointId], references: [id])
+  workerId        String
+  worker          BoronganPerson      @relation("ResultWorker", fields: [workerId], references: [id])
+  coordinatorId   String?
+  coordinator     BoronganPerson?     @relation("ResultCoordinator", fields: [coordinatorId], references: [id])
+  driverId        String?
+  driver          BoronganPerson?     @relation("ResultDriver", fields: [driverId], references: [id])
+  taskId          String
+  task            PieceTask           @relation(fields: [taskId], references: [id])
+  date            DateTime            @db.Date
+  qty             Int
+  workerRate      BigInt
+  coordinatorRate BigInt
+  driverRate      BigInt
+  note            String?
+  settlementId    String?
+  settlement      BoronganSettlement? @relation(fields: [settlementId], references: [id])
+  createdBy       String
+  createdAt       DateTime            @default(now())
+
+  @@index([pointId, settlementId])
+}
+
+/// Pembayaran upah borongan satu titik (pekerja + koordinator + driver), dibayar bersamaan
+model BoronganSettlement {
+  id            String           @id @default(cuid())
+  number        String           @unique
+  pointId       String
+  point         BoronganPoint    @relation(fields: [pointId], references: [id])
+  date          DateTime
+  upTo          DateTime         @db.Date
+  bankAccountId String
+  total         BigInt
+  journalId     String?
+  createdBy     String
+  createdAt     DateTime         @default(now())
+  results       BoronganResult[]
 }
 
 /// Hasil kerja borongan per pekerja; periodId terisi setelah diklaim
@@ -297,6 +454,7 @@ model PieceWork {
   period     PayrollPeriod? @relation(fields: [periodId], references: [id], onDelete: SetNull)
   createdBy  String
   createdAt  DateTime       @default(now())
+
   @@index([employeeId, periodId])
 }
 
@@ -307,50 +465,51 @@ enum PayrollStatus {
 }
 
 model PayrollPeriod {
-  id         String        @id @default(cuid())
-  code       String        @unique
-  startDate  DateTime      @db.Date
-  endDate    DateTime      @db.Date
-  status     PayrollStatus @default(DRAFT)
-  kind       PayrollKind   @default(PERIODE)
+  id                String        @id @default(cuid())
+  code              String        @unique
+  startDate         DateTime      @db.Date
+  endDate           DateTime      @db.Date
+  status            PayrollStatus @default(DRAFT)
+  kind              PayrollKind   @default(PERIODE)
   /// Tanggal gajian (siklus bulanan: H+7)
-  payDate    DateTime?     @db.Date
+  payDate           DateTime?     @db.Date
   /// Klaim borongan: pekerja yang mengklaim
-  employeeId String?
-  approvedBy String?
-  paidAt     DateTime?
+  employeeId        String?
+  approvedBy        String?
+  paidAt            DateTime?
   paidFromAccountId String?
-  journalId  String?
-  createdAt  DateTime      @default(now())
-  payslips   Payslip[]
-  pieceWorks PieceWork[]
+  journalId         String?
+  createdAt         DateTime      @default(now())
+  payslips          Payslip[]
+  pieceWorks        PieceWork[]
 }
 
 model Payslip {
-  id           String        @id @default(cuid())
-  periodId     String
-  period       PayrollPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
-  employeeId   String
-  employee     Employee      @relation(fields: [employeeId], references: [id])
-  daysPresent  Int
+  id               String        @id @default(cuid())
+  periodId         String
+  period           PayrollPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  employeeId       String
+  employee         Employee      @relation(fields: [employeeId], references: [id])
+  daysPresent      Int
   /// Gaji bulanan: gaji pokok, hari tidak masuk dalam jatah libur, dan hari bolos
-  baseSalary   BigInt        @default(0)
-  offDays      Int           @default(0)
-  absentDays   Int           @default(0)
-  note         String?
-  dailyWage    BigInt
-  pieceWage    BigInt
-  pieceDetail  Json
-  transport    BigInt
-  bonus        BigInt        @default(0)
-  deduction    BigInt        @default(0)
+  baseSalary       BigInt        @default(0)
+  offDays          Int           @default(0)
+  absentDays       Int           @default(0)
+  note             String?
+  dailyWage        BigInt
+  pieceWage        BigInt
+  pieceDetail      Json
+  transport        BigInt
+  bonus            BigInt        @default(0)
+  deduction        BigInt        @default(0)
   /// Potongan kasbon pada slip ini; rincian [{id, number, amount}]
-  advanceDeduction BigInt    @default(0)
-  advanceDetail    Json      @default("[]")
+  advanceDeduction BigInt        @default(0)
+  advanceDetail    Json          @default("[]")
   /// Tunjangan (periode TUNJANGAN, dibayar tiap tanggal 15); rincian [{name, amount}]
   allowance        BigInt        @default(0)
   allowanceDetail  Json          @default("[]")
-  total        BigInt
+  total            BigInt
+
   @@unique([periodId, employeeId])
 }
 
@@ -371,23 +530,24 @@ enum ProductionStage {
 }
 
 model ProductionEntry {
-  id         String          @id @default(cuid())
-  date       DateTime        @db.Date
-  shiftId    String
-  shift      Shift           @relation(fields: [shiftId], references: [id])
-  divisionId String
-  division   Division        @relation(fields: [divisionId], references: [id])
-  employeeId String
-  employee   Employee        @relation(fields: [employeeId], references: [id])
-  stage      ProductionStage
-  productId  String
-  product    Product         @relation(fields: [productId], references: [id])
-  qtyGood    Int
-  qtyReject  Int             @default(0)
-  note       String?
-  createdBy  String
-  createdAt  DateTime        @default(now())
-  stockPosted Boolean        @default(false)
+  id          String          @id @default(cuid())
+  date        DateTime        @db.Date
+  shiftId     String
+  shift       Shift           @relation(fields: [shiftId], references: [id])
+  divisionId  String
+  division    Division        @relation(fields: [divisionId], references: [id])
+  employeeId  String
+  employee    Employee        @relation(fields: [employeeId], references: [id])
+  stage       ProductionStage
+  productId   String
+  product     Product         @relation(fields: [productId], references: [id])
+  qtyGood     Int
+  qtyReject   Int             @default(0)
+  note        String?
+  createdBy   String
+  createdAt   DateTime        @default(now())
+  stockPosted Boolean         @default(false)
+
   @@index([date, shiftId, divisionId])
 }
 
@@ -409,43 +569,44 @@ enum ReportStatus {
 }
 
 model ShiftReport {
-  id         String       @id @default(cuid())
-  date       DateTime     @db.Date
-  shiftId    String
-  shift      Shift        @relation(fields: [shiftId], references: [id])
-  divisionId String
-  division   Division     @relation(fields: [divisionId], references: [id])
-  status     ReportStatus @default(DRAFT)
+  id                String       @id @default(cuid())
+  date              DateTime     @db.Date
+  shiftId           String
+  shift             Shift        @relation(fields: [shiftId], references: [id])
+  divisionId        String
+  division          Division     @relation(fields: [divisionId], references: [id])
+  status            ReportStatus @default(DRAFT)
   /// [{label, photo, done, photoPath?}]
-  checklist  Json         @default("[]")
+  checklist         Json         @default("[]")
   /// PIC divisi yang melaporkan shift ini
-  picName    String?
+  picName           String?
   /// Detail hasil kerja sesuai format divisi (lihat src/lib/shiftReport.ts)
-  work       Json         @default("{}")
+  work              Json         @default("{}")
   /// Stok akhir shift (hitung fisik): [{itemId, name, unit, limit, qty}]
-  stockCount Json         @default("[]")
+  stockCount        Json         @default("[]")
   /// Hitungan stok sudah diterapkan ke kartu stok (penyesuaian stock opname)
-  stockApplied Boolean    @default(false)
+  stockApplied      Boolean      @default(false)
   /// Hitungan stok yang terakhir diterapkan; revisi laporan hanya menerapkan selisihnya
   stockAppliedCount Json?
-  complaints String?
-  followUp   String?
-  followUpStatus String   @default("BELUM")
-  createdBy  String
-  createdAt  DateTime     @default(now())
-  sends      ReportSend[]
+  complaints        String?
+  followUp          String?
+  followUpStatus    String       @default("BELUM")
+  createdBy         String
+  createdAt         DateTime     @default(now())
+  sends             ReportSend[]
+
   @@unique([date, shiftId, divisionId])
 }
 
 model ReportSend {
-  id        String      @id @default(cuid())
-  reportId  String
-  report    ShiftReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
-  sentAt    DateTime    @default(now())
-  sentBy    String
-  channel   String
-  status    String
-  error     String?
+  id       String      @id @default(cuid())
+  reportId String
+  report   ShiftReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  sentAt   DateTime    @default(now())
+  sentBy   String
+  channel  String
+  status   String
+  error    String?
 }
 
 // ============ STOK ============
@@ -457,14 +618,14 @@ enum ItemType {
 }
 
 model Supplier {
-  id      String  @id @default(cuid())
-  name    String
-  phone   String?
-  address String?
-  note    String?
-  active  Boolean @default(true)
-  items   Item[]
-  payables Payable[]
+  id        String     @id @default(cuid())
+  name      String
+  phone     String?
+  address   String?
+  note      String?
+  active    Boolean    @default(true)
+  items     Item[]
+  payables  Payable[]
   purchases Purchase[]
 }
 
@@ -491,48 +652,52 @@ model GypsumCharacter {
 }
 
 model Location {
-  id         String    @id @default(cuid())
-  code       String    @unique
-  name       String
-  divisionId String?
-  division   Division? @relation(fields: [divisionId], references: [id])
-  movesFrom  StockMovement[] @relation("MoveFrom")
-  movesTo    StockMovement[] @relation("MoveTo")
+  id            String          @id @default(cuid())
+  code          String          @unique
+  name          String
+  divisionId    String?
+  division      Division?       @relation(fields: [divisionId], references: [id])
+  movesFrom     StockMovement[] @relation("MoveFrom")
+  movesTo       StockMovement[] @relation("MoveTo")
+  boronganPoint BoronganPoint?
 }
 
 model Item {
-  id          String           @id @default(cuid())
-  sku         String           @unique
-  name        String
-  type        ItemType
-  unit        String
-  minStock    Decimal          @default(0) @db.Decimal(14, 3)
-  avgCost     BigInt           @default(0)
+  id                String                 @id @default(cuid())
+  sku               String                 @unique
+  name              String
+  type              ItemType
+  unit              String
+  minStock          Decimal                @default(0) @db.Decimal(14, 3)
+  avgCost           BigInt                 @default(0)
   /// Satuan resep/HPP (mis. gram) bila berbeda dari satuan stok `unit` (mis. sak); BOM memakai satuan ini
-  hppUnit     String?
+  hppUnit           String?
   /// Jumlah hppUnit dalam 1 unit stok (1 sak gypsum = 18000 gram)
-  hppFactor   Decimal          @default(1) @db.Decimal(14, 4)
+  hppFactor         Decimal                @default(1) @db.Decimal(14, 4)
   /// Harga beli terbaru & sebelumnya per unit stok, untuk HPP realtime dan indikator naik/turun
-  lastCost    BigInt           @default(0)
-  prevCost    BigInt           @default(0)
-  lastCostAt  DateTime?
-  supplierId  String?
-  supplier    Supplier?        @relation(fields: [supplierId], references: [id])
+  lastCost          BigInt                 @default(0)
+  prevCost          BigInt                 @default(0)
+  lastCostAt        DateTime?
+  supplierId        String?
+  supplier          Supplier?              @relation(fields: [supplierId], references: [id])
   gypsumCharacterId String?
-  gypsumCharacter   GypsumCharacter? @relation(fields: [gypsumCharacterId], references: [id])
-  active      Boolean          @default(true)
+  gypsumCharacter   GypsumCharacter?       @relation(fields: [gypsumCharacterId], references: [id])
+  active            Boolean                @default(true)
   /// Divisi penanggung jawab stock opname bahan baku ini; minStock = limit order
-  divisionId  String?
-  division    Division?        @relation(fields: [divisionId], references: [id])
-  sortOrder   Int              @default(0)
+  divisionId        String?
+  division          Division?              @relation(fields: [divisionId], references: [id])
+  sortOrder         Int                    @default(0)
   /// Klasifikasi item (mis. Bahan Utama); menentukan awalan kode otomatis
-  category    String?
-  note        String?
-  movements   StockMovement[]
-  bomLines    BomLine[]
-  requests    StockRequest[]
-  product     Product?         @relation("ProductFinishedItem")
-  purchaseLines PurchaseLine[]
+  category          String?
+  note              String?
+  movements         StockMovement[]
+  bomLines          BomLine[]
+  requests          StockRequest[]
+  product           Product?               @relation("ProductFinishedItem")
+  purchaseLines     PurchaseLine[]
+  pieceInputs       PieceTaskInput[]
+  pieceOutputs      PieceTask[]
+  handoverLines     BoronganHandoverLine[]
 }
 
 enum MovementType {
@@ -545,21 +710,22 @@ enum MovementType {
 }
 
 model StockMovement {
-  id         String       @id @default(cuid())
-  date       DateTime     @default(now())
-  type       MovementType
-  itemId     String
-  item       Item         @relation(fields: [itemId], references: [id])
+  id             String       @id @default(cuid())
+  date           DateTime     @default(now())
+  type           MovementType
+  itemId         String
+  item           Item         @relation(fields: [itemId], references: [id])
   fromLocationId String?
-  fromLocation   Location? @relation("MoveFrom", fields: [fromLocationId], references: [id])
+  fromLocation   Location?    @relation("MoveFrom", fields: [fromLocationId], references: [id])
   toLocationId   String?
-  toLocation     Location? @relation("MoveTo", fields: [toLocationId], references: [id])
-  qty        Decimal      @db.Decimal(14, 3)
-  unitCost   BigInt       @default(0)
-  ref        String?
-  note       String?
-  createdBy  String
-  journalId  String?
+  toLocation     Location?    @relation("MoveTo", fields: [toLocationId], references: [id])
+  qty            Decimal      @db.Decimal(14, 3)
+  unitCost       BigInt       @default(0)
+  ref            String?
+  note           String?
+  createdBy      String
+  journalId      String?
+
   @@index([itemId, date])
 }
 
@@ -571,17 +737,17 @@ enum RequestStatus {
 }
 
 model StockRequest {
-  id         String        @id @default(cuid())
-  itemId     String
-  item       Item          @relation(fields: [itemId], references: [id])
-  divisionId String
-  division   Division      @relation(fields: [divisionId], references: [id])
-  qty        Decimal       @db.Decimal(14, 3)
-  note       String?
-  status     RequestStatus @default(DIAJUKAN)
+  id          String        @id @default(cuid())
+  itemId      String
+  item        Item          @relation(fields: [itemId], references: [id])
+  divisionId  String
+  division    Division      @relation(fields: [divisionId], references: [id])
+  qty         Decimal       @db.Decimal(14, 3)
+  note        String?
+  status      RequestStatus @default(DIAJUKAN)
   requestedBy String
-  decidedBy  String?
-  createdAt  DateTime      @default(now())
+  decidedBy   String?
+  createdAt   DateTime      @default(now())
 }
 
 // ============ PRODUK & HPP ============
@@ -604,22 +770,22 @@ enum ProductVariant {
 }
 
 model Product {
-  id           String         @id @default(cuid())
-  sku          String         @unique
-  name         String
-  type         ProductType
-  variant      ProductVariant
-  storeId      String
-  store        Store          @relation(fields: [storeId], references: [id])
-  packQty      Int            @default(1)
-  laborCost    BigInt         @default(0)
-  overheadCost BigInt         @default(0)
-  active       Boolean        @default(true)
-  finishedItemId String?      @unique
-  finishedItem Item?          @relation("ProductFinishedItem", fields: [finishedItemId], references: [id])
-  bom          BomLine[]
-  prices       PriceHistory[]
-  production   ProductionEntry[]
+  id             String            @id @default(cuid())
+  sku            String            @unique
+  name           String
+  type           ProductType
+  variant        ProductVariant
+  storeId        String
+  store          Store             @relation(fields: [storeId], references: [id])
+  packQty        Int               @default(1)
+  laborCost      BigInt            @default(0)
+  overheadCost   BigInt            @default(0)
+  active         Boolean           @default(true)
+  finishedItemId String?           @unique
+  finishedItem   Item?             @relation("ProductFinishedItem", fields: [finishedItemId], references: [id])
+  bom            BomLine[]
+  prices         PriceHistory[]
+  production     ProductionEntry[]
 }
 
 model BomLine {
@@ -629,18 +795,19 @@ model BomLine {
   itemId    String
   item      Item    @relation(fields: [itemId], references: [id])
   qty       Decimal @db.Decimal(14, 4)
+
   @@unique([productId, itemId])
 }
 
 model PriceHistory {
-  id         String   @id @default(cuid())
-  productId  String
-  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  channel    String
-  price      BigInt
-  hpp        BigInt
+  id          String   @id @default(cuid())
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  channel     String
+  price       BigInt
+  hpp         BigInt
   effectiveAt DateTime @default(now())
-  createdBy  String
+  createdBy   String
 }
 
 // ============ FINANCE ============
@@ -686,50 +853,51 @@ enum TxSource {
 }
 
 model FinanceTransaction {
-  id            String      @id @default(cuid())
-  number        String      @unique
-  source        TxSource
-  direction     TxDirection
-  amount        BigInt
-  date          DateTime
-  accountId     String?
-  toAccountId   String?
-  categoryId    String?
+  id                  String        @id @default(cuid())
+  number              String        @unique
+  source              TxSource
+  direction           TxDirection
+  amount              BigInt
+  date                DateTime
+  accountId           String?
+  toAccountId         String?
+  categoryId          String?
   suggestedCategoryId String?
-  storeId       String?
-  store         Store?      @relation(fields: [storeId], references: [id])
-  counterparty  String?
-  note          String?
-  rawText       String?
-  proofPath     String?
-  proofMime     String?
-  aiExtraction  Json?
-  status        TxStatus    @default(DRAFT)
-  fingerprint   String
-  duplicateOfId String?
-  idempotencyKey String?    @unique
-  journalId     String?
-  createdBy     String
-  createdAt     DateTime    @default(now())
-  telegramChatId String?
-  telegramMessageId String?
-  approvals     ApprovalLog[]
+  storeId             String?
+  store               Store?        @relation(fields: [storeId], references: [id])
+  counterparty        String?
+  note                String?
+  rawText             String?
+  proofPath           String?
+  proofMime           String?
+  aiExtraction        Json?
+  status              TxStatus      @default(DRAFT)
+  fingerprint         String
+  duplicateOfId       String?
+  idempotencyKey      String?       @unique
+  journalId           String?
+  createdBy           String
+  createdAt           DateTime      @default(now())
+  telegramChatId      String?
+  telegramMessageId   String?
+  approvals           ApprovalLog[]
+
   @@index([fingerprint])
   @@index([status])
 }
 
 model ApprovalLog {
-  id             String             @id @default(cuid())
-  transactionId  String
-  transaction    FinanceTransaction @relation(fields: [transactionId], references: [id])
-  action         String
-  fromStatus     TxStatus?
-  toStatus       TxStatus
-  actorUserId    String?
-  actorName      String
-  viaTelegramId  String?
-  note           String?
-  at             DateTime           @default(now())
+  id            String             @id @default(cuid())
+  transactionId String
+  transaction   FinanceTransaction @relation(fields: [transactionId], references: [id])
+  action        String
+  fromStatus    TxStatus?
+  toStatus      TxStatus
+  actorUserId   String?
+  actorName     String
+  viaTelegramId String?
+  note          String?
+  at            DateTime           @default(now())
 }
 
 model TelegramIdentity {
@@ -746,33 +914,33 @@ model TelegramIdentity {
 }
 
 model ApiClient {
-  id        String   @id @default(cuid())
-  name      String
-  keyPrefix String   @unique
-  keyHash   String
-  scopes    String
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
+  id         String    @id @default(cuid())
+  name       String
+  keyPrefix  String    @unique
+  keyHash    String
+  scopes     String
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now())
   lastUsedAt DateTime?
 }
 
 model IdempotencyRecord {
-  key        String   @id
-  clientId   String
-  status     Int
-  response   Json
-  createdAt  DateTime @default(now())
+  key       String   @id
+  clientId  String
+  status    Int
+  response  Json
+  createdAt DateTime @default(now())
 }
 
 model NotificationLog {
-  id        String   @id @default(cuid())
-  at        DateTime @default(now())
-  channel   String
-  type      String
-  target    String?
-  status    String
-  payload   String?
-  error     String?
+  id      String   @id @default(cuid())
+  at      DateTime @default(now())
+  channel String
+  type    String
+  target  String?
+  status  String
+  payload String?
+  error   String?
 }
 
 // ============ AKUNTANSI ============
@@ -787,33 +955,34 @@ enum AccountType {
 }
 
 model CoaAccount {
-  id        String        @id @default(cuid())
-  code      String        @unique
-  name      String
-  type      AccountType
-  isCash    Boolean       @default(false)
-  parentId  String?
-  parent    CoaAccount?   @relation("CoaTree", fields: [parentId], references: [id])
-  children  CoaAccount[]  @relation("CoaTree")
-  active    Boolean       @default(true)
-  lines     JournalLine[]
-  banks     BankAccount[]
+  id         String        @id @default(cuid())
+  code       String        @unique
+  name       String
+  type       AccountType
+  isCash     Boolean       @default(false)
+  parentId   String?
+  parent     CoaAccount?   @relation("CoaTree", fields: [parentId], references: [id])
+  children   CoaAccount[]  @relation("CoaTree")
+  active     Boolean       @default(true)
+  lines      JournalLine[]
+  banks      BankAccount[]
   categories TxCategory[]
 }
 
 model Journal {
-  id          String        @id @default(cuid())
-  number      String        @unique
-  date        DateTime
-  description String
-  storeId     String
-  store       Store         @relation(fields: [storeId], references: [id])
-  source      String
-  sourceId    String?
-  createdBy   String
-  createdAt   DateTime      @default(now())
+  id           String        @id @default(cuid())
+  number       String        @unique
+  date         DateTime
+  description  String
+  storeId      String
+  store        Store         @relation(fields: [storeId], references: [id])
+  source       String
+  sourceId     String?
+  createdBy    String
+  createdAt    DateTime      @default(now())
   reversalOfId String?
-  lines       JournalLine[]
+  lines        JournalLine[]
+
   @@index([date])
   @@index([source, sourceId])
 }
@@ -827,6 +996,7 @@ model JournalLine {
   debit     BigInt     @default(0)
   credit    BigInt     @default(0)
   memo      String?
+
   @@index([journalId])
   @@index([accountId])
 }
@@ -843,21 +1013,22 @@ model AccountingPeriod {
   status   PeriodStatus @default(OPEN)
   closedAt DateTime?
   closedBy String?
+
   @@unique([year, month])
 }
 
 model Receivable {
-  id        String   @id @default(cuid())
-  number    String   @unique
+  id        String    @id @default(cuid())
+  number    String    @unique
   customer  String
   storeId   String
   date      DateTime
   dueDate   DateTime?
   amount    BigInt
-  paid      BigInt   @default(0)
+  paid      BigInt    @default(0)
   note      String?
   journalId String?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 }
 
 enum PayableKind {
@@ -866,21 +1037,21 @@ enum PayableKind {
 }
 
 model Payable {
-  id         String    @id @default(cuid())
-  number     String    @unique
+  id         String      @id @default(cuid())
+  number     String      @unique
   /// USAHA = utang supplier, PINJAMAN = pinjaman modal
   kind       PayableKind @default(USAHA)
   supplierId String?
-  supplier   Supplier? @relation(fields: [supplierId], references: [id])
+  supplier   Supplier?   @relation(fields: [supplierId], references: [id])
   vendor     String
   storeId    String
   date       DateTime
   dueDate    DateTime?
   amount     BigInt
-  paid       BigInt    @default(0)
+  paid       BigInt      @default(0)
   note       String?
   journalId  String?
-  createdAt  DateTime  @default(now())
+  createdAt  DateTime    @default(now())
 }
 
 model FixedAsset {
@@ -977,6 +1148,7 @@ model ReserveEntry {
   note      String?
   createdBy String
   createdAt DateTime    @default(now())
+
   @@index([fundId, date])
 }
 
