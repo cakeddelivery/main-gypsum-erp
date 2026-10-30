@@ -202,8 +202,9 @@ async function main() {
       await prisma.reserveFund.create({ data: { name, kind: "OWNER", dailyAmount: BigInt(100000), fromBankId: bank.SEABANK, toBankId: bank.SHOPEEPAY, storeId: mg.id } });
     }
   }
-  const tasks: [string, string, number][] = [["CAT_GIFTBOX", "Cat giftbox", 100], ["CAT_PLASTIK", "Cat plastik", 15], ["ASSEMBLING", "Assembling", 60]];
-  for (const [code, name, rate] of tasks) await prisma.pieceTask.upsert({ where: { code }, create: { code, name, ratePerPcs: BigInt(rate) }, update: {} });
+  // Budget per pcs dibagi pekerja / koordinator / driver
+  const tasks: [string, string, number, number, number][] = [["CAT_GIFTBOX", "Cat giftbox", 80, 20, 0], ["CAT_PLASTIK", "Cat plastik", 13, 2, 0], ["ASSEMBLING", "Assembling", 30, 15, 15]];
+  for (const [code, name, w, c, d] of tasks) await prisma.pieceTask.upsert({ where: { code }, create: { code, name, ratePerPcs: BigInt(w + c + d), workerRate: BigInt(w), coordinatorRate: BigInt(c), driverRate: BigInt(d) }, update: {} });
 
   const targets: [string, ProductionStage, number][] = [["CTK", "CETAK", 600], ["FIL", "FILLING_CAT", 400], ["ASM", "ASSEMBLING", 300], ["QCP", "PACKING", 300]];
   for (const [d, stage, qty] of targets) {

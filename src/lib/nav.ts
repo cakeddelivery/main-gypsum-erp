@@ -13,6 +13,7 @@ export const NAV: NavItem[] = [
   { href: "/produk", label: "Produk & HPP", icon: "tag", perms: ["product.view"] },
   { href: "/supplier", label: "Supplier", icon: "truck", perms: ["partner.view"] },
   { href: "/pelanggan", label: "Pelanggan", icon: "user", perms: ["partner.view"] },
+  { href: "/borongan", label: "Borongan", icon: "users", perms: ["borongan.view"] },
   { href: "/karyawan", label: "Karyawan", icon: "users", perms: ["employee.view"] },
   { href: "/gaji", label: "Penggajian", icon: "wallet", perms: ["payroll.view", "payroll.self"] },
   { href: "/finance", label: "Finance Inbox", icon: "inbox", perms: ["finance.view"] },
@@ -23,7 +24,7 @@ export const NAV: NavItem[] = [
 /** Label pendek untuk navigasi bawah (mobile) */
 const SHORT_LABEL: Record<string, string> = {
   "/": "Beranda", "/analitik": "Analitik", "/laporan": "Laporan", "/absensi": "Absen", "/stok": "Stok", "/produk": "Produk",
-  "/finance": "Finance", "/akuntansi": "Akuntansi", "/gaji": "Gaji", "/karyawan": "Karyawan", "/pengaturan": "Setelan",
+  "/finance": "Finance", "/akuntansi": "Akuntansi", "/gaji": "Gaji", "/karyawan": "Karyawan", "/pengaturan": "Setelan", "/borongan": "Borongan",
 };
 
 /** 5 menu prioritas per role untuk navigasi bawah di layar HP (urut kiri → kanan) */
@@ -37,6 +38,7 @@ export const PRIORITY_NAV: Record<Role, string[]> = {
   SUPERVISOR: ["/", "/produksi", "/absensi", "/laporan", "/stok"],
   PIC_CONTENT: ["/", "/produk", "/absensi", "/gaji"],
   OPERATOR: ["/", "/produksi", "/absensi", "/laporan", "/gaji"],
+  KOORDINATOR: ["/borongan"],
 };
 
 export const BOTTOM_NAV_SIZE = 5;
