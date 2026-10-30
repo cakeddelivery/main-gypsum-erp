@@ -695,6 +695,11 @@ model Item {
   requests          StockRequest[]
   product           Product?               @relation("ProductFinishedItem")
   purchaseLines     PurchaseLine[]
+  /// Resep barang setengah jadi: komponen per 1 unit stok + upah & overhead per unit
+  recipe            ItemRecipeLine[]       @relation("RecipeOf")
+  usedInRecipes     ItemRecipeLine[]       @relation("RecipeComponent")
+  laborCost         BigInt                 @default(0)
+  overheadCost      BigInt                 @default(0)
   pieceInputs       PieceTaskInput[]
   pieceOutputs      PieceTask[]
   handoverLines     BoronganHandoverLine[]
@@ -780,12 +785,43 @@ model Product {
   packQty        Int               @default(1)
   laborCost      BigInt            @default(0)
   overheadCost   BigInt            @default(0)
+  /// Target margin (% dari harga jual), affiliate & iklan (% harga) untuk saran harga
+  targetMargin   Decimal           @default(30) @db.Decimal(5, 2)
+  affiliatePct   Decimal           @default(0) @db.Decimal(5, 2)
+  adsPct         Decimal           @default(0) @db.Decimal(5, 2)
+  /// Rata-rata jumlah produk per pesanan marketplace (biaya pesanan flat dibagi ke tiap produk)
+  itemsPerOrder  Decimal           @default(1) @db.Decimal(6, 2)
   active         Boolean           @default(true)
   finishedItemId String?           @unique
   finishedItem   Item?             @relation("ProductFinishedItem", fields: [finishedItemId], references: [id])
   bom            BomLine[]
   prices         PriceHistory[]
   production     ProductionEntry[]
+}
+
+/// Komponen resep barang setengah jadi (bahan baku atau setengah jadi lain), qty dalam satuan resep komponen
+model ItemRecipeLine {
+  id          String  @id @default(cuid())
+  itemId      String
+  item        Item    @relation("RecipeOf", fields: [itemId], references: [id], onDelete: Cascade)
+  componentId String
+  component   Item    @relation("RecipeComponent", fields: [componentId], references: [id])
+  qty         Decimal @db.Decimal(14, 4)
+
+  @@unique([itemId, componentId])
+}
+
+/// Biaya overhead bulanan (listrik, LPG, penyusutan, sewa, dll.) yang dibebankan per pcs produksi
+model Overhead {
+  id            String   @id @default(cuid())
+  category      String
+  name          String
+  /// Biaya per bulan; untuk penyusutan = harga aset / umur (bulan)
+  monthlyAmount BigInt
+  assetCost     BigInt?
+  lifeMonths    Int?
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
 }
 
 model BomLine {
