@@ -56,3 +56,24 @@ export function normalizeUnit(list: readonly { value: string }[], unit?: string 
   if (!u) return "";
   return list.find((x) => x.value === u.toLowerCase())?.value ?? u;
 }
+
+/** Satuan yang bisa saling dikonversi untuk satuan pakai resep (nilai = kelipatan satuan terkecil) */
+const UNIT_FAMILY: Record<string, [string, number]> = { kg: ["massa", 1000], gram: ["massa", 1], liter: ["volume", 1000], ml: ["volume", 1], pcs: ["jumlah", 1] };
+
+/** Pilihan satuan pakai untuk komponen dengan satuan resep `recipeUnit` */
+export function useUnitOptions(recipeUnit: string) {
+  const f = UNIT_FAMILY[recipeUnit.trim().toLowerCase()];
+  return f ? Object.keys(UNIT_FAMILY).filter((u) => UNIT_FAMILY[u][0] === f[0]) : [recipeUnit];
+}
+
+/** Qty dalam satuan pakai → qty dalam satuan resep komponen (500 gram → 0,5 bila resep dalam kg) */
+export function toRecipeQty(qty: number, useUnit: string | null | undefined, recipeUnit: string) {
+  const a = useUnit ? UNIT_FAMILY[useUnit.trim().toLowerCase()] : undefined;
+  const b = UNIT_FAMILY[recipeUnit.trim().toLowerCase()];
+  if (!a || !b || a[0] !== b[0]) return qty;
+  return (qty * a[1]) / b[1];
+}
+
+export function fromRecipeQty(qty: number, useUnit: string | null | undefined, recipeUnit: string) {
+  return qty / toRecipeQty(1, useUnit, recipeUnit);
+}

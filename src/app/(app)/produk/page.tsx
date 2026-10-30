@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { itemCosts, overheadSummary, productCosting, latestPrices, margin } from "@/lib/hpp";
+import { itemCosts, productCosting, latestPrices, margin } from "@/lib/hpp";
 import { ProdukTabs } from "./ProdukTabs";
 import { TrendBadge } from "@/components/Trend";
 import { idr } from "@/lib/money";
@@ -22,12 +22,12 @@ export default async function ProdukPage({ searchParams }: { searchParams: Promi
     prisma.store.findMany(),
     prisma.item.findMany({ where: { type: "BARANG_JADI" }, orderBy: { name: "asc" } }),
   ]);
-  const [costs, oh] = await Promise.all([itemCosts(), overheadSummary()]);
+  const costs = await itemCosts();
   const rows = await Promise.all(products.map(async (p) => ({ p, cost: await productCosting(p.id, costs), prices: (await latestPrices(p.id)).latest })));
   const canHpp = user.can("product.manage") || user.can("accounting.view") || user.role === "OWNER";
   return (
     <div>
-      <PageHeader title="Produk & HPP" subtitle="Satuan, paket 12/24/48, giftbox, custom · BOM, biaya, harga & margin" actions={user.can("product.manage") && <Modal trigger="+ Produk" title="Produk baru"><ProductForm stores={stores} items={items} overheadPerPcs={oh.perPcs} /></Modal>} />
+      <PageHeader title="Produk & HPP" subtitle="Satuan, paket 12/24/48, giftbox, custom · BOM, biaya, harga & margin" actions={user.can("product.manage") && <Modal trigger="+ Produk" title="Tambah Master Produk Jadi"><ProductForm stores={stores} items={items} /></Modal>} />
       <ProdukTabs current="produk" />
       <FilterBar>
         <Field label="Cari"><input name="q" defaultValue={sp.q} className="input" /></Field>

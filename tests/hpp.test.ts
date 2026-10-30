@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
-import { channelPricing, createsCycle, itemCosts, overheadSummary, productCosting } from "@/lib/hpp";
+import { channelPricing, createsCycle, draftRecipeCost, itemCosts, overheadSummary, productCosting } from "@/lib/hpp";
+import { toRecipeQty, useUnitOptions } from "@/lib/itemCatalog";
 import { DEFAULT_FEES, channelParams, feePct, monthlyDepreciation, overheadPerPcs, priceBreakdown, suggestPrice } from "@/lib/pricing";
 import { saveItemRecord } from "@/lib/items";
 
@@ -51,10 +52,13 @@ describe("Resep setengah jadi (database)", () => {
     const cat = await saveItemRecord({ name: "Cat Resep Uji", type: "BAHAN_BAKU", category: "Cat & Pewarna", unit: "botol", hppUnit: "gram", hppFactor: 1000, minStock: 0, price: 50_000 }, actor);
     const polos = await saveItemRecord({ name: "Figur Polos Uji", type: "BARANG_DALAM_PROSES", category: "Barang Setengah Jadi", unit: "pcs", hppFactor: 1, minStock: 0 }, actor);
     const dicat = await saveItemRecord({ name: "Figur Dicat Uji", type: "BARANG_DALAM_PROSES", category: "Barang Setengah Jadi", unit: "pcs", hppFactor: 1, minStock: 0 }, actor);
+    // Overhead master Rp300.000/bulan ÷ 3.000 pcs = Rp100/pcs
+    const oh = await prisma.overhead.create({ data: { category: "Listrik", name: "Listrik Uji", monthlyAmount: 300_000, outputPerMonth: 3000, active: false } });
     // Polos: 50 gram gypsum (Rp200) + upah 300 + overhead 100 = 600
-    await prisma.item.update({ where: { id: polos.id }, data: { laborCost: 300, overheadCost: 100, recipe: { create: [{ componentId: gyp.id, qty: 50 }] } } });
+    await prisma.item.update({ where: { id: polos.id }, data: { recipe: { create: [{ componentId: gyp.id, qty: 50, useUnit: "gram" }] }, recipeLabor: { create: [{ name: "Cetak", rate: 300 }] }, recipeOverhead: { create: [{ overheadId: oh.id }] } } });
     // Dicat: 1 polos (600) + 10 gram cat (Rp500) + upah 80 = 1180
-    await prisma.item.update({ where: { id: dicat.id }, data: { laborCost: 80, recipe: { create: [{ componentId: polos.id, qty: 1 }, { componentId: cat.id, qty: 10 }] } } });
+    await prisma.item.update({ where: { id: dicat.id }, data: { recipe: { create: [{ componentId: polos.id, qty: 1 }, { componentId: cat.id, qty: 10 }] }, recipeLabor: { create: [{ name: "Cat", rate: 80 }] } } });
+    expect(await draftRecipeCost({ comp: [{ componentId: polos.id, qty: 2, useUnit: null }], labor: [{ taskId: null, name: "x", rate: 50 }], oh: [{ overheadId: oh.id, factor: 0.5 }] })).toBe(1300);
     const costs = await itemCosts();
     expect(costs.get(polos.id)).toMatchObject({ cur: 600, fromRecipe: true });
     expect(costs.get(dicat.id)?.cur).toBe(1180);
@@ -62,14 +66,25 @@ describe("Resep setengah jadi (database)", () => {
     expect(await createsCycle(prisma, dicat.id, cat.id)).toBe(false);
 
     const store = await prisma.store.findUniqueOrThrow({ where: { code: "MG" } });
-    const prod = await prisma.product.create({ data: { sku: "UJI-HPP-12", name: "Paket Uji 12", type: "PAKET_12", variant: "MIX", storeId: store.id, packQty: 12, overheadCost: 0, bom: { create: [{ itemId: dicat.id, qty: 12 }] } } });
+    const box = await saveItemRecord({ name: "Box Uji", type: "BAHAN_BAKU", category: "Kemasan & Packaging", unit: "pcs", hppFactor: 1, minStock: 0, price: 1_000 }, actor);
+    const prod = await prisma.product.create({ data: { sku: "UJI-HPP-12", name: "Paket Uji 12", type: "PAKET_12", variant: "MIX", storeId: store.id, packQty: 12, extraPackaging: 200, bom: { create: [{ itemId: dicat.id, qty: 12 }, { itemId: box.id, qty: 1 }] }, recipeLabor: { create: [{ name: "Packing", rate: 500 }] } } });
     const c = await productCosting(prod.id, costs);
     expect(c.material).toBe(14_160);
+    expect(c.packaging).toBe(1_200);
+    expect(c.labor).toBe(500);
+    expect(c.hpp).toBe(15_860);
     expect(c.lines[0].fromRecipe).toBe(true);
   });
-  it("overhead master dibagi kapasitas", async () => {
-    await prisma.overhead.createMany({ data: [{ category: "Listrik", name: "Listrik", monthlyAmount: 600_000 }, { category: "Penyusutan Oven", name: "Oven", monthlyAmount: 250_000, assetCost: 6_000_000, lifeMonths: 24 }] });
-    await prisma.setting.update({ where: { key: "overhead_capacity_pcs" }, data: { value: "1700" } });
-    expect(await overheadSummary()).toEqual({ total: 850_000, capacity: 1700, perPcs: 500 });
+  it("overhead per pcs = biaya ÷ output sendiri, cadangan output default", async () => {
+    await prisma.overhead.createMany({ data: [{ category: "Listrik", name: "Listrik", monthlyAmount: 600_000, outputPerMonth: 3000 }, { category: "Penyusutan Oven", name: "Oven", monthlyAmount: 250_000, assetCost: 6_000_000, lifeMonths: 24 }] });
+    await prisma.setting.update({ where: { key: "overhead_capacity_pcs" }, data: { value: "1000" } });
+    expect(await overheadSummary()).toMatchObject({ total: 850_000, capacity: 1000, perPcs: 450 });
+  });
+  it("satuan pakai dikonversi ke satuan resep", () => {
+    expect(useUnitOptions("Kg")).toEqual(["kg", "gram"]);
+    expect(useUnitOptions("botol")).toEqual(["botol"]);
+    expect(toRecipeQty(500, "gram", "kg")).toBe(0.5);
+    expect(toRecipeQty(2, "liter", "ml")).toBe(2000);
+    expect(toRecipeQty(3, "pcs", "sak")).toBe(3);
   });
 });

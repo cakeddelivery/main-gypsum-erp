@@ -3,9 +3,12 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int, dec, bool } from "@/lib/action";
 import { audit } from "@/lib/audit";
-import { createsCycle, productCosting } from "@/lib/hpp";
+import { createsCycle, draftRecipeCost, productCosting, type RecipeInput } from "@/lib/hpp";
+import { saveItemRecord } from "@/lib/items";
+import { toRecipeQty } from "@/lib/itemCatalog";
+import { recipeUnit } from "@/lib/unitcost";
 import { OVERHEAD_CATEGORIES, monthlyDepreciation, parseFees, type FeeConfig } from "@/lib/pricing";
-import type { ProductType, ProductVariant } from "@prisma/client";
+import type { Prisma, ProductType, ProductVariant } from "@prisma/client";
 
 /** Persen 0–95 */
 const pct = (fd: FormData, k: string, def: number) => {
@@ -16,47 +19,113 @@ const pct = (fd: FormData, k: string, def: number) => {
 
 const PACK: Record<string, number> = { SATUAN: 1, PAKET_12: 12, PAKET_24: 24, PAKET_48: 48, GIFTBOX: 1, CUSTOM: 1 };
 
+/**
+ * Produk jadi. Produk baru otomatis mendapat item stok barang jadi (kode MG-xxx) dengan stok awal
+ * bernilai estimasi HPP, batas minimum stok, dan harga jual offline pertama.
+ */
 export const saveProduct = action(
   "product.manage",
   async (fd, user) => {
     const id = optStr(fd, "id");
     const type = str(fd, "type") as ProductType;
+    const name = z.string().min(2, "Nama wajib").parse(str(fd, "name"));
+    const category = optStr(fd, "category") ?? "Mainan Gypsum";
+    const minStock = dec(fd, "minStock", 0);
     const data = {
-      sku: z.string().min(2, "SKU wajib").parse(str(fd, "sku").toUpperCase()),
-      name: z.string().min(2, "Nama wajib").parse(str(fd, "name")),
+      name,
+      category,
+      note: optStr(fd, "note"),
       type,
       variant: str(fd, "variant") as ProductVariant,
       storeId: str(fd, "storeId"),
       packQty: int(fd, "packQty", PACK[type] ?? 1) || 1,
-      laborCost: BigInt(int(fd, "laborCost")),
-      overheadCost: BigInt(int(fd, "overheadCost")),
-      targetMargin: pct(fd, "targetMargin", 30),
       affiliatePct: pct(fd, "affiliatePct", 0),
       adsPct: pct(fd, "adsPct", 0),
       itemsPerOrder: Math.max(1, dec(fd, "itemsPerOrder", 1)),
-      finishedItemId: optStr(fd, "finishedItemId"),
-      active: id ? bool(fd, "active") : true,
     };
-    const p = id ? await prisma.product.update({ where: { id }, data }) : await prisma.product.create({ data });
-    await audit(user, id ? "PRODUK_DIUBAH" : "PRODUK_DIBUAT", "Product", p.id, data);
-    return "Produk tersimpan";
+    if (minStock < 0) throw new Error("Batas minimum stok tidak boleh minus");
+    if (id) {
+      const cur = await prisma.product.findUniqueOrThrow({ where: { id } });
+      const sku = str(fd, "sku").toUpperCase() || cur.sku;
+      const finishedItemId = fd.has("finishedItemId") ? optStr(fd, "finishedItemId") : cur.finishedItemId;
+      const p = await prisma.product.update({ where: { id }, data: { ...data, sku, finishedItemId, active: bool(fd, "active") } });
+      if (p.finishedItemId) await prisma.item.update({ where: { id: p.finishedItemId }, data: { minStock } });
+      await audit(user, "PRODUK_DIUBAH", "Product", p.id, { ...data, sku, minStock });
+      return "Produk tersimpan";
+    }
+    const hpp = int(fd, "estimatedHpp");
+    const price = int(fd, "price");
+    const openingQty = dec(fd, "openingQty", 0);
+    if (hpp < 0 || price < 0) throw new Error("HPP dan harga tidak boleh minus");
+    const item = await saveItemRecord({ name, type: "BARANG_JADI", category: "Mainan Gypsum", unit: "pcs", hppFactor: 1, minStock, price: hpp, openingQty, note: data.note }, user);
+    let sku = str(fd, "sku").toUpperCase() || item.sku;
+    if (await prisma.product.findUnique({ where: { sku } })) sku = `${sku}-${Date.now().toString(36).slice(-3).toUpperCase()}`;
+    const p = await prisma.product.create({ data: { ...data, sku, finishedItemId: item.id } });
+    if (price > 0) await prisma.priceHistory.create({ data: { productId: p.id, channel: "OFFLINE", price: BigInt(price), hpp: BigInt(hpp), createdBy: user.name } });
+    await audit(user, "PRODUK_DIBUAT", "Product", p.id, { ...data, sku, hpp, price, openingQty, minStock });
+    return `Produk ${sku} tersimpan. Lanjut atur Resep HPP di halaman detail.`;
   },
-  ["/produk"],
+  ["/produk", "/stok"],
 );
 
-export const saveBom = action(
+/** Baris resep dari form RecipeEditor: comp_item/comp_qty/comp_unit, labor_task/labor_name/labor_rate, oh_id/oh_factor */
+async function parseRecipe(fd: FormData): Promise<RecipeInput> {
+  const all = (k: string) => fd.getAll(k).map((v) => String(v).trim());
+  const n = (v: string | undefined) => Number((v ?? "").replace(",", ".")) || 0;
+  const qty = all("comp_qty");
+  const units = all("comp_unit");
+  const raw = all("comp_item").map((id, i) => ({ componentId: id, qty: n(qty[i]), useUnit: units[i] || null })).filter((l) => l.componentId && l.qty > 0);
+  if (new Set(raw.map((l) => l.componentId)).size !== raw.length) throw new Error("Komponen yang sama dipilih dua kali");
+  const items = await prisma.item.findMany({ where: { id: { in: raw.map((l) => l.componentId) } } });
+  // Qty diisi dalam satuan pakai, disimpan dalam satuan resep komponen (500 gram → 0,5 bila resep kg)
+  const comp = raw.map((l) => {
+    const it = items.find((x) => x.id === l.componentId);
+    if (!it) throw new Error("Komponen tidak ditemukan");
+    return { ...l, qty: toRecipeQty(l.qty, l.useUnit, recipeUnit(it)) };
+  });
+  const tasks = all("labor_task");
+  const names = all("labor_name");
+  const rates = all("labor_rate");
+  const master = await prisma.pieceTask.findMany({ where: { id: { in: tasks.filter(Boolean) } } });
+  const labor = names.map((name, i) => {
+    const t = master.find((x) => x.id === tasks[i]);
+    const custom = Number((rates[i] ?? "").replace(/\./g, "")) || 0;
+    return { taskId: t?.id ?? null, name: t?.name ?? name, rate: custom > 0 ? custom : Number(t?.ratePerPcs ?? 0) };
+  }).filter((l) => l.name && l.rate > 0);
+  const factors = all("oh_factor");
+  const oh = all("oh_id").map((id, i) => ({ overheadId: id, factor: n(factors[i]) })).filter((o) => o.overheadId && o.factor > 0);
+  return { comp, labor, oh };
+}
+
+async function writeRecipe(tx: Prisma.TransactionClient, owner: { itemId: string } | { productId: string }, r: RecipeInput) {
+  await tx.recipeLabor.deleteMany({ where: owner });
+  await tx.recipeOverhead.deleteMany({ where: owner });
+  if (r.labor.length) await tx.recipeLabor.createMany({ data: r.labor.map((l) => ({ ...owner, ...l, rate: BigInt(l.rate) })) });
+  if (r.oh.length) await tx.recipeOverhead.createMany({ data: r.oh.map((o) => ({ ...owner, ...o })) });
+  if ("itemId" in owner) {
+    await tx.itemRecipeLine.deleteMany({ where: owner });
+    if (r.comp.length) await tx.itemRecipeLine.createMany({ data: r.comp.map((c) => ({ ...owner, ...c })) });
+  } else {
+    await tx.bomLine.deleteMany({ where: owner });
+    if (r.comp.length) await tx.bomLine.createMany({ data: r.comp.map((c) => ({ ...owner, itemId: c.componentId, qty: c.qty, useUnit: c.useUnit })) });
+  }
+}
+
+/** Resep HPP produk jadi: 4 section + tambahan kemasan + target margin */
+export const saveProductRecipe = action(
   "product.manage",
   async (fd, user) => {
     const productId = str(fd, "productId");
-    const itemId = str(fd, "itemId");
-    const qty = dec(fd, "qty");
-    if (qty <= 0) {
-      await prisma.bomLine.deleteMany({ where: { productId, itemId } });
-    } else {
-      await prisma.bomLine.upsert({ where: { productId_itemId: { productId, itemId } }, create: { productId, itemId, qty }, update: { qty } });
-    }
-    await audit(user, "BOM_DIUBAH", "Product", productId, { itemId, qty });
-    return qty <= 0 ? "Bahan dihapus dari BOM" : "BOM tersimpan";
+    const r = await parseRecipe(fd);
+    const extraPackaging = Math.max(0, int(fd, "extraPackaging"));
+    const targetMargin = pct(fd, "targetMargin", 30);
+    await prisma.$transaction(async (tx) => {
+      await writeRecipe(tx, { productId }, r);
+      // Biaya manual lama digantikan baris resep
+      await tx.product.update({ where: { id: productId }, data: { extraPackaging: BigInt(extraPackaging), targetMargin, laborCost: 0, overheadCost: 0 } });
+    });
+    await audit(user, "RESEP_PRODUK_DIUBAH", "Product", productId, { comp: r.comp.length, labor: r.labor.length, oh: r.oh.length, extraPackaging, targetMargin });
+    return "Resep HPP produk tersimpan";
   },
   ["/produk"],
 );
@@ -76,24 +145,28 @@ export const savePrice = action(
   ["/produk"],
 );
 
-/** Resep barang setengah jadi: komponen (bahan / setengah jadi lain) per 1 unit + upah & overhead per unit */
-export const saveRecipe = action(
+/** Barang setengah jadi baru/ubah beserta resepnya (komponen, tenaga kerja, overhead per 1 unit) */
+export const saveSemi = action(
   "product.manage",
   async (fd, user) => {
-    const itemId = str(fd, "itemId");
-    const qty = fd.getAll("qty").map((v) => Number(String(v).replace(",", ".")) || 0);
-    const lines = fd.getAll("componentId").map((v, i) => ({ componentId: String(v), qty: qty[i] ?? 0 })).filter((l) => l.componentId && l.qty > 0);
-    for (const l of lines) if (await createsCycle(prisma, itemId, l.componentId)) throw new Error("Komponen tidak boleh memakai barang ini sendiri (resep melingkar)");
-    if (new Set(lines.map((l) => l.componentId)).size !== lines.length) throw new Error("Komponen yang sama dipilih dua kali");
-    await prisma.$transaction(async (tx) => {
-      await tx.item.update({ where: { id: itemId }, data: { laborCost: BigInt(int(fd, "laborCost")), overheadCost: BigInt(int(fd, "overheadCost")) } });
-      await tx.itemRecipeLine.deleteMany({ where: { itemId } });
-      if (lines.length) await tx.itemRecipeLine.createMany({ data: lines.map((l) => ({ itemId, componentId: l.componentId, qty: l.qty })) });
-    });
-    await audit(user, "RESEP_DIUBAH", "Item", itemId, { lines: lines.length });
-    return "Resep tersimpan";
+    const id = optStr(fd, "id");
+    const r = await parseRecipe(fd);
+    if (id) for (const l of r.comp) if (await createsCycle(prisma, id, l.componentId)) throw new Error("Komponen tidak boleh memakai barang ini sendiri (resep melingkar)");
+    const base = { name: str(fd, "name"), type: "BARANG_DALAM_PROSES" as const, category: "Barang Setengah Jadi", unit: str(fd, "unit") || "pcs", hppFactor: 1, note: optStr(fd, "note") };
+    let itemId = id;
+    if (id) {
+      const cur = await prisma.item.findUniqueOrThrow({ where: { id } });
+      await saveItemRecord({ ...base, id, sku: cur.sku, minStock: Number(cur.minStock), hppUnit: null }, user);
+    } else {
+      // Nilai stok awal = HPP resep saat ini
+      const price = await draftRecipeCost(r);
+      itemId = (await saveItemRecord({ ...base, minStock: 0, price, openingQty: dec(fd, "openingQty", 0) }, user)).id;
+    }
+    await prisma.$transaction((tx) => writeRecipe(tx, { itemId: itemId! }, r));
+    await audit(user, "RESEP_DIUBAH", "Item", itemId!, { comp: r.comp.length, labor: r.labor.length, oh: r.oh.length });
+    return "Barang setengah jadi tersimpan";
   },
-  ["/produk"],
+  ["/produk", "/stok"],
 );
 
 export const saveOverhead = action(
@@ -107,7 +180,8 @@ export const saveOverhead = action(
     // Penyusutan dihitung dari harga aset / umur bila diisi
     const monthly = assetCost > 0 && lifeMonths > 0 ? monthlyDepreciation(assetCost, lifeMonths) : int(fd, "monthlyAmount");
     if (monthly <= 0) throw new Error("Isi biaya per bulan, atau harga aset dan umurnya");
-    const data = { category, name: str(fd, "name") || category, monthlyAmount: BigInt(monthly), assetCost: assetCost > 0 ? BigInt(assetCost) : null, lifeMonths: lifeMonths > 0 ? lifeMonths : null, active: fd.get("active") !== "off" };
+    const outputPerMonth = Math.max(0, int(fd, "outputPerMonth"));
+    const data = { category, name: str(fd, "name") || category, monthlyAmount: BigInt(monthly), outputPerMonth, note: optStr(fd, "note"), assetCost: assetCost > 0 ? BigInt(assetCost) : null, lifeMonths: lifeMonths > 0 ? lifeMonths : null, active: fd.get("active") !== "off" };
     const o = id ? await prisma.overhead.update({ where: { id }, data }) : await prisma.overhead.create({ data });
     await audit(user, "OVERHEAD", "Overhead", o.id, { ...data, monthlyAmount: monthly, assetCost, lifeMonths });
     return `${o.name} tersimpan (Rp${monthly.toLocaleString("id-ID")}/bulan)`;
@@ -118,7 +192,13 @@ export const saveOverhead = action(
 export const deleteOverhead = action(
   "product.manage",
   async (fd, user) => {
-    await prisma.overhead.delete({ where: { id: str(fd, "id") } });
+    const id = str(fd, "id");
+    if (await prisma.recipeOverhead.count({ where: { overheadId: id } })) {
+      await prisma.overhead.update({ where: { id }, data: { active: false } });
+      await audit(user, "OVERHEAD_NONAKTIF", "Overhead", id);
+      return "Overhead dipakai di resep, jadi dinonaktifkan";
+    }
+    await prisma.overhead.delete({ where: { id } });
     await audit(user, "OVERHEAD_DIHAPUS", "Overhead", str(fd, "id"));
     return "Overhead dihapus";
   },
