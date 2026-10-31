@@ -4,6 +4,7 @@ import { idr } from "@/lib/money";
 import { PageHeader } from "@/components/ui";
 import { parseRange, ReportFilter, type SP } from "../shared";
 import { Paged } from "@/components/Paged";
+import { DownloadCsv } from "@/components/DownloadCsv";
 
 export const metadata = { title: "Neraca Saldo" };
 
@@ -16,7 +17,7 @@ export default async function NeracaSaldo({ searchParams }: { searchParams: Prom
   const c = rows.reduce((s, x) => s + x.credit, 0);
   return (
     <div>
-      <PageHeader title="Neraca saldo" />
+      <PageHeader title="Neraca saldo" actions={<DownloadCsv filename={`neraca-saldo-${r.to}`} rows={[[`Neraca saldo per ${r.to}`], [], ["Kode", "Akun", "Tipe", "Debit", "Kredit"], ...rows.map((x) => [x.code, x.name, x.type, x.debit, x.credit]), ["", "Total", "", d, c]]} />} />
       <ReportFilter sp={sp} showFrom={false} />
       <div className="table-wrap">
         <Paged><table className="tbl">

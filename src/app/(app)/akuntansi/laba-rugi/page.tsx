@@ -4,8 +4,9 @@ import { idr } from "@/lib/money";
 import { letterhead } from "@/lib/letterhead";
 import { PageHeader, Stat } from "@/components/ui";
 import { DownloadJpg } from "@/components/DownloadJpg";
+import { DownloadCsv } from "@/components/DownloadCsv";
 import { DocExport, DocBar, DocSheet, DocSummary, fmtRange } from "@/components/DocSheet";
-import { AccountTable, parseRange, ReportFilter, Section, signerOf, storeLabel, type SP } from "../shared";
+import { AccountTable, accountCsv, parseRange, ReportFilter, Section, signerOf, storeLabel, type SP } from "../shared";
 
 export const metadata = { title: "Laba Rugi" };
 
@@ -17,7 +18,7 @@ export default async function LabaRugi({ searchParams }: { searchParams: Promise
   const period = fmtRange(r.from, r.to);
   return (
     <div>
-      <PageHeader title="Laporan laba rugi" actions={<DownloadJpg targetId="lr" filename={`laba-rugi-${r.from}-${r.to}`} />} />
+      <PageHeader title="Laporan laba rugi" actions={<><DownloadCsv filename={`laba-rugi-${r.from}-${r.to}`} rows={accountCsv(`Laba rugi ${period}`, [["Pendapatan", pl.revenue, pl.totalRevenue], ["Harga pokok penjualan", pl.cogs, pl.totalCogs], ["Beban operasional", pl.expenses, pl.totalExpenses]], [["Laba kotor", pl.grossProfit], ["Laba (rugi) bersih", pl.netProfit]])} /><DownloadJpg targetId="lr" filename={`laba-rugi-${r.from}-${r.to}`} /></>} />
       <ReportFilter sp={sp} />
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Pendapatan" value={idr(pl.totalRevenue)} />

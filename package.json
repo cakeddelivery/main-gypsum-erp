@@ -14,7 +14,8 @@
     "test": "bash tests/global-reset.sh && vitest run",
     "typecheck": "tsc --noEmit",
     "backup": "bash scripts/backup.sh",
-    "restore": "bash scripts/restore.sh"
+    "restore": "bash scripts/restore.sh",
+    "backup:buka": "bash scripts/decrypt-backup.sh"
   },
   "author": "",
   "license": "ISC",

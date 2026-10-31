@@ -5,6 +5,7 @@ import { idr } from "@/lib/money";
 import { fmtDateTime, jakartaDateTime, todayStr } from "@/lib/time";
 import { Empty, FilterBar, Field, PageHeader } from "@/components/ui";
 import { DownloadJpg } from "@/components/DownloadJpg";
+import { DownloadCsv } from "@/components/DownloadCsv";
 import { DocExport, DocBar, DocSheet, DocSummary, DocTable, fmtLong, fmtRange } from "@/components/DocSheet";
 import { letterhead } from "@/lib/letterhead";
 import { Paged } from "@/components/Paged";
@@ -33,7 +34,7 @@ export default async function KartuPage({ searchParams }: { searchParams: Promis
   const lh = await letterhead();
   return (
     <div>
-      <PageHeader title="Kartu persediaan" subtitle={item.name} actions={<DownloadJpg targetId="kartu" filename={`kartu-${item.sku}`} />} />
+      <PageHeader title="Kartu persediaan" subtitle={item.name} actions={<><DownloadCsv filename={`kartu-${item.sku}`} rows={[[`Kartu persediaan ${item.sku} ${item.name}`, `Satuan: ${item.unit}`], [], ["Tanggal", "Jenis", "Dari", "Ke", "Ref", "Masuk", "Keluar", "Saldo", "Harga (Rp)", "Nilai saldo (Rp)"], ["", "Saldo awal", "", "", "", "", "", opening, "", ""], ...rows.map(({ m, inQ, outQ, bal }) => [fmtDateTime(m.date), MOVEMENT_LABEL[m.type], m.fromLocation?.code ?? "", m.toLocation?.code ?? "", m.ref ?? "", inQ, outQ, bal, Number(m.unitCost), Math.round(bal * Number(m.unitCost))])]} /><DownloadJpg targetId="kartu" filename={`kartu-${item.sku}`} /></>} />
       <FilterBar>
         <Field label="Item"><select name="item" defaultValue={item.id} className="input">{items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}</select></Field>
         <Field label="Dari"><input type="date" name="from" defaultValue={sp.from} className="input" /></Field>

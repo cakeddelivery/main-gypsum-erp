@@ -4,8 +4,9 @@ import { idr } from "@/lib/money";
 import { letterhead } from "@/lib/letterhead";
 import { PageHeader, Stat } from "@/components/ui";
 import { DownloadJpg } from "@/components/DownloadJpg";
+import { DownloadCsv } from "@/components/DownloadCsv";
 import { DocExport, DocSheet, DocSummary, fmtLong } from "@/components/DocSheet";
-import { AccountTable, parseRange, ReportFilter, Section, signerOf, storeLabel, type SP } from "../shared";
+import { AccountTable, accountCsv, parseRange, ReportFilter, Section, signerOf, storeLabel, type SP } from "../shared";
 
 export const metadata = { title: "Neraca" };
 
@@ -17,7 +18,7 @@ export default async function Neraca({ searchParams }: { searchParams: Promise<S
   const per = fmtLong(r.to);
   return (
     <div>
-      <PageHeader title="Neraca" actions={<DownloadJpg targetId="nr" filename={`neraca-${r.to}`} />} />
+      <PageHeader title="Neraca" actions={<><DownloadCsv filename={`neraca-${r.to}`} rows={accountCsv(`Neraca per ${per}`, [["Aset", bs.assets, bs.totalAssets], ["Kewajiban", bs.liabilities, bs.totalLiabilities], ["Ekuitas", [...bs.equity, { code: "", name: "Laba (rugi) berjalan", amount: bs.currentEarnings }], bs.totalEquity]])} /><DownloadJpg targetId="nr" filename={`neraca-${r.to}`} /></>} />
       <ReportFilter sp={sp} showFrom={false} />
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Total aset" value={idr(bs.totalAssets)} />

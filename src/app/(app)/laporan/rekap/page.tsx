@@ -5,6 +5,7 @@ import { Paged } from "@/components/Paged";
 import { STAGES, STAGE_LABEL } from "@/lib/stock";
 import { Card, FilterBar, Field, PageHeader, Tabs } from "@/components/ui";
 import { DownloadJpg } from "@/components/DownloadJpg";
+import { DownloadCsv } from "@/components/DownloadCsv";
 import { DocExport, DocSheet, DocSummary, DocTable, fmtRange } from "@/components/DocSheet";
 import { letterhead } from "@/lib/letterhead";
 
@@ -48,7 +49,7 @@ export default async function RekapPage({ searchParams }: { searchParams: Promis
   const qs = (p: string) => `/laporan/rekap?period=${p}&date=${date}${sp.shift ? `&shift=${sp.shift}` : ""}`;
   return (
     <div>
-      <PageHeader title="Rekap produksi" subtitle="Laporan per shift, harian, mingguan, dan bulanan" actions={<DownloadJpg targetId="rekap" filename={`rekap-${period}-${start}`} />} />
+      <PageHeader title="Rekap produksi" subtitle="Laporan per shift, harian, mingguan, dan bulanan" actions={<><DownloadCsv filename={`rekap-${period}-${start}`} rows={[[`Rekap produksi ${start} s/d ${end}${shiftName ? ` (${shiftName})` : ""}`], [], ["Divisi", "Tahap", "Hasil baik (pcs)", "Reject (pcs)"], ...usedDivs.flatMap((d) => usedStages.filter((st) => cell(d.id, st)).map((st) => [d.name, STAGE_LABEL[st], cell(d.id, st)?.qtyGood ?? 0, cell(d.id, st)?.qtyReject ?? 0])), ["Total", "", totalGood, totalReject]]} /><DownloadJpg targetId="rekap" filename={`rekap-${period}-${start}`} /></>} />
       <Tabs current={period} tabs={[{ key: "harian", label: "Harian", href: qs("harian") }, { key: "mingguan", label: "Mingguan", href: qs("mingguan") }, { key: "bulanan", label: "Bulanan", href: qs("bulanan") }]} />
       <FilterBar>
         <input type="hidden" name="period" value={period} />

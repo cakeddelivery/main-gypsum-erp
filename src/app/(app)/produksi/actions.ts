@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, str, int, optStr, bool } from "@/lib/action";
 import { postProductionStock, reverseProductionStock, STAGES } from "@/lib/stock";
+import { REJECT_REASONS } from "@/lib/reject";
 import { audit } from "@/lib/audit";
 import { dateOnly } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
@@ -16,6 +17,7 @@ const entrySchema = z.object({
   productId: z.string().min(1, "Pilih produk"),
   qtyGood: z.number().int().min(0).max(100000),
   qtyReject: z.number().int().min(0).max(100000),
+  rejectReason: z.enum(REJECT_REASONS).nullable(),
 });
 
 export const createEntry = action(
@@ -30,7 +32,10 @@ export const createEntry = action(
       productId: str(fd, "productId"),
       qtyGood: int(fd, "qtyGood"),
       qtyReject: int(fd, "qtyReject"),
+      rejectReason: (optStr(fd, "rejectReason") ?? null) as (typeof REJECT_REASONS)[number] | null,
     });
+    if (data.qtyReject > 0 && !data.rejectReason) throw new Error("Pilih penyebab reject");
+    if (data.qtyReject === 0) data.rejectReason = null;
     if (data.qtyGood + data.qtyReject === 0) throw new Error("Isi jumlah hasil atau reject");
     // Operator hanya boleh mencatat hasil dirinya; kapten hanya divisinya
     if (user.role === "OPERATOR" && data.employeeId !== user.employeeId) throw new ForbiddenError();

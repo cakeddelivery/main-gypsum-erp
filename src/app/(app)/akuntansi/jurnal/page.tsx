@@ -8,6 +8,7 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { parseRange, ReportFilter, type SP } from "../shared";
 import { JournalLines } from "../JournalLines";
+import { DownloadCsv } from "@/components/DownloadCsv";
 import { manualJournal, reverse } from "../actions";
 
 export const metadata = { title: "Jurnal Umum" };
@@ -23,7 +24,7 @@ export default async function JurnalPage({ searchParams }: { searchParams: Promi
   const reversed = new Set(journals.map((j) => j.reversalOfId).filter(Boolean));
   return (
     <div className="space-y-5">
-      <PageHeader title="Jurnal umum" subtitle="Jurnal tidak dapat diubah; koreksi menggunakan jurnal pembalik" actions={<>{user.can("accounting.post") && (
+      <PageHeader title="Jurnal umum" subtitle="Jurnal tidak dapat diubah; koreksi menggunakan jurnal pembalik" actions={<><DownloadCsv filename={`jurnal-${r.from}-${r.to}`} rows={[["Tanggal", "No. jurnal", "Sumber", "Keterangan", "Kode akun", "Akun", "Memo", "Debit", "Kredit"], ...journals.slice().reverse().flatMap((j) => j.lines.map((l) => [todayStr(j.date), j.number, j.source, j.description, l.account.code, l.account.name, l.memo ?? "", Number(l.debit), Number(l.credit)]))]} />{user.can("accounting.post") && (
         <Modal trigger="+ Jurnal manual" title="Jurnal manual / penyesuaian" wide>
           <ModalForm action={manualJournal} className="space-y-3">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

@@ -2,6 +2,7 @@
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
 import { createEntry } from "./actions";
+import { REJECT_REASONS } from "@/lib/reject";
 
 type Opt = { id: string; name: string };
 export function EntryForm(p: { date: string; shifts: Opt[]; divisions: Opt[]; employees: (Opt & { divisionId: string })[]; products: Opt[]; stages: { value: string; label: string }[]; fixedEmployee?: string | null; fixedDivision?: string | null }) {
@@ -32,6 +33,9 @@ export function EntryForm(p: { date: string; shifts: Opt[]; divisions: Opt[]; em
       </label>
       <label><span className="label">Hasil baik (pcs)</span><input name="qtyGood" inputMode="numeric" pattern="[0-9]*" className="input" defaultValue="0" required /></label>
       <label><span className="label">Reject (pcs)</span><input name="qtyReject" inputMode="numeric" pattern="[0-9]*" className="input" defaultValue="0" /></label>
+      <label className="col-span-2"><span className="label">Penyebab reject (wajib bila ada reject)</span>
+        <select name="rejectReason" className="input" defaultValue=""><option value="">— Tidak ada reject —</option>{REJECT_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}</select>
+      </label>
       <label className="col-span-2"><span className="label">Catatan</span><input name="note" className="input" maxLength={300} /></label>
       <div className="col-span-2 flex justify-end"><Submit>Simpan hasil</Submit></div>
     </ModalForm>
