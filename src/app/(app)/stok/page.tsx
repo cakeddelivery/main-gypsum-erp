@@ -6,6 +6,7 @@ import { idr } from "@/lib/money";
 import { Badge, Empty, FilterBar, Field, PageHeader, Stat, Tabs } from "@/components/ui";
 import type { ItemType } from "@prisma/client";
 import { Paged } from "@/components/Paged";
+import { DownloadCsv } from "@/components/DownloadCsv";
 
 export const metadata = { title: "Stok & Persediaan" };
 
@@ -45,6 +46,7 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
             {(user.can("stock.request") || user.can("stock.approve")) && <Link href="/stok/permintaan" className="btn-secondary">Permintaan</Link>}
             {user.can("stock.view") && <Link href="/stok/kartu" className="btn-secondary">Kartu persediaan</Link>}
             {user.can("master.manage") && <Link href="/stok/master" className="btn-secondary">Master data</Link>}
+            {user.can("stock.view") && <DownloadCsv filename={`stok-${tab}`} rows={[["Kode", "Nama", "Jenis", "Satuan", "Stok", "Batas minimum", "Perlu order", "Harga rata-rata (Rp)", "Nilai (Rp)", "Supplier"], ...rows.map((r) => [r.sku, r.name, ITEM_TYPE_LABEL[r.type], r.unit, r.total, r.min, r.reorder ? "Ya" : "", Number(r.avgCost), Math.round(r.total * Number(r.avgCost)), r.supplier?.name ?? ""])]} />}
           </>
         }
       />

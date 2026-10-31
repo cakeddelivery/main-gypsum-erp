@@ -83,3 +83,16 @@ export const REPORTS = [
   { href: "/akuntansi/coa", label: "Chart of Accounts", desc: "Bagan akun manufaktur" },
   { href: "/akuntansi/tutup-buku", label: "Tutup buku", desc: "Penutupan periode bulanan" },
 ];
+
+type AcctRow = { code: string; name: string; amount: number };
+/** Baris CSV laporan berbasis akun: judul, tiap bagian (akun + total), lalu ringkasan */
+export function accountCsv(title: string, sections: [string, AcctRow[], number][], summary: [string, number][] = []) {
+  const out: (string | number)[][] = [[title], [], ["Bagian", "Kode", "Akun", "Jumlah (Rp)"]];
+  for (const [name, rows, total] of sections) {
+    for (const r of rows) out.push([name, r.code, r.name, r.amount]);
+    out.push([name, "", `Total ${name.toLowerCase()}`, total]);
+  }
+  if (summary.length) out.push([]);
+  for (const [l, v] of summary) out.push(["", "", l, v]);
+  return out;
+}

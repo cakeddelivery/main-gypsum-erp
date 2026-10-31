@@ -10,6 +10,7 @@ import { EntryForm } from "./EntryForm";
 import { deleteEntry } from "./actions";
 import type { Prisma } from "@prisma/client";
 import { Paged } from "@/components/Paged";
+import { DownloadCsv } from "@/components/DownloadCsv";
 
 export const metadata = { title: "Produksi" };
 
@@ -45,6 +46,7 @@ export default async function ProduksiPage({ searchParams }: { searchParams: Pro
         subtitle={`Hasil produksi ${fmtDay(dateOnly(date))}`}
         actions={
           <>
+            <DownloadCsv filename={`produksi-${date}`} rows={[["Tanggal", "Shift", "Divisi", "Karyawan", "Tahap", "Produk", "Hasil baik", "Reject", "Penyebab reject", "Catatan"], ...entries.map((e) => [date, e.shift.name, e.division.name, e.employee.name, STAGE_LABEL[e.stage], e.product.name, e.qtyGood, e.qtyReject, e.rejectReason ?? "", e.note ?? ""])]} />
             {user.can("production.target") && <Link href="/produksi/target" className="btn-secondary">Target</Link>}
             {user.can("production.create") && (
               <Modal trigger="+ Input hasil" title="Input hasil produksi" defaultOpen={sp.baru === "1"}>
@@ -113,7 +115,7 @@ export default async function ProduksiPage({ searchParams }: { searchParams: Pro
                   <td>{STAGE_LABEL[e.stage]}</td>
                   <td>{e.product.name}</td>
                   <td className="num">{e.qtyGood}</td>
-                  <td className="num text-rose-600">{e.qtyReject}</td>
+                  <td className="num text-rose-600">{e.qtyReject}{e.rejectReason && <div className="text-[11px] font-normal text-slate-400">{e.rejectReason}</div>}</td>
                   <td className="max-w-[200px] truncate text-slate-500">{e.note}</td>
                   {user.can("production.edit") && (
                     <td>

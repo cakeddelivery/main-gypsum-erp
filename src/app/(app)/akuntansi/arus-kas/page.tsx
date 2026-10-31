@@ -6,6 +6,8 @@ import { letterhead } from "@/lib/letterhead";
 import { Card, PageHeader, Stat } from "@/components/ui";
 import { Paged } from "@/components/Paged";
 import { DownloadJpg } from "@/components/DownloadJpg";
+import { DownloadCsv } from "@/components/DownloadCsv";
+import { todayStr } from "@/lib/time";
 import { DocExport, DocBar, DocSection, DocSheet, DocSummary, DocTable, fmtLong, fmtRange } from "@/components/DocSheet";
 import { parseRange, ReportFilter, storeLabel, type SP } from "../shared";
 
@@ -27,7 +29,7 @@ export default async function ArusKas({ searchParams }: { searchParams: Promise<
   const totals = { OPERASI: cf.operating, INVESTASI: cf.investing, PENDANAAN: cf.financing };
   return (
     <div>
-      <PageHeader title="Laporan arus kas" subtitle="Metode langsung; transfer antar rekening tidak dihitung" actions={<DownloadJpg targetId="ak" filename={`arus-kas-${r.from}-${r.to}`} />} />
+      <PageHeader title="Laporan arus kas" subtitle="Metode langsung; transfer antar rekening tidak dihitung" actions={<><DownloadCsv filename={`arus-kas-${r.from}-${r.to}`} rows={[[`Arus kas ${r.from} s/d ${r.to}`], [], ["Saldo kas awal", "", "", "", cf.opening], ["Aktivitas", "Tanggal", "No. jurnal", "Keterangan", "Jumlah (Rp)"], ...SECTIONS.flatMap((s) => [...cf.groups[s.key].map((x) => [s.title, todayStr(x.date), x.number, x.memo, x.amount]), [s.title, "", "", `Total ${s.title.toLowerCase()}`, totals[s.key]]]), ["Kenaikan (penurunan) kas", "", "", "", net], ["Saldo kas akhir", "", "", "", cf.closing]]} /><DownloadJpg targetId="ak" filename={`arus-kas-${r.from}-${r.to}`} /></>} />
       <ReportFilter sp={sp} />
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
         <Stat label="Saldo kas awal" value={idr(cf.opening)} hint={fmtLong(r.from)} />

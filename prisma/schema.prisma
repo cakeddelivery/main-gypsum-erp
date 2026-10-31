@@ -544,6 +544,8 @@ model ProductionEntry {
   product     Product         @relation(fields: [productId], references: [id])
   qtyGood     Int
   qtyReject   Int             @default(0)
+  /// Penyebab reject (lihat REJECT_REASONS); wajib bila qtyReject > 0
+  rejectReason String?
   note        String?
   createdBy   String
   createdAt   DateTime        @default(now())

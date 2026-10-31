@@ -5,6 +5,7 @@ const TABS = [
   { key: "bsj", label: "Barang Setengah Jadi", href: "/produk/setengah-jadi" },
   { key: "overhead", label: "Overhead", href: "/produk/overhead" },
   { key: "biaya", label: "Biaya Marketplace", href: "/produk/biaya" },
+  { key: "laba", label: "Laba & Reject", href: "/produk/laba" },
 ];
 
 export function ProdukTabs({ current }: { current: string }) {

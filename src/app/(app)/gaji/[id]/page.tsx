@@ -9,6 +9,7 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Paged } from "@/components/Paged";
+import { DownloadCsv } from "@/components/DownloadCsv";
 import { adjustSlip, approve, cancelClaim, compute, pay } from "../actions";
 
 export const metadata = { title: "Periode Penggajian" };
@@ -30,6 +31,7 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
         subtitle={`${p.kind === "BULANAN" ? "Gaji bulanan" : p.kind === "BORONGAN" ? "Klaim borongan" : "Upah harian/campuran"} · ${fmtDay(p.startDate)} – ${fmtDay(p.endDate)}${p.payDate ? ` · gajian ${fmtDay(p.payDate)}` : ""}`}
         actions={
           <>
+            <DownloadCsv filename={`gaji-${p.code}`} rows={[["Karyawan", "Divisi", "Hadir", "Libur", "Bolos", "Gaji pokok", "Upah harian", "Borongan", "Tunjangan", "Transport", "Bonus", "Potongan", "Kasbon", "Total"], ...p.payslips.map((x) => [x.employee.name, x.employee.division?.name ?? "", x.daysPresent, x.offDays, x.absentDays, Number(x.baseSalary), Number(x.dailyWage), Number(x.pieceWage), Number(x.allowance), Number(x.transport), Number(x.bonus), Number(x.deduction), Number(x.advanceDeduction), Number(x.total)])]} />
             {p.status === "DRAFT" && user.can("payroll.manage") && <ActionForm action={compute}><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary" pendingText="Menghitung…">Hitung ulang</Submit></ActionForm>}
             {p.kind === "BORONGAN" && p.status === "DRAFT" && user.can("payroll.manage") && <ActionForm action={cancelClaim} confirm="Batalkan klaim ini? Hasil borongan kembali menjadi belum diklaim."><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary">Batalkan klaim</Submit></ActionForm>}
             {p.status === "DRAFT" && user.can("payroll.approve") && p.payslips.length > 0 && <ActionForm action={approve} confirm="Setujui penggajian ini? Slip tidak bisa dihitung ulang setelah disetujui."><input type="hidden" name="id" value={p.id} /><Submit className="btn-success">Setujui</Submit></ActionForm>}

@@ -80,6 +80,8 @@ Staging di VPS (tes.maingypsum.shop) untuk cek fitur baru sebelum produksi: liha
      -d url=https://domain/api/telegram/webhook -d secret_token=$TELEGRAM_WEBHOOK_SECRET
    ```
 5. Monitoring: `GET /api/health` (status DB). Backup: `npm run backup` (pg_dump, simpan 14 hari) dan `npm run restore -- backups/<file>.dump`. Sertakan `STORAGE_DIR` dalam backup.
+   - **Backup ke luar VPS**: isi `BACKUP_PASSPHRASE` (kunci enkripsi, catat di tempat aman) dan `BACKUP_TELEGRAM_CHAT_ID` (ID Telegram owner) di `.env`. Setiap `npm run backup` lalu mengirim salinan terenkripsi lewat bot ERP ke chat itu (file > 45 MB dipecah). Opsional `BACKUP_RCLONE_REMOTE` (mis. `gdrive:MainGypsumBackup`) bila rclone sudah dikonfigurasi.
+   - Membuka backup dari Telegram/Drive: `npm run backup:buka -- <file>.dump.enc` (atau `.enc.part00`), lalu `npm run restore -- <file>.dump`.
 
 ## Telegram & Hermes AI
 

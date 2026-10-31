@@ -2,11 +2,12 @@ import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { ledger } from "@/lib/accounting";
 import { idr } from "@/lib/money";
-import { fmtDate, fmtDateTime } from "@/lib/time";
+import { fmtDate, fmtDateTime, todayStr } from "@/lib/time";
 import { Paged } from "@/components/Paged";
 import { letterhead } from "@/lib/letterhead";
 import { Field, PageHeader } from "@/components/ui";
 import { DownloadJpg } from "@/components/DownloadJpg";
+import { DownloadCsv } from "@/components/DownloadCsv";
 import { DocExport, DocBar, DocSection, DocSheet, DocTable, fmtLong, fmtRange } from "@/components/DocSheet";
 import { parseRange, ReportFilter, signerOf, storeLabel, type SP } from "../shared";
 
@@ -25,7 +26,7 @@ export default async function BukuBesar({ searchParams }: { searchParams: Promis
   const credit = l.rows.reduce((s, x) => s + Number(x.credit || 0), 0);
   return (
     <div>
-      <PageHeader title="Buku besar" subtitle={`${l.account.code} ${l.account.name}`} actions={<DownloadJpg targetId="bb" filename={`buku-besar-${l.account.code}`} />} />
+      <PageHeader title="Buku besar" subtitle={`${l.account.code} ${l.account.name}`} actions={<><DownloadCsv filename={`buku-besar-${l.account.code}-${r.from}-${r.to}`} rows={[[`Buku besar ${l.account.code} ${l.account.name}`, `${r.from} s/d ${r.to}`], [], ["Tanggal", "No. jurnal", "Keterangan", "Memo", "Debit", "Kredit", "Saldo"], ["", "", "Saldo awal", "", "", "", l.opening], ...l.rows.map((x) => [todayStr(x.date), x.number, x.description, x.memo ?? "", x.debit, x.credit, x.balance]), ["", "", "Saldo akhir", "", debit, credit, l.closing]]} /><DownloadJpg targetId="bb" filename={`buku-besar-${l.account.code}`} /></>} />
       <ReportFilter sp={sp} extra={<Field label="Akun"><select name="account" defaultValue={accountId} className="input">{accounts.map((a) => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}</select></Field>} />
       <div className="table-wrap">
         <Paged><table className="tbl">
