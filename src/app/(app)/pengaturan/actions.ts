@@ -7,6 +7,7 @@ import { hashPassword, ForbiddenError } from "@/lib/auth";
 import { ALL_PERMISSIONS, ROLES, DEFAULT_MATRIX } from "@/lib/rbac";
 import { generateApiKey, API_SCOPES } from "@/lib/apiAuth";
 import { sendDailyRecap } from "@/lib/jobs";
+import { setBotCommands } from "@/lib/telegram";
 import type { Role, TxDirection } from "@prisma/client";
 
 const P = ["/pengaturan"];
@@ -150,6 +151,13 @@ export const revokeApiClient = action("telegram.manage", async (fd, user) => {
   await prisma.apiClient.update({ where: { id }, data: { active: false } });
   await audit(user, "API_KEY_DICABUT", "ApiClient", id);
   return "API key dicabut";
+}, ["/pengaturan/telegram"]);
+
+export const installBotCommands = action("telegram.manage", async (_fd, user) => {
+  const r = await setBotCommands();
+  await audit(user, "MENU_BOT_DIPASANG", "Telegram", null, r);
+  if (!r.ok) throw new Error(`Gagal memasang menu bot: ${r.error}`);
+  return "Daftar perintah bot (/menu, /ringkasan, /laporan, …) terpasang";
 }, ["/pengaturan/telegram"]);
 
 export const testRecap = action("telegram.manage", async (_fd, user) => {

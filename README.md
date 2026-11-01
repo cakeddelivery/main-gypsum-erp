@@ -93,6 +93,13 @@ Alur: **Telegram Bot → Hermes AI Agent → Finance API `/api/v1` → Finance I
 - Tombol **Konfirmasi** di Telegram hanya membukukan bila ID Telegram dipetakan ke pengguna yang punya izin *Setujui & bukukan transaksi*.
 - Tanpa `HERMES_WEBHOOK_URL`, bot memakai ekstraksi aturan lokal (nominal, tanggal, rekening, kategori, catatan).
 
+### Menu tombol bot (Tahap 1)
+
+- `/menu` (atau tombol **📋 Menu** di bawah chat) membuka menu sesuai peran & izin akun ERP yang tertaut: **Ringkasan hari ini** (produksi, saldo rekening, pekerjaan tertunda, stok menipis), **Unduh laporan (JPG)**, **Catat transaksi**, dan **Rekap kemarin**. Perintah lain: `/ringkasan`, `/laporan`, `/rekap`, `/id`, `/bantuan`.
+- JPG yang bisa diunduh: arus kas, laba rugi, neraca, rekap produksi, laporan shift, slip gaji (karyawan hanya slip sendiri). JPG dibuat di server oleh Chromium headless dari halaman ERP yang sama (kop surat identik dengan tombol **Unduh JPG** di web), memakai sesi 5 menit milik pengguna Telegram itu sehingga hak akses tetap diperiksa halaman. Dikirim sebagai dokumen agar tidak dikompres Telegram.
+- Pasang Chromium sekali per server: `sudo npx playwright-core install-deps chromium` lalu `npx playwright-core install chromium` (sebagai user aplikasi). Atau isi `CHROMIUM_PATH` ke Chrome/Chromium yang sudah ada. Chromium ditutup otomatis setelah 3 menit tidak dipakai.
+- Daftar perintah di tombol "Menu" Telegram dipasang lewat **Pengaturan → Telegram & Hermes → Pasang daftar perintah bot**.
+
 ## Pengujian
 
 ```bash
