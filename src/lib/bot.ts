@@ -8,6 +8,7 @@ import { saveProof } from "./storage";
 import { idr } from "./money";
 import { fmtDate, jakartaDateTime } from "./time";
 import { dailyRecapText } from "./jobs";
+import { handleMenuCallback, handleMenuCommand } from "./botMenu";
 
 type TgUser = { id: number; first_name?: string; username?: string };
 type TgUpdate = {
@@ -84,6 +85,7 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   if (text === "/start" || text === "/id") {
     await sendTelegram(chatId, `Halo! ID Telegram Anda: <code>${msg.from.id}</code>\n${ident ? `Terhubung sebagai <b>${esc(ident.user.name)}</b>.` : "Belum terdaftar. Minta Owner menautkan ID ini di menu Pengaturan → Telegram & Hermes."}`);
     if (ident && !ident.chatId) await prisma.telegramIdentity.update({ where: { id: ident.id }, data: { chatId } });
+    if (ident && text === "/start") await handleMenuCommand(ident, chatId, "/menu");
     return;
   }
   if (!ident) {
@@ -91,12 +93,13 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     return;
   }
   if (!ident.chatId) await prisma.telegramIdentity.update({ where: { id: ident.id }, data: { chatId } });
+  if (await handleMenuCommand(ident, chatId, text)) return;
   if (text === "/rekap") {
     await sendTelegram(chatId, await dailyRecapText(new Date()), { type: "REKAP_MANUAL" });
     return;
   }
   if (text === "/bantuan" || text === "/help") {
-    await sendTelegram(chatId, "Kirim pesan atau foto bukti transaksi, contoh:\n<i>bayar listrik 350rb dari seabank hari ini</i>\n<i>terima pencairan shopee 1,2jt ke saldo penjual</i>\n<i>transfer internal dari saldo penjual ke seabank 500rb</i>\n\nAtau kirim <b>foto bukti transfer/nota</b> dengan caption keterangan saja, misal <i>beli cat supplier A</i>. Nominal, tanggal & rekening dibaca dari foto.\n\nSaya akan membuat DRAFT dan meminta konfirmasi. /rekap untuk rekap hari ini.");
+    await sendTelegram(chatId, "Kirim pesan atau foto bukti transaksi, contoh:\n<i>bayar listrik 350rb dari seabank hari ini</i>\n<i>terima pencairan shopee 1,2jt ke saldo penjual</i>\n<i>transfer internal dari saldo penjual ke seabank 500rb</i>\n\nAtau kirim <b>foto bukti transfer/nota</b> dengan caption keterangan saja, misal <i>beli cat supplier A</i>. Nominal, tanggal & rekening dibaca dari foto.\n\nSaya akan membuat DRAFT dan meminta konfirmasi.\n\n/menu untuk menu tombol (ringkasan & unduh laporan JPG), /rekap untuk rekap harian.");
     return;
   }
   if (!ident.canSubmit) {
@@ -151,6 +154,15 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
   const chatId = cb.message ? String(cb.message.chat.id) : null;
   const ident = await identityOf(cb.from.id);
   if (!ident) return answerCallback(cb.id, "ID Telegram Anda belum terdaftar");
+  if (action === "m") {
+    if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan menu sudah tidak tersedia, kirim /menu");
+    try {
+      return await handleMenuCallback(ident, cb.id, chatId, cb.message.message_id, cb.data!);
+    } catch (e) {
+      await prisma.notificationLog.create({ data: { channel: "TELEGRAM", type: "MENU", target: chatId, status: "GAGAL", payload: cb.data ?? "", error: (e as Error).message.slice(0, 500) } });
+      return answerCallback(cb.id, "Terjadi kesalahan, coba lagi");
+    }
+  }
   const actor = { id: ident.userId, name: ident.user.name, telegramId: ident.telegramUserId };
   // Melengkapi/membatalkan draft: hanya identitas yang boleh mengirim transaksi atau peninjau/penyetuju keuangan
   const canReview = ident.perms.has("finance.review") || ident.perms.has("finance.approve");

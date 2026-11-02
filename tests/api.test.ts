@@ -87,4 +87,25 @@ describe("Webhook Telegram", () => {
     await post({ update_id: 3, callback_query: { id: "c2", from: { id: 42 }, data: `ok:${t.id}` } });
     expect((await prisma.financeTransaction.findUniqueOrThrow({ where: { id: t.id } })).status).toBe("MENUNGGU_KONFIRMASI");
   });
+
+  it("menu tombol mengikuti izin peran; tombol 📋 Menu tidak membuat draft transaksi", async () => {
+    const before = await prisma.financeTransaction.count();
+    await post({ update_id: 4, message: { message_id: 90, chat: { id: 42 }, from: { id: 42 }, text: "📋 Menu" } });
+    expect(await prisma.financeTransaction.count()).toBe(before);
+    const menu = await prisma.notificationLog.findFirstOrThrow({ where: { type: "MENU", target: "42", payload: { contains: "Pilih menu" } }, orderBy: { at: "desc" } });
+    expect(menu.payload).toContain("Menu ERP");
+    const { mainMenu } = await import("@/lib/botMenu");
+    const { effectivePermissions } = await import("@/lib/rbac");
+    const ident = (role: "OPERATOR" | "FINANCE") => ({ userId: "u", canSubmit: true, perms: effectivePermissions(role, []), user: { name: "X", role, divisionId: null, employeeId: "e" } });
+    const op = mainMenu(ident("OPERATOR")).buttons.flat().map((b) => b.callback_data);
+    const fin = mainMenu(ident("FINANCE")).buttons.flat().map((b) => b.callback_data);
+    expect(op).not.toContain("m:tx");
+    expect(op).not.toContain("m:rkp");
+    expect(fin).toEqual(expect.arrayContaining(["m:sum", "m:rpt", "m:tx", "m:rkp"]));
+  });
+
+  it("operator tidak bisa meminta JPG laporan keuangan lewat tombol", async () => {
+    await post({ update_id: 5, callback_query: { id: "c3", from: { id: 42 }, data: "m:j:ak:cur", message: { message_id: 91, chat: { id: 42 } } } });
+    expect(await prisma.notificationLog.count({ where: { type: "LAPORAN_JPG", target: "42" } })).toBe(0);
+  });
 });

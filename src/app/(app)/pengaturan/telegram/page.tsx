@@ -8,7 +8,7 @@ import { Badge, Card, Field, PageHeader } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ActionForm, Submit } from "@/components/ActionForm";
-import { createApiClient, revokeApiClient, saveIdentity, testRecap } from "../actions";
+import { createApiClient, installBotCommands, revokeApiClient, saveIdentity, testRecap } from "../actions";
 import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Telegram & Hermes" };
@@ -51,7 +51,10 @@ export default async function TelegramPage() {
           <li>Finance API untuk Hermes: <code className="rounded bg-slate-100 px-1 text-xs">{base}/api/v1</code> — lihat <a className="link" href="/api/v1" target="_blank">dokumentasi singkat</a></li>
           <li>Alur: Telegram Bot → Hermes AI Agent → Finance API (/api/v1, hanya draft) → konfirmasi manusia → pembukuan.</li>
         </ul>
-        <ActionForm action={testRecap} className="mt-3"><Submit className="btn-secondary btn-sm">Kirim rekap harian sekarang (uji)</Submit></ActionForm>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <ActionForm action={testRecap}><Submit className="btn-secondary btn-sm">Kirim rekap harian sekarang (uji)</Submit></ActionForm>
+          <ActionForm action={installBotCommands}><Submit className="btn-secondary btn-sm">Pasang daftar perintah bot</Submit></ActionForm>
+        </div>
       </Card>
       <Card title="Identitas Telegram berizin" actions={<Modal trigger="+ Identitas" triggerClass="btn-primary btn-sm" title="Identitas Telegram">{form()}</Modal>}>
         <div className="overflow-x-auto">
