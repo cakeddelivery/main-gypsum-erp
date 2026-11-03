@@ -8,6 +8,7 @@ import { idr } from "@/lib/money";
 import { Badge, Empty, FilterBar, Field, PageHeader } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ProductForm } from "./ProductForm";
+import { itemCategories } from "@/lib/itemCategories";
 import type { ProductType, ProductVariant } from "@prisma/client";
 import { Paged } from "@/components/Paged";
 
@@ -17,17 +18,18 @@ const TYPE_LABEL: Record<ProductType, string> = { SATUAN: "Satuan", PAKET_12: "P
 export default async function ProdukPage({ searchParams }: { searchParams: Promise<{ q?: string; type?: string; variant?: string; store?: string }> }) {
   const user = await requirePerm("product.view");
   const sp = await searchParams;
-  const [products, stores, items] = await Promise.all([
+  const [products, stores, items, catMap] = await Promise.all([
     prisma.product.findMany({ where: { ...(sp.type ? { type: sp.type as ProductType } : {}), ...(sp.variant ? { variant: sp.variant as ProductVariant } : {}), ...(sp.store ? { storeId: sp.store } : {}), ...(sp.q ? { OR: [{ name: { contains: sp.q, mode: "insensitive" } }, { sku: { contains: sp.q, mode: "insensitive" } }] } : {}) }, include: { store: true }, orderBy: [{ active: "desc" }, { sku: "asc" }] }),
     prisma.store.findMany(),
     prisma.item.findMany({ where: { type: "BARANG_JADI" }, orderBy: { name: "asc" } }),
+    itemCategories(),
   ]);
   const costs = await itemCosts();
   const rows = await Promise.all(products.map(async (p) => ({ p, cost: await productCosting(p.id, costs), prices: (await latestPrices(p.id)).latest })));
   const canHpp = user.can("product.manage") || user.can("accounting.view") || user.role === "OWNER";
   return (
     <div>
-      <PageHeader title="Produk & HPP" subtitle="Satuan, paket 12/24/48, giftbox, custom · BOM, biaya, harga & margin" actions={user.can("product.manage") && <Modal trigger="+ Produk" title="Tambah Master Produk Jadi"><ProductForm stores={stores} items={items} /></Modal>} />
+      <PageHeader title="Produk & HPP" subtitle="Satuan, paket 12/24/48, giftbox, custom · BOM, biaya, harga & margin" actions={user.can("product.manage") && <Modal trigger="+ Produk" title="Tambah Master Produk Jadi"><ProductForm stores={stores} items={items} categories={catMap.BARANG_JADI.map((c) => c.name)} /></Modal>} />
       <ProdukTabs current="produk" />
       <FilterBar>
         <Field label="Cari"><input name="q" defaultValue={sp.q} className="input" /></Field>

@@ -122,6 +122,9 @@ describe("Stok & produksi terintegrasi", () => {
     const locs = await locationSettings(prisma);
     const gyp = await prisma.item.findUniqueOrThrow({ where: { sku: "BB-GYP" } });
     const pls = await prisma.item.findUniqueOrThrow({ where: { sku: "BB-PLS" } });
+    // Stok awal bisa sudah berubah oleh file tes lain (mis. input produksi via bot di api.test.ts), jadi hitung relatif
+    const start = await itemTotals();
+    const base0 = (id: string) => start.get(id) ?? 0;
     await prisma.$transaction(async (tx) => {
       await recordMovement(tx, { type: "PENERIMAAN", itemId: gyp.id, qty: 100, toLocationId: locs.raw, unitCost: 5000 }, actor);
       await recordMovement(tx, { type: "PENERIMAAN", itemId: pls.id, qty: 1000, toLocationId: locs.raw, unitCost: 150 }, actor);
@@ -135,15 +138,15 @@ describe("Stok & produksi terintegrasi", () => {
     const e1 = await prisma.productionEntry.create({ data: { ...base, stage: "CETAK", qtyGood: 90, qtyReject: 10 } });
     await prisma.$transaction((tx) => postProductionStock(tx, e1.id, actor));
     const totals = await itemTotals();
-    expect(totals.get(gyp.id)).toBeCloseTo(100 - 0.08 * 100, 5);
-    expect(totals.get(pls.id)).toBe(1000 - 100);
+    expect(totals.get(gyp.id)).toBeCloseTo(base0(gyp.id) + 100 - 0.08 * 100, 5);
+    expect(totals.get(pls.id)).toBe(base0(pls.id) + 1000 - 100);
     const e2 = await prisma.productionEntry.create({ data: { ...base, stage: "BARANG_JADI", qtyGood: 80, qtyReject: 0 } });
     await prisma.$transaction((tx) => postProductionStock(tx, e2.id, actor));
     const fin = await prisma.item.findUniqueOrThrow({ where: { sku: "BJ-SAT-COWOK" } });
-    expect((await itemTotals()).get(fin.id)).toBe(80);
+    expect((await itemTotals()).get(fin.id)).toBe(base0(fin.id) + 80);
     // posting ulang tidak menggandakan
     await prisma.$transaction((tx) => postProductionStock(tx, e2.id, actor));
-    expect((await itemTotals()).get(fin.id)).toBe(80);
+    expect((await itemTotals()).get(fin.id)).toBe(base0(fin.id) + 80);
     const val = await inventoryValuation();
     expect(val.byType.BARANG_JADI).toBeGreaterThan(0);
     const bs = await balanceSheet(new Date("2027-01-01"));

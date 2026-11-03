@@ -17,7 +17,7 @@
  */
 import { PrismaClient, type Prisma } from "@prisma/client";
 import { autoCode, nextSequence } from "../src/lib/codes";
-import { categoryPrefix } from "../src/lib/itemCatalog";
+import { categoryPrefixOf } from "../src/lib/itemCategories";
 
 const prisma = new PrismaClient();
 const apply = process.argv.includes("--jalankan");
@@ -42,7 +42,7 @@ async function plan(tx: Prisma.TransactionClient) {
   const items = await tx.item.findMany({ include: { division: { select: { code: true } } }, orderBy: [{ type: "asc" }, { sortOrder: "asc" }, { name: "asc" }] });
   for (const i of items) {
     const perDivision = i.type === "BAHAN_BAKU" && !i.category && i.division;
-    const prefix = perDivision ? `BB-${i.division!.code}` : categoryPrefix(i.type, i.category);
+    const prefix = perDivision ? `BB-${i.division!.code}` : await categoryPrefixOf(tx, i.type, i.category);
     if (fits(i.sku, prefix)) continue;
     const sku = await nextSequence(tx, prefix, async (s) => !!(await tx.item.findUnique({ where: { sku: s } })), { key: perDivision ? `KODE-${prefix}` : `SKU-${prefix}` });
     await tx.item.update({ where: { id: i.id }, data: { sku } });

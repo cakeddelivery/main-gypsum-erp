@@ -7,6 +7,8 @@ export type ExtractCategory = { id: string; name: string; direction: "MASUK" | "
 export type Extraction = {
   amount: number | null;
   date: string | null;
+  /** Jam WIB "HH:MM" bila tertulis di pesan/bukti */
+  time?: string | null;
   direction: "MASUK" | "KELUAR" | "TRANSFER" | null;
   accountId: string | null;
   toAccountId: string | null;
@@ -45,6 +47,22 @@ export function extractDate(text: string, now: Date = new Date()): string | null
     const y = m[3] ? +m[3] : +today.slice(0, 4);
     return `${y}-${pad(MONTHS[m[2]])}-${pad(+m[1])}`;
   }
+  return null;
+}
+
+/**
+ * Jam "HH:MM" dari teks: "jam 14.30", "pukul 9", "14:30 WIB", "03 Nov 2026 14:30:12".
+ * Angka berpemisah titik tanpa kata jam/pukul/WIB tidak dianggap jam (bisa nominal "10.000").
+ */
+export function extractTime(text: string): string | null {
+  const t = text.toLowerCase();
+  const ok = (h: number, m: number) => (h >= 0 && h <= 23 && m >= 0 && m <= 59 ? `${pad(h)}:${pad(m)}` : null);
+  let m = t.match(/\b(?:jam|pukul|pkl)\.?\s*(\d{1,2})(?:[.:](\d{2}))?\b/);
+  if (m) return ok(+m[1], m[2] ? +m[2] : 0);
+  m = t.match(/(?<![\d.,:])(\d{1,2})[.:](\d{2})(?:[.:]\d{2})?\s*(?:wib|wita|wit)\b/);
+  if (m) return ok(+m[1], +m[2]);
+  m = t.match(/(?<![\d.,:])(\d{1,2}):(\d{2})(?::\d{2})?(?![\d.,:])/);
+  if (m) return ok(+m[1], +m[2]);
   return null;
 }
 
@@ -128,10 +146,10 @@ export function extractTransaction(text: string, accounts: ExtractAccount[], cat
   const fields = direction === "TRANSFER" ? 5 : 5;
   const confidence = Math.round(((fields - missing.length) / fields) * 100) / 100;
 
-  return { amount, date: date ?? todayStr(now), direction, accountId, toAccountId, categoryId, note: text.trim().slice(0, 500), confidence, missing };
+  return { amount, date: date ?? todayStr(now), time: extractTime(text), direction, accountId, toAccountId, categoryId, note: text.trim().slice(0, 500), confidence, missing };
 }
 
-export type ReceiptHint = { amount: number | null; date: string | null; direction: "MASUK" | "KELUAR" | "TRANSFER" | null; account: string | null; toAccount?: string | null; counterparty: string | null };
+export type ReceiptHint = { amount: number | null; date: string | null; time?: string | null; direction: "MASUK" | "KELUAR" | "TRANSFER" | null; account: string | null; toAccount?: string | null; counterparty: string | null };
 
 /**
  * Gabungkan hasil baca foto bukti dengan caption. Nominal/tanggal/rekening yang ditulis di caption
@@ -141,7 +159,10 @@ export function mergeReceipt(ex: Extraction, text: string, rx: ReceiptHint | nul
   if (!rx) return ex;
   const direction = ex.direction ?? rx.direction;
   const amount = ex.amount ?? rx.amount;
-  const date = extractDate(text, now) ?? rx.date ?? ex.date;
+  const captionDate = extractDate(text, now);
+  const date = captionDate ?? rx.date ?? ex.date;
+  // Jam: yang ditulis di caption diutamakan, lalu jam di bukti (hanya bila tanggalnya juga dari bukti/sama)
+  const time = extractTime(text) ?? (rx.time && (!captionDate || captionDate === rx.date) ? rx.time : null);
   const fromRx = rx.account ? matchAccount(rx.account, accounts) : null;
   const toRx = rx.toAccount ? matchAccount(rx.toAccount, accounts) : null;
   // Transfer internal: rekening asal/tujuan dari foto lebih tepat daripada kata acak di caption
@@ -157,5 +178,5 @@ export function mergeReceipt(ex: Extraction, text: string, rx: ReceiptHint | nul
   if (direction === "TRANSFER" && !toAccountId) missing.push("rekening tujuan");
   if (direction !== "TRANSFER" && !categoryId) missing.push("kategori");
   const note = [text.trim(), rx.counterparty && !text.toLowerCase().includes(rx.counterparty.toLowerCase()) ? `(${rx.counterparty})` : ""].filter(Boolean).join(" ").slice(0, 500);
-  return { ...ex, amount, date, direction, accountId, toAccountId, categoryId, note, confidence: Math.round(((5 - missing.length) / 5) * 100) / 100, missing };
+  return { ...ex, amount, date, time, direction, accountId, toAccountId, categoryId, note, confidence: Math.round(((5 - missing.length) / 5) * 100) / 100, missing };
 }

@@ -5,7 +5,7 @@ import { action, str, optStr, int } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { postAllReserves, postReserve, withdrawReserve } from "@/lib/reserve";
 import { defaultStoreId } from "@/lib/accounting";
-import { todayStr } from "@/lib/time";
+import { addDays, todayStr } from "@/lib/time";
 import type { ReserveKind } from "@prisma/client";
 
 const PATHS = ["/finance/sisihan", "/"];
@@ -13,8 +13,19 @@ const PATHS = ["/finance/sisihan", "/"];
 export const reserveAll = action(
   "finance.approve",
   async (fd, user) => {
-    const r = await postAllReserves(str(fd, "date") || todayStr(), user);
-    return r.count ? `${r.count} sisihan dicatat, total Rp ${r.total.toLocaleString("id-ID")}` : "Semua dana sudah disisihkan untuk tanggal ini";
+    // Bisa satu tanggal atau rentang (mengejar hari yang terlewat); tanggal yang sudah disisihkan dilewati
+    const to = str(fd, "date") || todayStr();
+    const from = optStr(fd, "from") ?? to;
+    if (from > to) throw new Error("Tanggal awal harus sebelum tanggal akhir");
+    if (addDays(from, 62) < to) throw new Error("Rentang maksimal 2 bulan sekali catat");
+    let count = 0;
+    let total = 0;
+    for (let d = from; d <= to; d = addDays(d, 1)) {
+      const r = await postAllReserves(d, user);
+      count += r.count;
+      total += r.total;
+    }
+    return count ? `${count} sisihan dicatat, total Rp ${total.toLocaleString("id-ID")}` : "Semua dana sudah disisihkan untuk tanggal tersebut";
   },
   PATHS,
 );
@@ -54,7 +65,9 @@ export const saveFund = action(
       active: fd.get("active") !== "off",
     };
     if (data.dailyAmount <= BigInt(0)) throw new Error("Nominal harian harus > 0");
-    if (kind !== "OWNER" && !data.payableId) throw new Error("Pilih pinjaman modal yang dicicil");
+    // Cicilan harian langsung mengurangi utang, jadi wajib terhubung ke pinjaman. Tabungan cicilan boleh
+    // dikumpulkan dulu; pinjamannya cukup dipilih sebelum tabungan dibayarkan.
+    if (kind === "LOAN_PAYMENT" && !data.payableId) throw new Error("Pilih pinjaman modal yang dicicil (catat dulu di Akuntansi › Piutang, utang & pinjaman)");
     if (data.toBankId && data.toBankId === data.fromBankId) throw new Error("Rekening asal dan tujuan harus berbeda");
     const f = id ? await prisma.reserveFund.update({ where: { id }, data }) : await prisma.reserveFund.create({ data });
     await audit(user, id ? "DANA_SISIHAN_DIUBAH" : "DANA_SISIHAN_DIBUAT", "ReserveFund", f.id, { ...data, dailyAmount: Number(data.dailyAmount) });

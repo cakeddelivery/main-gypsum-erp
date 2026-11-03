@@ -9,7 +9,7 @@ import { generateApiKey, API_SCOPES } from "@/lib/apiAuth";
 import { sendDailyRecap } from "@/lib/jobs";
 import { setBotCommands } from "@/lib/telegram";
 import { autoCode } from "@/lib/codes";
-import type { Role, TxDirection } from "@prisma/client";
+import type { ItemType, Role, TxDirection } from "@prisma/client";
 
 const P = ["/pengaturan"];
 
@@ -51,10 +51,46 @@ export const saveBank = action("settings.manage", async (fd, user) => {
   const data = { name: z.string().min(2).parse(str(fd, "name")), coaAccountId: str(fd, "coaAccountId"), aliases: str(fd, "aliases").toLowerCase(), active: id ? bool(fd, "active") : true };
   const coa = await prisma.coaAccount.findUniqueOrThrow({ where: { id: data.coaAccountId } });
   if (!coa.isCash) throw new Error("Akun COA rekening harus akun kas/bank");
+  // Satu rekening = satu akun COA. Bila dipakai bersama, saldo kedua rekening tercampur dan total saldo terhitung dobel.
+  const shared = await prisma.bankAccount.findFirst({ where: { coaAccountId: data.coaAccountId, active: true, ...(id ? { id: { not: id } } : {}) } });
+  if (shared && data.active) throw new Error(`Akun COA ${coa.code} ${coa.name} sudah dipakai rekening ${shared.name}. Buat akun COA kas/bank baru untuk rekening ini (Akuntansi › Bagan akun).`);
   const s = id ? await prisma.bankAccount.update({ where: { id }, data }) : await prisma.bankAccount.create({ data: { ...data, code: await autoCode.bank(prisma, data.name) } });
   await audit(user, "REKENING_DISIMPAN", "BankAccount", s.id, data);
   return "Rekening tersimpan";
 }, P);
+
+/**
+ * Kategori item & produk jadi. Awalan menentukan kode otomatis item BARU (BU-001, MG-001);
+ * kode item lama tidak berubah. Ganti nama kategori ikut memperbarui item & produk yang memakainya.
+ */
+export const saveItemCategory = action("settings.manage", async (fd, user) => {
+  const id = optStr(fd, "id");
+  const type = z.enum(["BAHAN_BAKU", "BARANG_DALAM_PROSES", "BARANG_JADI"]).parse(str(fd, "type")) as ItemType;
+  const name = z.string().trim().min(2, "Nama kategori minimal 2 huruf").max(60).parse(str(fd, "name"));
+  const prefix = z.string().regex(/^[A-Z]{2,4}$/, "Awalan kode 2–4 huruf, mis. MG").parse(str(fd, "prefix").toUpperCase().replace(/[^A-Z]/g, ""));
+  // Urutan kosong = taruh paling bawah, supaya kategori utama tetap jadi pilihan pertama
+  const last = await prisma.itemCategory.aggregate({ where: { type }, _max: { sortOrder: true } });
+  const sortOrder = str(fd, "sortOrder") === "" ? (last._max.sortOrder ?? 0) + 1 : int(fd, "sortOrder");
+  const data = { type, name, prefix, active: id ? bool(fd, "active") : true, sortOrder };
+  const clash = await prisma.itemCategory.findFirst({ where: { OR: [{ prefix }, { type, name: { equals: name, mode: "insensitive" } }], ...(id ? { id: { not: id } } : {}) } });
+  if (clash) throw new Error(clash.prefix === prefix ? `Awalan ${prefix} sudah dipakai kategori ${clash.name}` : `Kategori ${name} sudah ada`);
+  // Awalan BB dipakai kode bahan per divisi (BB-PRD-001)
+  if (prefix === "BB") throw new Error("Awalan BB dipakai kode bahan per divisi, pilih awalan lain");
+  await prisma.$transaction(async (tx) => {
+    if (id) {
+      const cur = await tx.itemCategory.findUniqueOrThrow({ where: { id } });
+      if (cur.type !== type && (await tx.item.count({ where: { type: cur.type, category: cur.name } }))) throw new Error("Jenis kategori tidak bisa diganti karena sudah dipakai item");
+      if (!data.active && (await tx.itemCategory.count({ where: { type, active: true, id: { not: id } } })) === 0) throw new Error("Minimal satu kategori aktif untuk setiap jenis");
+      await tx.itemCategory.update({ where: { id }, data });
+      if (cur.name !== name) {
+        await tx.item.updateMany({ where: { type: cur.type, category: cur.name }, data: { category: name } });
+        if (type === "BARANG_JADI") await tx.product.updateMany({ where: { category: cur.name }, data: { category: name } });
+      }
+    } else await tx.itemCategory.create({ data });
+    await audit(user, "KATEGORI_ITEM_DISIMPAN", "ItemCategory", id ?? name, data, tx);
+  });
+  return "Kategori tersimpan";
+}, [...P, "/stok/master", "/produk"]);
 
 export const saveCategory = action("settings.manage", async (fd, user) => {
   const id = optStr(fd, "id");

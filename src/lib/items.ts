@@ -4,7 +4,7 @@ import { autoCode, nextSequence } from "./codes";
 import { COA, postJournal } from "./accounting";
 import { audit } from "./audit";
 import { INVENTORY_COA, StockError, locationSettings, recordMovement } from "./stock";
-import { ITEM_CATEGORIES, categoryPrefix } from "./itemCatalog";
+import { categoryPrefixOf, itemCategories } from "./itemCategories";
 
 export * from "./itemCatalog";
 
@@ -46,7 +46,10 @@ export async function saveItemRecord(input: ItemInput, actor: Actor) {
   const name = input.name.trim();
   if (name.length < 2) throw new StockError("Nama minimal 2 huruf");
   if (!(input.hppFactor > 0)) throw new StockError("Isi per satuan beli harus lebih dari 0");
-  if (input.category && !ITEM_CATEGORIES[input.type].some((c) => c.name === input.category)) throw new StockError("Kategori tidak sesuai jenis item");
+  if (input.category) {
+    const cats = await itemCategories(prisma, { includeInactive: true });
+    if (!cats[input.type].some((c) => c.name === input.category)) throw new StockError("Kategori tidak sesuai jenis item");
+  }
   const price = Math.round(input.price ?? 0);
   const openingQty = input.openingQty ?? 0;
   if (price < 0 || openingQty < 0) throw new StockError("Harga dan stok awal tidak boleh minus");
@@ -80,7 +83,7 @@ export async function saveItemRecord(input: ItemInput, actor: Actor) {
       await audit(actor, "ITEM_DIUBAH", "Item", it.id, data, tx);
       return it;
     }
-    const sku = input.sku?.trim().toUpperCase() || (await nextItemSku(tx, categoryPrefix(input.type, input.category)));
+    const sku = input.sku?.trim().toUpperCase() || (await nextItemSku(tx, await categoryPrefixOf(tx, input.type, input.category)));
     const it = await tx.item.create({ data: { ...data, sku, avgCost: BigInt(price), lastCost: BigInt(price), lastCostAt: price > 0 ? new Date() : null } });
     if (openingQty > 0) {
       const locs = await locationSettings(tx);

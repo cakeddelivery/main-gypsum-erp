@@ -9,7 +9,7 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { TxForm } from "../TxForm";
-import { approveTx, rejectTx, submitTx, updateTx } from "../actions";
+import { approveTx, cancelTx, rejectTx, submitTx, updateTx } from "../actions";
 
 export const metadata = { title: "Detail Transaksi" };
 
@@ -35,7 +35,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
     <div className="space-y-5">
       <PageHeader title={`Transaksi ${t.number}`} subtitle={`${idr(t.amount)} · ${fmtDateTime(t.date)} · dibuat ${t.createdBy}`} />
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={t.status === "DIBUKUKAN" ? "green" : t.status === "DITOLAK" ? "red" : t.status === "MENUNGGU_KONFIRMASI" ? "blue" : "amber"}>{STATUS_LABEL[t.status]}</Badge>
+        <Badge tone={t.status === "DIBUKUKAN" ? "green" : t.status === "DITOLAK" || t.status === "DIBATALKAN" ? "red" : t.status === "MENUNGGU_KONFIRMASI" ? "blue" : "amber"}>{STATUS_LABEL[t.status]}</Badge>
         <Badge>{t.source}</Badge>
         {t.store && t.direction === "TRANSFER" && <Badge tone="purple">{t.store.name}</Badge>}
         {suggested && <span className="text-xs text-slate-500">Rekomendasi kategori: <b>{suggested.name}</b></span>}
@@ -92,6 +92,19 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
                   </Modal>
                 )}
               </div>
+            </Card>
+          )}
+          {t.status === "DIBUKUKAN" && user.can("finance.approve") && (
+            <Card title="Batalkan transaksi">
+              <p className="mb-3 text-xs text-slate-500">Salah catat atau transaksi uji coba? Pembatalan membuat jurnal pembalik sehingga saldo rekening & laba rugi kembali seperti semula. Riwayatnya tetap tersimpan.</p>
+              <Modal trigger="Batalkan transaksi" triggerClass="btn-danger w-full" title="Batalkan transaksi dibukukan">
+                <ModalForm action={cancelTx} className="space-y-3">
+                  <input type="hidden" name="id" value={t.id} />
+                  <p className="text-sm text-slate-600">{t.number} · {idr(t.amount)} · {fmtDateTime(t.date)}</p>
+                  <Field label="Alasan pembatalan"><input name="reason" className="input" required placeholder="cth: transaksi uji coba / salah nominal" /></Field>
+                  <Submit className="btn-danger" pendingText="Membatalkan…">Batalkan & buat jurnal pembalik</Submit>
+                </ModalForm>
+              </Modal>
             </Card>
           )}
           <Card title="Jejak persetujuan">

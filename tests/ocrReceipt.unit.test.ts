@@ -35,7 +35,7 @@ Waktu Transaksi 03 Nov 2026, 08:52`;
 describe("baca bukti transaksi dari teks OCR", () => {
   it("QRIS SeaBank: nominal, tanggal, rekening, tujuan", () => {
     const r = receiptFromOcrText(SEABANK_QRIS, accounts, new Date("2026-11-03T04:00:00Z"));
-    expect(r).toEqual({ amount: 40000, date: "2026-11-03", direction: "KELUAR", account: "Seabank", toAccount: null, counterparty: "sumberjaya" });
+    expect(r).toEqual({ amount: 40000, date: "2026-11-03", time: "08:52", direction: "KELUAR", account: "Seabank", toAccount: null, counterparty: "sumberjaya" });
   });
   it("digabung dengan caption menjadi draft lengkap", () => {
     const text = "Isi ulang tabung LPG 2 pcs";

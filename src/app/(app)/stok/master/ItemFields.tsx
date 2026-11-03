@@ -3,7 +3,8 @@ import { useState } from "react";
 import type { ItemType } from "@prisma/client";
 import { Field } from "@/components/ui";
 import { Submit } from "@/components/ActionForm";
-import { BASE_UNITS, ITEM_CATEGORIES, PURCHASE_UNITS, normalizeUnit, unitOptions } from "@/lib/itemCatalog";
+import { BASE_UNITS, PURCHASE_UNITS, normalizeUnit, unitOptions } from "@/lib/itemCatalog";
+import type { CategoryMap } from "@/lib/itemCategories";
 import { fmtUnitPrice } from "@/lib/unitcost";
 
 type Opt = { id: string; name: string };
@@ -16,7 +17,7 @@ const TYPE_LABEL: Record<ItemType, string> = { BAHAN_BAKU: "Bahan baku", BARANG_
 const num = (s: string) => Number(s.replace(/\./g, "").replace(",", ".")) || 0;
 
 /** Form master item: kategori + kode otomatis, satuan beli ↔ satuan dasar HPP, stok awal & reorder point */
-export function ItemFields({ i, suppliers, divisions, gypsum }: { i?: ItemInit; suppliers: Opt[]; divisions: Opt[]; gypsum: Opt[] }) {
+export function ItemFields({ i, suppliers, divisions, gypsum, categories: ITEM_CATEGORIES }: { i?: ItemInit; suppliers: Opt[]; divisions: Opt[]; gypsum: Opt[]; categories: CategoryMap }) {
   const [type, setType] = useState<ItemType>(i?.type ?? "BAHAN_BAKU");
   const [category, setCategory] = useState(i?.category ?? ITEM_CATEGORIES[i?.type ?? "BAHAN_BAKU"][0].name);
   const [unit, setUnit] = useState(normalizeUnit(PURCHASE_UNITS, i?.unit) || "sak");
@@ -24,7 +25,8 @@ export function ItemFields({ i, suppliers, divisions, gypsum }: { i?: ItemInit; 
   const [factor, setFactor] = useState(i ? String(i.hppFactor).replace(".", ",") : "1");
   const [price, setPrice] = useState(i?.lastCost ? String(i.lastCost) : "");
   const [newSupplier, setNewSupplier] = useState(false);
-  const cats = ITEM_CATEGORIES[type];
+  // Kategori lama yang sudah dinonaktifkan tetap tampil untuk item yang masih memakainya
+  const cats = i?.category && i.type === type && !ITEM_CATEGORIES[type].some((c) => c.name === i.category) ? [...ITEM_CATEGORIES[type], { name: i.category, prefix: "" }] : ITEM_CATEGORIES[type];
   const same = !baseUnit || baseUnit === unit;
   const f = same ? 1 : num(factor);
   const perBase = f > 0 ? num(price) / f : 0;

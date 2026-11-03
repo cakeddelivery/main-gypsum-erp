@@ -6,7 +6,7 @@ import { AutoCode, Badge, Card, Field, PageHeader, Tabs } from "@/components/ui"
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
-import { saveBank, saveCategory, saveDivision, saveOrg, saveParams, saveShift, saveStore } from "./actions";
+import { saveBank, saveCategory, saveItemCategory, saveDivision, saveOrg, saveParams, saveShift, saveStore } from "./actions";
 import { Paged } from "@/components/Paged";
 import { LETTERHEAD_DEFAULT } from "@/lib/letterhead";
 
@@ -16,7 +16,7 @@ export default async function PengaturanPage({ searchParams }: { searchParams: P
   const user = await requirePerm("settings.manage", "users.manage", "telegram.manage", "audit.view");
   if (!user.can("settings.manage")) redirect(user.can("users.manage") ? "/pengaturan/pengguna" : user.can("telegram.manage") ? "/pengaturan/telegram" : "/pengaturan/audit");
   const { tab = "organisasi" } = await searchParams;
-  const [org, stores, divisions, shifts, banks, cats, cashAcc, catAcc, settings, locations] = await Promise.all([
+  const [org, stores, divisions, shifts, banks, cats, cashAcc, catAcc, settings, locations, itemCats, catUse] = await Promise.all([
     prisma.organization.findFirst(),
     prisma.store.findMany({ orderBy: { code: "asc" } }),
     prisma.division.findMany({ orderBy: { code: "asc" } }),
@@ -27,6 +27,8 @@ export default async function PengaturanPage({ searchParams }: { searchParams: P
     prisma.coaAccount.findMany({ where: { isCash: false, active: true }, orderBy: { code: "asc" } }),
     prisma.setting.findMany(),
     prisma.location.findMany({ orderBy: { code: "asc" } }),
+    prisma.itemCategory.findMany({ orderBy: [{ type: "asc" }, { sortOrder: "asc" }, { name: "asc" }] }),
+    prisma.item.groupBy({ by: ["type", "category"], _count: true }),
   ]);
   const s = (k: string) => settings.find((x) => x.key === k)?.value ?? "";
   const links = (
@@ -43,6 +45,7 @@ export default async function PengaturanPage({ searchParams }: { searchParams: P
     { key: "shift", label: "Shift" },
     { key: "rekening", label: "Rekening" },
     { key: "kategori", label: "Kategori transaksi" },
+    { key: "kategori-produk", label: "Kategori produk" },
     { key: "parameter", label: "Parameter operasional" },
   ].map((t) => ({ ...t, href: `?tab=${t.key}` }));
 
@@ -61,7 +64,22 @@ export default async function PengaturanPage({ searchParams }: { searchParams: P
   const catForm = (x?: (typeof cats)[number]) => (
     <ModalForm action={saveCategory} className="space-y-3">{x && <input type="hidden" name="id" value={x.id} />}<Field label="Nama"><input name="name" defaultValue={x?.name} className="input" required /></Field><Field label="Jenis"><select name="direction" defaultValue={x?.direction} className="input"><option value="MASUK">Pemasukan</option><option value="KELUAR">Pengeluaran</option></select></Field><Field label="Akun COA"><select name="coaAccountId" defaultValue={x?.coaAccountId} className="input">{catAcc.map((a) => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}</select></Field><Field label="Kata kunci rekomendasi (pisahkan koma)"><input name="keywords" defaultValue={x?.keywords} className="input" /></Field>{x && <label className="flex gap-2 text-sm"><input type="checkbox" name="active" defaultChecked={x.active} /> Aktif</label>}<Submit>Simpan</Submit></ModalForm>
   );
+  const TYPE_LABEL = { BARANG_JADI: "Produk jadi", BARANG_DALAM_PROSES: "Barang setengah jadi", BAHAN_BAKU: "Bahan baku" } as const;
+  const itemCatForm = (x?: (typeof itemCats)[number]) => (
+    <ModalForm action={saveItemCategory} className="grid grid-cols-2 gap-3">
+      {x && <input type="hidden" name="id" value={x.id} />}
+      <Field label="Jenis" className="col-span-2"><select name="type" defaultValue={x?.type ?? "BARANG_JADI"} className="input">{Object.entries(TYPE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+      <Field label="Nama kategori" className="col-span-2"><input name="name" defaultValue={x?.name} className="input" required placeholder="cth: Mainan Edukasi" /></Field>
+      <Field label="Awalan kode" hint="2–4 huruf. Kode item baru: MG-001, MG-002"><input name="prefix" defaultValue={x?.prefix} className="input uppercase" required maxLength={4} placeholder="ME" data-raw /></Field>
+      <Field label="Urutan" hint="Kecil tampil lebih dulu; teratas jadi pilihan awal"><input name="sortOrder" defaultValue={x?.sortOrder ?? ""} placeholder="paling bawah" inputMode="numeric" className="input" /></Field>
+      {x && <label className="col-span-2 flex gap-2 text-sm"><input type="checkbox" name="active" defaultChecked={x.active} /> Aktif (nonaktif = tidak muncul di pilihan, item lama tetap)</label>}
+      <p className="col-span-2 text-xs text-slate-500">Ganti nama ikut memperbarui item & produk yang memakai kategori ini. Mengganti awalan hanya berlaku untuk item baru.</p>
+      <div className="col-span-2"><Submit>Simpan</Submit></div>
+    </ModalForm>
+  );
+  const used = (type: string, name: string) => catUse.find((u) => u.type === type && u.category === name)?._count ?? 0;
   const add: Record<string, React.ReactNode> = {
+    "kategori-produk": <Modal trigger="+ Kategori produk" title="Kategori produk baru">{itemCatForm()}</Modal>,
     organisasi: <Modal trigger="+ Toko" title="Toko baru">{storeForm()}</Modal>,
     divisi: <Modal trigger="+ Divisi" title="Divisi baru">{divForm()}</Modal>,
     shift: <Modal trigger="+ Shift" title="Shift baru">{shiftForm()}</Modal>,
@@ -88,6 +106,18 @@ export default async function PengaturanPage({ searchParams }: { searchParams: P
       {tab === "shift" && <div className="table-wrap"><Paged><table className="tbl"><thead><tr><th>Kode</th><th>Nama</th><th>Jam</th><th>Toleransi</th><th>Status</th><th /></tr></thead><tbody>{shifts.map((x) => <tr key={x.id}><td className="font-mono text-xs">{x.code}</td><td>{x.name}</td><td>{x.startTime}–{x.endTime} WIB</td><td>{x.toleranceMinutes} menit</td><td>{active(x.active)}</td><td>{edit(shiftForm(x), "Ubah shift")}</td></tr>)}</tbody></table></Paged></div>}
       {tab === "rekening" && <div className="table-wrap"><Paged><table className="tbl"><thead><tr><th>Kode</th><th>Nama</th><th>Akun COA</th><th>Alias</th><th>Status</th><th /></tr></thead><tbody>{banks.map((x) => <tr key={x.id}><td className="font-mono text-xs">{x.code}</td><td>{x.name}</td><td>{x.coaAccount.code} {x.coaAccount.name}</td><td className="text-xs">{x.aliases}</td><td>{active(x.active)}</td><td>{edit(bankForm(x), "Ubah rekening")}</td></tr>)}</tbody></table></Paged></div>}
       {tab === "kategori" && <div className="table-wrap"><Paged><table className="tbl"><thead><tr><th>Nama</th><th>Jenis</th><th>Akun COA</th><th>Kata kunci</th><th>Status</th><th /></tr></thead><tbody>{cats.map((x) => <tr key={x.id}><td>{x.name}</td><td><Badge tone={x.direction === "MASUK" ? "green" : "red"}>{x.direction}</Badge></td><td>{x.coaAccount.code} {x.coaAccount.name}</td><td className="max-w-xs truncate text-xs">{x.keywords}</td><td>{active(x.active)}</td><td>{edit(catForm(x), "Ubah kategori")}</td></tr>)}</tbody></table></Paged></div>}
+      {tab === "kategori-produk" && (
+        <div className="space-y-4">
+          <p className="text-sm text-slate-500">Kategori dipakai di form Produk jadi dan Master stok, dan menentukan awalan kode otomatis.</p>
+          {(Object.keys(TYPE_LABEL) as (keyof typeof TYPE_LABEL)[]).map((t) => (
+            <Card key={t} title={TYPE_LABEL[t]}>
+              <div className="table-wrap"><table className="tbl"><thead><tr><th>Nama</th><th>Awalan kode</th><th className="num">Dipakai</th><th>Status</th><th /></tr></thead>
+                <tbody>{itemCats.filter((c) => c.type === t).map((x) => <tr key={x.id}><td>{x.name}</td><td className="font-mono text-xs">{x.prefix}-001</td><td className="num">{used(t, x.name)} item</td><td>{active(x.active)}</td><td>{edit(itemCatForm(x), "Ubah kategori produk")}</td></tr>)}</tbody>
+              </table></div>
+            </Card>
+          ))}
+        </div>
+      )}
       {tab === "parameter" && (
         <Card title="Parameter operasional" actions={
           <Modal trigger="Ubah parameter" triggerClass="btn-primary btn-sm" title="Ubah parameter operasional" wide>

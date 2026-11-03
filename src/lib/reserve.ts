@@ -80,7 +80,7 @@ export async function withdrawReserve(fundId: string, amount: number, date: stri
     const to = await tx.bankAccount.findUniqueOrThrow({ where: { id: f.toBankId! } });
     let liability: string = COA.UTANG_GAJI_OWNER;
     if (f.kind === "LOAN_SAVING") {
-      if (!f.payableId) throw new FinanceError("Pilih pinjaman yang dibayar dari tabungan ini");
+      if (!f.payableId) throw new FinanceError("Hubungkan dulu dana ini ke pinjaman modal (Ubah dana → Pinjaman modal). Catat pinjamannya di Akuntansi › Piutang, utang & pinjaman.");
       const loan = await tx.payable.findUniqueOrThrow({ where: { id: f.payableId } });
       if (amount > Number(loan.amount - loan.paid)) throw new FinanceError(`Melebihi sisa pinjaman ${loan.number}`);
       await tx.payable.update({ where: { id: loan.id }, data: { paid: { increment: BigInt(amount) } } });

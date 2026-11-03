@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { Prisma, type TxDirection, type TxSource, type TxStatus } from "@prisma/client";
 import { prisma } from "./db";
 import { nextNumber } from "./numbering";
-import { postJournal, COA } from "./accounting";
+import { assertPeriodOpen, postJournal, reverseJournal, COA } from "./accounting";
 import { audit } from "./audit";
 import { addDays, dateStr, jakartaDateTime } from "./time";
 
@@ -15,6 +15,7 @@ export const STATUS_LABEL: Record<TxStatus, string> = {
   MENUNGGU_KONFIRMASI: "Menunggu Konfirmasi",
   DIBUKUKAN: "Dibukukan",
   DITOLAK: "Ditolak",
+  DIBATALKAN: "Dibatalkan",
 };
 
 export class FinanceError extends Error {}
@@ -50,7 +51,7 @@ export async function findDuplicate(tx: Tx | typeof prisma, input: { direction: 
   return tx.financeTransaction.findFirst({
     where: {
       id: excludeId ? { not: excludeId } : undefined,
-      status: { not: "DITOLAK" },
+      status: { notIn: ["DITOLAK", "DIBATALKAN"] },
       direction: input.direction,
       amount: BigInt(input.amount),
       accountId: input.accountId ?? undefined,
@@ -80,7 +81,7 @@ function validateBasic(i: TxInput) {
 }
 
 /**
- * Buat transaksi di Finance Inbox. Tidak pernah membukukan jurnal.
+ * Buat transaksi di menu Transaksi. Tidak pernah membukukan jurnal.
  * - submit=false (manual) -> DRAFT
  * - submit=true / sumber AI & Telegram -> MENUNGGU_KONFIRMASI, atau PERLU_DITINJAU bila data kurang / terindikasi duplikat
  */
@@ -253,6 +254,26 @@ export async function approveAndBook(id: string, actor: Actor & { id: string }, 
     await tx.approvalLog.create({ data: { transactionId: id, action: "DISETUJUI_DIBUKUKAN", fromStatus: cur.status, toStatus: "DIBUKUKAN", actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: note ?? `Jurnal ${journal.number}` } });
     await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_DIBUKUKAN", "FinanceTransaction", id, { journal: journal.number, viaTelegram: actor.telegramId ?? null }, tx);
     return { transaction: t, journal };
+  });
+}
+
+/**
+ * Batalkan transaksi yang sudah dibukukan: jurnal asli tidak diubah, dibuat jurnal pembalik sehingga
+ * saldo rekening & laba rugi kembali seperti sebelum transaksi. Pembalik bertanggal sama dengan transaksi
+ * bila periodenya masih terbuka (laporan harian bersih), atau hari ini bila periodenya sudah ditutup.
+ */
+export async function cancelBookedTransaction(id: string, actor: Actor & { id: string }, reason: string, now: Date = new Date()) {
+  if (!reason?.trim()) throw new FinanceError("Alasan pembatalan wajib diisi");
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "FinanceTransaction" WHERE id = ${id} FOR UPDATE`;
+    const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
+    if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi berstatus Dibukukan yang dapat dibatalkan");
+    const date = await assertPeriodOpen(tx, cur.date).then(() => cur.date, () => now);
+    const rev = await reverseJournal(tx, cur.journalId, date, { id: actor.id, name: actor.name }, `batal ${cur.number} — ${reason.trim()}`.slice(0, 150));
+    const t = await tx.financeTransaction.update({ where: { id }, data: { status: "DIBATALKAN" } });
+    await tx.approvalLog.create({ data: { transactionId: id, action: "DIBATALKAN", fromStatus: "DIBUKUKAN", toStatus: "DIBATALKAN", actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: `${reason.trim()} · jurnal pembalik ${rev.number}` } });
+    await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_DIBATALKAN", "FinanceTransaction", id, { reason, reversal: rev.number }, tx);
+    return { transaction: t, reversal: rev };
   });
 }
 

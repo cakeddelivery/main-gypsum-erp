@@ -33,7 +33,7 @@ export default async function TutupBuku() {
   return (
     <div className="space-y-5">
       <PageHeader title="Tutup buku bulanan" subtitle={`Otomatis setiap tanggal 1 pukul 09.00 WIB (${(auto?.value ?? "true") === "true" ? "aktif" : "nonaktif"}) · periode tertutup menolak pembukuan baru`} />
-      {pending > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">Masih ada {pending} transaksi di Finance Inbox yang belum final. Selesaikan sebelum menutup periode.</div>}
+      {pending > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">Masih ada {pending} transaksi di menu Transaksi yang belum final. Selesaikan sebelum menutup periode.</div>}
       <Card title="Periode">
         <div className="overflow-x-auto">
           <Paged><table className="tbl">

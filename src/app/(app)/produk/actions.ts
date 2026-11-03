@@ -5,6 +5,7 @@ import { action, str, optStr, int, dec, bool } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { createsCycle, draftRecipeCost, productCosting, type RecipeInput } from "@/lib/hpp";
 import { saveItemRecord } from "@/lib/items";
+import { itemCategories } from "@/lib/itemCategories";
 import { toRecipeQty } from "@/lib/itemCatalog";
 import { recipeUnit } from "@/lib/unitcost";
 import { OVERHEAD_CATEGORIES, monthlyDepreciation, parseFees, type FeeConfig } from "@/lib/pricing";
@@ -29,7 +30,7 @@ export const saveProduct = action(
     const id = optStr(fd, "id");
     const type = str(fd, "type") as ProductType;
     const name = z.string().min(2, "Nama wajib").parse(str(fd, "name"));
-    const category = optStr(fd, "category") ?? "Mainan Gypsum";
+    const category = optStr(fd, "category") ?? (await itemCategories()).BARANG_JADI[0].name;
     const minStock = dec(fd, "minStock", 0);
     const data = {
       name,
@@ -49,7 +50,8 @@ export const saveProduct = action(
       const sku = cur.sku;
       const finishedItemId = fd.has("finishedItemId") ? optStr(fd, "finishedItemId") : cur.finishedItemId;
       const p = await prisma.product.update({ where: { id }, data: { ...data, sku, finishedItemId, active: bool(fd, "active") } });
-      if (p.finishedItemId) await prisma.item.update({ where: { id: p.finishedItemId }, data: { minStock } });
+      // Kategori produk ikut ke item stok barang jadinya (kode lama tidak berubah)
+      if (p.finishedItemId) await prisma.item.update({ where: { id: p.finishedItemId }, data: { minStock, category } });
       await audit(user, "PRODUK_DIUBAH", "Product", p.id, { ...data, sku, minStock });
       return "Produk tersimpan";
     }
@@ -57,7 +59,7 @@ export const saveProduct = action(
     const price = int(fd, "price");
     const openingQty = dec(fd, "openingQty", 0);
     if (hpp < 0 || price < 0) throw new Error("HPP dan harga tidak boleh minus");
-    const item = await saveItemRecord({ name, type: "BARANG_JADI", category: "Mainan Gypsum", unit: "pcs", hppFactor: 1, minStock, price: hpp, openingQty, note: data.note }, user);
+    const item = await saveItemRecord({ name, type: "BARANG_JADI", category, unit: "pcs", hppFactor: 1, minStock, price: hpp, openingQty, note: data.note }, user);
     let sku = item.sku;
     if (await prisma.product.findUnique({ where: { sku } })) sku = `${sku}-${Date.now().toString(36).slice(-3).toUpperCase()}`;
     const p = await prisma.product.create({ data: { ...data, sku, finishedItemId: item.id } });
@@ -152,7 +154,7 @@ export const saveSemi = action(
     const id = optStr(fd, "id");
     const r = await parseRecipe(fd);
     if (id) for (const l of r.comp) if (await createsCycle(prisma, id, l.componentId)) throw new Error("Komponen tidak boleh memakai barang ini sendiri (resep melingkar)");
-    const base = { name: str(fd, "name"), type: "BARANG_DALAM_PROSES" as const, category: "Barang Setengah Jadi", unit: str(fd, "unit") || "pcs", hppFactor: 1, note: optStr(fd, "note") };
+    const base = { name: str(fd, "name"), type: "BARANG_DALAM_PROSES" as const, category: (await itemCategories()).BARANG_DALAM_PROSES[0].name, unit: str(fd, "unit") || "pcs", hppFactor: 1, note: optStr(fd, "note") };
     let itemId = id;
     if (id) {
       const cur = await prisma.item.findUniqueOrThrow({ where: { id } });

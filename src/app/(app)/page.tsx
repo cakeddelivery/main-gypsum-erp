@@ -64,8 +64,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <>
           <Tabs current={storeId ?? "all"} tabs={[{ key: "all", label: "Konsolidasi", href: "/" }, ...stores.map((s) => ({ key: s.id, label: s.name, href: `/?store=${s.id}` }))]} />
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label={`Pemasukan ${MONTHS[fin.month - 1]}`} value={idr(fin.income)} tone="green" href="/finance?status=DIBUKUKAN" />
-            <Stat label={`Pengeluaran ${MONTHS[fin.month - 1]}`} value={idr(fin.expense)} tone="red" href="/finance?status=DIBUKUKAN" />
+            <Stat label={`Pemasukan ${MONTHS[fin.month - 1]}`} value={idr(fin.income)} tone="green" href="/akuntansi/arus-kas" />
+            <Stat label={`Pengeluaran ${MONTHS[fin.month - 1]}`} value={idr(fin.expense)} tone="red" href="/akuntansi/arus-kas" />
             <Stat label="Laba rugi bulan ini" value={idr(fin.pl.netProfit)} tone={fin.pl.netProfit >= 0 ? "green" : "red"} hint={`Pendapatan ${idr(fin.pl.totalRevenue)}`} href="/akuntansi/laba-rugi" />
             <Stat label="Total saldo rekening" value={idr(banks!.reduce((s, b) => s + b.balance, 0))} tone="blue" hint={`${banks!.length} rekening`} href="/akuntansi/buku-besar" />
           </div>
