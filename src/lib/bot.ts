@@ -8,12 +8,25 @@ import { saveProof } from "./storage";
 import { idr } from "./money";
 import { fmtDate, jakartaDateTime } from "./time";
 import { dailyRecapText } from "./jobs";
-import { handleMenuCallback, handleMenuCommand } from "./botMenu";
+import { handleMenuCallback, handleMenuCommand, MENU_TEXT } from "./botMenu";
+import { clearSession, handleFlowCallback, handleFlowLocation, handleFlowText, type TgLocation } from "./botFlow";
 
 type TgUser = { id: number; first_name?: string; username?: string };
 type TgUpdate = {
   update_id: number;
-  message?: { message_id: number; chat: { id: number }; from?: TgUser; text?: string; caption?: string; photo?: { file_id: string; file_size?: number }[] };
+  message?: {
+    message_id: number;
+    date?: number;
+    chat: { id: number };
+    from?: TgUser;
+    text?: string;
+    caption?: string;
+    photo?: { file_id: string; file_size?: number }[];
+    location?: TgLocation;
+    venue?: unknown;
+    forward_origin?: unknown;
+    forward_date?: number;
+  };
   callback_query?: { id: string; from: TgUser; data?: string; message?: { message_id: number; chat: { id: number } } };
 };
 
@@ -93,6 +106,13 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     return;
   }
   if (!ident.chatId) await prisma.telegramIdentity.update({ where: { id: ident.id }, data: { chatId } });
+  // Isian bertahap (produksi, absen, stok): lokasi & jawaban teks
+  if (msg.location) {
+    await handleFlowLocation(ident, chatId, msg.location, { forwarded: !!(msg.forward_origin || msg.forward_date), venue: !!msg.venue, ageSec: msg.date ? Math.floor(Date.now() / 1000) - msg.date : 0 });
+    return;
+  }
+  if (text === MENU_TEXT || (text.startsWith("/") && text !== "/batal")) await clearSession(chatId);
+  else if (text && !msg.photo && (await handleFlowText(ident, chatId, text))) return;
   if (await handleMenuCommand(ident, chatId, text)) return;
   if (text === "/rekap") {
     await sendTelegram(chatId, await dailyRecapText(new Date()), { type: "REKAP_MANUAL" });
@@ -154,6 +174,15 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
   const chatId = cb.message ? String(cb.message.chat.id) : null;
   const ident = await identityOf(cb.from.id);
   if (!ident) return answerCallback(cb.id, "ID Telegram Anda belum terdaftar");
+  if (action === "f") {
+    if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan sudah tidak tersedia, kirim /menu");
+    try {
+      return await handleFlowCallback(ident, cb.id, chatId, cb.message.message_id, cb.data!);
+    } catch (e) {
+      await prisma.notificationLog.create({ data: { channel: "TELEGRAM", type: "ISIAN", target: chatId, status: "GAGAL", payload: cb.data ?? "", error: (e as Error).message.slice(0, 500) } });
+      return answerCallback(cb.id, "Terjadi kesalahan, coba lagi");
+    }
+  }
   if (action === "m") {
     if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan menu sudah tidak tersedia, kirim /menu");
     try {

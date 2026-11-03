@@ -1009,6 +1009,16 @@ model IdempotencyRecord {
   createdAt DateTime @default(now())
 }
 
+/// Isian bertahap di bot Telegram (input produksi, mutasi stok, absen). Satu sesi aktif per chat, kedaluwarsa 30 menit.
+model BotSession {
+  chatId    String   @id
+  userId    String
+  flow      String
+  step      String
+  data      Json     @default("{}")
+  updatedAt DateTime @updatedAt
+}
+
 model NotificationLog {
   id      String   @id @default(cuid())
   at      DateTime @default(now())

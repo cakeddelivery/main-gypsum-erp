@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { handleTelegramUpdate } from "@/lib/bot";
 import { prisma } from "@/lib/db";
 import { MENU_TEXT } from "@/lib/botMenu";
+import { hasActiveFlow } from "@/lib/botFlow";
 
 /**
  * Webhook Telegram Bot API. Diverifikasi dengan header X-Telegram-Bot-Api-Secret-Token.
@@ -21,7 +22,9 @@ export async function POST(req: Request) {
     const hermes = process.env.HERMES_WEBHOOK_URL;
     // Perintah & tombol "📋 Menu" selalu ditangani ERP (tidak diteruskan ke Hermes)
     const isCommand = typeof update.message?.text === "string" && (update.message.text.startsWith("/") || update.message.text.trim() === MENU_TEXT);
-    if (hermes && update.message && !isCommand) {
+    // Lokasi (absen) dan jawaban isian bertahap juga selalu ditangani ERP
+    const local = isCommand || !!update.message?.location || (update.message?.chat?.id != null && (await hasActiveFlow(String(update.message.chat.id))));
+    if (hermes && update.message && !local) {
       const res = await fetch(hermes, { method: "POST", headers: { "content-type": "application/json", ...(process.env.HERMES_WEBHOOK_TOKEN ? { authorization: `Bearer ${process.env.HERMES_WEBHOOK_TOKEN}` } : {}) }, body: JSON.stringify(update), signal: AbortSignal.timeout(20000) });
       if (!res.ok) throw new Error(`Hermes HTTP ${res.status}`);
     } else {
