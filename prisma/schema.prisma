@@ -1268,3 +1268,15 @@ model AlertRead {
 
   @@unique([userId, key])
 }
+
+/// Kategori item stok & produk jadi (diatur di Pengaturan › Kategori produk); prefix = awalan kode otomatis
+model ItemCategory {
+  id        String   @id @default(cuid())
+  type      ItemType
+  name      String
+  prefix    String   @unique
+  active    Boolean  @default(true)
+  sortOrder Int      @default(0)
+
+  @@unique([type, name])
+}

@@ -1,7 +1,6 @@
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
 import { AutoCode, Field } from "@/components/ui";
-import { ITEM_CATEGORIES } from "@/lib/itemCatalog";
 import { saveProduct } from "./actions";
 import type { Product } from "@prisma/client";
 
@@ -9,13 +8,14 @@ const TYPES = { SATUAN: "Satuan", PAKET_12: "Paket 12", PAKET_24: "Paket 24", PA
 const ro = "input bg-slate-100 dark:bg-slate-800";
 
 /** Master produk jadi (susunan mengikuti form referensi owner); resep HPP diatur di halaman detail */
-export function ProductForm({ p, stores, items, hpp, minStock }: { p?: Product; stores: { id: string; name: string }[]; items: { id: string; sku: string; name: string }[]; hpp?: number; minStock?: number }) {
+export function ProductForm({ p, stores, items, hpp, minStock, categories }: { p?: Product; stores: { id: string; name: string }[]; items: { id: string; sku: string; name: string }[]; hpp?: number; minStock?: number; categories: string[] }) {
+  const cats = p?.category && !categories.includes(p.category) ? [...categories, p.category] : categories;
   return (
     <ModalForm action={saveProduct} className="grid grid-cols-2 gap-3">
       {p && <input type="hidden" name="id" value={p.id} />}
       <AutoCode label="Kode Produk Jadi" className="col-span-2" value={p?.sku} example="MG-001" hint="Kode dibuat otomatis berdasarkan kategori & nomor urut." />
       <Field label="Nama Produk Mainan" className="col-span-2"><input name="name" defaultValue={p?.name} placeholder="Cth: Patung Gypsum Dinosaurus Set" className="input" required /></Field>
-      <Field label="Kategori Produk" className="col-span-2"><select name="category" defaultValue={p?.category ?? "Mainan Gypsum"} className="input">{ITEM_CATEGORIES.BARANG_JADI.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}</select></Field>
+      <Field label="Kategori Produk" className="col-span-2"><select name="category" defaultValue={p?.category ?? cats[0]} className="input">{cats.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
       <Field label="Tipe"><select name="type" defaultValue={p?.type} className="input">{Object.entries(TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
       <Field label="Varian"><select name="variant" defaultValue={p?.variant} className="input">{["COWOK", "CEWEK", "HEWAN", "TRANSPORTASI", "MIX"].map((v) => <option key={v} value={v}>{v}</option>)}</select></Field>
       {p ? (

@@ -11,6 +11,7 @@ import { Submit } from "@/components/ActionForm";
 import Link from "next/link";
 import { saveGypsum, saveItem, saveLocation } from "../actions";
 import { ItemFields } from "./ItemFields";
+import { itemCategories } from "@/lib/itemCategories";
 import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Master Stok" };
@@ -18,12 +19,13 @@ export const metadata = { title: "Master Stok" };
 export default async function MasterPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   await requirePerm("master.manage");
   const { tab = "item" } = await searchParams;
-  const [items, suppliers, locations, gypsum, divisions] = await Promise.all([
+  const [items, suppliers, locations, gypsum, divisions, categories] = await Promise.all([
     prisma.item.findMany({ include: { supplier: true, gypsumCharacter: true }, orderBy: { name: "asc" } }),
     prisma.supplier.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     prisma.location.findMany({ include: { division: true }, orderBy: { code: "asc" } }),
     prisma.gypsumCharacter.findMany({ orderBy: { name: "asc" } }),
     prisma.division.findMany({ orderBy: { code: "asc" } }),
+    itemCategories(),
   ]);
   const opt = (x: { id: string; name: string }) => ({ id: x.id, name: x.name });
   const itemForm = (i?: (typeof items)[number]) => (
@@ -33,6 +35,7 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
         suppliers={suppliers.map(opt)}
         divisions={divisions.map(opt)}
         gypsum={gypsum.map(opt)}
+        categories={categories}
       />
     </ModalForm>
   );
