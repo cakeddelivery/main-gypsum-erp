@@ -5,6 +5,7 @@ import { dateOnly, fmtDay, todayStr } from "@/lib/time";
 import { Badge, Card, FilterBar, Field, PageHeader } from "@/components/ui";
 import { isDone, needsOrder, toEntries, type StockCountRow } from "@/lib/shiftReport";
 import { openReport } from "./actions";
+import { Submit } from "@/components/ActionForm";
 
 export const metadata = { title: "Laporan Shift" };
 
@@ -59,7 +60,7 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
                             <input type="hidden" name="date" value={date} />
                             <input type="hidden" name="shiftId" value={s.id} />
                             <input type="hidden" name="divisionId" value={div.id} />
-                            <button className="btn-primary btn-sm">Buat</button>
+                            <Submit className="btn-primary btn-sm" pendingText="Membuat…">Buat</Submit>
                           </form>
                         )
                       )}

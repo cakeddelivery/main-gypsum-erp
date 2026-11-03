@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { toJpeg } from "html-to-image";
+import { CLOSE_MS } from "./Modal";
 
 /**
  * Tombol "Unduh JPG": membuat gambar dari dokumen ber-kop surat (DocSheet di dalam DocExport) lalu menampilkan
@@ -12,6 +13,7 @@ export function DownloadJpg({ targetId, filename }: { targetId: string; filename
   const [busy, setBusy] = useState(false);
   const [url, setUrl] = useState<string | null>(null);
   const [canShare, setCanShare] = useState(false);
+  const [closing, setClosing] = useState(false);
   const ref = useRef<HTMLDialogElement>(null);
   const name = `${filename}.jpg`;
 
@@ -20,7 +22,12 @@ export function DownloadJpg({ targetId, filename }: { targetId: string; filename
     if (!d) return;
     if (url && !d.open) d.showModal();
     if (!url && d.open) d.close();
+    if (!url) setClosing(false);
   }, [url]);
+  const close = () => {
+    setClosing(true);
+    window.setTimeout(() => setUrl(null), CLOSE_MS);
+  };
 
   const render = async () => {
     const el = document.getElementById(targetId);
@@ -71,15 +78,20 @@ export function DownloadJpg({ targetId, filename }: { targetId: string; filename
       </button>
       <dialog
         ref={ref}
+        data-closing={closing || undefined}
         onClose={() => setUrl(null)}
-        onClick={(e) => e.target === e.currentTarget && setUrl(null)}
-        className="w-[calc(100%-1.5rem)] max-w-3xl rounded-2xl bg-white p-0 text-slate-800 shadow-xl backdrop:bg-slate-900/50"
+        onCancel={(e) => {
+          e.preventDefault();
+          close();
+        }}
+        onClick={(e) => e.target === e.currentTarget && close()}
+        className="modal w-[calc(100%-1.5rem)] max-w-3xl rounded-2xl bg-white p-0 text-slate-800 shadow-xl backdrop:bg-slate-900/50"
       >
         {url && (
           <div>
             <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-3">
               <h2 className="min-w-0 truncate font-semibold text-slate-900">Pratinjau JPG</h2>
-              <button type="button" aria-label="Tutup" className="rounded p-1 text-slate-600 hover:bg-slate-100" onClick={() => setUrl(null)}>✕</button>
+              <button type="button" aria-label="Tutup" className="rounded p-1 text-slate-600 hover:bg-slate-100" onClick={close}>✕</button>
             </div>
             <div className="max-h-[65vh] overflow-y-auto bg-slate-100 p-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -88,7 +100,7 @@ export function DownloadJpg({ targetId, filename }: { targetId: string; filename
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-5 py-3">
               <span className="min-w-0 truncate text-xs text-slate-500">{name}</span>
               <div className="flex gap-2">
-                <button type="button" className="btn-secondary" onClick={() => setUrl(null)}>Tutup</button>
+                <button type="button" className="btn-secondary" onClick={close}>Tutup</button>
                 {canShare && <button type="button" className="btn-secondary" onClick={share}>Bagikan</button>}
                 <button type="button" className="btn-primary" onClick={save}>⬇ Unduh</button>
               </div>
