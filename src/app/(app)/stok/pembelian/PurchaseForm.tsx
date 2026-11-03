@@ -177,7 +177,7 @@ export function PurchaseFields({ items, suppliers, banks, today, defaultBank }: 
       <div className="grid gap-3 sm:grid-cols-3">
         <label className="sm:col-span-3"><span className="label">Catatan</span><input name="note" className="input" placeholder="cth: beli 5 sak gypsum super casting" /></label>
       </div>
-      <p className="text-xs text-amber-700">Pembelian di sini sudah menambah stok dan membukukan pembayarannya. Jangan dicatat lagi di Finance Inbox agar tidak dobel. Sisa hutang dibayar lewat Akuntansi › Piutang, utang & pinjaman.</p>
+      <p className="text-xs text-amber-700">Pembelian di sini sudah menambah stok dan membukukan pembayarannya. Jangan dicatat lagi di menu Transaksi agar tidak dobel. Sisa hutang dibayar lewat Akuntansi › Piutang, utang & pinjaman.</p>
     </div>
   );
 }

@@ -228,6 +228,23 @@ export async function cashFlow(r: Range) {
   return { groups, operating: total("OPERASI"), investing: total("INVESTASI"), financing: total("PENDANAAN"), opening, closing };
 }
 
+/**
+ * Uang masuk & keluar nyata dari semua jurnal yang menyentuh kas/bank (menu Transaksi, pembelian, gaji, kasbon,
+ * borongan, pengambilan owner, pinjaman, dst.). Transfer antar rekening & saldo awal tidak dihitung, dan
+ * pasangan transaksi yang dibatalkan (jurnal asli + pembaliknya dalam rentang yang sama) saling dihapus.
+ */
+export async function cashMovements(start: Date, end: Date, storeId?: string | null) {
+  const journals = await prisma.journal.findMany({
+    where: { date: { gte: start, lt: end }, ...(storeId ? { storeId } : {}) },
+    include: { lines: { include: { account: true } } },
+    orderBy: { date: "asc" },
+  });
+  const reversed = new Set(journals.map((j) => j.reversalOfId).filter(Boolean) as string[]);
+  const kept = journals.filter((j) => !reversed.has(j.id) && !(j.reversalOfId && journals.some((o) => o.id === j.reversalOfId)));
+  const g = classifyCashJournals(kept);
+  return [...g.OPERASI, ...g.INVESTASI, ...g.PENDANAAN];
+}
+
 export async function cashBalance(before: Date, storeId?: string | null) {
   const agg = await prisma.journalLine.aggregate({
     where: { account: { isCash: true }, journal: { date: { lt: before }, ...(storeId ? { storeId } : {}) } },

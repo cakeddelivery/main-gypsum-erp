@@ -20,6 +20,21 @@ export function todayStr(d: Date = new Date()): string {
   return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
 }
 
+/** "HH:MM" jam saat ini di WIB */
+export function nowTimeStr(d: Date = new Date()): string {
+  const p = jakartaParts(d);
+  return `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`;
+}
+
+/**
+ * Jam transaksi: jam yang terbaca (bukti/pesan) bila ada; bila tidak, jam sekarang untuk transaksi hari ini,
+ * dan 12:00 untuk tanggal lain (jam aslinya tidak diketahui).
+ */
+export function txTime(date: string, time: string | null | undefined, now: Date = new Date()): string {
+  if (time && /^([01]\d|2[0-3]):[0-5]\d$/.test(time)) return time;
+  return date === todayStr(now) ? nowTimeStr(now) : "12:00";
+}
+
 /** Tanggal kalender (kolom @db.Date) dari "YYYY-MM-DD" */
 export function dateOnly(s: string): Date {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new Error("Format tanggal tidak valid");

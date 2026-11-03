@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { nowTimeStr, todayStr } from "@/lib/time";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { useCloseModal } from "@/components/Modal";
 import type { ActionResult } from "@/lib/action";
@@ -25,6 +26,15 @@ export function TxForm(p: {
   const [hint, setHint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [formKey] = useState(() => Math.random().toString(36).slice(2) + Date.now().toString(36));
+  // Jam ikut jam sekarang (WIB) sampai diubah manual, terisi dari pesan, atau tanggalnya bukan hari ini
+  const [timeAuto, setTimeAuto] = useState(p.mode === "create" && !p.init.time);
+  useEffect(() => {
+    if (!timeAuto) return;
+    const tick = () => setV((o) => (o.date === todayStr() ? { ...o, time: nowTimeStr() } : o));
+    tick();
+    const id = setInterval(tick, 15000);
+    return () => clearInterval(id);
+  }, [timeAuto]);
   const set = (k: keyof Init) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setV((o) => ({ ...o, [k]: e.target.value }));
   const cats = p.categories.filter((c) => c.direction === v.direction);
   // Toko hanya membedakan withdraw saldo penjual marketplace (transfer internal); selain itu selalu toko default.
@@ -51,12 +61,14 @@ export function TxForm(p: {
                   direction: ex.direction ?? o.direction,
                   amount: ex.amount ?? o.amount,
                   date: ex.date ?? o.date,
+                  time: ex.time ?? o.time,
                   accountId: ex.accountId ?? o.accountId,
                   toAccountId: ex.toAccountId ?? o.toAccountId,
                   categoryId: ex.categoryId ?? o.categoryId,
                   note: o.note || ex.note,
                   storeId: storeIn(v.rawText) ?? o.storeId,
                 }));
+                if (ex.time) setTimeAuto(false);
                 setHint(ex.missing.length ? `Terisi otomatis. Periksa: ${ex.missing.join(", ")}` : "Semua kolom terisi otomatis — periksa sebelum menyimpan.");
               } finally {
                 setBusy(false);
@@ -81,7 +93,7 @@ export function TxForm(p: {
           <input type="hidden" name="storeId" value={p.defaultStoreId ?? v.storeId ?? ""} />
         )}
         <label><span className="label">Tanggal</span><input type="date" name="date" value={v.date ?? ""} onChange={set("date")} className="input" required /></label>
-        <label><span className="label">Jam (WIB)</span><input type="time" name="time" value={v.time ?? "12:00"} onChange={set("time")} className="input" /></label>
+        <label><span className="label">Jam (WIB)</span><input type="time" name="time" value={v.time ?? "12:00"} onChange={(e) => { setTimeAuto(false); set("time")(e); }} className="input" />{timeAuto && <span className="mt-0.5 block text-xs text-slate-500">Otomatis jam sekarang</span>}</label>
         <label><span className="label">{v.direction === "TRANSFER" ? "Dari rekening" : "Rekening"}</span>
           <select name="accountId" value={v.accountId ?? ""} onChange={set("accountId")} className="input"><option value="">— pilih —</option>{p.banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
         </label>
@@ -94,7 +106,7 @@ export function TxForm(p: {
             <select name="categoryId" value={v.categoryId ?? ""} onChange={set("categoryId")} className="input"><option value="">— pilih —</option>{cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
           </label>
         )}
-        <label><span className="label">Pihak terkait</span><input name="counterparty" value={v.counterparty ?? ""} onChange={set("counterparty")} className="input" placeholder="Supplier / pelanggan" /></label>
+        <label><span className="label">Pihak terkait (opsional)</span><input name="counterparty" value={v.counterparty ?? ""} onChange={set("counterparty")} className="input" placeholder="Nama toko / supplier / pembeli" /><span className="mt-0.5 block text-xs text-slate-500">Siapa penerima/pengirim uang. Untuk pencarian & cek duplikat.</span></label>
         <label className="col-span-2 md:col-span-1"><span className="label">Bukti (JPG/PNG/PDF, maks 5 MB)</span><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></label>
         <label className="col-span-2 md:col-span-3"><span className="label">Catatan</span><textarea name="note" value={v.note ?? ""} onChange={set("note")} rows={2} className="input" /></label>
       </div>

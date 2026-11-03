@@ -5,6 +5,8 @@ import type { ExtractAccount } from "./extract";
 export type ReceiptRead = {
   amount: number | null;
   date: string | null;
+  /** Jam WIB "HH:MM" yang tertulis di bukti */
+  time?: string | null;
   direction: "MASUK" | "KELUAR" | "TRANSFER" | null;
   account: string | null;
   toAccount: string | null;
@@ -32,12 +34,12 @@ export async function readReceipt(image: Buffer, caption: string, accounts: Extr
     text: `Foto ini dikirim admin usaha "Main Gypsum" sebagai bukti transaksi. Rekening milik usaha: ${ours}.
 Keterangan dari admin: "${caption || "-"}"
 Balas HANYA satu objek JSON tanpa teks lain, dengan kunci:
-{"is_receipt": boolean, "amount": integer, "date": "YYYY-MM-DD", "direction": "MASUK"|"KELUAR"|"TRANSFER"|"TIDAK_JELAS", "account": string, "to_account": string, "counterparty": string}
-amount = nominal transaksi dalam rupiah (bilangan bulat, tanpa biaya admin bila terpisah; 0 bila tidak terbaca). date = tanggal transaksi ("" bila tidak terlihat). account = nama rekening usaha yang terlibat (untuk TRANSFER: rekening asal), ditulis persis seperti daftar di atas ("" bila tidak terlihat). to_account = rekening usaha tujuan, hanya untuk TRANSFER ("" selain itu). counterparty = nama pihak lain: penerima/pengirim/toko ("" bila tidak ada).
+{"is_receipt": boolean, "amount": integer, "date": "YYYY-MM-DD", "time": "HH:MM", "direction": "MASUK"|"KELUAR"|"TRANSFER"|"TIDAK_JELAS", "account": string, "to_account": string, "counterparty": string}
+amount = nominal transaksi dalam rupiah (bilangan bulat, tanpa biaya admin bila terpisah; 0 bila tidak terbaca). date = tanggal transaksi ("" bila tidak terlihat). time = jam transaksi 24 jam WIB seperti tertulis di bukti ("" bila tidak terlihat). account = nama rekening usaha yang terlibat (untuk TRANSFER: rekening asal), ditulis persis seperti daftar di atas ("" bila tidak terlihat). to_account = rekening usaha tujuan, hanya untuk TRANSFER ("" selain itu). counterparty = nama pihak lain: penerima/pengirim/toko ("" bila tidak ada).
 direction: TRANSFER bila uang hanya berpindah antar rekening milik usaha (mis. penarikan/withdraw Saldo Penjual Shopee ke Seabank, top up ShopeePay dari Seabank); rekening bank atas nama pemilik usaha dianggap rekening usaha. KELUAR bila uang keluar ke pihak lain (bayar supplier, nota belanja). MASUK bila uang masuk dari pihak lain. TIDAK_JELAS bila ragu.
 is_receipt = false bila foto bukan bukti transaksi/nota. Jangan menebak angka yang tidak terbaca.`,
   });
-  const out = parseJsonObject<{ is_receipt?: boolean; amount?: unknown; date?: unknown; direction?: unknown; account?: unknown; to_account?: unknown; counterparty?: unknown }>(text);
+  const out = parseJsonObject<{ is_receipt?: boolean; amount?: unknown; date?: unknown; time?: unknown; direction?: unknown; account?: unknown; to_account?: unknown; counterparty?: unknown }>(text);
   if (!out) {
     console.error("readReceipt: jawaban AI bukan JSON", text.slice(0, 300));
     return null;
@@ -47,9 +49,11 @@ is_receipt = false bila foto bukan bukti transaksi/nota. Jangan menebak angka ya
   // Nominal yang terbaca jelas tetap dipakai walau AI ragu menyebutnya bukti transaksi
   if (!out.is_receipt && !(amount > 0)) return null;
   const date = str(out.date);
+  const time = str(out.time)?.replace(".", ":").match(/^(\d{1,2}):(\d{2})/);
   return {
     amount: amount > 0 ? Math.round(amount) : null,
     date: date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null,
+    time: time && +time[1] <= 23 && +time[2] <= 59 ? `${time[1].padStart(2, "0")}:${time[2]}` : null,
     direction: out.direction === "MASUK" || out.direction === "KELUAR" || out.direction === "TRANSFER" ? out.direction : null,
     account: str(out.account),
     toAccount: out.direction === "TRANSFER" ? str(out.to_account) : null,

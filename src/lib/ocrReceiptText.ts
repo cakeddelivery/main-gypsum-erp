@@ -1,10 +1,11 @@
-import { extractDate, type ExtractAccount } from "./extract";
+import { extractDate, extractTime, type ExtractAccount } from "./extract";
 import { amountFromOcrText } from "./ocrAmount";
 
 /** Hasil baca foto bukti dari teks OCR (bentuknya sama dengan hasil AI di receipt.ts) */
 export type OcrReceipt = {
   amount: number | null;
   date: string | null;
+  time?: string | null;
   direction: "MASUK" | "KELUAR" | "TRANSFER" | null;
   account: string | null;
   toAccount: string | null;
@@ -43,13 +44,17 @@ export function receiptFromOcrText(text: string, accounts: ExtractAccount[], now
 
   // Tanggal: baris berlabel waktu/tanggal dulu, lalu baris mana pun yang memuat tanggal
   let date: string | null = null;
+  let time: string | null = null;
   for (const l of [...lines.filter((l) => DATE_LINE.test(l)), ...lines.filter((l) => !DATE_LINE.test(l) && !/\bno\b/i.test(l))]) {
     const d = extractDate(l, now);
     if (d && +d.slice(0, 4) >= 2020 && +d.slice(0, 4) <= 2100) {
       date = d;
+      time = extractTime(l);
       break;
     }
   }
+  // Jam sering di baris tersendiri ("14:32 WIB") di bawah/atas tanggal
+  if (!time) for (const l of lines.filter((l) => !/\b(no|ref|id)\b/i.test(l))) if ((time = extractTime(l))) break;
 
   let counterparty: string | null = null;
   for (const l of lines) {
@@ -71,5 +76,5 @@ export function receiptFromOcrText(text: string, accounts: ExtractAccount[], now
   // Arah: kebanyakan foto yang dikirim adalah bukti bayar; MASUK hanya bila jelas tertulis
   const direction = INCOMING.test(text) ? "MASUK" : OUTGOING.test(text) || senderIdx >= 0 ? "KELUAR" : null;
 
-  return { amount, date, direction, account, toAccount: null, counterparty };
+  return { amount, date, time, direction, account, toAccount: null, counterparty };
 }

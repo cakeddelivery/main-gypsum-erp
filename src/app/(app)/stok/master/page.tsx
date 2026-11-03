@@ -96,7 +96,7 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
       {tab !== "item" && <div className="table-wrap">
         <Paged><table className="tbl">
           {tab === "lokasi" && (<>
-            <thead><tr><th>Nama</th><th>Divisi</th><th /></tr></thead>
+            <thead><tr><th>Kode</th><th>Nama</th><th>Divisi</th><th /></tr></thead>
             <tbody>{locations.map((l) => <tr key={l.id}><td className="font-mono text-xs">{l.code}</td><td>{l.name}</td><td>{l.division?.name}</td><td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah lokasi">{locForm(l)}</Modal></td></tr>)}</tbody>
           </>)}
           {tab === "gypsum" && (<>

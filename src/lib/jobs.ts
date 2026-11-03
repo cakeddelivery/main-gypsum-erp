@@ -2,7 +2,7 @@ import { prisma } from "./db";
 import { idr } from "./money";
 import { addDays, dayRange, jakartaParts, todayStr, fmtDay, dateOnly } from "./time";
 import { bankBalances } from "./finance";
-import { closePeriod } from "./accounting";
+import { cashMovements, closePeriod } from "./accounting";
 import { sendTelegram, telegramConfigured } from "./telegram";
 import { lowStockItems } from "./stock";
 import { generateAllowancePayroll, generateMonthlyPayroll } from "./payroll";
@@ -14,6 +14,10 @@ export async function dailyRecapText(now: Date, forDate?: string) {
   const date = forDate ?? addDays(todayStr(now), -1);
   const { start, end } = dayRange(date);
   const booked = await prisma.financeTransaction.groupBy({ by: ["direction"], where: { status: "DIBUKUKAN", date: { gte: start, lt: end } }, _sum: { amount: true }, _count: true });
+  // Total uang masuk/keluar dari semua jurnal kas (termasuk pembelian, gaji, kasbon) — bukan hanya menu Transaksi
+  const moves = await cashMovements(start, end);
+  const cashIn = moves.filter((m) => m.amount > 0).reduce((s, m) => s + m.amount, 0);
+  const cashOut = moves.filter((m) => m.amount < 0).reduce((s, m) => s - m.amount, 0);
   const pending = await prisma.financeTransaction.groupBy({ by: ["status"], where: { status: { in: ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"] } }, _count: true });
   const prod = await prisma.productionEntry.aggregate({ where: { date: dateOnly(date) }, _sum: { qtyGood: true, qtyReject: true } });
   const finished = await prisma.productionEntry.aggregate({ where: { date: dateOnly(date), stage: "BARANG_JADI" }, _sum: { qtyGood: true } });
@@ -27,8 +31,9 @@ export async function dailyRecapText(now: Date, forDate?: string) {
     `${fmtDay(dateOnly(date))}`,
     ``,
     `<b>Keuangan (dibukukan)</b>`,
-    `Pemasukan: ${idr(g("MASUK")?._sum.amount ?? 0)} (${g("MASUK")?._count ?? 0} trx)`,
-    `Pengeluaran: ${idr(g("KELUAR")?._sum.amount ?? 0)} (${g("KELUAR")?._count ?? 0} trx)`,
+    `Uang masuk: ${idr(cashIn)}`,
+    `Uang keluar: ${idr(cashOut)} (termasuk pembelian, gaji, kasbon)`,
+    `Transaksi dibukukan: ${(g("MASUK")?._count ?? 0) + (g("KELUAR")?._count ?? 0)} masuk/keluar`,
     `Transfer internal: ${idr(g("TRANSFER")?._sum.amount ?? 0)}`,
     ``,
     `<b>Saldo rekening</b>`,

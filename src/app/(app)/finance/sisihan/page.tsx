@@ -4,7 +4,7 @@ import { idr } from "@/lib/money";
 import { fmtDay, todayStr } from "@/lib/time";
 import { RESERVE_LABEL, reserveSummary } from "@/lib/reserve";
 import { Badge, Card, Empty, Field, PageHeader, Stat } from "@/components/ui";
-import { ActionForm, Submit } from "@/components/ActionForm";
+import { Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { reserveAll, reserveOne, saveFund, withdraw } from "./actions";
@@ -33,7 +33,7 @@ export default async function SisihanPage() {
       <Field label="Nominal per hari (IDR)"><input name="dailyAmount" defaultValue={f ? Number(f.dailyAmount) : ""} inputMode="numeric" className="input" required /></Field>
       <Field label="Dari rekening"><select name="fromBankId" defaultValue={f?.fromBankId ?? banks.find((b) => b.code === "SEABANK")?.id} className="input">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
       <Field label="Ke rekening simpanan" hint="Tidak dipakai untuk cicilan harian"><select name="toBankId" defaultValue={f?.toBankId ?? banks.find((b) => b.code === "SHOPEEPAY")?.id} className="input">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
-      <Field label="Pinjaman modal (untuk dana cicilan)" className="col-span-2"><select name="payableId" defaultValue={f?.payableId ?? ""} className="input"><option value="">—</option>{loans.map((l) => <option key={l.id} value={l.id}>{l.number} · {l.vendor} · sisa {idr(l.amount - l.paid)}</option>)}</select></Field>
+      <Field label="Pinjaman modal (untuk dana cicilan)" className="col-span-2" hint={loans.length ? "Wajib untuk Cicilan pinjaman harian. Tabungan cicilan boleh dikosongkan dulu, pilih sebelum dibayarkan." : "Belum ada pinjaman modal tercatat. Catat dulu di Akuntansi › Piutang, utang & pinjaman (tombol + Pinjaman modal). Tabungan cicilan tetap bisa disimpan tanpa pinjaman."}><select name="payableId" defaultValue={f?.payableId ?? ""} className="input" data-plain={loans.length ? undefined : ""}><option value="">{loans.length ? "— belum dipilih —" : "— belum ada pinjaman —"}</option>{loans.map((l) => <option key={l.id} value={l.id}>{l.number} · {l.vendor} · sisa {idr(l.amount - l.paid)}</option>)}</select></Field>
       {f && <Field label="Status"><select name="active" defaultValue={f.active ? "on" : "off"} className="input"><option value="on">Aktif</option><option value="off">Nonaktif</option></select></Field>}
       <div className="col-span-2"><Submit>Simpan</Submit></div>
     </ModalForm>
@@ -46,7 +46,16 @@ export default async function SisihanPage() {
         actions={
           <>
             <Modal trigger="+ Dana" triggerClass="btn-secondary" title="Dana sisihan baru">{fundForm()}</Modal>
-            <ActionForm action={reserveAll}><input type="hidden" name="date" value={t} /><Submit pendingText="Mencatat…">Sisihkan semua hari ini</Submit></ActionForm>
+            <Modal trigger="Sisihkan semua" title="Sisihkan semua dana aktif">
+              <ModalForm action={reserveAll} className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Dari tanggal"><input type="date" name="from" defaultValue={t} max={t} className="input" /></Field>
+                  <Field label="Sampai tanggal"><input type="date" name="date" defaultValue={t} max={t} className="input" /></Field>
+                </div>
+                <p className="text-xs text-slate-500">Setiap dana aktif dicatat sekali per hari dengan nominal hariannya. Tanggal yang sudah disisihkan otomatis dilewati, jadi aman untuk mengejar hari yang terlewat.</p>
+                <Submit pendingText="Mencatat…">Sisihkan</Submit>
+              </ModalForm>
+            </Modal>
           </>
         }
       />

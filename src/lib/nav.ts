@@ -16,7 +16,7 @@ export const NAV: NavItem[] = [
   { href: "/borongan", label: "Borongan", icon: "users", perms: ["borongan.view"] },
   { href: "/karyawan", label: "Karyawan", icon: "users", perms: ["employee.view"] },
   { href: "/gaji", label: "Penggajian", icon: "wallet", perms: ["payroll.view", "payroll.self"] },
-  { href: "/finance", label: "Finance Inbox", icon: "inbox", perms: ["finance.view"] },
+  { href: "/finance", label: "Transaksi", icon: "inbox", perms: ["finance.view"] },
   { href: "/akuntansi", label: "Akuntansi", icon: "book", perms: ["accounting.view"] },
   { href: "/pengaturan", label: "Pengaturan", icon: "cog", perms: ["settings.manage", "users.manage", "telegram.manage", "audit.view"] },
 ];
@@ -24,7 +24,7 @@ export const NAV: NavItem[] = [
 /** Label pendek untuk navigasi bawah (mobile) */
 const SHORT_LABEL: Record<string, string> = {
   "/": "Beranda", "/analitik": "Analitik", "/laporan": "Laporan", "/absensi": "Absen", "/stok": "Stok", "/produk": "Produk",
-  "/finance": "Finance", "/akuntansi": "Akuntansi", "/gaji": "Gaji", "/karyawan": "Karyawan", "/pengaturan": "Setelan", "/borongan": "Borongan",
+  "/finance": "Transaksi", "/akuntansi": "Akuntansi", "/gaji": "Gaji", "/karyawan": "Karyawan", "/pengaturan": "Setelan", "/borongan": "Borongan",
 };
 
 /** 5 menu prioritas per role untuk navigasi bawah di layar HP (urut kiri → kanan) */

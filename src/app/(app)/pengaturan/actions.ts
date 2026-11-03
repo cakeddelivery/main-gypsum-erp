@@ -51,6 +51,9 @@ export const saveBank = action("settings.manage", async (fd, user) => {
   const data = { name: z.string().min(2).parse(str(fd, "name")), coaAccountId: str(fd, "coaAccountId"), aliases: str(fd, "aliases").toLowerCase(), active: id ? bool(fd, "active") : true };
   const coa = await prisma.coaAccount.findUniqueOrThrow({ where: { id: data.coaAccountId } });
   if (!coa.isCash) throw new Error("Akun COA rekening harus akun kas/bank");
+  // Satu rekening = satu akun COA. Bila dipakai bersama, saldo kedua rekening tercampur dan total saldo terhitung dobel.
+  const shared = await prisma.bankAccount.findFirst({ where: { coaAccountId: data.coaAccountId, active: true, ...(id ? { id: { not: id } } : {}) } });
+  if (shared && data.active) throw new Error(`Akun COA ${coa.code} ${coa.name} sudah dipakai rekening ${shared.name}. Buat akun COA kas/bank baru untuk rekening ini (Akuntansi › Bagan akun).`);
   const s = id ? await prisma.bankAccount.update({ where: { id }, data }) : await prisma.bankAccount.create({ data: { ...data, code: await autoCode.bank(prisma, data.name) } });
   await audit(user, "REKENING_DISIMPAN", "BankAccount", s.id, data);
   return "Rekening tersimpan";

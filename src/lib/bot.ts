@@ -7,7 +7,7 @@ import { approveAndBook, createTransaction, FinanceError, rejectTransaction, STA
 import { answerCallback, chatAction, downloadTelegramFile, editTelegram, esc, sendTelegram, type InlineButton } from "./telegram";
 import { saveProof } from "./storage";
 import { idr } from "./money";
-import { fmtDate, jakartaDateTime } from "./time";
+import { fmtDate, jakartaDateTime, txTime } from "./time";
 import { dailyRecapText } from "./jobs";
 import { handleMenuCallback, handleMenuCommand, MENU_TEXT } from "./botMenu";
 import { clearSession, handleFlowCallback, handleFlowLocation, handleFlowText, type TgLocation } from "./botFlow";
@@ -61,7 +61,7 @@ export async function draftMessage(txId: string): Promise<{ text: string; button
     t.duplicateOfId ? "⚠️ Terindikasi duplikat dengan transaksi lain." : "",
   ].filter(Boolean);
   const buttons: InlineButton[][] = [];
-  if (t.status === "DIBUKUKAN" || t.status === "DITOLAK") return { text: lines.join("\n"), buttons };
+  if (t.status === "DIBUKUKAN" || t.status === "DITOLAK" || t.status === "DIBATALKAN") return { text: lines.join("\n"), buttons };
   if (!t.accountId) {
     lines.push("\nPilih rekening:");
     buttons.push(...chunk(banks.map((b) => ({ text: b.name, callback_data: `acc:${t.id}:${b.id}` })), 2));
@@ -164,7 +164,7 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     {
       direction: ex.direction,
       amount: ex.amount,
-      date: jakartaDateTime(ex.date!, "12:00"),
+      date: jakartaDateTime(ex.date!, txTime(ex.date!, ex.time)),
       accountId: ex.accountId,
       toAccountId: ex.toAccountId,
       categoryId: ex.categoryId,

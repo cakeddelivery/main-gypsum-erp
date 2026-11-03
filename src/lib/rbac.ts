@@ -49,7 +49,7 @@ export const PERMISSIONS = {
   "payroll.manage": "Hitung penggajian",
   "payroll.approve": "Setujui & bayar gaji",
   "payroll.self": "Lihat slip gaji sendiri",
-  "finance.view": "Lihat Finance Inbox",
+  "finance.view": "Lihat Transaksi",
   "finance.create": "Input transaksi",
   "finance.review": "Tinjau transaksi",
   "finance.approve": "Setujui & bukukan transaksi",

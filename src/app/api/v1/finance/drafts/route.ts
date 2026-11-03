@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { apiError, authenticateApi, withIdempotency } from "@/lib/apiAuth";
 import { createTransaction, FinanceError } from "@/lib/finance";
 import { saveProof } from "@/lib/storage";
-import { jakartaDateTime } from "@/lib/time";
+import { jakartaDateTime, txTime } from "@/lib/time";
 import { draftMessage } from "@/lib/bot";
 import { sendTelegram, telegramConfigured } from "@/lib/telegram";
 import { present, telegramActor } from "./shared";
@@ -60,7 +60,7 @@ export async function POST(req: Request) {
         {
           direction: b.direction,
           amount: b.amount,
-          date: jakartaDateTime(d, t ?? "12:00"),
+          date: jakartaDateTime(d, txTime(d, t?.slice(0, 5))),
           accountId: acc?.id ?? null,
           toAccountId: to?.id ?? null,
           categoryId: b.category_id ?? null,

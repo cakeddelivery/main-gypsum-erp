@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit",
     "kosongkan": "tsx scripts/kosongkan-data.ts",
     "rapikan:kode": "tsx scripts/rapikan-kode.ts",
+    "pisahkan:rekening": "tsx scripts/pisahkan-coa-rekening.ts",
     "backup": "bash scripts/backup.sh",
     "restore": "bash scripts/restore.sh",
     "backup:buka": "bash scripts/decrypt-backup.sh"

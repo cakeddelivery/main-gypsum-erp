@@ -3,10 +3,10 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int } from "@/lib/action";
-import { approveAndBook, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
+import { cancelBookedTransaction, approveAndBook, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
 import { saveProof } from "@/lib/storage";
 import { extractTransaction } from "@/lib/extract";
-import { jakartaDateTime } from "@/lib/time";
+import { jakartaDateTime, txTime } from "@/lib/time";
 import { assertPerm } from "@/lib/auth";
 import type { TxDirection } from "@prisma/client";
 
@@ -14,7 +14,7 @@ async function readForm(fd: FormData): Promise<TxInput> {
   const direction = z.enum(["MASUK", "KELUAR", "TRANSFER"]).parse(str(fd, "direction")) as TxDirection;
   const date = str(fd, "date");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Tanggal wajib diisi");
-  const time = str(fd, "time") || "12:00";
+  const time = txTime(date, str(fd, "time"));
   let proofPath: string | null = null;
   let proofMime: string | null = null;
   const file = fd.get("proof");
@@ -74,6 +74,11 @@ export const rejectTx = action(["finance.review", "finance.approve"], async (fd,
   await rejectTransaction(str(fd, "id"), { id: user.id, name: user.name }, str(fd, "reason"));
   return "Transaksi ditolak";
 }, ["/finance", "/"]);
+
+export const cancelTx = action("finance.approve", async (fd, user) => {
+  const { reversal } = await cancelBookedTransaction(str(fd, "id"), { id: user.id, name: user.name }, str(fd, "reason"));
+  return `Transaksi dibatalkan (jurnal pembalik ${reversal.number})`;
+}, ["/finance", "/", "/akuntansi"]);
 
 /** Ekstraksi teks (fallback aturan) untuk membantu pengisian form */
 export async function extractAction(text: string) {

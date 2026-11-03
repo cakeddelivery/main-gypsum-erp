@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 import { addDays, dateOnly, dayRange, jakartaParts, monthRange, todayStr } from "./time";
-import { profitLoss } from "./accounting";
+import { cashMovements, profitLoss } from "./accounting";
 
 export async function productionSummary(date: string, filter: { divisionId?: string | null; employeeId?: string | null } = {}) {
   const where = { date: dateOnly(date), ...(filter.divisionId ? { divisionId: filter.divisionId } : {}), ...(filter.employeeId ? { employeeId: filter.employeeId } : {}) };
@@ -51,25 +51,24 @@ export async function financeMonth(storeId?: string | null) {
   const p = jakartaParts();
   const { start, end } = monthRange(p.year, p.month);
   const pl = await profitLoss({ start, end, storeId });
-  const flows = await prisma.financeTransaction.groupBy({ by: ["direction"], where: { status: "DIBUKUKAN", date: { gte: start, lt: end }, ...(storeId ? { storeId } : {}) }, _sum: { amount: true } });
+  // Uang masuk/keluar dari jurnal kas (bukan hanya menu Transaksi) agar pembelian, gaji, kasbon, dll. ikut terhitung
+  const moves = await cashMovements(start, end, storeId);
   const sales = await prisma.financeTransaction.aggregate({ where: { status: "DIBUKUKAN", direction: "MASUK", date: { gte: start, lt: end }, ...(storeId ? { storeId } : {}) }, _sum: { amount: true } });
-  const g = (d: string) => Number(flows.find((f) => f.direction === d)?._sum.amount ?? 0);
-  return { pl, income: g("MASUK"), expense: g("KELUAR"), sales: Number(sales._sum.amount ?? 0), month: p.month, year: p.year };
+  const income = moves.filter((m) => m.amount > 0).reduce((s, m) => s + m.amount, 0);
+  const expense = moves.filter((m) => m.amount < 0).reduce((s, m) => s - m.amount, 0);
+  return { pl, income, expense, sales: Number(sales._sum.amount ?? 0), month: p.month, year: p.year };
 }
 
 export async function financeTrend(days: number, storeId?: string | null) {
   const end = todayStr();
   const start = addDays(end, -(days - 1));
-  const txs = await prisma.financeTransaction.findMany({
-    where: { status: "DIBUKUKAN", direction: { in: ["MASUK", "KELUAR"] }, date: { gte: dayRange(start).start, lt: dayRange(end).end }, ...(storeId ? { storeId } : {}) },
-    select: { date: true, amount: true, direction: true },
-  });
+  const moves = await cashMovements(dayRange(start).start, dayRange(end).end, storeId);
   const map = new Map<string, { masuk: number; keluar: number }>();
-  for (const t of txs) {
+  for (const t of moves) {
     const d = todayStr(t.date);
     const cur = map.get(d) ?? { masuk: 0, keluar: 0 };
-    if (t.direction === "MASUK") cur.masuk += Number(t.amount);
-    else cur.keluar += Number(t.amount);
+    if (t.amount > 0) cur.masuk += t.amount;
+    else cur.keluar -= t.amount;
     map.set(d, cur);
   }
   return Array.from({ length: days }, (_, i) => {
