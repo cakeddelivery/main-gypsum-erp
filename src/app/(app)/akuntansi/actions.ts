@@ -1,6 +1,7 @@
 "use server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { autoCode } from "@/lib/codes";
 import { action, str, optStr, int } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { closePeriod, postJournal, reverseJournal, COA, type LineInput } from "@/lib/accounting";
@@ -41,8 +42,9 @@ export const saveCoa = action(
   "accounting.post",
   async (fd, user) => {
     const id = optStr(fd, "id");
-    const data = { code: z.string().regex(/^\d-\d{4}$/, "Format kode: 6-1234").parse(str(fd, "code")), name: z.string().min(3).parse(str(fd, "name")), type: str(fd, "type") as AccountType, isCash: fd.get("isCash") === "on", active: id ? fd.get("active") === "on" : true };
-    const a = id ? await prisma.coaAccount.update({ where: { id }, data }) : await prisma.coaAccount.create({ data });
+    const data = { name: z.string().min(3).parse(str(fd, "name")), type: str(fd, "type") as AccountType, isCash: fd.get("isCash") === "on", active: id ? fd.get("active") === "on" : true };
+    // Kode akun otomatis: digit tipe + kelompok berikutnya (6-2000); kode lama tidak diubah karena dipakai jurnal sistem
+    const a = id ? await prisma.coaAccount.update({ where: { id }, data }) : await prisma.coaAccount.create({ data: { ...data, code: await autoCode.coa(prisma, data.type) } });
     await audit(user, id ? "AKUN_COA_DIUBAH" : "AKUN_COA_DIBUAT", "CoaAccount", a.id, data);
     return "Akun tersimpan";
   },

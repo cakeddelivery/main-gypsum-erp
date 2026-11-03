@@ -4,7 +4,7 @@ import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { addDays, fmtDay, todayStr } from "@/lib/time";
-import { Badge, Empty, Field, PageHeader } from "@/components/ui";
+import { AutoCode, Badge, Empty, Field, PageHeader } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ActionForm, Submit } from "@/components/ActionForm";
@@ -36,7 +36,7 @@ export default async function GajiPage() {
             {user.can("payroll.manage") && (
               <Modal trigger="+ Periode harian" title="Periode upah harian / campuran">
                 <ModalForm action={createPeriod} className="space-y-3">
-                  <Field label="Kode periode"><input name="code" className="input" defaultValue={`GJ-${t}`} required /></Field>
+                  <AutoCode label="Kode periode" example={`GJ-${addDays(t, -6).replace(/-/g, "")}`} hint="GJ + tanggal mulai, dibuat otomatis" />
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Mulai"><input type="date" name="startDate" defaultValue={addDays(t, -6)} className="input" /></Field>
                     <Field label="Selesai"><input type="date" name="endDate" defaultValue={t} className="input" /></Field>

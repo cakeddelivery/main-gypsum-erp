@@ -1,5 +1,6 @@
 import { Prisma, type ItemType } from "@prisma/client";
 import { prisma } from "./db";
+import { autoCode, nextSequence } from "./codes";
 import { COA, postJournal } from "./accounting";
 import { audit } from "./audit";
 import { INVENTORY_COA, StockError, locationSettings, recordMovement } from "./stock";
@@ -12,14 +13,7 @@ type Actor = { id: string; name: string };
 
 /** Kode item berikutnya per awalan, mis. BU-001; melewati kode yang sudah dipakai manual */
 export async function nextItemSku(tx: Tx, prefix: string) {
-  for (;;) {
-    const rows = await tx.$queryRaw<{ value: number }[]>`
-      INSERT INTO "Counter"("key","value") VALUES (${`SKU-${prefix}`}, 1)
-      ON CONFLICT ("key") DO UPDATE SET "value" = "Counter"."value" + 1
-      RETURNING "value"`;
-    const sku = `${prefix}-${String(rows[0].value).padStart(3, "0")}`;
-    if (!(await tx.item.findUnique({ where: { sku } }))) return sku;
-  }
+  return nextSequence(tx, prefix, async (sku) => !!(await tx.item.findUnique({ where: { sku } })), { key: `SKU-${prefix}` });
 }
 
 export type ItemInput = {
@@ -64,7 +58,7 @@ export async function saveItemRecord(input: ItemInput, actor: Actor) {
     const newSupplier = input.newSupplierName?.trim();
     if (!supplierId && newSupplier) {
       const existing = await tx.supplier.findFirst({ where: { name: { equals: newSupplier, mode: "insensitive" } } });
-      supplierId = existing?.id ?? (await tx.supplier.create({ data: { name: newSupplier } })).id;
+      supplierId = existing?.id ?? (await tx.supplier.create({ data: { name: newSupplier, code: await autoCode.supplier(tx) } })).id;
     }
     const data = {
       name,

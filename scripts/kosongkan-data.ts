@@ -57,7 +57,7 @@ const STEPS: { label: string; sql: string; count?: string }[] = [
   { label: "Akun login karyawan dinonaktifkan", sql: `UPDATE ${q("User")} SET "employeeId" = NULL, "active" = false WHERE "employeeId" IS NOT NULL AND "role" <> 'OWNER'`, count: `SELECT count(*) FROM ${q("User")} WHERE "employeeId" IS NOT NULL AND "role" <> 'OWNER'` },
   { label: "Akun OWNER dilepas dari data karyawan (tetap aktif)", sql: `UPDATE ${q("User")} SET "employeeId" = NULL WHERE "employeeId" IS NOT NULL AND "role" = 'OWNER'`, count: `SELECT count(*) FROM ${q("User")} WHERE "employeeId" IS NOT NULL AND "role" = 'OWNER'` },
   { label: "Karyawan", sql: `DELETE FROM ${q("Employee")}` },
-  { label: "Nomor urut dokumen (mulai dari 0001 lagi)", sql: `DELETE FROM ${q("Counter")} WHERE "key" NOT LIKE 'SKU-%'`, count: `SELECT count(*) FROM ${q("Counter")} WHERE "key" NOT LIKE 'SKU-%'` },
+  { label: "Nomor urut dokumen (mulai dari 0001 lagi)", sql: `DELETE FROM ${q("Counter")} WHERE "key" NOT LIKE 'SKU-%' AND "key" NOT LIKE 'KODE-%'`, count: `SELECT count(*) FROM ${q("Counter")} WHERE "key" NOT LIKE 'SKU-%' AND "key" NOT LIKE 'KODE-%'` },
   { label: "Notifikasi sudah dibaca", sql: `DELETE FROM ${q("AlertRead")}` },
   { label: "Log notifikasi", sql: `DELETE FROM ${q("NotificationLog")}` },
   { label: "Cache API (idempotensi)", sql: `DELETE FROM ${q("IdempotencyRecord")}` },

@@ -5,6 +5,7 @@ import { action, str, optStr, int } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { ForbiddenError, hashPassword } from "@/lib/auth";
 import { dateOnly } from "@/lib/time";
+import { autoCode } from "@/lib/codes";
 import type { EmployeeStatus, Role, WageType } from "@prisma/client";
 
 export const saveEmployee = action(
@@ -14,7 +15,6 @@ export const saveEmployee = action(
     const join = str(fd, "joinDate");
     const resign = str(fd, "resignDate");
     const data = {
-      code: z.string().min(2, "Kode wajib").parse(str(fd, "code").toUpperCase()),
       name: z.string().min(2, "Nama wajib").parse(str(fd, "name")),
       divisionId: z.string().min(1, "Divisi wajib").parse(str(fd, "divisionId")),
       position: z.string().min(2, "Jabatan wajib").parse(str(fd, "position")),
@@ -29,7 +29,8 @@ export const saveEmployee = action(
     if (data.wageType === "BULANAN" && !data.joinDate) throw new Error("Karyawan bulanan wajib punya tanggal masuk (dasar tanggal gajian)");
     if (data.wageType === "BULANAN" && data.monthlySalary <= BigInt(0)) throw new Error("Isi gaji bulanan");
     if (resign && join && resign < join) throw new Error("Tanggal resign tidak boleh sebelum tanggal masuk");
-    const e = id ? await prisma.employee.update({ where: { id }, data }) : await prisma.employee.create({ data });
+    // Kode karyawan otomatis per divisi (CTK-001); kode tetap walau pindah divisi
+    const e = id ? await prisma.employee.update({ where: { id }, data }) : await prisma.employee.create({ data: { ...data, code: await autoCode.employee(prisma, data.divisionId) } });
     if (data.status === "NONAKTIF") await prisma.user.updateMany({ where: { employeeId: e.id }, data: { active: false } });
     await audit(user, id ? "KARYAWAN_DIUBAH" : "KARYAWAN_DIBUAT", "Employee", e.id, data);
     return "Data karyawan tersimpan";

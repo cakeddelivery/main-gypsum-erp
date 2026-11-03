@@ -320,9 +320,3 @@ export const DIVISION_SETUP: Record<ReportTemplate, DivisionSetup> = {
     ],
   },
 };
-
-/** SKU bahan baku divisi: BB-<kode divisi>-<NAMA> */
-export function materialSku(divCode: string, name: string) {
-  const slug = name.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 32);
-  return `BB-${divCode}-${slug}`;
-}

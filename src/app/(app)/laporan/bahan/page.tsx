@@ -2,7 +2,7 @@ import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { REPORT_TEMPLATES, TEMPLATES, toEntries } from "@/lib/shiftReport";
 import { ActionForm, Submit } from "@/components/ActionForm";
-import { Badge, Card, Empty, Field, PageHeader, Tabs } from "@/components/ui";
+import { AutoCode, Badge, Card, Empty, Field, PageHeader, Tabs } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ChecklistEditor } from "./ChecklistEditor";
@@ -31,7 +31,7 @@ export default async function BahanDivisiPage({ searchParams }: { searchParams: 
   const divForm = (d?: (typeof divisions)[number]) => (
     <ModalForm action={saveDivision} className="space-y-3">
       {d && <input type="hidden" name="id" value={d.id} />}
-      {!d && <Field label="Kode"><input name="code" className="input" placeholder="mis. PRD" required /></Field>}
+      <AutoCode value={d?.code} example="PRD" hint="Singkatan nama divisi, dipakai sebagai awalan kode karyawan & bahan" />
       <Field label="Nama divisi"><input name="name" defaultValue={d?.name} className="input" required /></Field>
       <Field label="Format laporan shift">
         <select name="reportTemplate" defaultValue={d?.reportTemplate ?? ""} className="input">

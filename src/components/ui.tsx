@@ -71,6 +71,15 @@ export function Field({ label, children, hint, className = "" }: { label: string
   );
 }
 
+/** Kolom kode yang dibuat otomatis oleh sistem (tidak bisa diketik) */
+export function AutoCode({ value, example, label = "Kode", hint, className = "" }: { value?: string | null; example: string; label?: string; hint?: string; className?: string }) {
+  return (
+    <Field label={label} className={className} hint={value ? undefined : hint ?? "Dibuat otomatis saat disimpan"}>
+      <input value={value ?? ""} placeholder={`Otomatis (Cth: ${example})`} className="input bg-slate-100 font-mono dark:bg-slate-800" readOnly tabIndex={-1} />
+    </Field>
+  );
+}
+
 export function Tabs({ tabs, current }: { tabs: { href: string; label: string; count?: number; key: string }[]; current: string }) {
   return (
     <div className="no-print -mx-1 mb-4 flex gap-1 overflow-x-auto pb-1">

@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
-import { DIVISION_SETUP, REPORT_TEMPLATES, materialSku } from "./shiftReport";
+import { DIVISION_SETUP, REPORT_TEMPLATES } from "./shiftReport";
+import { autoCode } from "./codes";
 
 const REPLACED_FLAG = "bahan_baku_divisi_v1";
 
@@ -29,9 +30,9 @@ export async function applyDivisionSetup(db: PrismaClient, opts: { replaceOld?: 
       div = await db.division.update({ where: { id: div.id }, data: { reportTemplate: t, active: true, ...(empty ? { checklist: setup.checklist } : {}) } });
     }
     for (const [i, [name, unit, limit]] of setup.materials.entries()) {
-      const sku = materialSku(setup.code, name);
-      const ex = await db.item.findUnique({ where: { sku } });
+      const ex = await db.item.findFirst({ where: { divisionId: div.id, name: { equals: name, mode: "insensitive" } } });
       if (ex) continue;
+      const sku = await autoCode.divisionMaterial(db, div.code);
       await db.item.create({ data: { sku, name, unit, type: "BAHAN_BAKU", minStock: limit, divisionId: div.id, sortOrder: i } });
       res.materialsCreated++;
     }

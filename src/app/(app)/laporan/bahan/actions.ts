@@ -3,7 +3,8 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, bool, dec, int, optStr, str } from "@/lib/action";
 import { audit } from "@/lib/audit";
-import { isTemplate, materialSku, type ChecklistTask } from "@/lib/shiftReport";
+import { isTemplate, type ChecklistTask } from "@/lib/shiftReport";
+import { autoCode } from "@/lib/codes";
 
 const PATHS = ["/laporan", "/stok"];
 
@@ -22,10 +23,8 @@ export const saveMaterial = action(
     if (id) {
       item = await prisma.item.update({ where: { id }, data });
     } else {
-      // SKU otomatis, diberi akhiran bila nama yang sama pernah dipakai
-      const base = materialSku(division.code, name);
-      let sku = base;
-      for (let i = 2; await prisma.item.findUnique({ where: { sku } }); i++) sku = `${base}-${i}`;
+      // Kode otomatis per divisi: BB-PRD-001
+      const sku = await autoCode.divisionMaterial(prisma, division.code);
       const last = await prisma.item.aggregate({ where: { divisionId }, _max: { sortOrder: true } });
       item = await prisma.item.create({ data: { ...data, sku, type: "BAHAN_BAKU", sortOrder: str(fd, "sortOrder") ? data.sortOrder : (last._max.sortOrder ?? -1) + 1 } });
     }
@@ -82,7 +81,7 @@ export const saveDivision = action(
     };
     const d = id
       ? await prisma.division.update({ where: { id }, data })
-      : await prisma.division.create({ data: { ...data, code: z.string().regex(/^[A-Z0-9]{2,8}$/, "Kode 2-8 huruf besar/angka").parse(str(fd, "code").toUpperCase()) } });
+      : await prisma.division.create({ data: { ...data, code: await autoCode.division(prisma, data.name) } });
     await audit(user, id ? "DIVISI_DIUBAH" : "DIVISI_DIBUAT", "Division", d.id, data);
     return "Divisi tersimpan";
   },

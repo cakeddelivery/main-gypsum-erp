@@ -1,6 +1,7 @@
 "use server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { autoCode } from "@/lib/codes";
 import { action, str, optStr, int, dec, bool } from "@/lib/action";
 import { recordMovement } from "@/lib/stock";
 import { audit } from "@/lib/audit";
@@ -117,8 +118,8 @@ export const saveLocation = action(
   "master.manage",
   async (fd, user) => {
     const id = optStr(fd, "id");
-    const data = { code: z.string().min(2).parse(str(fd, "code").toUpperCase()), name: z.string().min(2).parse(str(fd, "name")), divisionId: optStr(fd, "divisionId") };
-    const s = id ? await prisma.location.update({ where: { id }, data }) : await prisma.location.create({ data });
+    const data = { name: z.string().min(2).parse(str(fd, "name")), divisionId: optStr(fd, "divisionId") };
+    const s = id ? await prisma.location.update({ where: { id }, data }) : await prisma.location.create({ data: { ...data, code: await autoCode.location(prisma, data.name) } });
     await audit(user, "LOKASI_DISIMPAN", "Location", s.id, data);
     return "Lokasi tersimpan";
   },

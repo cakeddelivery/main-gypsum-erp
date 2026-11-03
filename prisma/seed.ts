@@ -112,8 +112,8 @@ async function main() {
   const loc: Record<string, string> = {};
   for (const [code, name, divisionId] of locs) loc[code] = (await prisma.location.upsert({ where: { code }, create: { code, name, divisionId }, update: {} })).id;
 
-  const sup = (await prisma.supplier.findFirst({ where: { name: "CV Gypsum Jaya" } })) ?? (await prisma.supplier.create({ data: { name: "CV Gypsum Jaya", phone: "0812-0000-0001", address: "Surabaya" } }));
-  const sup2 = (await prisma.supplier.findFirst({ where: { name: "Toko Cat Warna" } })) ?? (await prisma.supplier.create({ data: { name: "Toko Cat Warna", phone: "0812-0000-0002" } }));
+  const sup = (await prisma.supplier.findFirst({ where: { name: "CV Gypsum Jaya" } })) ?? (await prisma.supplier.create({ data: { code: "SUP-001", name: "CV Gypsum Jaya", phone: "0812-0000-0001", address: "Surabaya" } }));
+  const sup2 = (await prisma.supplier.findFirst({ where: { name: "Toko Cat Warna" } })) ?? (await prisma.supplier.create({ data: { code: "SUP-002", name: "Toko Cat Warna", phone: "0812-0000-0002" } }));
   const gc = (await prisma.gypsumCharacter.findFirst({ where: { name: "Gypsum Super Putih" } })) ?? (await prisma.gypsumCharacter.create({ data: { name: "Gypsum Super Putih", waterRatio: "1 : 0,6", settingMinutes: 20, hardness: "Sedang", note: "Untuk karakter detail halus" } }));
 
   const items: [string, string, "BAHAN_BAKU" | "BARANG_DALAM_PROSES" | "BARANG_JADI", string, number, number, string | null][] = [

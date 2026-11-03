@@ -1,6 +1,6 @@
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
-import { Field } from "@/components/ui";
+import { AutoCode, Field } from "@/components/ui";
 import { ITEM_CATEGORIES } from "@/lib/itemCatalog";
 import { saveProduct } from "./actions";
 import type { Product } from "@prisma/client";
@@ -13,9 +13,7 @@ export function ProductForm({ p, stores, items, hpp, minStock }: { p?: Product; 
   return (
     <ModalForm action={saveProduct} className="grid grid-cols-2 gap-3">
       {p && <input type="hidden" name="id" value={p.id} />}
-      <Field label="Kode Produk Jadi" className="col-span-2" hint={p ? undefined : "Kode dibuat otomatis berdasarkan kategori & nomor urut."}>
-        <input name="sku" defaultValue={p?.sku} placeholder="Otomatis terbuat (Cth: MG-001)" className={p ? "input" : ro} readOnly={!p} />
-      </Field>
+      <AutoCode label="Kode Produk Jadi" className="col-span-2" value={p?.sku} example="MG-001" hint="Kode dibuat otomatis berdasarkan kategori & nomor urut." />
       <Field label="Nama Produk Mainan" className="col-span-2"><input name="name" defaultValue={p?.name} placeholder="Cth: Patung Gypsum Dinosaurus Set" className="input" required /></Field>
       <Field label="Kategori Produk" className="col-span-2"><select name="category" defaultValue={p?.category ?? "Mainan Gypsum"} className="input">{ITEM_CATEGORIES.BARANG_JADI.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}</select></Field>
       <Field label="Tipe"><select name="type" defaultValue={p?.type} className="input">{Object.entries(TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>

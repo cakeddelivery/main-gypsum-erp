@@ -8,6 +8,7 @@ import { ALL_PERMISSIONS, ROLES, DEFAULT_MATRIX } from "@/lib/rbac";
 import { generateApiKey, API_SCOPES } from "@/lib/apiAuth";
 import { sendDailyRecap } from "@/lib/jobs";
 import { setBotCommands } from "@/lib/telegram";
+import { autoCode } from "@/lib/codes";
 import type { Role, TxDirection } from "@prisma/client";
 
 const P = ["/pengaturan"];
@@ -22,16 +23,16 @@ export const saveOrg = action("settings.manage", async (fd, user) => {
 export const saveStore = action("settings.manage", async (fd, user) => {
   const id = optStr(fd, "id");
   const org = await prisma.organization.findFirstOrThrow();
-  const data = { code: z.string().min(2).parse(str(fd, "code").toUpperCase()), name: z.string().min(2).parse(str(fd, "name")), active: id ? bool(fd, "active") : true };
-  const s = id ? await prisma.store.update({ where: { id }, data }) : await prisma.store.create({ data: { ...data, organizationId: org.id } });
+  const data = { name: z.string().min(2).parse(str(fd, "name")), active: id ? bool(fd, "active") : true };
+  const s = id ? await prisma.store.update({ where: { id }, data }) : await prisma.store.create({ data: { ...data, code: await autoCode.store(prisma, data.name), organizationId: org.id } });
   await audit(user, "TOKO_DISIMPAN", "Store", s.id, data);
   return "Toko tersimpan";
 }, P);
 
 export const saveDivision = action("settings.manage", async (fd, user) => {
   const id = optStr(fd, "id");
-  const data = { code: z.string().min(2).parse(str(fd, "code").toUpperCase()), name: z.string().min(2).parse(str(fd, "name")), active: id ? bool(fd, "active") : true };
-  const s = id ? await prisma.division.update({ where: { id }, data }) : await prisma.division.create({ data });
+  const data = { name: z.string().min(2).parse(str(fd, "name")), active: id ? bool(fd, "active") : true };
+  const s = id ? await prisma.division.update({ where: { id }, data }) : await prisma.division.create({ data: { ...data, code: await autoCode.division(prisma, data.name) } });
   await audit(user, "DIVISI_DISIMPAN", "Division", s.id, data);
   return "Divisi tersimpan";
 }, P);
@@ -39,18 +40,18 @@ export const saveDivision = action("settings.manage", async (fd, user) => {
 const hhmm = z.string().regex(/^\d{2}:\d{2}$/, "Format jam HH:MM");
 export const saveShift = action("settings.manage", async (fd, user) => {
   const id = optStr(fd, "id");
-  const data = { code: z.string().min(1).parse(str(fd, "code").toUpperCase()), name: z.string().min(2).parse(str(fd, "name")), startTime: hhmm.parse(str(fd, "startTime")), endTime: hhmm.parse(str(fd, "endTime")), toleranceMinutes: int(fd, "toleranceMinutes"), active: id ? bool(fd, "active") : true };
-  const s = id ? await prisma.shift.update({ where: { id }, data }) : await prisma.shift.create({ data });
+  const data = { name: z.string().min(2).parse(str(fd, "name")), startTime: hhmm.parse(str(fd, "startTime")), endTime: hhmm.parse(str(fd, "endTime")), toleranceMinutes: int(fd, "toleranceMinutes"), active: id ? bool(fd, "active") : true };
+  const s = id ? await prisma.shift.update({ where: { id }, data }) : await prisma.shift.create({ data: { ...data, code: await autoCode.shift(prisma) } });
   await audit(user, "SHIFT_DISIMPAN", "Shift", s.id, data);
   return "Shift tersimpan";
 }, P);
 
 export const saveBank = action("settings.manage", async (fd, user) => {
   const id = optStr(fd, "id");
-  const data = { code: z.string().min(2).parse(str(fd, "code").toUpperCase()), name: z.string().min(2).parse(str(fd, "name")), coaAccountId: str(fd, "coaAccountId"), aliases: str(fd, "aliases").toLowerCase(), active: id ? bool(fd, "active") : true };
+  const data = { name: z.string().min(2).parse(str(fd, "name")), coaAccountId: str(fd, "coaAccountId"), aliases: str(fd, "aliases").toLowerCase(), active: id ? bool(fd, "active") : true };
   const coa = await prisma.coaAccount.findUniqueOrThrow({ where: { id: data.coaAccountId } });
   if (!coa.isCash) throw new Error("Akun COA rekening harus akun kas/bank");
-  const s = id ? await prisma.bankAccount.update({ where: { id }, data }) : await prisma.bankAccount.create({ data });
+  const s = id ? await prisma.bankAccount.update({ where: { id }, data }) : await prisma.bankAccount.create({ data: { ...data, code: await autoCode.bank(prisma, data.name) } });
   await audit(user, "REKENING_DISIMPAN", "BankAccount", s.id, data);
   return "Rekening tersimpan";
 }, P);

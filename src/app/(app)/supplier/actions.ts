@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, bool, optStr, str } from "@/lib/action";
 import { audit } from "@/lib/audit";
+import { autoCode } from "@/lib/codes";
 
 const data = (fd: FormData) => ({
   name: z.string().min(2, "Nama minimal 2 huruf").parse(str(fd, "name")),
@@ -17,7 +18,7 @@ export const saveSupplier = action(
   async (fd, user) => {
     const id = optStr(fd, "id");
     const d = data(fd);
-    const s = id ? await prisma.supplier.update({ where: { id }, data: d }) : await prisma.supplier.create({ data: d });
+    const s = id ? await prisma.supplier.update({ where: { id }, data: d }) : await prisma.supplier.create({ data: { ...d, code: await autoCode.supplier(prisma) } });
     await audit(user, "SUPPLIER_DISIMPAN", "Supplier", s.id, d);
     return "Supplier tersimpan";
   },
@@ -42,7 +43,7 @@ export const saveCustomer = action(
   async (fd, user) => {
     const id = optStr(fd, "id");
     const d = data(fd);
-    const c = id ? await prisma.customer.update({ where: { id }, data: d }) : await prisma.customer.create({ data: d });
+    const c = id ? await prisma.customer.update({ where: { id }, data: d }) : await prisma.customer.create({ data: { ...d, code: await autoCode.customer(prisma) } });
     await audit(user, "PELANGGAN_DISIMPAN", "Customer", c.id, d);
     return "Pelanggan tersimpan";
   },
