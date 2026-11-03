@@ -13,6 +13,7 @@
     "cek:password": "tsx scripts/cek-password.ts",
     "test": "bash tests/global-reset.sh && vitest run",
     "typecheck": "tsc --noEmit",
+    "kosongkan": "tsx scripts/kosongkan-data.ts",
     "backup": "bash scripts/backup.sh",
     "restore": "bash scripts/restore.sh",
     "backup:buka": "bash scripts/decrypt-backup.sh"
