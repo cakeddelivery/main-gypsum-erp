@@ -1,9 +1,10 @@
 import { prisma } from "./db";
 import { effectivePermissions } from "./rbac";
 import { extractTransaction, mergeReceipt } from "./extract";
-import { readReceipt } from "./receipt";
+import { readReceipt, type ReceiptRead } from "./receipt";
+import { ocrReceipt } from "./ocrReceipt";
 import { approveAndBook, createTransaction, FinanceError, rejectTransaction, STATUS_LABEL, submitForConfirmation, updateTransaction, missingFields } from "./finance";
-import { answerCallback, downloadTelegramFile, editTelegram, esc, sendTelegram, type InlineButton } from "./telegram";
+import { answerCallback, chatAction, downloadTelegramFile, editTelegram, esc, sendTelegram, type InlineButton } from "./telegram";
 import { saveProof } from "./storage";
 import { idr } from "./money";
 import { fmtDate, jakartaDateTime } from "./time";
@@ -138,7 +139,22 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   const [banks, cats] = await Promise.all([prisma.bankAccount.findMany({ where: { active: true } }), prisma.txCategory.findMany({ where: { active: true } })]);
   let ex = extractTransaction(text || "foto bukti", banks, cats);
   // Foto bukti + caption keterangan: nominal, tanggal & rekening dibaca dari foto
-  const receipt = photo && (!ex.amount || !ex.direction || !ex.accountId) ? await readReceipt(photo, text, banks).catch(() => null) : null;
+  let receipt: ReceiptRead | null = null;
+  if (photo && (!ex.amount || !ex.direction || !ex.accountId)) {
+    await chatAction(chatId, "typing").catch(() => {});
+    receipt = await readReceipt(photo, text, banks).catch((e) => {
+      console.error("readReceipt:", e instanceof Error ? e.message : e);
+      return null;
+    });
+    // AI tidak terpasang / kuota habis / tidak menemukan nominal → baca foto dengan OCR di server
+    if (!receipt?.amount || !receipt.direction || !receipt.account) {
+      const ocr = await ocrReceipt(photo, banks).catch((e) => {
+        console.error("ocrReceipt:", e instanceof Error ? e.message : e);
+        return null;
+      });
+      if (ocr) receipt = receipt ? { ...ocr, ...Object.fromEntries(Object.entries(receipt).filter(([, v]) => v != null)) } : ocr;
+    }
+  }
   ex = mergeReceipt(ex, text, receipt, banks, cats);
   if (!ex.amount || !ex.direction) {
     await sendTelegram(chatId, `Saya belum bisa membaca ${!ex.amount ? "nominal" : "jenis transaksi (masuk/keluar/transfer)"} dari ${photo ? "foto & keterangan" : "pesan"} ini. Tulis ulang dengan lebih lengkap, misal: <i>bayar gypsum 2jt dari seabank</i>.`);
