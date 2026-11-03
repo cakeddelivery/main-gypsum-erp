@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
-  serverExternalPackages: ["@prisma/client", "bcryptjs"],
+  serverExternalPackages: ["@prisma/client", "bcryptjs", "tesseract.js"],
   experimental: { serverActions: { bodySizeLimit: "6mb" } },
   async headers() {
     return [

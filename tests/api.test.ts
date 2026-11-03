@@ -68,6 +68,37 @@ describe("Webhook Telegram", () => {
     expect((await post({}, "salah-secret-xxxxx")).status).toBe(403);
   });
 
+  it("foto bukti + caption tanpa nominal, AI tidak tersedia → dibaca OCR server jadi draft", async () => {
+    const { vi } = await import("vitest");
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const img = readFileSync(join(__dirname, "fixtures", "bukti-seabank-qris.jpg"));
+    const sent: string[] = [];
+    const realFetch = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (!u.startsWith("https://api.telegram.org/")) return realFetch(url, init);
+      if (u.includes("/file/bot")) return new Response(img);
+      if (u.endsWith("/getFile")) return Response.json({ ok: true, result: { file_path: "photos/x.jpg" } });
+      if (u.endsWith("/sendMessage")) sent.push(JSON.parse(String(init?.body)).text);
+      return Response.json({ ok: true, result: { message_id: 1 } });
+    });
+    process.env.TELEGRAM_BOT_TOKEN = "123:test";
+    try {
+      await post({ update_id: 9, message: { message_id: 4700, chat: { id: Number(TG) }, from: { id: Number(TG) }, caption: "Isi ulang tabung LPG 2 pcs", photo: [{ file_id: "kecil" }, { file_id: "besar" }] } });
+    } finally {
+      process.env.TELEGRAM_BOT_TOKEN = "";
+      vi.unstubAllGlobals();
+    }
+    const t = await prisma.financeTransaction.findFirstOrThrow({ where: { telegramMessageId: "4700" } });
+    const acc = await prisma.bankAccount.findUniqueOrThrow({ where: { id: t.accountId! } });
+    expect(Number(t.amount)).toBe(40000);
+    expect(t.direction).toBe("KELUAR");
+    expect(acc.name).toMatch(/sea\s*bank/i);
+    expect(t.note).toContain("Isi ulang tabung LPG");
+    expect(sent.at(-1)).toContain("Draft dibuat");
+  }, 60_000);
+
   it("pesan → draft; tombol konfirmasi oleh identitas berizin → dibukukan", async () => {
     await post({ update_id: 1, message: { message_id: 77, chat: { id: Number(TG) }, from: { id: Number(TG) }, text: "bayar listrik 410rb dari kas hari ini" } });
     const t = await prisma.financeTransaction.findFirstOrThrow({ where: { telegramMessageId: "77" } });

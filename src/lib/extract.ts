@@ -102,7 +102,7 @@ export function extractTransaction(text: string, accounts: ExtractAccount[], cat
   let direction: Extraction["direction"] = null;
   if (/\b(transfer internal|pindah dana|pindah saldo|tarik saldo|tarik dana|pindahkan|withdraw|wd|penarikan)\b/.test(t)) direction = "TRANSFER";
   else if (/\b(masuk|terima|diterima|pemasukan|pendapatan|penjualan|cair|pencairan|dp dari)\b/.test(t)) direction = "MASUK";
-  else if (/\b(keluar|bayar|beli|pembelian|biaya|pengeluaran|belanja|ongkir|gaji|upah)\b/.test(t)) direction = "KELUAR";
+  else if (/\b(keluar|bayar|beli|pembelian|biaya|pengeluaran|belanja|ongkir|gaji|upah|isi ulang|refill|servis|service|sewa|tagihan)\b/.test(t)) direction = "KELUAR";
 
   let accountId: string | null = null;
   let toAccountId: string | null = null;
