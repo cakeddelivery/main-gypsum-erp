@@ -105,6 +105,9 @@ Alur: **Telegram Bot → Hermes AI Agent → Finance API `/api/v1` → Finance I
 - **📍 Absen**: tombol *Kirim lokasi* Telegram → cek area kerja (geofence) yang sama dengan web. Lokasi yang diteruskan, dipilih dari peta (venue), atau lebih tua dari 2 menit ditolak. Absensi diberi catatan "Absen via Telegram".
 - **🏭 Input produksi**: pilih (divisi →) karyawan, tanggal, shift, tahap, produk → ketik hasil baik & reject → penyebab reject → Simpan. Aturan sama dengan web (operator hanya dirinya, kapten hanya divisinya), stok & jurnal produksi ikut tercatat.
 - **📦 Stok**: cek stok per lokasi, mutasi stok (penerimaan/pengeluaran/transfer; penyesuaian hanya penyetuju stok), dan permintaan stok. Barang dicari dengan mengetik nama/kode.
+- **💵 Kasbon** (Tahap 3): karyawan melihat sisa kasbon sendiri; penyetuju gaji memberi kasbon (karyawan → nominal → potongan per gajian → rekening).
+- **🛒 Pembelian** (Tahap 3): supplier (pilih atau ketik nama baru) → barang + jumlah + total harga (bisa beberapa barang) → dibayar sekarang (lunas / DP / tempo) → rekening → jatuh tempo. Memakai `createPurchase` yang sama dengan web; foto bukti tetap lewat web.
+- **🧑‍🏭 Borongan** (Tahap 3): terima serah terima, catat setoran hasil beberapa pekerja berturut-turut, kirim bahan ke titik (pengelola) / hasil ke gudang (koordinator), lihat & bayar upah belum dibayar.
 - Isian bertahap disimpan di tabel `BotSession` (kedaluwarsa 30 menit). `/batal` atau tombol ❌ membatalkan; saat isian aktif, teks & lokasi tidak diteruskan ke Hermes.
 
 ## Pengujian

@@ -145,6 +145,39 @@ describe("Webhook Telegram", () => {
     await prisma.workSite.deleteMany({ where: { name: "Workshop tes" } });
   });
 
+  it("Tahap 3: finance memberi kasbon & mencatat pembelian lunas lewat bot", async () => {
+    const id = Number(TG);
+    let n = 600;
+    const cb = (data: string) => post({ update_id: ++n, callback_query: { id: `k${n}`, from: { id }, data, message: { message_id: 700, chat: { id } } } });
+    const msg = (text: string) => post({ update_id: ++n, message: { message_id: ++n, date: Math.floor(Date.now() / 1000), chat: { id }, from: { id }, text } });
+    const op = await prisma.user.findUniqueOrThrow({ where: { username: "operator" } });
+    const bank = await prisma.bankAccount.findFirstOrThrow({ where: { active: true }, orderBy: { code: "asc" } });
+    await cb("f:start:ksb");
+    await cb(`f:${op.employeeId}`);
+    await msg("250rb");
+    await cb("f:0");
+    await cb(`f:${bank.id}`);
+    await cb("f:skip");
+    await cb("f:ok");
+    const a = await prisma.cashAdvance.findFirstOrThrow({ where: { employeeId: op.employeeId! }, orderBy: { createdAt: "desc" } });
+    expect([Number(a.amount), Number(a.installment), a.paidFromAccountId]).toEqual([250000, 0, bank.id]);
+
+    const item = await prisma.item.findFirstOrThrow({ where: { active: true, type: "BAHAN_BAKU" } });
+    await cb("f:start:beli");
+    await msg("Supplier Bot Tes");
+    await cb(`f:${item.id}`);
+    await msg("3");
+    await msg("90rb");
+    await cb("f:done");
+    await cb("f:full");
+    await cb(`f:${bank.id}`);
+    await cb("f:skip");
+    await cb("f:ok");
+    const p = await prisma.purchase.findFirstOrThrow({ where: { vendor: "Supplier Bot Tes" }, include: { lines: true } });
+    expect([p.term, Number(p.total), p.lines.length, Number(p.lines[0].qty)]).toEqual(["LUNAS", 90000, 1, 3]);
+    expect(await prisma.botSession.findUnique({ where: { chatId: TG } })).toBeNull();
+  });
+
   it("operator tidak bisa memulai mutasi stok lewat bot", async () => {
     await post({ update_id: 500, callback_query: { id: "m1", from: { id: 42 }, data: "f:start:mut", message: { message_id: 202, chat: { id: 42 } } } });
     expect(await prisma.botSession.findUnique({ where: { chatId: "42" } })).toBeNull();

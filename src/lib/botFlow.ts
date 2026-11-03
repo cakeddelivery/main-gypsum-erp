@@ -11,6 +11,9 @@ import { idr } from "./money";
 import { addDays, dateOnly, fmtDate, fmtDateTime, jakartaDateTime, todayStr } from "./time";
 import { answerCallback, editTelegram, esc, sendTelegram, type InlineButton } from "./telegram";
 import type { BotIdent } from "./botMenu";
+import { cancelRow, can, chunk, fmtQty, itemChoices, itemPrompt, MENU_TEXT, PAGE, pager, parseCount, parseQty, userDivision, type Ctx, type Data, type Prompt, type Session } from "./botKit";
+export { parseCount, parseQty } from "./botKit";
+import { T3_FLOWS, t3MenuRows } from "./botFlow3";
 
 /**
  * Isian bertahap di bot Telegram (Tahap 2): input hasil produksi + reject, absen dengan lokasi,
@@ -19,17 +22,7 @@ import type { BotIdent } from "./botMenu";
  */
 
 export const FLOW_TTL_MIN = 30;
-const MENU_TEXT = "📋 Menu";
-const PAGE = 10;
 
-type Data = Record<string, string | number | null | undefined>;
-type Session = { chatId: string; userId: string; flow: string; step: string; data: Data };
-type Prompt = { text: string; buttons?: InlineButton[][]; replyKeyboard?: { text: string; request_location?: boolean }[][] };
-type Ctx = { i: BotIdent; chatId: string; messageId?: number };
-
-const can = (i: BotIdent, ...p: Permission[]) => p.some((x) => i.perms.has(x));
-const chunk = <T,>(arr: T[], n: number) => Array.from({ length: Math.ceil(arr.length / n) }, (_, k) => arr.slice(k * n, k * n + n));
-const cancelRow: InlineButton[] = [{ text: "❌ Batal", callback_data: "f:x" }];
 
 // ---------- Sesi ----------
 export async function getSession(chatId: string): Promise<Session | null> {
@@ -74,22 +67,7 @@ async function restoreKeyboard(chatId: string, text: string) {
   await sendTelegram(chatId, text, { keyboard: [[MENU_TEXT]], type: "ISIAN" });
 }
 
-// ---------- Angka ----------
-export function parseCount(s: string): number | null {
-  const t = s.trim().replace(/\s/g, "");
-  if (/^\d{1,3}(\.\d{3})+$/.test(t)) return Number(t.replace(/\./g, ""));
-  if (!/^\d+$/.test(t)) return null;
-  return Number(t);
-}
 
-export function parseQty(s: string): number | null {
-  const t = s.trim().replace(/\s/g, "");
-  if (/^\d{1,3}(\.\d{3})+$/.test(t)) return Number(t.replace(/\./g, ""));
-  if (!/^\d+([.,]\d+)?$/.test(t)) return null;
-  return Number(t.replace(",", "."));
-}
-
-const fmtQty = (n: number) => (Math.round(n * 1000) / 1000).toLocaleString("id-ID");
 
 // ---------- Menu fitur Tahap 2 ----------
 export function inputMenuRows(i: BotIdent): InlineButton[][] {
@@ -99,6 +77,7 @@ export function inputMenuRows(i: BotIdent): InlineButton[][] {
   if (can(i, "production.create")) top.push({ text: "🏭 Input produksi", callback_data: "f:start:prod" });
   if (top.length) rows.push(top);
   if (can(i, "stock.move", "stock.request", "stock.view")) rows.push([{ text: "📦 Stok", callback_data: "f:start:stok" }]);
+  rows.push(...t3MenuRows(i));
   return rows;
 }
 
@@ -109,12 +88,6 @@ function stockMenu(i: BotIdent): Prompt {
   if (can(i, "stock.request")) rows.push([{ text: "📝 Permintaan stok", callback_data: "f:start:req" }]);
   rows.push([{ text: "⬅ Kembali", callback_data: "m:home" }]);
   return { text: "<b>📦 Stok</b>\nPilih menu:", buttons: rows };
-}
-
-async function userDivision(i: BotIdent): Promise<string | null> {
-  if (i.user.divisionId) return i.user.divisionId;
-  if (!i.user.employeeId) return null;
-  return (await prisma.employee.findUnique({ where: { id: i.user.employeeId }, select: { divisionId: true } }))?.divisionId ?? null;
 }
 
 // =====================================================================
@@ -174,13 +147,6 @@ async function prodPrompt(s: Session): Promise<Prompt> {
       return { text: `${head}\n\nSimpan hasil produksi ini?`, buttons: [[{ text: "✅ Simpan", callback_data: "f:ok" }, { text: "❌ Batal", callback_data: "f:x" }]] };
   }
   return { text: head };
-}
-
-function pager(page: number, more: boolean): InlineButton[][] {
-  const nav: InlineButton[] = [];
-  if (page > 0) nav.push({ text: "◀ Sebelumnya", callback_data: "f:pg:" + (page - 1) });
-  if (more) nav.push({ text: "Berikutnya ▶", callback_data: "f:pg:" + (page + 1) });
-  return nav.length ? [nav] : [];
 }
 
 /** Proses jawaban (tombol/teks) untuk input produksi. Mengembalikan pesan galat atau null. */
@@ -336,22 +302,6 @@ export async function handleFlowLocation(i: BotIdent, chatId: string, loc: TgLoc
 // =====================================================================
 // Stok: cek, mutasi, permintaan
 // =====================================================================
-async function searchItems(q: string) {
-  const t = q.trim();
-  if (t.length < 2) return [];
-  return prisma.item.findMany({ where: { active: true, OR: [{ name: { contains: t, mode: "insensitive" } }, { sku: { contains: t, mode: "insensitive" } }] }, orderBy: { name: "asc" }, take: 10 });
-}
-
-function itemPrompt(head: string): Prompt {
-  return { text: `${head}\n\n✍️ Ketik nama atau kode bahan/barang (minimal 2 huruf), contoh: <code>gypsum</code>`, buttons: [cancelRow] };
-}
-
-async function itemChoices(head: string, q: string): Promise<Prompt | string> {
-  const items = await searchItems(q);
-  if (!items.length) return `Tidak ada barang yang cocok dengan "${q.slice(0, 30)}". Ketik nama lain.`;
-  return { text: `${head}\nHasil pencarian "${esc(q.slice(0, 30))}":`, buttons: [...items.map((x) => [{ text: `${x.name} (${x.unit})`.slice(0, 50), callback_data: `f:${x.id}` }]), [{ text: "🔎 Cari lagi", callback_data: "f:again" }], cancelRow] };
-}
-
 async function locButtons(itemId: string | null, onlyWithStock: boolean) {
   const [locs, bal] = await Promise.all([prisma.location.findMany({ orderBy: { code: "asc" } }), itemId ? stockBalances(prisma, itemId) : Promise.resolve([])]);
   const qty = (id: string) => bal.find((b) => b.locationId === id)?.qty ?? 0;
@@ -545,7 +495,8 @@ async function stokAnswer(ctx: Ctx, s: Session, v: string, fromText: boolean): P
 // =====================================================================
 // Router
 // =====================================================================
-async function promptFor(s: Session): Promise<Prompt> {
+async function promptFor(s: Session, i: BotIdent): Promise<Prompt> {
+  if (T3_FLOWS[s.flow]) return T3_FLOWS[s.flow].prompt(s, i);
   if (s.flow === "prod") return prodPrompt(s);
   if (s.flow === "absen") return absenPrompt(s);
   return stokPrompt(s);
@@ -553,6 +504,7 @@ async function promptFor(s: Session): Promise<Prompt> {
 
 async function finish(ctx: Ctx, s: Session) {
   await clearSession(ctx.chatId);
+  if (T3_FLOWS[s.flow]) return present(ctx, await T3_FLOWS[s.flow].finish(ctx, s));
   const d = s.data;
   const again = (flow: string, label: string): InlineButton[][] => [[{ text: label, callback_data: `f:start:${flow}` }, { text: MENU_TEXT, callback_data: "m:home" }]];
   if (s.flow === "prod") return present(ctx, { text: `✅ <b>Hasil produksi tersimpan</b>\n${esc(String(d.employeeName ?? ""))} · ${STAGE_LABEL[d.stage as ProductionStage]} · ${esc(String(d.productName))}\nHasil baik ${d.qtyGood} pcs · Reject ${d.qtyReject} pcs`, buttons: again("prod", "🏭 Input lagi") });
@@ -565,7 +517,8 @@ async function start(ctx: Ctx, flow: string) {
   const { i, chatId } = ctx;
   let r: Session | string | Prompt;
   if (flow === "stok") return present(ctx, stockMenu(i));
-  if (flow === "prod") r = await prodStart(ctx);
+  if (T3_FLOWS[flow]) r = await T3_FLOWS[flow].start(ctx);
+  else if (flow === "prod") r = await prodStart(ctx);
   else if (flow === "absen") r = await absenStart(ctx);
   else if (flow === "cek") r = can(i, "stock.view") ? { chatId, userId: i.userId, flow: "cek", step: "item", data: {} } : "Anda tidak berwenang melihat stok";
   else if (flow === "mut") r = can(i, "stock.move") ? { chatId, userId: i.userId, flow: "mut", step: "type", data: { canAdjust: can(i, "stock.approve") ? 1 : 0 } } : "Anda tidak berwenang mencatat mutasi stok";
@@ -574,27 +527,32 @@ async function start(ctx: Ctx, flow: string) {
   if (typeof r === "string") return sendTelegram(chatId, `❌ ${esc(r)}`);
   if (!("flow" in r)) return present(ctx, r);
   await save(r);
-  return present(ctx, await promptFor(r));
+  return present(ctx, await promptFor(r, i));
 }
 
 async function answer(ctx: Ctx, s: Session, v: string, fromText: boolean) {
   const step0 = s.step;
-  const res = s.flow === "prod" ? await prodAnswer(ctx, s, v, fromText) : s.flow === "absen" ? (fromText ? "Kirim lokasi dengan tombol 📍 di bawah kolom chat" : null) : await stokAnswer(ctx, s, v, fromText);
+  const res = T3_FLOWS[s.flow] ? await T3_FLOWS[s.flow].answer(ctx, s, v, fromText) : s.flow === "prod" ? await prodAnswer(ctx, s, v, fromText) : s.flow === "absen" ? (fromText ? "Kirim lokasi dengan tombol 📍 di bawah kolom chat" : null) : await stokAnswer(ctx, s, v, fromText);
   if (res === "done") return finish(ctx, s);
   if (typeof res === "string") {
     await sendTelegram(ctx.chatId, `⚠️ ${esc(res)}\n<i>Ketik /batal untuk membatalkan isian.</i>`);
     // Gagal saat menyimpan (mis. stok asal tidak cukup): kembali ke isian jumlah agar bisa diperbaiki
-    if (step0 === "confirm" && s.flow !== "prod" && s.flow !== "cek") {
+    if (s.step !== step0) {
+      // Isian dikembalikan ke langkah sebelumnya oleh alur (mis. stok kurang)
+      await save(s);
+      return present({ ...ctx, messageId: undefined }, await promptFor(s, ctx.i));
+    }
+    if (step0 === "confirm" && (s.flow === "mut" || s.flow === "req")) {
       s.step = "qty";
       await save(s);
-      return present({ ...ctx, messageId: undefined }, await promptFor(s));
+      return present({ ...ctx, messageId: undefined }, await promptFor(s, ctx.i));
     }
     return;
   }
   await save(s);
   // Hasil pencarian barang: tampilkan pilihan tanpa pindah langkah
   if (res && typeof res === "object") return present({ ...ctx, messageId: undefined }, res);
-  return present(ctx, await promptFor(s));
+  return present(ctx, await promptFor(s, ctx.i));
 }
 
 /** Tombol isian (callback_data diawali "f:") */
@@ -619,7 +577,7 @@ export async function handleFlowCallback(i: BotIdent, cbId: string, chatId: stri
   if (a === "pg") {
     s.data.page = Math.max(0, Number(b) || 0);
     await save(s);
-    return present(ctx, await promptFor(s));
+    return present(ctx, await promptFor(s, ctx.i));
   }
   return answer(ctx, s, data.slice(2), false);
 }
