@@ -2,7 +2,7 @@ import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { ITEM_TYPE_LABEL } from "@/lib/stock";
 import { idr } from "@/lib/money";
-import { Badge, Empty, Field, PageHeader, Tabs } from "@/components/ui";
+import { AutoCode, Badge, Empty, Field, PageHeader, Tabs } from "@/components/ui";
 import { TrendBadge } from "@/components/Trend";
 import { costPerRecipeUnit, fmtUnitPrice, latestCost, previousCost, recipeUnit, trendOf } from "@/lib/unitcost";
 import { Modal } from "@/components/Modal";
@@ -39,7 +39,7 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
   const locForm = (l?: (typeof locations)[number]) => (
     <ModalForm action={saveLocation} className="space-y-3">
       {l && <input type="hidden" name="id" value={l.id} />}
-      <Field label="Kode"><input name="code" defaultValue={l?.code} className="input" required /></Field>
+      <AutoCode value={l?.code} example="GBB" hint="Inisial nama lokasi (Gudang Bahan Baku = GBB)" />
       <Field label="Nama"><input name="name" defaultValue={l?.name} className="input" required /></Field>
       <Field label="Divisi"><select name="divisionId" defaultValue={l?.divisionId ?? ""} className="input"><option value="">—</option>{divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
       <Submit>Simpan</Submit>

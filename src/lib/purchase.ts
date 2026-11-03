@@ -1,5 +1,6 @@
 import type { PaymentTerm } from "@prisma/client";
 import { prisma } from "./db";
+import { autoCode } from "./codes";
 import { postJournal, COA, type LineInput } from "./accounting";
 import { nextNumber } from "./numbering";
 import { audit } from "./audit";
@@ -73,7 +74,7 @@ export async function createPurchase(input: PurchaseInput, actor: Actor) {
     let supplier = input.supplierId ? await tx.supplier.findUniqueOrThrow({ where: { id: input.supplierId } }) : null;
     const newName = input.newSupplierName?.trim();
     if (!supplier && newName) {
-      supplier = (await tx.supplier.findFirst({ where: { name: { equals: newName, mode: "insensitive" } } })) ?? (await tx.supplier.create({ data: { name: newName } }));
+      supplier = (await tx.supplier.findFirst({ where: { name: { equals: newName, mode: "insensitive" } } })) ?? (await tx.supplier.create({ data: { name: newName, code: await autoCode.supplier(tx) } }));
       await audit(actor, "SUPPLIER_DISIMPAN", "Supplier", supplier.id, { name: newName, from: "pembelian" }, tx);
     }
     const vendor = input.vendor || supplier?.name;

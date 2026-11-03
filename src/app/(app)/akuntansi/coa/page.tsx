@@ -1,6 +1,6 @@
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { Badge, Field, PageHeader } from "@/components/ui";
+import { AutoCode, Badge, Field, PageHeader } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
@@ -16,7 +16,7 @@ export default async function CoaPage() {
   const form = (a?: (typeof accounts)[number]) => (
     <ModalForm action={saveCoa} className="grid grid-cols-2 gap-3">
       {a && <input type="hidden" name="id" value={a.id} />}
-      <Field label="Kode"><input name="code" defaultValue={a?.code} className="input" placeholder="6-1234" required /></Field>
+      <AutoCode value={a?.code} example="6-2000" hint="Digit awal = tipe (1 Aset, 2 Kewajiban, 3 Ekuitas, 4 Pendapatan, 5 HPP, 6 Beban)" />
       <Field label="Tipe"><select name="type" defaultValue={a?.type} className="input">{TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select></Field>
       <Field label="Nama" className="col-span-2"><input name="name" defaultValue={a?.name} className="input" required /></Field>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="isCash" defaultChecked={a?.isCash} /> Akun kas/bank</label>

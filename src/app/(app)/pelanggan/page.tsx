@@ -9,7 +9,7 @@ export default async function PelangganPage({ searchParams }: { searchParams: Pr
   const user = await requirePerm("partner.view");
   const { q } = await searchParams;
   const rows = await prisma.customer.findMany({
-    where: q ? { OR: [{ name: { contains: q, mode: "insensitive" } }, { phone: { contains: q } }, { address: { contains: q, mode: "insensitive" } }] } : {},
+    where: q ? { OR: [{ code: { contains: q, mode: "insensitive" } }, { name: { contains: q, mode: "insensitive" } }, { phone: { contains: q } }, { address: { contains: q, mode: "insensitive" } }] } : {},
     orderBy: [{ active: "desc" }, { name: "asc" }],
   });
   return (

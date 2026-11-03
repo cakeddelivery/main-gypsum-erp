@@ -14,6 +14,7 @@
     "test": "bash tests/global-reset.sh && vitest run",
     "typecheck": "tsc --noEmit",
     "kosongkan": "tsx scripts/kosongkan-data.ts",
+    "rapikan:kode": "tsx scripts/rapikan-kode.ts",
     "backup": "bash scripts/backup.sh",
     "restore": "bash scripts/restore.sh",
     "backup:buka": "bash scripts/decrypt-backup.sh"

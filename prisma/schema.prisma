@@ -622,6 +622,8 @@ enum ItemType {
 
 model Supplier {
   id        String     @id @default(cuid())
+  /// Kode otomatis SUP-001
+  code      String?    @unique
   name      String
   phone     String?
   address   String?
@@ -635,6 +637,8 @@ model Supplier {
 /// Pelanggan offline (pembeli langsung, bukan lewat marketplace)
 model Customer {
   id        String   @id @default(cuid())
+  /// Kode otomatis PLG-001
+  code      String?  @unique
   name      String
   phone     String?
   address   String?

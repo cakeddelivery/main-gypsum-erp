@@ -1,6 +1,7 @@
 "use server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { autoCode } from "@/lib/codes";
 import { action, str, int, optStr } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { approvePeriod, giveAdvance, repayAdvance, cancelPieceClaim, computePeriod, createPieceClaim, generateAllowancePayroll, generateMonthlyPayroll, payPeriod } from "@/lib/payroll";
@@ -13,7 +14,7 @@ export const createPeriod = action(
     const start = str(fd, "startDate");
     const end = str(fd, "endDate");
     if (!start || !end || end < start) throw new Error("Rentang tanggal tidak valid");
-    const p = await prisma.payrollPeriod.create({ data: { code: z.string().min(3, "Kode wajib").parse(str(fd, "code")), startDate: dateOnly(start), endDate: dateOnly(end) } });
+    const p = await prisma.payrollPeriod.create({ data: { code: await autoCode.payrollPeriod(prisma, dateOnly(start)), startDate: dateOnly(start), endDate: dateOnly(end) } });
     await audit(user, "PERIODE_GAJI_DIBUAT", "PayrollPeriod", p.id);
     return "Periode dibuat";
   },
@@ -91,7 +92,7 @@ export const savePieceTask = action(
     const name = z.string().min(2, "Nama tugas wajib").parse(str(fd, "name"));
     const t = id
       ? await prisma.pieceTask.update({ where: { id }, data: { name, ratePerPcs: BigInt(rate), active: fd.get("active") !== "off" } })
-      : await prisma.pieceTask.create({ data: { name, ratePerPcs: BigInt(rate), code: name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").slice(0, 30) } });
+      : await prisma.pieceTask.create({ data: { name, ratePerPcs: BigInt(rate), code: await autoCode.pieceTask(prisma) } });
     await audit(user, "TUGAS_BORONGAN", "PieceTask", t.id, { name, rate });
     return "Tugas borongan tersimpan";
   },

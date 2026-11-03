@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDay } from "@/lib/time";
 import { ROLE_LABEL, ROLES } from "@/lib/rbac";
-import { Badge, Empty, FilterBar, Field, PageHeader } from "@/components/ui";
+import { AutoCode, Badge, Empty, FilterBar, Field, PageHeader } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
@@ -33,7 +33,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
   const form = (e?: (typeof employees)[number]) => (
     <ModalForm action={saveEmployee} className="grid grid-cols-2 gap-3">
       {e && <input type="hidden" name="id" value={e.id} />}
-      <Field label="Kode"><input name="code" defaultValue={e?.code} className="input" required /></Field>
+      <AutoCode value={e?.code} example="CTK-001" hint="Awalan = kode divisi + nomor urut" />
       <Field label="Nama"><input name="name" defaultValue={e?.name} className="input" required /></Field>
       <Field label="Divisi"><select name="divisionId" defaultValue={e?.divisionId} className="input">{divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
       <Field label="Jabatan"><input name="position" defaultValue={e?.position} className="input" required /></Field>

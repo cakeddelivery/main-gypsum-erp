@@ -46,7 +46,7 @@ export const saveProduct = action(
     if (minStock < 0) throw new Error("Batas minimum stok tidak boleh minus");
     if (id) {
       const cur = await prisma.product.findUniqueOrThrow({ where: { id } });
-      const sku = str(fd, "sku").toUpperCase() || cur.sku;
+      const sku = cur.sku;
       const finishedItemId = fd.has("finishedItemId") ? optStr(fd, "finishedItemId") : cur.finishedItemId;
       const p = await prisma.product.update({ where: { id }, data: { ...data, sku, finishedItemId, active: bool(fd, "active") } });
       if (p.finishedItemId) await prisma.item.update({ where: { id: p.finishedItemId }, data: { minStock } });
@@ -58,7 +58,7 @@ export const saveProduct = action(
     const openingQty = dec(fd, "openingQty", 0);
     if (hpp < 0 || price < 0) throw new Error("HPP dan harga tidak boleh minus");
     const item = await saveItemRecord({ name, type: "BARANG_JADI", category: "Mainan Gypsum", unit: "pcs", hppFactor: 1, minStock, price: hpp, openingQty, note: data.note }, user);
-    let sku = str(fd, "sku").toUpperCase() || item.sku;
+    let sku = item.sku;
     if (await prisma.product.findUnique({ where: { sku } })) sku = `${sku}-${Date.now().toString(36).slice(-3).toUpperCase()}`;
     const p = await prisma.product.create({ data: { ...data, sku, finishedItemId: item.id } });
     if (price > 0) await prisma.priceHistory.create({ data: { productId: p.id, channel: "OFFLINE", price: BigInt(price), hpp: BigInt(hpp), createdBy: user.name } });

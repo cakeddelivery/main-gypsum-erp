@@ -3,6 +3,7 @@ import type { BoronganRole, HandoverKind } from "@prisma/client";
 import { action, int, optStr, str } from "@/lib/action";
 import { hashPassword } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { autoCode } from "@/lib/codes";
 import { audit } from "@/lib/audit";
 import { BoronganError, assertPoint, boronganScope, cancelHandover, checkSplit, createHandover, deleteResult, receiveHandover, recordResult, removePerson, savePerson, settlePoint } from "@/lib/borongan";
 import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
@@ -132,7 +133,7 @@ export const saveTask = action(
     const t = await prisma.$transaction(async (tx) => {
       const t = id
         ? await tx.pieceTask.update({ where: { id }, data })
-        : await tx.pieceTask.create({ data: { ...data, code: `${name.toUpperCase().replace(/[^A-Z0-9]+/g, "_").slice(0, 24)}_${Date.now().toString(36).slice(-4).toUpperCase()}` } });
+        : await tx.pieceTask.create({ data: { ...data, code: await autoCode.pieceTask(tx) } });
       await tx.pieceTaskInput.deleteMany({ where: { taskId: t.id } });
       if (inputs.length) await tx.pieceTaskInput.createMany({ data: inputs.map((l) => ({ taskId: t.id, itemId: l.itemId, qty: l.qty })) });
       return t;
