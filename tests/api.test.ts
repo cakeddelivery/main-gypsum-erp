@@ -104,6 +104,52 @@ describe("Webhook Telegram", () => {
     expect(fin).toEqual(expect.arrayContaining(["m:sum", "m:rpt", "m:tx", "m:rkp"]));
   });
 
+  it("isian bertahap: operator input produksi + reject lewat tombol & teks", async () => {
+    const cb = (data: string, n: number) => post({ update_id: 100 + n, callback_query: { id: `cb${n}`, from: { id: 42 }, data, message: { message_id: 200, chat: { id: 42 } } } });
+    const msg = (text: string, n: number) => post({ update_id: 100 + n, message: { message_id: 300 + n, date: Math.floor(Date.now() / 1000), chat: { id: 42 }, from: { id: 42 }, text } });
+    const shift = await prisma.shift.findFirstOrThrow({ where: { active: true }, orderBy: { code: "asc" } });
+    const product = await prisma.product.findFirstOrThrow({ where: { active: true } });
+    await cb("f:start:prod", 1);
+    await cb("f:0", 2);
+    if ((await prisma.shift.count({ where: { active: true } })) > 1) await cb(`f:${shift.id}`, 3);
+    await cb("f:CETAK", 4);
+    await cb(`f:${product.id}`, 5);
+    await msg("abc", 6); // bukan angka: tetap di langkah yang sama
+    expect((await prisma.botSession.findUniqueOrThrow({ where: { chatId: "42" } })).step).toBe("good");
+    await msg("1.250", 7);
+    await msg("3", 8);
+    await cb("f:2", 9);
+    await cb("f:ok", 10);
+    const e = await prisma.productionEntry.findFirstOrThrow({ where: { note: "Via Telegram" }, orderBy: { createdAt: "desc" } });
+    expect([e.qtyGood, e.qtyReject, e.rejectReason, e.stage]).toEqual([1250, 3, "Cacat cetak", "CETAK"]);
+    expect(await prisma.botSession.findUnique({ where: { chatId: "42" } })).toBeNull();
+    // teks transaksi setelah isian selesai kembali dibaca sebagai transaksi
+    expect(await prisma.financeTransaction.count({ where: { telegramChatId: "42", telegramMessageId: "307" } })).toBe(0);
+  });
+
+  it("absen lewat lokasi Telegram: tolak lokasi diteruskan & di luar area, terima di dalam area", async () => {
+    await prisma.workSite.create({ data: { name: "Workshop tes", latitude: -7.12, longitude: 112.41, radiusM: 100 } });
+    const op = await prisma.user.findUniqueOrThrow({ where: { username: "operator" } });
+    await prisma.attendance.deleteMany({ where: { employeeId: op.employeeId! } });
+    const loc = (lat: number, lng: number, n: number, extra = {}) => post({ update_id: 400 + n, message: { message_id: 400 + n, date: Math.floor(Date.now() / 1000), chat: { id: 42 }, from: { id: 42 }, location: { latitude: lat, longitude: lng, horizontal_accuracy: 15 }, ...extra } });
+    await post({ update_id: 399, callback_query: { id: "a1", from: { id: 42 }, data: "f:start:absen", message: { message_id: 201, chat: { id: 42 } } } });
+    await loc(-7.12, 112.41, 1, { forward_date: 1 });
+    await loc(-7.2, 112.5, 2);
+    const today = await prisma.attendance.count({ where: { employeeId: op.employeeId! } });
+    expect(today).toBe(0);
+    await loc(-7.1201, 112.4101, 3);
+    const a = await prisma.attendance.findFirstOrThrow({ where: { employeeId: op.employeeId! } });
+    expect(a.checkIn).not.toBeNull();
+    expect(a.note).toBe("Absen via Telegram");
+    expect(a.checkInDistance).toBeLessThanOrEqual(100);
+    await prisma.workSite.deleteMany({ where: { name: "Workshop tes" } });
+  });
+
+  it("operator tidak bisa memulai mutasi stok lewat bot", async () => {
+    await post({ update_id: 500, callback_query: { id: "m1", from: { id: 42 }, data: "f:start:mut", message: { message_id: 202, chat: { id: 42 } } } });
+    expect(await prisma.botSession.findUnique({ where: { chatId: "42" } })).toBeNull();
+  });
+
   it("operator tidak bisa meminta JPG laporan keuangan lewat tombol", async () => {
     await post({ update_id: 5, callback_query: { id: "c3", from: { id: 42 }, data: "m:j:ak:cur", message: { message_id: 91, chat: { id: 42 } } } });
     expect(await prisma.notificationLog.count({ where: { type: "LAPORAN_JPG", target: "42" } })).toBe(0);

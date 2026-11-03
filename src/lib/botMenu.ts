@@ -10,6 +10,7 @@ import { idr } from "./money";
 import { addDays, dateStr, fmtDate, jakartaDateTime, jakartaParts, MONTHS, todayStr } from "./time";
 import { answerCallback, chatAction, editTelegram, esc, sendTelegram, sendTelegramDocument, type InlineButton } from "./telegram";
 import { renderDocJpg, RenderError } from "./render";
+import { inputMenuRows } from "./botFlow";
 
 /** Teks tombol menu tetap di bawah kolom chat */
 export const MENU_TEXT = "📋 Menu";
@@ -41,6 +42,7 @@ function hasReports(i: BotIdent) {
 export function mainMenu(i: BotIdent): { text: string; buttons: InlineButton[][] } {
   const rows: InlineButton[][] = [];
   rows.push([{ text: "📊 Ringkasan hari ini", callback_data: "m:sum" }]);
+  rows.push(...inputMenuRows(i));
   if (hasReports(i)) rows.push([{ text: "📄 Unduh laporan (JPG)", callback_data: "m:rpt" }]);
   if (i.canSubmit && can(i, "finance.create")) rows.push([{ text: "💸 Catat transaksi", callback_data: "m:tx" }]);
   if (can(i, "dashboard.finance")) rows.push([{ text: "🗓 Rekap kemarin", callback_data: "m:rkp" }]);

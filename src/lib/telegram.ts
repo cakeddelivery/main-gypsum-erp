@@ -27,13 +27,14 @@ async function call(method: string, body: unknown): Promise<{ ok: boolean; resul
 }
 
 /** Kirim pesan + catat log pengiriman/kesalahan */
-export async function sendTelegram(chatId: string, text: string, opts: { buttons?: InlineButton[][]; keyboard?: string[][]; type?: string } = {}) {
+export async function sendTelegram(chatId: string, text: string, opts: { buttons?: InlineButton[][]; keyboard?: string[][]; replyMarkup?: unknown; type?: string } = {}) {
   const r = await call("sendMessage", {
     chat_id: chatId,
     text,
     parse_mode: "HTML",
     ...(opts.buttons ? { reply_markup: { inline_keyboard: opts.buttons } } : {}),
     ...(opts.keyboard ? { reply_markup: { keyboard: opts.keyboard.map((row) => row.map((t) => ({ text: t }))), resize_keyboard: true, is_persistent: true } } : {}),
+    ...(opts.replyMarkup ? { reply_markup: opts.replyMarkup } : {}),
   });
   await prisma.notificationLog.create({
     data: { channel: "TELEGRAM", type: opts.type ?? "PESAN", target: chatId, status: r.ok ? "TERKIRIM" : "GAGAL", payload: text.slice(0, 2000), error: r.error ?? null },

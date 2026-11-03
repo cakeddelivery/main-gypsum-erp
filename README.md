@@ -100,6 +100,13 @@ Alur: **Telegram Bot → Hermes AI Agent → Finance API `/api/v1` → Finance I
 - Pasang Chromium sekali per server: `sudo npx playwright-core install-deps chromium` lalu `npx playwright-core install chromium` (sebagai user aplikasi). Atau isi `CHROMIUM_PATH` ke Chrome/Chromium yang sudah ada. Chromium ditutup otomatis setelah 3 menit tidak dipakai.
 - Daftar perintah di tombol "Menu" Telegram dipasang lewat **Pengaturan → Telegram & Hermes → Pasang daftar perintah bot**.
 
+### Input lewat bot (Tahap 2)
+
+- **📍 Absen**: tombol *Kirim lokasi* Telegram → cek area kerja (geofence) yang sama dengan web. Lokasi yang diteruskan, dipilih dari peta (venue), atau lebih tua dari 2 menit ditolak. Absensi diberi catatan "Absen via Telegram".
+- **🏭 Input produksi**: pilih (divisi →) karyawan, tanggal, shift, tahap, produk → ketik hasil baik & reject → penyebab reject → Simpan. Aturan sama dengan web (operator hanya dirinya, kapten hanya divisinya), stok & jurnal produksi ikut tercatat.
+- **📦 Stok**: cek stok per lokasi, mutasi stok (penerimaan/pengeluaran/transfer; penyesuaian hanya penyetuju stok), dan permintaan stok. Barang dicari dengan mengetik nama/kode.
+- Isian bertahap disimpan di tabel `BotSession` (kedaluwarsa 30 menit). `/batal` atau tombol ❌ membatalkan; saat isian aktif, teks & lokasi tidak diteruskan ke Hermes.
+
 ## Pengujian
 
 ```bash

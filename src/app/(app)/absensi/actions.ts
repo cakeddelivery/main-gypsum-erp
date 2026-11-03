@@ -2,7 +2,8 @@
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int, bool } from "@/lib/action";
 import { audit } from "@/lib/audit";
-import { checkGeofence, evaluateCheckIn, nearestShift, readGeo } from "@/lib/attendance";
+import { evaluateCheckIn, readGeo } from "@/lib/attendance";
+import { selfCheckIn, selfCheckOut } from "@/lib/attendanceSelf";
 import { addDays, dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
 import type { AttendanceStatus } from "@prisma/client";
@@ -10,30 +11,8 @@ import type { AttendanceStatus } from "@prisma/client";
 export const checkIn = action(
   "attendance.self",
   async (fd, user) => {
-    if (!user.employeeId) throw new Error("Akun Anda belum ditautkan ke data karyawan");
-    const date = todayStr();
-    const sched = await prisma.shiftSchedule.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(date) } } });
-    const exists = await prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(date) } } });
-    if (exists) throw new Error("Anda sudah absen masuk hari ini");
-    const pos = readGeo(fd);
-    const geo = checkGeofence(pos, await activeSites());
-    if (!geo.ok) throw new Error(geo.error);
-    const now = new Date();
-    // Jadwal dari admin dipakai bila ada; selain itu shift dikenali dari jam masuk terdekat
-    const shift = sched
-      ? await prisma.shift.findUniqueOrThrow({ where: { id: sched.shiftId } })
-      : nearestShift(await prisma.shift.findMany({ where: { active: true } }), now);
-    if (!shift) throw new Error("Belum ada shift aktif. Hubungi admin.");
-    const shiftId = shift.id;
-    const ev = evaluateCheckIn(shift, now);
-    const a = await prisma.attendance.create({
-      data: {
-        employeeId: user.employeeId, shiftId, date: dateOnly(date), checkIn: now, status: ev.status, lateMinutes: ev.lateMinutes,
-        checkInLat: pos?.lat, checkInLng: pos?.lng, checkInAccuracy: pos?.accuracy, checkInDistance: geo.distance, checkInSiteId: geo.site?.id,
-      },
-    });
-    await audit(user, "ABSEN_MASUK", "Attendance", a.id, { ...ev, lat: pos?.lat, lng: pos?.lng, lokasi: geo.site?.name, jarak: geo.distance });
-    return ev.status === "TERLAMBAT" ? `Absen tercatat — terlambat ${ev.lateMinutes} menit` : "Absen masuk tercatat";
+    const r = await selfCheckIn(user, readGeo(fd));
+    return r.status === "TERLAMBAT" ? `Absen tercatat — terlambat ${r.lateMinutes} menit` : "Absen masuk tercatat";
   },
   ["/absensi", "/"],
 );
@@ -41,18 +20,7 @@ export const checkIn = action(
 export const checkOut = action(
   "attendance.self",
   async (fd, user) => {
-    if (!user.employeeId) throw new Error("Akun belum ditautkan ke karyawan");
-    const a = await prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(todayStr()) } } });
-    if (!a?.checkIn) throw new Error("Belum absen masuk");
-    if (a.checkOut) throw new Error("Sudah absen pulang");
-    const pos = readGeo(fd);
-    const geo = checkGeofence(pos, await activeSites());
-    if (!geo.ok) throw new Error(geo.error);
-    await prisma.attendance.update({
-      where: { id: a.id },
-      data: { checkOut: new Date(), checkOutLat: pos?.lat, checkOutLng: pos?.lng, checkOutAccuracy: pos?.accuracy, checkOutDistance: geo.distance },
-    });
-    await audit(user, "ABSEN_PULANG", "Attendance", a.id, { lat: pos?.lat, lng: pos?.lng, lokasi: geo.site?.name, jarak: geo.distance });
+    await selfCheckOut(user, readGeo(fd));
     return "Absen pulang tercatat";
   },
   ["/absensi"],
