@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
-import { approveAndBook, bankBalances, cancelBookedTransaction, createTransaction } from "@/lib/finance";
+import { approveAndBook, bankBalances, cancelBookedTransaction, createTransaction, deleteClosedTransactions, rejectTransaction } from "@/lib/finance";
 import { cashMovements, profitLoss } from "@/lib/accounting";
 import { extractTime, extractTransaction, mergeReceipt } from "@/lib/extract";
 import { receiptFromOcrText } from "@/lib/ocrReceiptText";
@@ -62,5 +62,28 @@ describe("Batalkan transaksi dibukukan", () => {
     // Transaksi dibatalkan tidak lagi memicu peringatan duplikat
     const again = await createTransaction({ direction: "KELUAR", amount: 41_234, date, accountId: bank.id, categoryId: cat.id }, "TELEGRAM", actor);
     expect(again.duplicate).toBeNull();
+  });
+});
+
+describe("Hapus transaksi dibatalkan/ditolak", () => {
+  it("hanya Dibatalkan/Ditolak yang bisa dihapus; saldo tidak berubah", async () => {
+    const u = await prisma.user.findUniqueOrThrow({ where: { username: "owner" } });
+    const actor = { id: u.id, name: u.name };
+    const bank = await prisma.bankAccount.findUniqueOrThrow({ where: { code: "SEABANK" } });
+    const cat = await prisma.txCategory.findFirstOrThrow({ where: { direction: "KELUAR", active: true } });
+    const date = jakartaDateTime("2026-11-04", "10:00");
+    const mk = async (amount: number) => (await createTransaction({ direction: "KELUAR", amount, date, accountId: bank.id, categoryId: cat.id }, "TELEGRAM", actor)).transaction;
+    const booked = await mk(51_111);
+    await approveAndBook(booked.id, actor);
+    await expect(deleteClosedTransactions([booked.id], actor)).rejects.toThrow(/Dibatalkan\/Ditolak/);
+    await cancelBookedTransaction(booked.id, actor, "uji");
+    const rejected = await mk(52_222);
+    await rejectTransaction(rejected.id, actor, "salah");
+    const before = (await bankBalances()).find((b) => b.id === bank.id)!.balance;
+    expect(await deleteClosedTransactions([booked.id, rejected.id], actor)).toBe(2);
+    expect((await bankBalances()).find((b) => b.id === bank.id)!.balance).toBe(before);
+    const rows = await prisma.financeTransaction.findMany({ where: { id: { in: [booked.id, rejected.id] } } });
+    expect(rows.every((r) => r.deletedAt && r.deletedBy === actor.name)).toBe(true);
+    await expect(deleteClosedTransactions([booked.id], actor)).rejects.toThrow(/sudah dihapus/);
   });
 });

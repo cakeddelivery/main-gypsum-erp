@@ -277,6 +277,28 @@ export async function cancelBookedTransaction(id: string, actor: Actor & { id: s
   });
 }
 
+const DELETABLE: TxStatus[] = ["DIBATALKAN", "DITOLAK"];
+
+/**
+ * Hapus transaksi Dibatalkan/Ditolak dari daftar Transaksi. Tidak menyentuh saldo: transaksi ditolak tidak
+ * pernah dibukukan, dan transaksi dibatalkan sudah dinetralkan jurnal pembalik (jurnal tetap tersimpan, dikunci).
+ */
+export async function deleteClosedTransactions(ids: string[], actor: Actor & { id: string }) {
+  if (!ids.length) throw new FinanceError("Tidak ada transaksi yang dipilih");
+  return prisma.$transaction(async (tx) => {
+    const rows = await tx.financeTransaction.findMany({ where: { id: { in: ids }, deletedAt: null } });
+    const bad = rows.find((r) => !DELETABLE.includes(r.status));
+    if (bad) throw new FinanceError(`${bad.number} berstatus ${STATUS_LABEL[bad.status]}; hanya transaksi Dibatalkan/Ditolak yang bisa dihapus`);
+    if (!rows.length) throw new FinanceError("Transaksi sudah dihapus");
+    await tx.financeTransaction.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: { deletedAt: new Date(), deletedBy: actor.name } });
+    for (const r of rows) {
+      await tx.approvalLog.create({ data: { transactionId: r.id, action: "DIHAPUS", fromStatus: r.status, toStatus: r.status, actorUserId: actor.id, actorName: actor.name, note: "Dihapus dari daftar Transaksi" } });
+    }
+    await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_DIHAPUS", "FinanceTransaction", rows.length === 1 ? rows[0].id : null, { numbers: rows.map((r) => r.number) }, tx);
+    return rows.length;
+  });
+}
+
 /** Saldo rekening = saldo akun COA terkait */
 /** Saldo buku tiap rekening sampai akhir tanggal `upTo` (WIB) */
 export async function bankBalancesAt(upTo: string) {

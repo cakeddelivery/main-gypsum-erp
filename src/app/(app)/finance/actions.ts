@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int } from "@/lib/action";
-import { cancelBookedTransaction, approveAndBook, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
+import { cancelBookedTransaction, deleteClosedTransactions, approveAndBook, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
 import { saveProof } from "@/lib/storage";
 import { extractTransaction } from "@/lib/extract";
 import { jakartaDateTime, txTime } from "@/lib/time";
@@ -79,6 +79,22 @@ export const cancelTx = action("finance.approve", async (fd, user) => {
   const { reversal } = await cancelBookedTransaction(str(fd, "id"), { id: user.id, name: user.name }, str(fd, "reason"));
   return `Transaksi dibatalkan (jurnal pembalik ${reversal.number})`;
 }, ["/finance", "/", "/akuntansi"]);
+
+export const deleteTx = action("finance.approve", async (fd, user) => {
+  const ids = fd.getAll("id").map(String).filter(Boolean);
+  const n = await deleteClosedTransactions(ids, { id: user.id, name: user.name });
+  if (str(fd, "back")) redirect("/finance");
+  return `${n} transaksi dihapus dari daftar`;
+}, ["/finance", "/"]);
+
+/** Hapus semua transaksi berstatus tertentu (Dibatalkan/Ditolak) sekaligus */
+export const deleteAllClosedTx = action("finance.approve", async (fd, user) => {
+  const status = z.enum(["DIBATALKAN", "DITOLAK"]).parse(str(fd, "status"));
+  const rows = await prisma.financeTransaction.findMany({ where: { status, deletedAt: null }, select: { id: true } });
+  if (!rows.length) return "Tidak ada transaksi untuk dihapus";
+  const n = await deleteClosedTransactions(rows.map((r) => r.id), { id: user.id, name: user.name });
+  return `${n} transaksi dihapus dari daftar`;
+}, ["/finance", "/"]);
 
 /** Ekstraksi teks (fallback aturan) untuk membantu pengisian form */
 export async function extractAction(text: string) {

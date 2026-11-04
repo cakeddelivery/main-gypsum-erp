@@ -8,7 +8,8 @@ import { Badge, Empty, FilterBar, Field, PageHeader, Tabs } from "@/components/u
 import { Modal } from "@/components/Modal";
 import type { Prisma, TxStatus } from "@prisma/client";
 import { TxForm } from "./TxForm";
-import { createTx, extractAction } from "./actions";
+import { createTx, deleteAllClosedTx, extractAction } from "./actions";
+import { ActionForm, Submit } from "@/components/ActionForm";
 import { Paged } from "@/components/Paged";
 import { DownloadCsv } from "@/components/DownloadCsv";
 
@@ -22,12 +23,17 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
   const sp = await searchParams;
   const status = STATUSES.includes(sp.status as TxStatus) ? (sp.status as TxStatus) : undefined;
   const where: Prisma.FinanceTransactionWhereInput = {
+    deletedAt: null,
     ...(sp.source ? { source: sp.source as never } : {}),
     ...(sp.direction ? { direction: sp.direction as never } : {}),
-    ...(sp.account ? { OR: [{ accountId: sp.account }, { toAccountId: sp.account }] } : {}),
+
     ...(sp.store ? { storeId: sp.store } : {}),
     ...(sp.from || sp.to ? { date: { ...(sp.from ? { gte: jakartaDateTime(sp.from, "00:00") } : {}), ...(sp.to ? { lt: new Date(jakartaDateTime(sp.to, "00:00").getTime() + 86400000) } : {}) } } : {}),
-    ...(sp.q ? { OR: [{ number: { contains: sp.q, mode: "insensitive" } }, { note: { contains: sp.q, mode: "insensitive" } }, { counterparty: { contains: sp.q, mode: "insensitive" } }] } : {}),
+    // Filter rekening & kata kunci sama-sama OR, jadi digabung dengan AND agar tidak saling menimpa
+    AND: [
+      ...(sp.account ? [{ OR: [{ accountId: sp.account }, { toAccountId: sp.account }] }] : []),
+      ...(sp.q ? [{ OR: [{ number: { contains: sp.q, mode: "insensitive" as const } }, { note: { contains: sp.q, mode: "insensitive" as const } }, { counterparty: { contains: sp.q, mode: "insensitive" as const } }] }] : []),
+    ],
   };
   const [rows, counts, banks, cats, stores, def] = await Promise.all([
     prisma.financeTransaction.findMany({ where: { ...where, ...(status ? { status } : {}) }, orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: 200 }),
@@ -48,6 +54,15 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
         </Modal>
       )}</>} />
       <Tabs current={status ?? "ALL"} tabs={[{ key: "ALL", label: "Semua", href: qs(undefined), count: counts.reduce((s, c) => s + c._count, 0) }, ...STATUSES.map((s) => ({ key: s, label: STATUS_LABEL[s], href: qs(s), count: counts.find((c) => c.status === s)?._count ?? 0 }))]} />
+      {(status === "DIBATALKAN" || status === "DITOLAK") && user.can("finance.approve") && (counts.find((c) => c.status === status)?._count ?? 0) > 0 && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
+          <span>Transaksi {STATUS_LABEL[status].toLowerCase()} tidak memengaruhi saldo. Hapus dari daftar agar tidak mengganggu; riwayat & jurnalnya tetap tersimpan untuk audit.</span>
+          <ActionForm action={deleteAllClosedTx} confirm={`Hapus semua transaksi ${STATUS_LABEL[status].toLowerCase()} dari daftar?`}>
+            <input type="hidden" name="status" value={status} />
+            <Submit className="btn-danger btn-sm" pendingText="Menghapus…">Hapus semua yang {STATUS_LABEL[status].toLowerCase()}</Submit>
+          </ActionForm>
+        </div>
+      )}
       <FilterBar>
         {status && <input type="hidden" name="status" value={status} />}
         <Field label="Cari"><input name="q" defaultValue={sp.q} className="input" placeholder="No. / catatan / pihak" /></Field>
