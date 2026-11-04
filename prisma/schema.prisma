@@ -1242,6 +1242,9 @@ model ReserveEntry {
   amount    BigInt
   journalId String?
   note      String?
+  /// Foto bukti transfer sisihan (penyimpanan privat)
+  proofPath String?
+  proofMime String?
   createdBy String
   createdAt DateTime    @default(now())
 

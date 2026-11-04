@@ -58,3 +58,35 @@ export function detectPurchase(text: string, items: PurchaseItem[], direction: s
 export async function rawMaterials(): Promise<PurchaseItem[]> {
   return prisma.item.findMany({ where: { active: true, type: "BAHAN_BAKU" }, select: { id: true, sku: true, name: true, unit: true, supplierId: true } });
 }
+
+// ---------- Angsuran / pembayaran utang supplier ----------
+export type PayableCandidate = { id: string; number: string; vendor: string; remaining: number; purchaseNumber: string | null; items: string[] };
+const PAY_WORDS = /\b(angsur|angsuran|ngangsur|cicil|cicilan|nyicil|pelunasan|lunasi|melunasi|hutang|utang|tempo)\b/;
+
+/**
+ * Pesan pembayaran utang ke supplier ("angsur kardus", "bayar hutang Toko A"): cocokkan dengan utang yang belum lunas
+ * lewat nama supplier, nama barang pembeliannya, atau nomor pembelian/utang.
+ * `matches` kosong = kata angsuran ada tapi utangnya tidak bisa dipastikan (pengguna memilih dari daftar).
+ */
+export function detectPayablePayment(text: string, payables: PayableCandidate[], direction: string | null): { matches: PayableCandidate[] } | null {
+  if (direction === "MASUK" || direction === "TRANSFER") return null;
+  const low = text.toLowerCase();
+  if (!PAY_WORDS.test(low) || !payables.length) return null;
+  const t = ` ${norm(text)} `;
+  const has = (w: string) => w.length >= 3 && !STOP.has(w) && !/^\d+$/.test(w) && t.includes(` ${w} `);
+  const ranked = payables
+    .map((p) => {
+      let s = 0;
+      if (t.includes(` ${norm(p.number)} `) || (p.purchaseNumber && t.includes(` ${norm(p.purchaseNumber)} `))) s += 100;
+      const vend = norm(p.vendor);
+      if (vend.length >= 3 && t.includes(` ${vend} `)) s += 60;
+      else if (vend.split(" ").filter((w) => w.length >= 4).some(has)) s += 30;
+      // Makin banyak kata nama barang yang cocok, makin yakin ("kardus uji" > "uji")
+      s += 20 * Math.max(0, ...p.items.map((n) => norm(n).split(" ").filter(has).length));
+      return { p, s };
+    })
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s);
+  const top = ranked.length ? ranked.filter((x) => x.s === ranked[0].s).map((x) => x.p) : [];
+  return { matches: top };
+}

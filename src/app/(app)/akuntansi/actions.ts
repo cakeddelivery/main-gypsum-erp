@@ -9,6 +9,7 @@ import { nextNumber } from "@/lib/numbering";
 import { jakartaDateTime, todayStr } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
 import { balanceAdjustmentLines, bankBalancesAt } from "@/lib/finance";
+import { payPayable } from "@/lib/payables";
 import type { AccountType } from "@prisma/client";
 
 const d = (fd: FormData, k = "date") => jakartaDateTime(str(fd, k) || todayStr(), "12:00");
@@ -134,6 +135,10 @@ export const settle = action(
     const kind = str(fd, "kind");
     const id = str(fd, "id");
     const amount = int(fd, "amount");
+    if (kind !== "piutang") {
+      await payPayable({ payableId: id, amount, bankAccountId: str(fd, "bankAccountId"), date: d(fd), interest: int(fd, "interest") }, user);
+      return "Pembayaran dibukukan";
+    }
     const bank = await prisma.bankAccount.findUniqueOrThrow({ where: { id: str(fd, "bankAccountId") } });
     await prisma.$transaction(async (tx) => {
       const doc = kind === "piutang" ? await tx.receivable.findUniqueOrThrow({ where: { id } }) : await tx.payable.findUniqueOrThrow({ where: { id } });

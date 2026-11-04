@@ -144,7 +144,14 @@ export function extractTransaction(text: string, accounts: ExtractAccount[], cat
   let direction: Extraction["direction"] = null;
   if (/\b(transfer internal|pindah dana|pindah saldo|tarik saldo|tarik dana|pindahkan|withdraw|wd|penarikan)\b/.test(t)) direction = "TRANSFER";
   else if (/\b(masuk|terima|diterima|pemasukan|pendapatan|penjualan|cair|pencairan|dp dari)\b/.test(t)) direction = "MASUK";
-  else if (/\b(keluar|bayar|beli|pembelian|biaya|pengeluaran|belanja|ongkir|gaji|upah|isi ulang|refill|servis|service|sewa|tagihan)\b/.test(t)) direction = "KELUAR";
+  else if (/\b(keluar|bayar|beli|pembelian|biaya|pengeluaran|belanja|ongkir|gaji|upah|isi ulang|refill|servis|service|sewa|tagihan|angsur|angsuran|cicil|cicilan|nyicil|kulakan|hutang|utang|pelunasan)\b/.test(t)) direction = "KELUAR";
+  // "transfer/sisihkan dari seabank ke shopeepay": dua rekening sendiri = transfer internal
+  if (direction !== "TRANSFER" && direction !== "MASUK") {
+    const m = t.match(/dari\s+([a-z0-9 ]+?)\s+ke\s+([a-z0-9 ]+?)(?:\s+(?:rp|sebesar|\d)|$)/);
+    const a = m ? matchAccount(m[1], accounts) : null;
+    const b = m ? matchAccount(m[2], accounts) : null;
+    if (a && b && a !== b && (direction === null || /\b(transfer|tf|pindah|sisih|sisihkan|nabung|tabung|setor)\b/.test(t))) direction = "TRANSFER";
+  }
 
   let accountId: string | null = null;
   let toAccountId: string | null = null;

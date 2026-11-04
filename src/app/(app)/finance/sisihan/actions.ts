@@ -3,12 +3,21 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int } from "@/lib/action";
 import { audit } from "@/lib/audit";
-import { postAllReserves, postReserve, withdrawReserve } from "@/lib/reserve";
+import { attachReserveProof, postAllReserves, postReserve, withdrawReserve, type Proof } from "@/lib/reserve";
+import { saveProof } from "@/lib/storage";
 import { defaultStoreId } from "@/lib/accounting";
 import { addDays, todayStr } from "@/lib/time";
 import type { ReserveKind } from "@prisma/client";
 
 const PATHS = ["/finance/sisihan", "/"];
+
+/** Foto/PDF bukti transfer dari form (opsional) */
+async function proofOf(fd: FormData): Promise<Proof> {
+  const file = fd.get("proof");
+  if (!(file && typeof file === "object" && "arrayBuffer" in file && file.size > 0)) return null;
+  if (!["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(file.type)) throw new Error("Bukti harus JPG, PNG, WEBP, atau PDF");
+  return { path: await saveProof(Buffer.from(await file.arrayBuffer()), file.type), mime: file.type };
+}
 
 export const reserveAll = action(
   "finance.approve",
@@ -34,7 +43,7 @@ export const reserveOne = action(
   "finance.approve",
   async (fd, user) => {
     const amount = int(fd, "amount");
-    await postReserve(str(fd, "fundId"), str(fd, "date") || todayStr(), user, amount > 0 ? amount : undefined);
+    await postReserve(str(fd, "fundId"), str(fd, "date") || todayStr(), user, amount > 0 ? amount : undefined, await proofOf(fd));
     return "Sisihan dicatat";
   },
   PATHS,
@@ -43,8 +52,22 @@ export const reserveOne = action(
 export const withdraw = action(
   "finance.approve",
   async (fd, user) => {
-    await withdrawReserve(str(fd, "fundId"), int(fd, "amount"), str(fd, "date") || todayStr(), user, optStr(fd, "note"));
+    await withdrawReserve(str(fd, "fundId"), int(fd, "amount"), str(fd, "date") || todayStr(), user, optStr(fd, "note"), await proofOf(fd));
     return "Penarikan dibukukan";
+  },
+  PATHS,
+);
+
+/** Lampirkan bukti transfer ke sisihan yang sudah tercatat (bisa sekaligus semua dana pada tanggal yang sama) */
+export const attachProof = action(
+  "finance.approve",
+  async (fd, user) => {
+    const proof = await proofOf(fd);
+    if (!proof) throw new Error("Pilih foto bukti transfer");
+    const ids = fd.getAll("entryId").map(String).filter(Boolean);
+    if (!ids.length) throw new Error("Pilih sisihan yang dilampiri bukti");
+    const n = await attachReserveProof(ids, proof, user);
+    return `Bukti dilampirkan ke ${n} sisihan`;
   },
   PATHS,
 );

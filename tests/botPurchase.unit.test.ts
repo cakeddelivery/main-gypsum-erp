@@ -26,6 +26,8 @@ describe("nominal tidak tertukar dengan jumlah barang / tahun", () => {
     const ex = mergeReceipt(extractTransaction(text, [], []), text, { amount: 640000, date: "2026-11-04", direction: "KELUAR", account: null, counterparty: "Toko Plastik" }, [], []);
     expect(ex.amount).toBe(640000);
     const text2 = "beli plastik 2000 pcs 600rb";
+    const text3 = "Angsur kardus (-4.370.000)";
+    expect(mergeReceipt(extractTransaction(text3, [], []), text3, { amount: 2000000, date: "2026-11-02", direction: "KELUAR", account: null, counterparty: "Hendra C Thesno" }, [], []).amount).toBe(2000000);
     expect(mergeReceipt(extractTransaction(text2, [], []), text2, { amount: 640000, date: "2026-11-04", direction: "KELUAR", account: null, counterparty: null }, [], []).amount).toBe(600000);
   });
 });

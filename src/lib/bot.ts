@@ -12,7 +12,10 @@ import { dailyRecapText } from "./jobs";
 import { handleMenuCallback, handleMenuCommand, MENU_TEXT } from "./botMenu";
 import { clearSession, getSession, handleFlowCallback, handleFlowLocation, handleFlowText, startPrefilledFlow, type TgLocation } from "./botFlow";
 import { detectPurchase, rawMaterials } from "./botPurchase";
-import { prefilledPurchase } from "./botFlow3";
+import { prefilledPayablePayment, prefilledPurchase, prefilledReserve } from "./botFlow3";
+import { detectPayablePayment } from "./botPurchase";
+import { openPayables } from "./payables";
+import { matchReserveTransfer } from "./reserve";
 
 type TgUser = { id: number; first_name?: string; username?: string };
 type TgUpdate = {
@@ -176,6 +179,24 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     aiExtraction: receipt ? { ...ex, receipt } : ex,
     messageId: String(msg.message_id),
   };
+  const ctx = { i: ident, chatId };
+  const basis = [text, receipt?.counterparty].filter(Boolean).join(" ");
+  // Bukti transfer dana sisihan (nominal = kelipatan sisihan harian, rekening sesuai alur dana)
+  if ((ex.direction === "TRANSFER" || ex.direction === "KELUAR") && ident.perms.has("finance.approve")) {
+    const m = await matchReserveTransfer({ amount: ex.amount, fromBankId: ex.accountId, toBankId: ex.direction === "TRANSFER" ? ex.toAccountId : null, date: ex.date!, text: basis });
+    if (m) {
+      const session = await prefilledReserve(ctx, { options: m.options, sure: m.sure, proofPath, tx: draft });
+      if (session) return startPrefilledFlow(ctx, session);
+    }
+  }
+  // Angsuran / pembayaran utang supplier ("angsur kardus"): langsung ke isian bayar utang
+  if (ex.direction === "KELUAR" && (ident.perms.has("accounting.post") || ident.perms.has("finance.approve"))) {
+    const hit = detectPayablePayment(basis, await openPayables(), ex.direction);
+    if (hit) {
+      const session = await prefilledPayablePayment(ctx, { candidates: hit.matches.map((p) => p.id), amount: ex.amount, bankId: ex.accountId, date: ex.date, time: txTime(ex.date!, ex.time), note: text || null, proofPath, tx: draft });
+      if (session) return startPrefilledFlow(ctx, session);
+    }
+  }
   // Pembelian bahan baku sesuai master data: langsung ke isian Pembelian (stok + utang/kas), bukan draft biasa
   if (ex.direction === "KELUAR" && ident.perms.has("finance.approve")) {
     const hit = detectPurchase([text, receipt?.counterparty].filter(Boolean).join(" "), await rawMaterials(), ex.direction);
