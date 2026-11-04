@@ -4,6 +4,7 @@ import { postJournal, COA, type LineInput } from "./accounting";
 import { audit } from "./audit";
 import { addDays, dateOnly, dateStr, jakartaDateTime, todayStr } from "./time";
 import { FinanceError } from "./finance";
+import { liabilityAccountId, payableLines, splitPayment } from "./payables";
 
 type Actor = { id: string; name: string };
 
@@ -72,7 +73,7 @@ export async function postAllReserves(date: string, actor: Actor) {
  * Dana dipakai: OWNER = owner mengambil kompensasinya (Dr Hutang Kompensasi / Cr ShopeePay);
  * LOAN_SAVING = tabungan dibayarkan ke pemberi pinjaman (Dr Hutang Pinjaman / Cr rekening simpanan).
  */
-export async function withdrawReserve(fundId: string, amount: number, date: string, actor: Actor, note?: string | null, proof: Proof = null) {
+export async function withdrawReserve(fundId: string, amount: number, date: string, actor: Actor, note?: string | null, proof: Proof = null, pay: { payableId?: string | null; interest?: number | null } = {}) {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "ReserveFund" WHERE id = ${fundId} FOR UPDATE`;
     const f = await tx.reserveFund.findUniqueOrThrow({ where: { id: fundId } });
@@ -80,15 +81,21 @@ export async function withdrawReserve(fundId: string, amount: number, date: stri
     const bal = await fundBalance(tx, fundId);
     if (!(amount > 0) || amount > bal) throw new FinanceError(`Nominal harus 1 – ${bal}`);
     const to = await tx.bankAccount.findUniqueOrThrow({ where: { id: f.toBankId! } });
-    let liability: string = COA.UTANG_GAJI_OWNER;
+    let lines: LineInput[] = [{ accountCode: COA.UTANG_GAJI_OWNER, debit: amount }, { accountId: to.coaAccountId, credit: amount }];
+    let desc = `Pengambilan ${f.name}`;
     if (f.kind === "LOAN_SAVING") {
-      if (!f.payableId) throw new FinanceError("Hubungkan dulu dana ini ke pinjaman modal (Ubah dana → Pinjaman modal). Catat pinjamannya di Akuntansi › Piutang, hutang & pinjaman.");
-      const loan = await tx.payable.findUniqueOrThrow({ where: { id: f.payableId } });
-      if (amount > Number(loan.amount - loan.paid)) throw new FinanceError(`Melebihi sisa pinjaman ${loan.number}`);
-      await tx.payable.update({ where: { id: loan.id }, data: { paid: { increment: BigInt(amount) } } });
-      liability = COA.UTANG_PINJAMAN;
+      // Satu tabungan bisa untuk beberapa pinjaman: pinjaman yang dibayar dipilih saat membayar (bawaan: pinjaman di pengaturan dana)
+      const loanId = pay.payableId || f.payableId;
+      if (!loanId) throw new FinanceError("Pilih pinjaman yang dibayar. Catat pinjamannya di Akuntansi › Piutang, hutang & pinjaman.");
+      const loan = await tx.payable.findUniqueOrThrow({ where: { id: loanId } });
+      const sp = splitPayment(loan, amount, pay.interest);
+      if (sp.interest < 0 || sp.principal <= 0) throw new FinanceError("Bunga harus 0 – kurang dari nominal");
+      if (sp.principal > Number(loan.amount - loan.paid)) throw new FinanceError(`Pokok melebihi sisa pinjaman ${loan.number}`);
+      await tx.payable.update({ where: { id: loan.id }, data: { paid: { increment: BigInt(sp.principal) } } });
+      lines = payableLines(await liabilityAccountId(tx, loan), to.coaAccountId, sp.principal, sp.interest, `Cicilan ${loan.number} ${loan.vendor}`.slice(0, 120));
+      desc = `Cicilan ${loan.number} ${loan.vendor} dari ${f.name}`;
     }
-    const j = await postJournal(tx, { date: jakartaDateTime(date, "12:00"), storeId: f.storeId, description: `${f.kind === "OWNER" ? "Pengambilan" : "Pembayaran pinjaman dari"} ${f.name}`, source: "SISIHAN", sourceId: f.id, actor, lines: [{ accountCode: liability, debit: amount }, { accountId: to.coaAccountId, credit: amount }] });
+    const j = await postJournal(tx, { date: jakartaDateTime(date, "12:00"), storeId: f.storeId, description: desc, source: "SISIHAN", sourceId: f.id, actor, lines });
     await tx.reserveEntry.create({ data: { fundId, date: dateOnly(date), type: "TARIK", amount: BigInt(amount), journalId: j.id, note: note ?? null, proofPath: proof?.path ?? null, proofMime: proof?.mime ?? null, createdBy: actor.name } });
     await audit(actor, "SISIHAN_DITARIK", "ReserveFund", fundId, { amount }, tx);
   });

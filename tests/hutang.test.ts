@@ -142,3 +142,23 @@ describe("Ubah kategori transaksi dibukukan", () => {
     await expect(reclassifyBooked(transaction.id, { categoryId: iuran.id }, owner)).rejects.toThrow("sudah sama");
   });
 });
+
+describe("Satu tabungan cicilan untuk beberapa pinjaman", () => {
+  it("pinjaman dipilih saat membayar dari tabungan", async () => {
+    const { postReserve, withdrawReserve, fundBalance } = await import("@/lib/reserve");
+    const a = await createLoanRecord({ lender: `Tab A ${tag}`, amount: 2_000_000, paidBefore: 0, date: jakartaDateTime(todayStr(), "12:00"), note: "uji-hutang" }, owner);
+    const b = await createLoanRecord({ lender: `Tab B ${tag}`, amount: 3_000_000, paidBefore: 0, date: jakartaDateTime(todayStr(), "12:00"), note: "uji-hutang" }, owner);
+    const sp = await prisma.bankAccount.findUniqueOrThrow({ where: { code: "SHOPEEPAY" } });
+    const store = await prisma.setting.findUniqueOrThrow({ where: { key: "default_store_id" } });
+    const fund = await prisma.reserveFund.create({ data: { name: `Tabungan uji ${tag}`, kind: "LOAN_SAVING", dailyAmount: BigInt(300_000), fromBankId: seabank, toBankId: sp.id, storeId: store.value } });
+    await postReserve(fund.id, todayStr(), owner);
+    await withdrawReserve(fund.id, 100_000, todayStr(), owner, null, null, { payableId: a.id });
+    await withdrawReserve(fund.id, 150_000, todayStr(), owner, null, null, { payableId: b.id });
+    expect(Number((await prisma.payable.findUniqueOrThrow({ where: { id: a.id } })).paid)).toBe(100_000);
+    expect(Number((await prisma.payable.findUniqueOrThrow({ where: { id: b.id } })).paid)).toBe(150_000);
+    expect(await fundBalance(prisma, fund.id)).toBe(50_000);
+    await expect(withdrawReserve(fund.id, 10_000, todayStr(), owner)).rejects.toThrow("Pilih pinjaman");
+    await prisma.reserveFund.update({ where: { id: fund.id }, data: { active: false } });
+  });
+});
+

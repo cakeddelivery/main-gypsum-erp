@@ -52,7 +52,7 @@ export const reserveOne = action(
 export const withdraw = action(
   "finance.approve",
   async (fd, user) => {
-    await withdrawReserve(str(fd, "fundId"), int(fd, "amount"), str(fd, "date") || todayStr(), user, optStr(fd, "note"), await proofOf(fd));
+    await withdrawReserve(str(fd, "fundId"), int(fd, "amount"), str(fd, "date") || todayStr(), user, optStr(fd, "note"), await proofOf(fd), { payableId: optStr(fd, "payableId"), interest: str(fd, "interest") ? int(fd, "interest") : null });
     return "Penarikan dibukukan";
   },
   PATHS,
