@@ -445,7 +445,7 @@ export async function changeBookedStore(id: string, storeId: string, actor: Acto
   });
 }
 
-export type Reclass = { categoryId: string } | { payableId: string; interest?: number | null };
+export type Reclass = { categoryId: string } | { payableId: string; interest?: number | null } | { accountId: string };
 
 /**
  * Ubah pencatatan transaksi yang sudah dibukukan: pindah kategori, atau jadikan pembayaran hutang / cicilan pinjaman
@@ -458,10 +458,16 @@ export async function reclassifyBooked(id: string, target: Reclass, actor: Actor
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
     if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi Dibukukan yang diubah lewat menu ini; draft cukup diubah biasa");
     if (cur.direction === "TRANSFER") throw new FinanceError("Transfer antar rekening tidak berkategori");
-    if (await tx.financeTxSplit.count({ where: { transactionId: id } })) throw new FinanceError("Transaksi ini punya rincian; batalkan lalu catat ulang bila rinciannya perlu diubah");
-    let data: { categoryId: string | null; payableId: string | null; payInterest: bigint };
+    if (!("accountId" in target) && (await tx.financeTxSplit.count({ where: { transactionId: id } }))) throw new FinanceError("Transaksi ini punya rincian; batalkan lalu catat ulang bila rinciannya perlu diubah");
+    let data: { categoryId: string | null; payableId: string | null; payInterest: bigint } | { accountId: string };
     let label: string;
-    if ("categoryId" in target) {
+    if ("accountId" in target) {
+      const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: target.accountId } });
+      if (!bank.active) throw new FinanceError("Rekening tidak aktif");
+      if (cur.accountId === bank.id) throw new FinanceError("Rekening sudah sama");
+      data = { accountId: bank.id };
+      label = `Rekening: ${bank.name}`;
+    } else if ("categoryId" in target) {
       const cat = await tx.txCategory.findUniqueOrThrow({ where: { id: target.categoryId } });
       if (cat.direction !== cur.direction) throw new FinanceError("Kategori tidak sesuai jenis transaksi");
       if (cur.categoryId === cat.id && !cur.payableId) throw new FinanceError("Kategori sudah sama");
@@ -489,7 +495,7 @@ export async function reclassifyBooked(id: string, target: Reclass, actor: Actor
     const t = await tx.financeTransaction.update({ where: { id }, data: { journalId: j.id } });
     await syncLoanSaving(tx, updated, j.id, actor.name);
     await tx.approvalLog.create({ data: { transactionId: id, action: "DIUBAH", fromStatus: cur.status, toStatus: cur.status, actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: `${label} · jurnal ${j.number}`.slice(0, 300) } });
-    await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_DIKLASIFIKASI_ULANG", "FinanceTransaction", id, { before: { categoryId: cur.categoryId, payableId: cur.payableId }, after: data, journal: j.number }, tx);
+    await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_DIKLASIFIKASI_ULANG", "FinanceTransaction", id, { before: { categoryId: cur.categoryId, payableId: cur.payableId, accountId: cur.accountId }, after: data, journal: j.number }, tx);
     return t;
   });
 }
