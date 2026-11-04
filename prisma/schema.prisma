@@ -960,12 +960,16 @@ model FinanceTransaction {
   journalId           String?
   createdBy           String
   createdAt           DateTime      @default(now())
+  /// Dihapus dari daftar (hanya status Dibatalkan/Ditolak); baris & jurnalnya tetap ada untuk jejak audit
+  deletedAt           DateTime?
+  deletedBy           String?
   telegramChatId      String?
   telegramMessageId   String?
   approvals           ApprovalLog[]
 
   @@index([fingerprint])
   @@index([status])
+  @@index([deletedAt])
 }
 
 model ApprovalLog {

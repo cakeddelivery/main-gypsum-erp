@@ -9,7 +9,7 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { TxForm } from "../TxForm";
-import { approveTx, cancelTx, rejectTx, submitTx, updateTx } from "../actions";
+import { approveTx, cancelTx, deleteTx, rejectTx, submitTx, updateTx } from "../actions";
 
 export const metadata = { title: "Detail Transaksi" };
 
@@ -105,6 +105,22 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
                   <Submit className="btn-danger" pendingText="Membatalkan…">Batalkan & buat jurnal pembalik</Submit>
                 </ModalForm>
               </Modal>
+            </Card>
+          )}
+          {(t.status === "DIBATALKAN" || t.status === "DITOLAK") && user.can("finance.approve") && (
+            <Card title="Hapus transaksi">
+              {t.deletedAt ? (
+                <p className="text-sm text-slate-500">Sudah dihapus dari daftar oleh {t.deletedBy} · {fmtDateTime(t.deletedAt)}</p>
+              ) : (
+                <>
+                  <p className="mb-3 text-xs text-slate-500">Transaksi ini tidak memengaruhi saldo{t.status === "DIBATALKAN" ? " (sudah dinetralkan jurnal pembalik)" : ""}. Menghapus menyembunyikannya dari daftar Transaksi; riwayatnya tetap tersimpan untuk audit.</p>
+                  <ActionForm action={deleteTx} confirm={`Hapus ${t.number} dari daftar Transaksi?`}>
+                    <input type="hidden" name="id" value={t.id} />
+                    <input type="hidden" name="back" value="1" />
+                    <Submit className="btn-danger w-full" pendingText="Menghapus…">Hapus transaksi</Submit>
+                  </ActionForm>
+                </>
+              )}
             </Card>
           )}
           <Card title="Jejak persetujuan">
