@@ -150,7 +150,8 @@ describe("Rincian: satu transfer untuk beberapa keperluan", () => {
   it("bot memecah caption, kategori kosong ditanyakan, jurnal dipecah & stok masuk", async () => {
     const it = await prisma.item.findUniqueOrThrow({ where: { sku: "BB-UJI-PLASTIK" } });
     sent.length = 0;
-    const tag = Date.now() % 100000;
+    // Minimal 5 digit: nominal polos < 4 digit tidak dibaca sebagai rupiah
+    const tag = 10000 + (Date.now() % 90000);
     await say(`plastik uji kemasan 100 pcs 50rb\ngalon cleo ${tag}\nongkir gypsum 10rb\ndari seabank`);
     const t = await prisma.financeTransaction.findFirstOrThrow({ orderBy: { createdAt: "desc" }, include: { splits: { orderBy: { sortOrder: "asc" } } } });
     expect(t.splits).toHaveLength(3);
