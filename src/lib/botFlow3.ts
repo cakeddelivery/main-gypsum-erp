@@ -164,6 +164,78 @@ const giveKasbon: FlowDef = {
 // =====================================================================
 // Pembelian bahan baku
 // =====================================================================
+
+/** Langkah berikutnya untuk isian pembelian yang sudah terisi dari pesan/bukti transfer */
+function nextPrefilled(s: Session): string {
+  const d = s.data;
+  if (!d.supName) return "sup";
+  if (d.itemId) return d.qty == null ? "qty" : "amt";
+  const lines = getLines(s);
+  if (!lines.length) return "item";
+  if (!d.pre) return "more";
+  const total = lines.reduce((t, l) => t + (l.amount ?? 0), 0);
+  if (d.paid == null) d.paid = total;
+  if (Number(d.paid) > 0 && !d.bankId) return "bank";
+  if (Number(d.paid) < total && !d.due) return "due";
+  return "confirm";
+}
+
+export type PurchasePrefill = {
+  item: { id: string; name: string; unit: string; supplierId: string | null };
+  others: { id: string; name: string }[];
+  qty: number | null;
+  amount: number | null;
+  bankId: string | null;
+  supplier: { id: string; name: string } | null;
+  date: string | null;
+  time: string | null;
+  note: string | null;
+  proofPath: string | null;
+  /** Data draft transaksi biasa, dipakai bila pengguna memilih "Bukan pembelian" */
+  tx: unknown;
+};
+
+/** Mulai isian pembelian dari pesan/foto yang dikenali menyebut bahan baku di master data */
+export async function prefilledPurchase(ctx: Ctx, p: PurchasePrefill): Promise<Session | null> {
+  if (!can(ctx.i, "finance.approve")) return null;
+  const bank = p.bankId ? await prisma.bankAccount.findUnique({ where: { id: p.bankId } }) : null;
+  const sup = p.supplier ?? (p.item.supplierId ? await prisma.supplier.findUnique({ where: { id: p.item.supplierId }, select: { id: true, name: true } }) : null);
+  const s: Session = {
+    chatId: ctx.chatId,
+    userId: ctx.i.userId,
+    flow: "beli",
+    step: "sup",
+    data: {
+      page: 0,
+      pre: 1,
+      lines: "[]",
+      supId: sup?.id ?? null,
+      supName: sup?.name ?? null,
+      supNew: 0,
+      itemId: p.item.id,
+      itemName: p.item.name,
+      unit: p.item.unit,
+      qty: p.qty,
+      preAmount: p.amount,
+      bankId: bank?.id ?? null,
+      bankName: bank?.name ?? null,
+      date: p.date,
+      time: p.time,
+      note: p.note ? p.note.slice(0, 200) : null,
+      proofPath: p.proofPath,
+      others: p.others.length ? JSON.stringify(p.others) : null,
+      tx: JSON.stringify(p.tx),
+    },
+  };
+  // Jumlah & nominal sudah ada: barang langsung masuk daftar
+  if (p.qty && p.amount) {
+    setLines(s, [{ itemId: p.item.id, name: p.item.name, unit: p.item.unit, qty: p.qty, amount: p.amount }]);
+    s.data.itemId = s.data.itemName = s.data.qty = s.data.preAmount = null;
+  }
+  s.step = nextPrefilled(s);
+  return s;
+}
+
 const purchase: FlowDef = {
   async start(ctx) {
     if (!can(ctx.i, "finance.approve")) return "Anda tidak berwenang mencatat pembelian";
@@ -182,31 +254,39 @@ const purchase: FlowDef = {
       d.bankName ? `Dari rekening: ${esc(String(d.bankName))}` : "",
       d.due ? `Jatuh tempo: ${fmtDate(dateOnly(String(d.due)))}` : "",
       d.note ? `Catatan: ${esc(String(d.note))}` : "",
+      d.date && d.date !== todayStr() ? `Tanggal: ${fmtDate(dateOnly(String(d.date)))}` : "",
+      d.pre ? "<i>Dikenali dari pesan/bukti transfer sesuai master bahan baku.</i>" : "",
     ].filter(Boolean).join("\n");
     const page = Number(d.page ?? 0);
+    // Pesan yang dikenali sebagai pembelian: tetap bisa dicatat sebagai transaksi biasa
+    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan pembelian, catat transaksi biasa", callback_data: "f:plain" }]] : [];
+    const others: { id: string; name: string }[] = d.others ? JSON.parse(String(d.others)) : [];
     switch (s.step) {
       case "sup": {
         const sups = await prisma.supplier.findMany({ where: { active: true }, orderBy: { name: "asc" }, skip: page * PAGE, take: PAGE + 1 });
-        return { text: `${head}\nPilih supplier, atau ✍️ ketik nama supplier baru:`, buttons: [...chunk(sups.slice(0, PAGE).map((x) => ({ text: x.name.slice(0, 30), callback_data: `f:${x.id}` })), 2), ...pager(page, sups.length > PAGE), cancelRow] };
+        return { text: `${head}\nPilih supplier, atau ✍️ ketik nama supplier baru:`, buttons: [...chunk(sups.slice(0, PAGE).map((x) => ({ text: x.name.slice(0, 30), callback_data: `f:${x.id}` })), 2), ...pager(page, sups.length > PAGE), ...plainRow, cancelRow] };
       }
       case "item":
         return itemPrompt(head);
       case "qty":
-        return { text: `${head}\n\n✍️ Ketik jumlah dalam <b>${esc(String(d.unit))}</b>, contoh <code>10</code>`, buttons: [cancelRow] };
+        return { text: `${head}\n\n✍️ Ketik jumlah dalam <b>${esc(String(d.unit))}</b>, contoh <code>10</code>`, buttons: [...plainRow, cancelRow] };
       case "amt":
-        return { text: `${head}\n\n✍️ Ketik <b>total harga</b> barang ini (Rp), contoh <code>850000</code> atau <code>850rb</code>`, buttons: [cancelRow] };
+        return { text: `${head}\n\n✍️ Ketik <b>total harga</b> barang ini (Rp), contoh <code>850000</code> atau <code>850rb</code>`, buttons: [...plainRow, cancelRow] };
       case "more":
         return { text: `${head}\n\nAda barang lain di nota ini?`, buttons: [[{ text: "➕ Tambah barang", callback_data: "f:add" }, { text: "Selesai ➡", callback_data: "f:done" }], cancelRow] };
       case "paid":
         return { text: `${head}\n\nBerapa yang dibayar sekarang? Pilih atau ✍️ ketik nominal (DP).`, buttons: [[{ text: `Lunas (${idr(total)})`, callback_data: "f:full" }], [{ text: "Belum bayar / tempo", callback_data: "f:zero" }], cancelRow] };
       case "bank":
-        return { text: `${head}\nDibayar dari rekening:`, buttons: [...(await bankButtons()), cancelRow] };
+        return { text: `${head}\nDibayar dari rekening:`, buttons: [...(await bankButtons()), ...plainRow, cancelRow] };
       case "due":
         return { text: `${head}\nJatuh tempo sisa utang:`, buttons: [[{ text: "7 hari", callback_data: "f:7" }, { text: "14 hari", callback_data: "f:14" }, { text: "30 hari", callback_data: "f:30" }], cancelRow] };
       case "note":
         return { text: `${head}\n\n✍️ Ketik catatan/no. nota, atau lewati.`, buttons: [[{ text: "Lewati", callback_data: "f:skip" }], cancelRow] };
       case "confirm":
-        return { text: `${head}\n\nSimpan pembelian ini? Stok masuk gudang bahan baku dan jurnal langsung tercatat.`, buttons: [[{ text: "✅ Simpan", callback_data: "f:ok" }, { text: "❌ Batal", callback_data: "f:x" }]] };
+        return {
+          text: `${head}\n\nSimpan pembelian ini? Stok masuk gudang bahan baku dan jurnal langsung tercatat.${others.length ? `\nBarang lain di pesan: ${others.map((o) => esc(o.name)).join(", ")}. Tekan ➕ bila ikut dibeli.` : ""}`,
+          buttons: [[{ text: "✅ Simpan", callback_data: "f:ok" }, { text: "➕ Tambah barang", callback_data: "f:add" }], ...plainRow, [{ text: "❌ Batal", callback_data: "f:x" }]],
+        };
     }
     return { text: head };
   },
@@ -230,7 +310,7 @@ const purchase: FlowDef = {
           d.supName = sup.name;
           d.supNew = 0;
         }
-        s.step = "item";
+        s.step = nextPrefilled(s);
         return null;
       case "item": {
         if (fromText) return itemChoices("<b>🛒 Pembelian bahan baku</b>", v);
@@ -248,7 +328,12 @@ const purchase: FlowDef = {
         const n = parseQty(v);
         if (n == null || !(n > 0)) return "Ketik jumlah lebih dari 0";
         d.qty = n;
-        s.step = "amt";
+        if (d.pre && d.preAmount) {
+          lines.push({ itemId: String(d.itemId), name: String(d.itemName), unit: String(d.unit), qty: n, amount: Number(d.preAmount) });
+          setLines(s, lines);
+          d.itemId = d.itemName = d.qty = d.preAmount = null;
+          s.step = nextPrefilled(s);
+        } else s.step = "amt";
         return null;
       }
       case "amt": {
@@ -257,7 +342,7 @@ const purchase: FlowDef = {
         lines.push({ itemId: String(d.itemId), name: String(d.itemName), unit: String(d.unit), qty: Number(d.qty), amount: n });
         setLines(s, lines);
         d.itemId = d.itemName = d.qty = null;
-        s.step = "more";
+        s.step = d.pre ? nextPrefilled(s) : "more";
         return null;
       }
       case "more":
@@ -276,7 +361,7 @@ const purchase: FlowDef = {
         if (!b) return "Pilih rekening dengan tombol";
         d.bankId = b.id;
         d.bankName = b.name;
-        s.step = Number(d.paid) < total ? "due" : "note";
+        s.step = Number(d.paid) < total ? "due" : d.pre ? "confirm" : "note";
         return null;
       }
       case "due": {
@@ -291,6 +376,13 @@ const purchase: FlowDef = {
         s.step = "confirm";
         return null;
       case "confirm": {
+        if (v === "add") {
+          // Tambah barang lain: lanjut isian biasa (jumlah dibayar ditanyakan ulang karena tagihan berubah)
+          d.pre = 0;
+          d.paid = null;
+          s.step = "item";
+          return null;
+        }
         if (v !== "ok") return "Tekan Simpan atau Batal";
         if (!can(ctx.i, "finance.approve")) return "Anda tidak berwenang";
         try {
@@ -303,13 +395,15 @@ const purchase: FlowDef = {
               supplierId: d.supId ? String(d.supId) : null,
               newSupplierName: d.supId ? null : String(d.supName),
               storeId: store.value,
-              date: jakartaDateTime(todayStr(), "12:00"),
+              date: jakartaDateTime(d.date ? String(d.date) : todayStr(), d.time ? String(d.time) : "12:00"),
               term,
               lines: lines.map((l) => ({ itemId: l.itemId, qty: l.qty, amount: l.amount })),
               paidNow: term === "BERTAHAP" ? paid : 0,
               bankAccountId: paid > 0 ? String(d.bankId) : null,
               dueDate: term !== "LUNAS" && d.due ? jakartaDateTime(String(d.due), "12:00") : null,
               note: [d.note ? String(d.note) : "", "via Telegram"].filter(Boolean).join(" · "),
+              proofPath: d.proofPath ? String(d.proofPath) : null,
+              proofMime: d.proofPath ? "image/jpeg" : null,
             },
             actorOf(ctx.i),
           );

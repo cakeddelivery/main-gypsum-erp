@@ -8,6 +8,7 @@ import { Badge, Card, ErrorBox, Field, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
+import { ProofPreview } from "@/components/ProofPreview";
 import { TxForm } from "../TxForm";
 import { approveTx, cancelTx, deleteTx, rejectTx, submitTx, updateTx } from "../actions";
 
@@ -70,10 +71,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
         <div className="space-y-5">
           {t.proofPath && (
             <Card title="Bukti (privat)">
-              {t.proofMime === "application/pdf" ? <a className="link text-sm" href={`/api/files/proof/${t.id}`} target="_blank">Buka PDF bukti</a> : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <a href={`/api/files/proof/${t.id}`} target="_blank"><img src={`/api/files/proof/${t.id}`} alt="Bukti transaksi" className="max-h-80 w-full rounded-lg object-contain" /></a>
-              )}
+              <ProofPreview thumb src={`/api/files/proof/${t.id}`} mime={t.proofMime} title={`Bukti ${t.number}`} />
             </Card>
           )}
           {editable && (

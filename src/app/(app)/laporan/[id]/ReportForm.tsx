@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { toast } from "@/components/Toaster";
+import { ProofPreview } from "@/components/ProofPreview";
 import {
   TEMPLATES,
   colTotals,
@@ -256,10 +257,7 @@ function PhotoTask({ id, index, entry }: { id: string; index: number; entry: Che
   return (
     <div className="flex flex-1 items-center gap-3">
       {src ? (
-        <a href={src} target="_blank" rel="noreferrer" className="shrink-0">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={src} alt={entry.label} className="h-12 w-12 rounded-md object-cover" />
-        </a>
+        <ProofPreview thumb src={src} title={entry.label} thumbClass="h-12 w-12 object-cover" />
       ) : (
         <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md border border-dashed border-slate-300 text-lg text-slate-400">📷</span>
       )}

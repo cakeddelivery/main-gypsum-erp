@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 import { effectivePermissions } from "./rbac";
-import { extractTransaction, mergeReceipt } from "./extract";
+import { extractTransaction, hasExplicitAmount, mergeReceipt } from "./extract";
 import { readReceipt, type ReceiptRead } from "./receipt";
 import { ocrReceipt } from "./ocrReceipt";
 import { approveAndBook, createTransaction, FinanceError, rejectTransaction, STATUS_LABEL, submitForConfirmation, updateTransaction, missingFields } from "./finance";
@@ -10,7 +10,9 @@ import { idr } from "./money";
 import { fmtDate, jakartaDateTime, txTime } from "./time";
 import { dailyRecapText } from "./jobs";
 import { handleMenuCallback, handleMenuCommand, MENU_TEXT } from "./botMenu";
-import { clearSession, handleFlowCallback, handleFlowLocation, handleFlowText, type TgLocation } from "./botFlow";
+import { clearSession, getSession, handleFlowCallback, handleFlowLocation, handleFlowText, startPrefilledFlow, type TgLocation } from "./botFlow";
+import { detectPurchase, rawMaterials } from "./botPurchase";
+import { prefilledPurchase } from "./botFlow3";
 
 type TgUser = { id: number; first_name?: string; username?: string };
 type TgUpdate = {
@@ -140,7 +142,8 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   let ex = extractTransaction(text || "foto bukti", banks, cats);
   // Foto bukti + caption keterangan: nominal, tanggal & rekening dibaca dari foto
   let receipt: ReceiptRead | null = null;
-  if (photo && (!ex.amount || !ex.direction || !ex.accountId)) {
+  // Nominal dari caption hanya dipercaya bila ditulis jelas (Rp/rb/jt); angka lain bisa jumlah barang atau tahun
+  if (photo && (!hasExplicitAmount(text) || !ex.direction || !ex.accountId)) {
     await chatAction(chatId, "typing").catch(() => {});
     receipt = await readReceipt(photo, text, banks).catch((e) => {
       console.error("readReceipt:", e instanceof Error ? e.message : e);
@@ -160,29 +163,80 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     await sendTelegram(chatId, `Saya belum bisa membaca ${!ex.amount ? "nominal" : "jenis transaksi (masuk/keluar/transfer)"} dari ${photo ? "foto & keterangan" : "pesan"} ini. Tulis ulang dengan lebih lengkap, misal: <i>bayar gypsum 2jt dari seabank</i>.`);
     return;
   }
+  const draft: DraftInput = {
+    direction: ex.direction,
+    amount: ex.amount,
+    date: jakartaDateTime(ex.date!, txTime(ex.date!, ex.time)).toISOString(),
+    accountId: ex.accountId,
+    toAccountId: ex.toAccountId,
+    categoryId: ex.categoryId,
+    note: (text ? ex.note : (receipt?.counterparty ?? "")).slice(0, 500) || null,
+    rawText: text,
+    proofPath,
+    aiExtraction: receipt ? { ...ex, receipt } : ex,
+    messageId: String(msg.message_id),
+  };
+  // Pembelian bahan baku sesuai master data: langsung ke isian Pembelian (stok + utang/kas), bukan draft biasa
+  if (ex.direction === "KELUAR" && ident.perms.has("finance.approve")) {
+    const hit = detectPurchase([text, receipt?.counterparty].filter(Boolean).join(" "), await rawMaterials(), ex.direction);
+    if (hit) {
+      const supplier = await matchSupplier([text, receipt?.counterparty].filter(Boolean).join(" "));
+      const session = await prefilledPurchase(
+        { i: ident, chatId },
+        { item: hit.item, others: hit.others.map((o) => ({ id: o.id, name: o.name })), qty: hit.qty, amount: ex.amount, bankId: ex.accountId, supplier, date: ex.date, time: txTime(ex.date!, ex.time), note: text || null, proofPath, tx: draft },
+      );
+      if (session) return startPrefilledFlow({ i: ident, chatId }, session);
+    }
+  }
+  await createDraft(chatId, ident, draft);
+}
+
+/** Data draft transaksi dari pesan bot (disimpan di sesi pembelian agar bisa dicatat sebagai transaksi biasa) */
+type DraftInput = {
+  direction: "MASUK" | "KELUAR" | "TRANSFER";
+  amount: number;
+  date: string;
+  accountId: string | null;
+  toAccountId: string | null;
+  categoryId: string | null;
+  note: string | null;
+  rawText: string;
+  proofPath: string | null;
+  aiExtraction: unknown;
+  messageId: string;
+};
+
+async function createDraft(chatId: string, ident: NonNullable<Awaited<ReturnType<typeof identityOf>>>, d: DraftInput) {
   const { transaction } = await createTransaction(
     {
-      direction: ex.direction,
-      amount: ex.amount,
-      date: jakartaDateTime(ex.date!, txTime(ex.date!, ex.time)),
-      accountId: ex.accountId,
-      toAccountId: ex.toAccountId,
-      categoryId: ex.categoryId,
-      suggestedCategoryId: ex.categoryId,
-      note: (text ? ex.note : (receipt?.counterparty ?? "")).slice(0, 500) || null,
-      rawText: text,
-      proofPath,
-      proofMime: proofPath ? "image/jpeg" : null,
-      aiExtraction: receipt ? { ...ex, receipt } : ex,
-      idempotencyKey: `tg:${chatId}:${msg.message_id}`,
+      direction: d.direction,
+      amount: d.amount,
+      date: new Date(d.date),
+      accountId: d.accountId,
+      toAccountId: d.toAccountId,
+      categoryId: d.categoryId,
+      suggestedCategoryId: d.categoryId,
+      note: d.note,
+      rawText: d.rawText,
+      proofPath: d.proofPath,
+      proofMime: d.proofPath ? "image/jpeg" : null,
+      aiExtraction: d.aiExtraction as object,
+      idempotencyKey: `tg:${chatId}:${d.messageId}`,
       telegramChatId: chatId,
-      telegramMessageId: String(msg.message_id),
+      telegramMessageId: d.messageId,
     },
     "TELEGRAM",
     { id: ident.userId, name: ident.user.name, telegramId: ident.telegramUserId },
   );
   const m = await draftMessage(transaction.id);
   await sendTelegram(chatId, `📝 Draft dibuat (belum dibukukan)\n\n${m.text}`, { buttons: m.buttons, type: "DRAFT" });
+}
+
+/** Supplier yang namanya disebut di caption atau nama penerima di bukti transfer */
+async function matchSupplier(text: string) {
+  const t = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+  const sups = await prisma.supplier.findMany({ where: { active: true }, select: { id: true, name: true } });
+  return sups.filter((x) => { const n = x.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); return n.length >= 3 && t.includes(` ${n} `); }).sort((a, b) => b.name.length - a.name.length)[0] ?? null;
 }
 
 async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
@@ -192,6 +246,15 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
   if (!ident) return answerCallback(cb.id, "ID Telegram Anda belum terdaftar");
   if (action === "f") {
     if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan sudah tidak tersedia, kirim /menu");
+    if (cb.data === "f:plain") {
+      // Isian pembelian dari pesan → dibatalkan, pesan dicatat sebagai draft transaksi biasa
+      const s = await getSession(chatId);
+      if (!s?.data.tx || s.userId !== ident.userId) return answerCallback(cb.id, "Isian sudah kedaluwarsa, kirim ulang pesannya");
+      await clearSession(chatId);
+      await answerCallback(cb.id, "");
+      await editTelegram(chatId, cb.message.message_id, "Dicatat sebagai transaksi biasa.", []).catch(() => {});
+      return createDraft(chatId, ident, JSON.parse(String(s.data.tx)) as DraftInput);
+    }
     try {
       return await handleFlowCallback(ident, cb.id, chatId, cb.message.message_id, cb.data!);
     } catch (e) {
