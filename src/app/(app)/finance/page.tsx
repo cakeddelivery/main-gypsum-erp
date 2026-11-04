@@ -37,7 +37,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
     ],
   };
   const [rows, counts, banks, cats, stores, def] = await Promise.all([
-    prisma.financeTransaction.findMany({ where: { ...where, ...(status ? { status } : {}) }, orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: 200 }),
+    prisma.financeTransaction.findMany({ where: { ...where, ...(status ? { status } : {}) }, orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: 200, include: { payable: { select: { number: true, kind: true, vendor: true } } } }),
     prisma.financeTransaction.groupBy({ by: ["status"], where, _count: true }),
     prisma.bankAccount.findMany(),
     prisma.txCategory.findMany(),
@@ -47,11 +47,13 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
   const name = (list: { id: string; name: string }[], id: string | null) => list.find((x) => x.id === id)?.name ?? "—";
   // Withdraw saldo penjual marketplace = pemasukan penjualan toko (MG / DL)
   const isWd = (t: { direction: string; accountId: string | null }) => t.direction === "TRANSFER" && !!banks.find((b) => b.id === t.accountId)?.marketplace;
+  type PayRef = { payable: { number: string; kind: string; vendor: string } | null; categoryId: string | null };
+  const catLabel = (t: PayRef) => (t.payable ? `${t.payable.kind === "PINJAMAN" ? "Cicilan pinjaman" : "Bayar hutang"} · ${t.payable.vendor}` : name(cats, t.categoryId));
   const wdLabel = (t: { storeId: string | null }) => `Pemasukan penjualan · ${stores.find((x) => x.id === t.storeId)?.code ?? "toko?"}`;
   const qs = (s?: string) => { const u = new URLSearchParams(Object.entries({ ...sp, baru: undefined, status: s }).filter(([, v]) => v) as [string, string][]); return `/finance?${u}`; };
   return (
     <div>
-      <PageHeader title="Transaksi" subtitle="Pemasukan, pengeluaran & transfer dari input manual, Telegram, dan AI · IDR · WIB" actions={<><DownloadCsv filename={`transaksi-${todayStr()}`} rows={[["Nomor", "Tanggal", "Arah", "Jumlah (Rp)", "Rekening", "Ke rekening", "Kategori", "Toko", "Pihak", "Catatan", "Status"], ...rows.map((t) => [t.number, fmtDateTime(t.date), t.direction, Number(t.amount), name(banks, t.accountId), t.toAccountId ? name(banks, t.toAccountId) : "", name(cats, t.categoryId), t.storeId ? name(stores, t.storeId) : "", t.counterparty ?? "", t.note ?? "", STATUS_LABEL[t.status]])]} />{user.can("finance.approve") && <Link href="/finance/sisihan" className="btn-secondary">Dana sisihan</Link>}{user.can("accounting.post") && <Link href="/akuntansi/saldo-rekening" className="btn-secondary">Atur saldo rekening</Link>}{user.can("finance.create") && (
+      <PageHeader title="Transaksi" subtitle="Pemasukan, pengeluaran & transfer dari input manual, Telegram, dan AI · IDR · WIB" actions={<><DownloadCsv filename={`transaksi-${todayStr()}`} rows={[["Nomor", "Tanggal", "Arah", "Jumlah (Rp)", "Rekening", "Ke rekening", "Kategori", "Toko", "Pihak", "Catatan", "Status"], ...rows.map((t) => [t.number, fmtDateTime(t.date), t.direction, Number(t.amount), name(banks, t.accountId), t.toAccountId ? name(banks, t.toAccountId) : "", catLabel(t), t.storeId ? name(stores, t.storeId) : "", t.counterparty ?? "", t.note ?? "", STATUS_LABEL[t.status]])]} />{user.can("finance.approve") && <Link href="/finance/sisihan" className="btn-secondary">Dana sisihan</Link>}{user.can("accounting.post") && <Link href="/akuntansi/saldo-rekening" className="btn-secondary">Atur saldo rekening</Link>}{user.can("finance.create") && (
         <Modal trigger="+ Transaksi" title="Transaksi baru" wide defaultOpen={sp.baru === "1"}>
           <p className="mb-3 text-xs text-slate-500">Masuk ke daftar Transaksi sebagai draft — baru dibukukan setelah disetujui pihak berwenang.</p>
           <TxForm mode="create" action={createTx} extract={extractAction} banks={banks.filter((b) => b.active)} categories={cats.filter((c) => c.active)} stores={stores.filter((x) => x.active)} defaultStoreId={def?.value} init={{ direction: "KELUAR", date: todayStr(), storeId: def?.value ?? stores[0]?.id }} />
@@ -84,7 +86,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
               <li key={t.id}>
                 <Link href={`/finance/${t.id}`} className="card block p-3">
                   <div className="flex items-start justify-between gap-2">
-                    <div><div className="text-xs text-slate-400">{t.number} · {SOURCE[t.source]}</div><div className="text-sm font-medium">{t.note || name(cats, t.categoryId)}</div>{isWd(t) && <div className="text-xs text-emerald-700">Withdraw · {wdLabel(t)}</div>}</div>
+                    <div><div className="text-xs text-slate-400">{t.number} · {SOURCE[t.source]}</div><div className="text-sm font-medium">{t.note || catLabel(t)}</div>{isWd(t) && <div className="text-xs text-emerald-700">Withdraw · {wdLabel(t)}</div>}</div>
                     <div className={`text-right font-semibold tabular-nums ${t.direction === "MASUK" || isWd(t) ? "text-emerald-600" : t.direction === "KELUAR" ? "text-rose-600" : "text-slate-700"}`}>{t.direction === "KELUAR" ? "−" : t.direction === "MASUK" || isWd(t) ? "+" : "⇄"}{idr(t.amount)}</div>
                   </div>
                   <div className="mt-1 flex items-center justify-between text-xs text-slate-500"><span>{fmtDateTime(t.date)} · {name(banks, t.accountId)}</span><Badge tone={TONE[t.status]}>{STATUS_LABEL[t.status]}</Badge></div>
@@ -103,7 +105,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
                     <td className={`num font-medium ${t.direction === "MASUK" || isWd(t) ? "text-emerald-600" : t.direction === "KELUAR" ? "text-rose-600" : ""}`}>{isWd(t) ? "+" : ""}{idr(t.amount)}</td>
                     <td><Badge tone={TONE[t.status]}>{STATUS_LABEL[t.status]}</Badge></td>
                     <td>{name(banks, t.accountId)}{t.direction === "TRANSFER" && ` → ${name(banks, t.toAccountId)}`}</td>
-                    <td>{isWd(t) ? <span className={t.storeId ? "text-emerald-700" : "text-amber-700"}>{wdLabel(t)}</span> : t.direction === "TRANSFER" ? "—" : name(cats, t.categoryId)}</td>
+                    <td>{isWd(t) ? <span className={t.storeId ? "text-emerald-700" : "text-amber-700"}>{wdLabel(t)}</span> : t.direction === "TRANSFER" ? "—" : catLabel(t)}</td>
                     <td>{SOURCE[t.source]}</td>
                     <td className="max-w-[180px] truncate">{t.note}</td>
                   </tr>

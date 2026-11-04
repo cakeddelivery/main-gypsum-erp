@@ -271,15 +271,15 @@ export async function handleTelegramUpdate(u: TgUpdate) {
       if (session) return startPrefilledFlow(ctx, session);
     }
   }
-  // Angsuran / pembayaran utang supplier ("angsur kardus"): langsung ke isian bayar utang
+  // Angsuran hutang supplier / cicilan pinjaman ("angsur kardus", "bayar hutang <nama>", nominal = cicilan): langsung ke isian bayar hutang
   if (!splits.length && ex.direction === "KELUAR" && (ident.perms.has("accounting.post") || ident.perms.has("finance.approve"))) {
-    const hit = detectPayablePayment(basis, await openPayables(), ex.direction);
+    const hit = detectPayablePayment(basis, await openPayables(), ex.direction, ex.amount);
     if (hit) {
       const session = await prefilledPayablePayment(ctx, { candidates: hit.matches.map((p) => p.id), amount: ex.amount, bankId: ex.accountId, date: ex.date, time: txTime(ex.date!, ex.time), note: text || null, proofPath, tx: draft });
       if (session) return startPrefilledFlow(ctx, session);
     }
   }
-  // Pembelian bahan baku sesuai master data: langsung ke isian Pembelian (stok + utang/kas), bukan draft biasa
+  // Pembelian bahan baku sesuai master data: langsung ke isian Pembelian (stok + hutang/kas), bukan draft biasa
   if (!splits.length && ex.direction === "KELUAR" && ident.perms.has("finance.approve")) {
     const hit = detectPurchase([text, receipt?.counterparty].filter(Boolean).join(" "), materials, ex.direction);
     if (hit) {

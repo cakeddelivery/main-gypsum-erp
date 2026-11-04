@@ -51,7 +51,7 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
     tasks.push(
       prisma.payable.findMany({ where: { dueDate: { lte: new Date(Date.now() + 7 * 86400000) } }, select: { amount: true, paid: true } }).then((rows) => {
         const due = rows.filter((r) => r.paid < r.amount).length;
-        if (due) out.push({ key: "payable", label: "Utang jatuh tempo ≤ 7 hari", count: due, href: "/akuntansi/piutang-utang?tab=utang", tone: "red" });
+        if (due) out.push({ key: "payable", label: "Hutang jatuh tempo ≤ 7 hari", count: due, href: "/akuntansi/piutang-utang?tab=utang", tone: "red" });
       }),
     );
   }

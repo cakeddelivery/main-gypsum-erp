@@ -40,7 +40,7 @@ export default async function Neraca({ searchParams }: { searchParams: Promise<S
           notes={[`Laporan ini merupakan neraca (posisi keuangan) ${store.charAt(0).toLowerCase() + store.slice(1)}.`, `Posisi saldo per ${per}.`, bs.balanced ? "Neraca seimbang: total aset sama dengan total kewajiban + ekuitas." : "Neraca TIDAK seimbang: periksa jurnal.", "Laporan ini dihasilkan secara otomatis dari sistem dan dapat digunakan sebagai referensi internal."]}
         >
           <Section no={1} tone="blue" title="Aset" hint="Kas, bank, persediaan, piutang, dan aset tetap" rows={bs.assets} total={bs.totalAssets} totalLabel="Total aset" />
-          <Section no={2} tone="red" title="Kewajiban" hint="Utang usaha, pinjaman, dan kewajiban lainnya" rows={bs.liabilities} total={bs.totalLiabilities} totalLabel="Total kewajiban" />
+          <Section no={2} tone="red" title="Kewajiban" hint="Hutang usaha, pinjaman, dan kewajiban lainnya" rows={bs.liabilities} total={bs.totalLiabilities} totalLabel="Total kewajiban" />
           <Section no={3} tone="green" title="Ekuitas" hint="Modal pemilik dan laba ditahan" rows={[...bs.equity, { code: "—", name: "Laba (rugi) berjalan", amount: bs.currentEarnings }]} total={bs.totalEquity} totalLabel="Total ekuitas" />
           <DocSummary
             rows={[

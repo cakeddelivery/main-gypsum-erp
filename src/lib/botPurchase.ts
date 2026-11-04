@@ -60,19 +60,23 @@ export async function rawMaterials(): Promise<PurchaseItem[]> {
   return prisma.item.findMany({ where: { active: true, type: "BAHAN_BAKU" }, select: { id: true, sku: true, name: true, unit: true, supplierId: true } });
 }
 
-// ---------- Angsuran / pembayaran utang supplier ----------
-export type PayableCandidate = { id: string; number: string; vendor: string; remaining: number; purchaseNumber: string | null; items: string[] };
-const PAY_WORDS = /\b(angsur|angsuran|ngangsur|cicil|cicilan|nyicil|pelunasan|lunasi|melunasi|hutang|utang|tempo)\b/;
+// ---------- Angsuran / pembayaran hutang supplier ----------
+export type PayableCandidate = { id: string; number: string; vendor: string; remaining: number; purchaseNumber: string | null; items: string[]; kind?: string; installment?: number | null };
+const PAY_WORDS = /\b(angsur|angsuran|ngangsur|cicil|cicilan|nyicil|pelunasan|lunasi|melunasi|hutang|utang|tempo|pinjaman|pinjam|spinjam|paylater|kredit)\b/;
 
 /**
- * Pesan pembayaran utang ke supplier ("angsur kardus", "bayar hutang Toko A"): cocokkan dengan utang yang belum lunas
- * lewat nama supplier, nama barang pembeliannya, atau nomor pembelian/utang.
- * `matches` kosong = kata angsuran ada tapi utangnya tidak bisa dipastikan (pengguna memilih dari daftar).
+ * Pesan pembayaran hutang supplier / cicilan pinjaman ("angsur kardus", "bayar hutang <nama>", "cicilan <aplikasi>"):
+ * cocokkan dengan hutang yang belum lunas lewat nama supplier/pemberi pinjaman, nama barang pembeliannya,
+ * nomor pembelian/hutang, atau nominal yang sama persis dengan cicilan terjadwal.
+ * `matches` kosong = kata angsuran ada tapi hutangnya tidak bisa dipastikan (pengguna memilih dari daftar).
  */
-export function detectPayablePayment(text: string, payables: PayableCandidate[], direction: string | null): { matches: PayableCandidate[] } | null {
+export function detectPayablePayment(text: string, payables: PayableCandidate[], direction: string | null, amount?: number | null): { matches: PayableCandidate[] } | null {
   if (direction === "MASUK" || direction === "TRANSFER") return null;
+  if (!payables.length) return null;
   const low = text.toLowerCase();
-  if (!PAY_WORDS.test(low) || !payables.length) return null;
+  // Nominal persis sama dengan cicilan pinjaman terjadwal: cukup kuat walau tanpa kata "cicilan"
+  const byAmount = amount ? payables.filter((p) => p.installment && Math.abs(p.installment - amount) <= 2) : [];
+  if (!PAY_WORDS.test(low)) return byAmount.length ? { matches: byAmount } : null;
   const t = ` ${norm(text)} `;
   const has = (w: string) => w.length >= 3 && !STOP.has(w) && !/^\d+$/.test(w) && t.includes(` ${w} `);
   const ranked = payables
@@ -84,6 +88,8 @@ export function detectPayablePayment(text: string, payables: PayableCandidate[],
       else if (vend.split(" ").filter((w) => w.length >= 4).some(has)) s += 30;
       // Makin banyak kata nama barang yang cocok, makin yakin ("kardus uji" > "uji")
       s += 20 * Math.max(0, ...p.items.map((n) => norm(n).split(" ").filter(has).length));
+      if (amount && p.installment && Math.abs(p.installment - amount) <= 2) s += 50;
+      else if (amount && amount === p.remaining) s += 10;
       return { p, s };
     })
     .filter((x) => x.s > 0)

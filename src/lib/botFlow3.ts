@@ -2,9 +2,9 @@ import type { HandoverKind } from "@prisma/client";
 import { prisma } from "./db";
 import { giveAdvance, PayrollError } from "./payroll";
 import { createPurchase, termFor } from "./purchase";
-import { payPayable } from "./payables";
+import { nextInstallment, splitPayment } from "./payables";
 import { applyReserveOption } from "./reserve";
-import { FinanceError } from "./finance";
+import { bookPayablePayment, FinanceError } from "./finance";
 import { BoronganError, boronganScope, BORONGAN_ROLE_LABEL, createHandover, HANDOVER_LABEL, payLines, receiveHandover, recordResult, settlePoint, type Scope } from "./borongan";
 import { StockError } from "./stock";
 import { idr, parseIDR } from "./money";
@@ -253,7 +253,7 @@ const purchase: FlowDef = {
       d.supName ? `Supplier: ${esc(String(d.supName))}${d.supNew ? " (baru)" : ""}` : "",
       lines.length ? `${linesText(lines)}\nTagihan: <b>${idr(total)}</b>` : "",
       d.itemName && s.step !== "item" ? `Barang: ${esc(String(d.itemName))}${d.qty ? ` · ${fmtQty(Number(d.qty))} ${esc(String(d.unit))}` : ""}` : "",
-      d.paid != null ? `Dibayar sekarang: ${idr(Number(d.paid))}${Number(d.paid) < total ? ` · sisa utang ${idr(total - Number(d.paid))}` : " (lunas)"}` : "",
+      d.paid != null ? `Dibayar sekarang: ${idr(Number(d.paid))}${Number(d.paid) < total ? ` · sisa hutang ${idr(total - Number(d.paid))}` : " (lunas)"}` : "",
       d.bankName ? `Dari rekening: ${esc(String(d.bankName))}` : "",
       d.due ? `Jatuh tempo: ${fmtDate(dateOnly(String(d.due)))}` : "",
       d.note ? `Catatan: ${esc(String(d.note))}` : "",
@@ -282,7 +282,7 @@ const purchase: FlowDef = {
       case "bank":
         return { text: `${head}\nDibayar dari rekening:`, buttons: [...(await bankButtons()), ...plainRow, cancelRow] };
       case "due":
-        return { text: `${head}\nJatuh tempo sisa utang:`, buttons: [[{ text: "7 hari", callback_data: "f:7" }, { text: "14 hari", callback_data: "f:14" }, { text: "30 hari", callback_data: "f:30" }], cancelRow] };
+        return { text: `${head}\nJatuh tempo sisa hutang:`, buttons: [[{ text: "7 hari", callback_data: "f:7" }, { text: "14 hari", callback_data: "f:14" }, { text: "30 hari", callback_data: "f:30" }], cancelRow] };
       case "note":
         return { text: `${head}\n\n✍️ Ketik catatan/no. nota, atau lewati.`, buttons: [[{ text: "Lewati", callback_data: "f:skip" }], cancelRow] };
       case "confirm":
@@ -422,7 +422,7 @@ const purchase: FlowDef = {
   },
   async finish(_ctx, s) {
     const lines = getLines(s);
-    return { text: `✅ <b>Pembelian ${esc(String(s.data.number))} tercatat</b>${s.data.term === "LUNAS" ? " (lunas)" : " (ada utang)"}\n${esc(String(s.data.supName))}\n${linesText(lines)}\nStok sudah masuk gudang bahan baku.`, buttons: [[{ text: "🛒 Pembelian lain", callback_data: "f:start:beli" }, ...menuBtn]] };
+    return { text: `✅ <b>Pembelian ${esc(String(s.data.number))} tercatat</b>${s.data.term === "LUNAS" ? " (lunas)" : " (ada hutang)"}\n${esc(String(s.data.supName))}\n${linesText(lines)}\nStok sudah masuk gudang bahan baku.`, buttons: [[{ text: "🛒 Pembelian lain", callback_data: "f:start:beli" }, ...menuBtn]] };
   },
 };
 
@@ -822,11 +822,11 @@ const pay: FlowDef = {
 };
 
 // =====================================================================
-// Angsuran / pembayaran utang supplier (dari pesan atau foto bukti transfer)
+// Angsuran hutang supplier / cicilan pinjaman (dari pesan atau foto bukti transfer)
 // =====================================================================
 export type PayablePrefill = { candidates: string[]; amount: number | null; bankId: string | null; date: string | null; time: string | null; note: string | null; proofPath: string | null; tx: unknown };
 
-/** Mulai isian bayar utang yang sudah terisi dari pesan/bukti transfer */
+/** Mulai isian bayar hutang yang sudah terisi dari pesan/bukti transfer */
 export async function prefilledPayablePayment(ctx: Ctx, p: PayablePrefill): Promise<Session | null> {
   if (!can(ctx.i, "accounting.post", "finance.approve")) return null;
   const bank = p.bankId ? await prisma.bankAccount.findUnique({ where: { id: p.bankId } }) : null;
@@ -846,50 +846,66 @@ async function pickPayable(s: Session, id: string) {
   const p = await prisma.payable.findUnique({ where: { id }, include: { supplier: { select: { name: true } } } });
   if (!p || p.paid >= p.amount) return false;
   s.data.payId = p.id;
+  s.data.payKind = p.kind;
   s.data.payName = `${p.number} · ${p.supplier?.name ?? p.vendor}`;
   s.data.remaining = Number(p.amount - p.paid);
+  s.data.plan = JSON.stringify({ amount: Number(p.amount), paid: Number(p.paid), installments: p.installments, interestTotal: p.interestTotal == null ? null : Number(p.interestTotal) });
+  s.data.next = nextInstallment(p)?.total ?? null;
+  s.data.interest = null;
   return true;
+}
+
+/** Pokok & bunga dari nominal transfer (bunga dari jadwal cicilan bila nominalnya sama, atau yang diketik pengguna) */
+function paySplit(d: Session["data"]) {
+  if (!d.amount || !d.plan) return { principal: Number(d.amount ?? 0), interest: 0 };
+  return splitPayment(JSON.parse(String(d.plan)), Number(d.amount), d.interest == null ? null : Number(d.interest));
 }
 
 function nextPayStep(s: Session) {
   const d = s.data;
   if (!d.payId) return "pick";
-  if (!d.amount || Number(d.amount) > Number(d.remaining)) return "amt";
+  const sp = paySplit(d);
+  if (!d.amount || sp.principal <= 0 || sp.principal > Number(d.remaining)) return "amt";
   if (!d.bankId) return "bank";
   return "confirm";
 }
 
 const payDebt: FlowDef = {
   async start(ctx) {
-    if (!can(ctx.i, "accounting.post", "finance.approve")) return "Anda tidak berwenang mencatat pembayaran utang";
+    if (!can(ctx.i, "accounting.post", "finance.approve")) return "Anda tidak berwenang mencatat pembayaran hutang";
     return { chatId: ctx.chatId, userId: ctx.i.userId, flow: "utang", step: "pick", data: { page: 0 } };
   },
   async prompt(s) {
     const d = s.data;
     const rem = Number(d.remaining ?? 0);
+    const sp = paySplit(d);
+    const loan = d.payKind === "PINJAMAN";
     const head = [
-      "<b>💳 Bayar / angsur utang supplier</b>",
-      d.payName ? `Utang: ${esc(String(d.payName))}\nSisa sebelum bayar: ${idr(rem)}` : "",
-      d.amount ? `Dibayar: <b>${idr(Number(d.amount))}</b>${rem ? ` · sisa setelah ini ${idr(Math.max(0, rem - Number(d.amount)))}` : ""}` : "",
+      "<b>💳 Bayar hutang / cicilan pinjaman</b>",
+      d.payName ? `${loan ? "Pinjaman" : "Hutang"}: ${esc(String(d.payName))}\nSisa pokok sebelum bayar: ${idr(rem)}` : "",
+      d.next ? `Cicilan terjadwal: ${idr(Number(d.next))}` : "",
+      d.amount ? `Dibayar: <b>${idr(Number(d.amount))}</b>${sp.interest ? ` (pokok ${idr(sp.principal)} + bunga/biaya ${idr(sp.interest)})` : ""}${rem ? ` · sisa setelah ini ${idr(Math.max(0, rem - sp.principal))}` : ""}` : "",
       d.bankName ? `Dari rekening: ${esc(String(d.bankName))}` : "",
       d.date && d.date !== todayStr() ? `Tanggal: ${fmtDate(dateOnly(String(d.date)))}` : "",
-      d.tx ? "<i>Dikenali dari pesan/bukti transfer sebagai angsuran utang.</i>" : "",
+      d.tx ? "<i>Dikenali dari pesan/bukti transfer sebagai pembayaran hutang.</i>" : "",
     ].filter(Boolean).join("\n");
-    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan bayar utang, catat transaksi biasa", callback_data: "f:plain" }]] : [];
+    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan bayar hutang, catat transaksi biasa", callback_data: "f:plain" }]] : [];
     switch (s.step) {
       case "pick": {
         const cands: string[] = d.cands ? JSON.parse(String(d.cands)) : [];
         const rows = await prisma.payable.findMany({ where: cands.length ? { id: { in: cands } } : {}, include: { supplier: { select: { name: true } } }, orderBy: { date: "desc" }, take: 100 });
         const open = rows.filter((p) => p.paid < p.amount).slice(0, 12);
-        if (!open.length) return { text: `${head}\n\nTidak ada utang yang belum lunas.`, buttons: [...plainRow, cancelRow] };
-        return { text: `${head}\n\nPilih utang yang dibayar:`, buttons: [...open.map((p) => [{ text: `${p.number} · ${(p.supplier?.name ?? p.vendor).slice(0, 18)} · sisa ${idr(Number(p.amount - p.paid))}`.slice(0, 60), callback_data: `f:${p.id}` }]), ...(cands.length ? [[{ text: "📋 Lihat semua utang", callback_data: "f:all" }]] : []), ...plainRow, cancelRow] };
+        if (!open.length) return { text: `${head}\n\nTidak ada hutang yang belum lunas.`, buttons: [...plainRow, cancelRow] };
+        return { text: `${head}\n\nPilih hutang / pinjaman yang dibayar:`, buttons: [...open.map((p) => [{ text: `${p.kind === "PINJAMAN" ? "🏦" : "📦"} ${p.number} · ${(p.supplier?.name ?? p.vendor).slice(0, 18)} · sisa ${idr(Number(p.amount - p.paid))}`.slice(0, 60), callback_data: `f:${p.id}` }]), ...(cands.length ? [[{ text: "📋 Lihat semua hutang", callback_data: "f:all" }]] : []), ...plainRow, cancelRow] };
       }
       case "amt":
-        return { text: `${head}\n\n✍️ Ketik nominal yang dibayar (maks. ${idr(rem)}), contoh <code>2000000</code> atau <code>2jt</code>`, buttons: [[{ text: `Lunasi (${idr(rem)})`, callback_data: "f:full" }], ...plainRow, cancelRow] };
+        return { text: `${head}\n\n✍️ Ketik nominal yang ditransfer (pokok maks. ${idr(rem)}), contoh <code>2000000</code> atau <code>2jt</code>`, buttons: [...(d.next ? [[{ text: `Cicilan (${idr(Number(d.next))})`, callback_data: "f:inst" }]] : []), [{ text: `Lunasi (${idr(rem)})`, callback_data: "f:full" }], ...plainRow, cancelRow] };
+      case "int":
+        return { text: `${head}\n\n✍️ Ketik bunga/biaya yang termasuk dalam nominal ini (0 bila tidak ada)`, buttons: [[{ text: "Tanpa bunga (0)", callback_data: "f:0" }], cancelRow] };
       case "bank":
         return { text: `${head}\nDibayar dari rekening:`, buttons: [...(await bankButtons()), ...plainRow, cancelRow] };
       case "confirm":
-        return { text: `${head}\n\nSimpan pembayaran utang ini? Jurnal langsung tercatat dan sisa utang berkurang.`, buttons: [[{ text: "✅ Simpan", callback_data: "f:ok" }], [{ text: "✏️ Ubah nominal", callback_data: "f:editamt" }], ...plainRow, [{ text: "❌ Batal", callback_data: "f:x" }]] };
+        return { text: `${head}\n\nSimpan pembayaran ini? Tercatat di Transaksi, jurnal langsung dibukukan dan sisa hutang berkurang.`, buttons: [[{ text: "✅ Simpan", callback_data: "f:ok" }], [{ text: "✏️ Ubah nominal", callback_data: "f:editamt" }, { text: "✏️ Bunga", callback_data: "f:editint" }], ...plainRow, [{ text: "❌ Batal", callback_data: "f:x" }]] };
     }
     return { text: head };
   },
@@ -897,18 +913,28 @@ const payDebt: FlowDef = {
     const d = s.data;
     switch (s.step) {
       case "pick":
-        if (fromText) return "Pilih utang dengan tombol";
+        if (fromText) return "Pilih hutang dengan tombol";
         if (v === "all") {
           d.cands = null;
           return null;
         }
-        if (!(await pickPayable(s, v))) return "Utang tidak ditemukan atau sudah lunas";
+        if (!(await pickPayable(s, v))) return "Hutang tidak ditemukan atau sudah lunas";
         s.step = nextPayStep(s);
         return null;
       case "amt": {
-        const n = !fromText && v === "full" ? Number(d.remaining) : parseIDR(v);
-        if (!n || n <= 0 || n > Number(d.remaining)) return `Nominal harus 1 – ${idr(Number(d.remaining))}`;
+        const n = !fromText && v === "full" ? Number(d.remaining) : !fromText && v === "inst" ? Number(d.next) : parseIDR(v);
+        if (!n || n <= 0) return "Nominal tidak valid";
         d.amount = n;
+        d.interest = null;
+        if (paySplit(d).principal > Number(d.remaining)) return `Pokok melebihi sisa hutang ${idr(Number(d.remaining))}. Bila ada bunga, tekan ✏️ Bunga setelah ini.`;
+        s.step = nextPayStep(s);
+        return null;
+      }
+      case "int": {
+        const n = !fromText ? Number(v) : parseIDR(v) ?? (v.trim() === "0" ? 0 : NaN);
+        if (!Number.isFinite(n) || n < 0 || n >= Number(d.amount)) return "Bunga harus 0 – kurang dari nominal";
+        d.interest = n;
+        if (paySplit(d).principal > Number(d.remaining)) return `Pokok masih melebihi sisa hutang ${idr(Number(d.remaining))}`;
         s.step = nextPayStep(s);
         return null;
       }
@@ -925,11 +951,38 @@ const payDebt: FlowDef = {
           s.step = "amt";
           return null;
         }
+        if (v === "editint") {
+          s.step = "int";
+          return null;
+        }
         if (v !== "ok") return "Tekan Simpan atau Batal";
         if (!can(ctx.i, "accounting.post", "finance.approve")) return "Anda tidak berwenang";
         try {
-          const r = await payPayable({ payableId: String(d.payId), amount: Number(d.amount), bankAccountId: String(d.bankId), date: jakartaDateTime(d.date ? String(d.date) : todayStr(), d.time ? String(d.time) : "12:00") }, actorOf(ctx.i));
+          const tx = d.tx ? (JSON.parse(String(d.tx)) as { messageId?: string; rawText?: string; proofPath?: string | null; aiExtraction?: object; note?: string | null }) : null;
+          const sp = paySplit(d);
+          const r = await bookPayablePayment(
+            {
+              payableId: String(d.payId),
+              amount: Number(d.amount),
+              interest: sp.interest,
+              bankAccountId: String(d.bankId),
+              date: jakartaDateTime(d.date ? String(d.date) : todayStr(), d.time ? String(d.time) : "12:00"),
+              note: d.note ? String(d.note) : null,
+              rawText: tx?.rawText ?? null,
+              proofPath: d.proofPath ? String(d.proofPath) : tx?.proofPath ?? null,
+              proofMime: d.proofPath || tx?.proofPath ? "image/jpeg" : null,
+              aiExtraction: tx?.aiExtraction ?? null,
+              idempotencyKey: tx?.messageId ? `tg:${ctx.chatId}:${tx.messageId}` : null,
+              telegramChatId: ctx.chatId,
+              telegramMessageId: tx?.messageId ?? null,
+            },
+            "TELEGRAM",
+            actorOf(ctx.i),
+          );
           d.remaining = r.remaining;
+          d.txNumber = r.transaction.number;
+          d.principal = r.principal;
+          d.interest = r.interest;
         } catch (e) {
           return errMsg(e);
         }
@@ -941,7 +994,7 @@ const payDebt: FlowDef = {
   async finish(_ctx, s) {
     const d = s.data;
     const rem = Number(d.remaining);
-    return { text: `✅ <b>Pembayaran utang tercatat</b>\n${esc(String(d.payName))}\nDibayar ${idr(Number(d.amount))} dari ${esc(String(d.bankName))}\n${rem > 0 ? `Sisa utang: <b>${idr(rem)}</b>` : "Utang sudah <b>lunas</b> 🎉"}`, buttons: [menuBtn] };
+    return { text: `✅ <b>Pembayaran ${d.payKind === "PINJAMAN" ? "cicilan pinjaman" : "hutang"} tercatat</b> (${esc(String(d.txNumber))})\n${esc(String(d.payName))}\nDibayar ${idr(Number(d.amount))} dari ${esc(String(d.bankName))}${Number(d.interest) ? `\nPokok ${idr(Number(d.principal))} · bunga/biaya ${idr(Number(d.interest))}` : ""}\n${rem > 0 ? `Sisa hutang: <b>${idr(rem)}</b>` : "Hutang sudah <b>lunas</b> 🎉"}`, buttons: [menuBtn] };
   },
 };
 

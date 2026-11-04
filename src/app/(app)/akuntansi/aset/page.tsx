@@ -32,7 +32,7 @@ export default async function AsetPage() {
             <Field label="Harga perolehan (IDR)"><input name="cost" inputMode="numeric" className="input" required /></Field>
             <Field label="Umur manfaat (bulan)"><input name="usefulLifeMonths" inputMode="numeric" defaultValue="48" className="input" /></Field>
             <Field label="Nilai sisa (IDR)"><input name="residual" inputMode="numeric" defaultValue="0" className="input" /></Field>
-            <Field label="Sumber dana" className="col-span-2"><select name="funding" className="input">{banks.map((b) => <option key={b.id} value={b.id}>Dibayar dari {b.name}</option>)}<option value="UTANG">Utang usaha</option><option value="SALDO_AWAL">Saldo awal (aset lama)</option></select></Field>
+            <Field label="Sumber dana" className="col-span-2"><select name="funding" className="input">{banks.map((b) => <option key={b.id} value={b.id}>Dibayar dari {b.name}</option>)}<option value="UTANG">Hutang usaha</option><option value="SALDO_AWAL">Saldo awal (aset lama)</option></select></Field>
             <div className="col-span-2"><Submit>Simpan</Submit></div>
           </ModalForm>
         </Modal>

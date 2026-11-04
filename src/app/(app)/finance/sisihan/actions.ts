@@ -88,9 +88,9 @@ export const saveFund = action(
       active: fd.get("active") !== "off",
     };
     if (data.dailyAmount <= BigInt(0)) throw new Error("Nominal harian harus > 0");
-    // Cicilan harian langsung mengurangi utang, jadi wajib terhubung ke pinjaman. Tabungan cicilan boleh
+    // Cicilan harian langsung mengurangi hutang, jadi wajib terhubung ke pinjaman. Tabungan cicilan boleh
     // dikumpulkan dulu; pinjamannya cukup dipilih sebelum tabungan dibayarkan.
-    if (kind === "LOAN_PAYMENT" && !data.payableId) throw new Error("Pilih pinjaman modal yang dicicil (catat dulu di Akuntansi › Piutang, utang & pinjaman)");
+    if (kind === "LOAN_PAYMENT" && !data.payableId) throw new Error("Pilih pinjaman modal yang dicicil (catat dulu di Akuntansi › Piutang, hutang & pinjaman)");
     if (data.toBankId && data.toBankId === data.fromBankId) throw new Error("Rekening asal dan tujuan harus berbeda");
     const f = id ? await prisma.reserveFund.update({ where: { id }, data }) : await prisma.reserveFund.create({ data });
     await audit(user, id ? "DANA_SISIHAN_DIUBAH" : "DANA_SISIHAN_DIBUAT", "ReserveFund", f.id, { ...data, dailyAmount: Number(data.dailyAmount) });

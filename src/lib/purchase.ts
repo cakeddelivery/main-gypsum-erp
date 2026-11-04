@@ -45,7 +45,7 @@ export function lineAmounts(lines: PurchaseInput["lines"]) {
   });
 }
 
-/** Validasi murni cara bayar pembelian; mengembalikan nominal dibayar sekarang & sisa utang */
+/** Validasi murni cara bayar pembelian; mengembalikan nominal dibayar sekarang & sisa hutang */
 export function splitPayment(term: PaymentTerm, total: number, paidNow: number) {
   if (total <= 0) throw new StockError("Total pembelian harus > 0");
   if (term === "LUNAS") return { paid: total, debt: 0 };
@@ -59,7 +59,7 @@ export function splitPayment(term: PaymentTerm, total: number, paidNow: number) 
 
 /**
  * Pembelian bahan baku: stok masuk gudang bahan baku (harga rata-rata ikut diperbarui),
- * jurnal Dr Persediaan Bahan Baku / Cr Rekening (dibayar) + Cr Utang Usaha (sisa), sisa tercatat di Utang dengan jatuh tempo.
+ * jurnal Dr Persediaan Bahan Baku / Cr Rekening (dibayar) + Cr Hutang Usaha (sisa), sisa tercatat di Hutang dengan jatuh tempo.
  */
 export async function createPurchase(input: PurchaseInput, actor: Actor) {
   const lines = lineAmounts(input.lines.filter((l) => l.itemId && l.qty > 0));

@@ -15,9 +15,9 @@ export const RESERVE_LABEL: Record<ReserveKind, string> = {
 
 /**
  * Baris jurnal penyisihan harian:
- * - OWNER: Dr Beban Kompensasi Pengelola / Cr Utang Kompensasi Pengelola, dan uangnya dipindah rekening asal → ShopeePay
- * - LOAN_SAVING: pindah rekening asal → rekening simpanan (utang belum berkurang)
- * - LOAN_PAYMENT: Dr Utang Pinjaman Modal / Cr rekening asal (utang langsung berkurang)
+ * - OWNER: Dr Beban Kompensasi Pengelola / Cr Hutang Kompensasi Pengelola, dan uangnya dipindah rekening asal → ShopeePay
+ * - LOAN_SAVING: pindah rekening asal → rekening simpanan (hutang belum berkurang)
+ * - LOAN_PAYMENT: Dr Hutang Pinjaman Modal / Cr rekening asal (hutang langsung berkurang)
  */
 export function reserveLines(kind: ReserveKind, amount: number, fromCoa: string, toCoa: string | null): LineInput[] {
   if (kind === "LOAN_PAYMENT") return [{ accountCode: COA.UTANG_PINJAMAN, debit: amount }, { accountId: fromCoa, credit: amount }];
@@ -69,20 +69,20 @@ export async function postAllReserves(date: string, actor: Actor) {
 }
 
 /**
- * Dana dipakai: OWNER = owner mengambil kompensasinya (Dr Utang Kompensasi / Cr ShopeePay);
- * LOAN_SAVING = tabungan dibayarkan ke pemberi pinjaman (Dr Utang Pinjaman / Cr rekening simpanan).
+ * Dana dipakai: OWNER = owner mengambil kompensasinya (Dr Hutang Kompensasi / Cr ShopeePay);
+ * LOAN_SAVING = tabungan dibayarkan ke pemberi pinjaman (Dr Hutang Pinjaman / Cr rekening simpanan).
  */
 export async function withdrawReserve(fundId: string, amount: number, date: string, actor: Actor, note?: string | null, proof: Proof = null) {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "ReserveFund" WHERE id = ${fundId} FOR UPDATE`;
     const f = await tx.reserveFund.findUniqueOrThrow({ where: { id: fundId } });
-    if (f.kind === "LOAN_PAYMENT") throw new FinanceError("Cicilan harian langsung mengurangi utang; tidak ada saldo untuk ditarik");
+    if (f.kind === "LOAN_PAYMENT") throw new FinanceError("Cicilan harian langsung mengurangi hutang; tidak ada saldo untuk ditarik");
     const bal = await fundBalance(tx, fundId);
     if (!(amount > 0) || amount > bal) throw new FinanceError(`Nominal harus 1 – ${bal}`);
     const to = await tx.bankAccount.findUniqueOrThrow({ where: { id: f.toBankId! } });
     let liability: string = COA.UTANG_GAJI_OWNER;
     if (f.kind === "LOAN_SAVING") {
-      if (!f.payableId) throw new FinanceError("Hubungkan dulu dana ini ke pinjaman modal (Ubah dana → Pinjaman modal). Catat pinjamannya di Akuntansi › Piutang, utang & pinjaman.");
+      if (!f.payableId) throw new FinanceError("Hubungkan dulu dana ini ke pinjaman modal (Ubah dana → Pinjaman modal). Catat pinjamannya di Akuntansi › Piutang, hutang & pinjaman.");
       const loan = await tx.payable.findUniqueOrThrow({ where: { id: f.payableId } });
       if (amount > Number(loan.amount - loan.paid)) throw new FinanceError(`Melebihi sisa pinjaman ${loan.number}`);
       await tx.payable.update({ where: { id: loan.id }, data: { paid: { increment: BigInt(amount) } } });

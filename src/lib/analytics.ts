@@ -99,7 +99,7 @@ export async function businessSnapshot(now: Date = new Date()) {
   const monthlyPayroll = monthlyEmps.reduce((s, e) => s + Number(e.monthlySalary), 0);
   const dailyReserve = reserves.filter((r) => r.active).reduce((s, r) => s + Number(r.dailyAmount), 0);
   const obligations = [
-    { label: "Utang jatuh tempo ≤ 30 hari", amount: dueSoon.reduce((s, p) => s + rem(p), 0) },
+    { label: "Hutang jatuh tempo ≤ 30 hari", amount: dueSoon.reduce((s, p) => s + rem(p), 0) },
     { label: "Gaji/klaim belum dibayar", amount: pendingPayroll },
     { label: "Perkiraan gaji bulanan 30 hari ke depan", amount: Math.max(0, monthlyPayroll - periods.filter((p) => p.kind === "BULANAN").reduce((s, p) => s + p.payslips.reduce((a, x) => a + Number(x.total), 0), 0)) },
     { label: "Borongan belum diklaim", amount: Number(unclaimed._sum.amount ?? 0) },
@@ -162,11 +162,11 @@ export function ruleInsights(s: Snapshot): Insight[] {
     else out.push({ tone: "green", title: `Margin bersih ${last.label} ${margin}%`, detail: "Sehat. Pertimbangkan menambah kapasitas produksi produk dengan margin tertinggi." });
     if (gross < 30) out.push({ tone: "amber", title: `Margin kotor ${gross}%`, detail: "HPP memakan lebih dari 70% penjualan. Cek harga bahan baku, reject produksi, dan harga jual." });
   }
-  if (s.overdueCount) out.push({ tone: "red", title: `${s.overdueCount} utang lewat jatuh tempo (${rp(s.overdueAmount)})`, detail: "Bayar atau negosiasi ulang dengan supplier agar pasokan bahan baku tidak terganggu." });
+  if (s.overdueCount) out.push({ tone: "red", title: `${s.overdueCount} hutang lewat jatuh tempo (${rp(s.overdueAmount)})`, detail: "Bayar atau negosiasi ulang dengan supplier agar pasokan bahan baku tidak terganggu." });
   if (s.projected30 < 0) out.push({ tone: "red", title: `Proyeksi kas 30 hari minus ${rp(-s.projected30)}`, detail: "Kewajiban 30 hari melebihi kas bebas + rata-rata pemasukan. Tunda pembelian non-penting, percepat penagihan piutang." });
   else if (s.obligations30 > 0 && s.freeCash < s.obligations30) out.push({ tone: "amber", title: "Kas bebas belum menutup kewajiban 30 hari", detail: `Kas bebas ${rp(s.freeCash)} vs kewajiban ${rp(s.obligations30)}. Bergantung pada penjualan bulan ini.` });
   if (s.runwayMonths !== null && s.runwayMonths < 3) out.push({ tone: s.runwayMonths < 1 ? "red" : "amber", title: `Runway kas ±${s.runwayMonths} bulan`, detail: "Pengeluaran rata-rata lebih besar dari pemasukan. Targetkan cadangan kas minimal 3 bulan biaya operasional." });
-  if (s.loanDebt > 0 && s.cur.revenue > 0) out.push({ tone: "blue", title: `Sisa pinjaman modal ${rp(s.loanDebt)}`, detail: "Jaga sisihan harian cicilan tetap jalan. Prioritaskan pelunasan sebelum menambah utang baru." });
+  if (s.loanDebt > 0 && s.cur.revenue > 0) out.push({ tone: "blue", title: `Sisa pinjaman modal ${rp(s.loanDebt)}`, detail: "Jaga sisihan harian cicilan tetap jalan. Prioritaskan pelunasan sebelum menambah hutang baru." });
   if (s.reservesMissingToday) out.push({ tone: "amber", title: `${s.reservesMissingToday} dana sisihan hari ini belum dicatat`, detail: "Catat di Finance › Dana sisihan agar kompensasi owner & cicilan tidak tertinggal." });
   if (s.advances > 0) out.push({ tone: "blue", title: `Kasbon karyawan berjalan ${rp(s.advances)}`, detail: "Akan dipotong dari gaji berikutnya. Batasi kasbon baru bila kas sedang ketat." });
   if (last && last.expenses > 0 && last.revenue > 0 && last.ownerComp / last.revenue > 0.3) out.push({ tone: "amber", title: "Kompensasi owner > 30% pendapatan", detail: "Wajar di awal usaha, tapi pantau agar tidak menghambat modal kerja." });

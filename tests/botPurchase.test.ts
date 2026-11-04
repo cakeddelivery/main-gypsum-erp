@@ -99,7 +99,7 @@ describe("Bot: angsuran utang supplier", () => {
     await tap("f:ok");
     const pay = await prisma.payable.findUniqueOrThrow({ where: { id: p.payableId! } });
     expect(Number(pay.paid)).toBe(200000);
-    expect(sent.at(-1)?.text).toContain("Sisa utang");
+    expect(sent.at(-1)?.text).toContain("Sisa hutang");
   });
 });
 

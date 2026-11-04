@@ -8,20 +8,26 @@ import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
 import { createLoan, createPayable, createReceivable, settle } from "../actions";
 import { Paged } from "@/components/Paged";
+import { COA } from "@/lib/accounting";
+import { nextInstallment } from "@/lib/payables";
 
-export const metadata = { title: "Piutang, Utang & Pinjaman" };
+export const metadata = { title: "Piutang, Hutang & Pinjaman" };
 
 export default async function PiutangUtang({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
   const user = await requirePerm("accounting.view");
   const { tab = "piutang" } = await searchParams;
-  const [recv, pay, banks, revenueAcc, debitAcc, suppliers] = await Promise.all([
+  const [recv, pay, banks, revenueAcc, debitAcc, suppliers, liabAcc] = await Promise.all([
     prisma.receivable.findMany({ orderBy: { date: "desc" } }),
-    prisma.payable.findMany({ orderBy: { date: "desc" } }),
+    prisma.payable.findMany({ orderBy: { date: "desc" }, include: { coaAccount: { select: { code: true, name: true } } } }),
     prisma.bankAccount.findMany({ where: { active: true } }),
     prisma.coaAccount.findMany({ where: { type: "PENDAPATAN", active: true }, orderBy: { code: "asc" } }),
-    prisma.coaAccount.findMany({ where: { type: { in: ["BEBAN", "ASET", "HPP"] }, active: true, isCash: false }, orderBy: { code: "asc" } }),
+    // Hutang supplier: lawannya barang/jasa yang diterima (persediaan, aset, beban) — bukan piutang
+    prisma.coaAccount.findMany({ where: { type: { in: ["BEBAN", "ASET", "HPP"] }, active: true, isCash: false, NOT: { code: { startsWith: "1-13" } } }, orderBy: { code: "asc" } }),
     prisma.supplier.findMany({ orderBy: { name: "asc" } }),
+    prisma.coaAccount.findMany({ where: { type: "KEWAJIBAN", active: true }, orderBy: { code: "asc" } }),
   ]);
+  const defDebit = debitAcc.find((a) => a.code === COA.PERSEDIAAN_BAHAN)?.id;
+  const defLiab = liabAcc.find((a) => a.code === COA.UTANG_PINJAMAN)?.id;
   const common = (
     <>
       <Field label="Tanggal"><input type="date" name="date" defaultValue={todayStr()} className="input" /></Field>
@@ -35,7 +41,7 @@ export default async function PiutangUtang({ searchParams }: { searchParams: Pro
   const rows = tab === "piutang" ? recv.map((r) => ({ ...r, party: r.customer })) : (tab === "pinjaman" ? loans : usaha).map((p) => ({ ...p, party: p.vendor }));
   return (
     <div className="space-y-4">
-      <PageHeader title="Piutang, utang & pinjaman" actions={<>{user.can("accounting.post") && (tab === "piutang" ? (
+      <PageHeader title="Piutang, hutang & pinjaman" actions={<>{user.can("accounting.post") && (tab === "piutang" ? (
         <Modal trigger="+ Piutang" title="Piutang baru">
           <ModalForm action={createReceivable} className="grid grid-cols-2 gap-3">
             <Field label="Pelanggan" className="col-span-2"><input name="customer" className="input" required /></Field>
@@ -46,34 +52,46 @@ export default async function PiutangUtang({ searchParams }: { searchParams: Pro
       ) : tab === "pinjaman" ? (
         <Modal trigger="+ Pinjaman modal" title="Pinjaman modal baru">
           <ModalForm action={createLoan} className="grid grid-cols-2 gap-3">
-            <Field label="Pemberi pinjaman" className="col-span-2"><input name="vendor" className="input" required /></Field>
-            <Field label="Uang masuk ke rekening" className="col-span-2"><select name="bankAccountId" className="input">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
-            {common}<div className="col-span-2"><Submit>Simpan</Submit></div>
+            <Field label="Pemberi pinjaman" className="col-span-2"><input name="vendor" className="input" required placeholder="nama orang / aplikasi pinjaman" /></Field>
+            <Field label="Akun COA hutang" className="col-span-2"><select name="coaAccountId" className="input" defaultValue={defLiab}>{liabAcc.map((a) => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}</select></Field>
+            <Field label="Uang masuk ke rekening" className="col-span-2" hint="Pinjaman lama = sudah diterima sebelum memakai aplikasi (uangnya sudah termasuk saldo awal rekening)"><select name="bankAccountId" className="input">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}<option value="LAMA">— Pinjaman lama (sebelum pakai aplikasi) —</option></select></Field>
+            <Field label="Tanggal terima"><input type="date" name="date" defaultValue={todayStr()} className="input" /></Field>
+            <Field label="Jatuh tempo"><input type="date" name="dueDate" className="input" /></Field>
+            <Field label="Nominal pinjaman / pokok (IDR)"><input name="amount" inputMode="numeric" className="input" required /></Field>
+            <Field label="Uang diterima bersih" hint="Bila dipotong biaya pencairan; selisihnya jadi beban bunga & biaya pinjaman"><input name="received" inputMode="numeric" className="input" placeholder="sama dengan pokok" /></Field>
+            <Field label="Pokok sudah dibayar" hint="Khusus pinjaman lama: yang sudah dicicil sebelum memakai aplikasi"><input name="paidBefore" inputMode="numeric" className="input" placeholder="0" /></Field>
+            <Field label="Jumlah cicilan (tenor)" hint="Opsional, untuk memecah pokok & bunga tiap cicilan"><input name="installments" inputMode="numeric" className="input" placeholder="mis. 6" /></Field>
+            <Field label="Total bunga / biaya cicilan" className="col-span-2" hint="Opsional. Total bunga/biaya selama tenor"><input name="interestTotal" inputMode="numeric" className="input" placeholder="0 = tanpa bunga" /></Field>
+            <Field label="Catatan" className="col-span-2"><input name="note" className="input" /></Field>
+            <div className="col-span-2"><Submit>Simpan</Submit></div>
           </ModalForm>
         </Modal>
       ) : (
-        <Modal trigger="+ Utang" title="Utang baru">
+        <Modal trigger="+ Hutang" title="Hutang supplier baru">
           <ModalForm action={createPayable} className="grid grid-cols-2 gap-3">
             <Field label="Supplier"><select name="supplierId" className="input"><option value="">— lainnya —</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
             <Field label="Nama pemasok (bila lainnya)"><input name="vendor" className="input" /></Field>
-            <Field label="Akun debit (beban/persediaan/aset)" className="col-span-2"><select name="debitAccountId" className="input">{debitAcc.map((a) => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}</select></Field>
+            <Field label="Untuk (akun debit)" className="col-span-2" hint="Barang/jasa yang diterima dari supplier: biasanya Persediaan Bahan Baku"><select name="debitAccountId" className="input" defaultValue={defDebit}>{debitAcc.map((a) => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}</select></Field>
             {common}<div className="col-span-2"><Submit>Simpan</Submit></div>
           </ModalForm>
         </Modal>
       ))}</>} />
-      <Tabs current={tab} tabs={[{ key: "piutang", label: "Piutang", href: "?tab=piutang", count: recv.filter((r) => r.paid < r.amount).length }, { key: "utang", label: "Utang supplier", href: "?tab=utang", count: usaha.filter((r) => r.paid < r.amount).length }, { key: "pinjaman", label: "Pinjaman modal", href: "?tab=pinjaman", count: loans.filter((r) => r.paid < r.amount).length }]} />
+      <Tabs current={tab} tabs={[{ key: "piutang", label: "Piutang", href: "?tab=piutang", count: recv.filter((r) => r.paid < r.amount).length }, { key: "utang", label: "Hutang supplier", href: "?tab=utang", count: usaha.filter((r) => r.paid < r.amount).length }, { key: "pinjaman", label: "Pinjaman modal", href: "?tab=pinjaman", count: loans.filter((r) => r.paid < r.amount).length }]} />
       <Card>
         <div className="mb-3 text-sm">Total outstanding: <b>{idr(rows.reduce((s, r) => s + Number(r.amount - r.paid), 0))}</b></div>
         <div className="overflow-x-auto">
           <Paged><table className="tbl">
-            <thead><tr><th>No.</th><th>{tab === "piutang" ? "Pelanggan" : tab === "pinjaman" ? "Pemberi pinjaman" : "Pemasok"}</th><th>Tanggal</th><th>Jatuh tempo</th><th className="num">Nominal</th><th className="num">Dibayar</th><th>Status</th><th /></tr></thead>
+            <thead><tr><th>No.</th><th>{tab === "piutang" ? "Pelanggan" : tab === "pinjaman" ? "Pemberi pinjaman" : "Pemasok"}</th>{tab === "pinjaman" && <th>Akun · cicilan</th>}<th>Tanggal</th><th>Jatuh tempo</th><th className="num">Nominal</th><th className="num">Dibayar</th><th>Status</th><th /></tr></thead>
             <tbody>
               {rows.map((r) => {
                 const rem = Number(r.amount - r.paid);
+                const next = "installments" in r ? nextInstallment(r) : null;
                 const overdue = rem > 0 && r.dueDate && r.dueDate < new Date();
                 return (
                   <tr key={r.id}>
-                    <td className="font-mono text-xs">{r.number}</td><td>{r.party}</td><td>{fmtDate(r.date)}</td><td>{fmtDate(r.dueDate)}</td><td className="num">{idr(r.amount)}</td><td className="num">{idr(r.paid)}</td>
+                    <td className="font-mono text-xs">{r.number}</td><td>{r.party}</td>
+                    {tab === "pinjaman" && "coaAccount" in r && <td className="text-xs">{r.coaAccount ? `${r.coaAccount.code} ${r.coaAccount.name}` : `${COA.UTANG_PINJAMAN} Hutang Pinjaman Modal`}{next && <div className="text-slate-500">Cicilan {next.no}/{r.installments}: {idr(next.total)} (pokok {idr(next.principal)}{next.interest ? ` + bunga ${idr(next.interest)}` : ""})</div>}</td>}
+                    <td>{fmtDate(r.date)}</td><td>{fmtDate(r.dueDate)}</td><td className="num">{idr(r.amount)}</td><td className="num">{idr(r.paid)}</td>
                     <td>{rem === 0 ? <Badge tone="green">Lunas</Badge> : overdue ? <Badge tone="red">Jatuh tempo</Badge> : <Badge tone="amber">Belum lunas</Badge>}</td>
                     <td>{rem > 0 && user.can("accounting.post") && (
                       <Modal trigger={tab === "piutang" ? "Terima" : "Bayar"} triggerClass="btn-secondary btn-sm" title={`${tab === "piutang" ? "Pelunasan" : "Pembayaran"} ${r.number}`}>
@@ -81,8 +99,9 @@ export default async function PiutangUtang({ searchParams }: { searchParams: Pro
                           <input type="hidden" name="kind" value={tab === "piutang" ? "piutang" : "utang"} /><input type="hidden" name="id" value={r.id} />
                           <Field label="Rekening"><select name="bankAccountId" className="input">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
                           <Field label="Tanggal"><input type="date" name="date" defaultValue={todayStr()} className="input" /></Field>
-                          <Field label={`Nominal pokok (sisa ${idr(rem)})`}><input name="amount" defaultValue={rem} inputMode="numeric" className="input" /></Field>
-                          {tab !== "piutang" && <Field label="Bunga / biaya (opsional)" hint="Dicatat sebagai beban, tidak mengurangi pokok"><input name="interest" defaultValue={0} inputMode="numeric" className="input" /></Field>}
+                          <Field label={`Nominal pokok (sisa ${idr(rem)})`}><input name="amount" defaultValue={next ? next.principal : rem} inputMode="numeric" className="input" /></Field>
+                          {tab !== "piutang" && <Field label="Bunga / biaya (opsional)" hint="Masuk Beban Bunga & Biaya Pinjaman, tidak mengurangi pokok. Total keluar rekening = pokok + bunga"><input name="interest" defaultValue={next?.interest ?? 0} inputMode="numeric" className="input" /></Field>}
+                          {tab !== "piutang" && <Field label="Catatan"><input name="note" className="input" placeholder={`${tab === "pinjaman" ? "Cicilan pinjaman" : "Bayar hutang"} ${r.number}`} /></Field>}
                           <Submit>Bukukan</Submit>
                         </ModalForm>
                       </Modal>
