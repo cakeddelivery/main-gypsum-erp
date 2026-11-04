@@ -45,6 +45,7 @@ const COA: [string, string, AccountType, boolean?][] = [
   ["6-1350", "Beban Kebersihan & Iuran Lingkungan", "BEBAN"],
   ["6-1900", "Beban Ongkos Kirim", "BEBAN"],
   ["6-1950", "Beban Bunga & Biaya Pinjaman", "BEBAN"],
+  ["6-1650", "Beban Pelatihan & Pengembangan SDM", "BEBAN"],
   ["6-9000", "Beban Lain-lain", "BEBAN"],
 ];
 
@@ -85,6 +86,7 @@ async function main() {
     ["Ongkos Kirim", "KELUAR", "6-1900", "ongkir,ongkos kirim,ekspedisi,jne,jnt,sicepat"],
     ["Iuran Lingkungan & Kebersihan", "KELUAR", "6-1350", "iuran,sampah,kebersihan,keamanan,ronda,retribusi"],
     ["Bunga & Biaya Pinjaman", "KELUAR", "6-1950", "bunga pinjaman,biaya pinjaman,denda keterlambatan"],
+    ["Pelatihan & Pengembangan", "KELUAR", "6-1650", "kelas,kursus,pelatihan,training,workshop,seminar,bootcamp,webinar"],
     ["Pembelian Peralatan", "KELUAR", "1-2100", "mesin,peralatan,oven,kompresor,cetakan,mold"],
     ["Prive Pemilik", "KELUAR", "3-3000", "prive,ambil pribadi"],
     ["Beban Lain-lain", "KELUAR", "6-9000", "lain-lain,lainnya"],
