@@ -120,3 +120,26 @@ describe("Bot: dana sisihan dari bukti transfer", () => {
     expect(await prisma.financeTransaction.count()).toBe(before);
   });
 });
+
+describe("Bot: draft duplikat", () => {
+  it("menampilkan transaksi sebelumnya dan tombol pilihan selain Batalkan", async () => {
+    const amt = 100000 + (Date.now() % 1000) * 7;
+    await say(`bayar servis mesin ${amt} dari seabank`);
+    const first = await prisma.financeTransaction.findFirstOrThrow({ orderBy: { createdAt: "desc" } });
+    sent.length = 0;
+    await say(`bayar servis mesin ${amt} dari seabank`);
+    const msg = sent.at(-1)!;
+    expect(msg.text).toContain("Mirip transaksi sebelumnya");
+    expect(msg.text).toContain(first.number);
+    const cbs = msg.buttons!.flat().map((b) => b.callback_data.split(":")[0]);
+    expect(cbs).toEqual(expect.arrayContaining(["rev", "no", "chg"]));
+    const second = await prisma.financeTransaction.findFirstOrThrow({ orderBy: { createdAt: "desc" } });
+    sent.length = 0;
+    await tap(`chg:${second.id}:acc`);
+    expect(sent.at(-1)?.text).toContain("Ganti rekening");
+    expect(sent.at(-1)?.buttons?.flat().some((b) => b.callback_data.startsWith(`acc:${second.id}:`))).toBe(true);
+    await tap(`rev:${second.id}`);
+    const after = sent.at(-1)!;
+    expect(after.buttons!.flat().some((b) => b.callback_data === `ok:${second.id}`)).toBe(true);
+  });
+});

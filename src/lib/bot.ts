@@ -7,7 +7,7 @@ import { approveAndBook, createTransaction, FinanceError, rejectTransaction, STA
 import { answerCallback, chatAction, downloadTelegramFile, editTelegram, esc, sendTelegram, type InlineButton } from "./telegram";
 import { saveProof } from "./storage";
 import { idr } from "./money";
-import { fmtDate, jakartaDateTime, txTime } from "./time";
+import { fmtDate, fmtDateTime, jakartaDateTime, txTime } from "./time";
 import { dailyRecapText } from "./jobs";
 import { handleMenuCallback, handleMenuCommand, MENU_TEXT } from "./botMenu";
 import { clearSession, getSession, handleFlowCallback, handleFlowLocation, handleFlowText, startPrefilledFlow, type TgLocation } from "./botFlow";
@@ -44,45 +44,82 @@ async function identityOf(tgId: number) {
   return { ...ident, perms };
 }
 
-/** Ringkasan draft + tombol interaktif sesuai data yang masih kurang */
-export async function draftMessage(txId: string): Promise<{ text: string; buttons: InlineButton[][] }> {
+type Pick = "acc" | "to" | "cat" | "st";
+
+/**
+ * Ringkasan draft + tombol interaktif: data yang kurang langsung diberi pilihan (rekening, tujuan, kategori, toko),
+ * transaksi yang dicurigai duplikat menampilkan transaksi sebelumnya, dan data yang sudah terisi tetap bisa diganti.
+ * `pick` = tampilkan pilihan untuk mengganti field tsb (tombol ✏️).
+ */
+export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: string; buttons: InlineButton[][] }> {
   const t = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: txId } });
-  const [banks, cats] = await Promise.all([
+  const [banks, cats, stores, dup] = await Promise.all([
     prisma.bankAccount.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
     prisma.txCategory.findMany({ where: { active: true, direction: t.direction }, orderBy: { name: "asc" } }),
+    prisma.store.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
+    t.duplicateOfId ? prisma.financeTransaction.findUnique({ where: { id: t.duplicateOfId } }) : null,
   ]);
   const bank = banks.find((b) => b.id === t.accountId);
   const to = banks.find((b) => b.id === t.toAccountId);
   const cat = cats.find((c) => c.id === t.categoryId);
-  const dir = t.direction === "MASUK" ? "Pemasukan" : t.direction === "KELUAR" ? "Pengeluaran" : "Transfer internal";
+  const store = stores.find((x) => x.id === t.storeId);
+  const dirOf = (d: string) => (d === "MASUK" ? "Pemasukan" : d === "KELUAR" ? "Pengeluaran" : "Transfer internal");
   const lines = [
     `<b>${esc(t.number)}</b> · ${STATUS_LABEL[t.status]}`,
-    `Jenis: ${dir}`,
+    `Jenis: ${dirOf(t.direction)}`,
     `Nominal: <b>${idr(t.amount)}</b>`,
-    `Tanggal: ${fmtDate(t.date)}`,
-    `Rekening: ${bank ? esc(bank.name) : "—"}${t.direction === "TRANSFER" ? ` → ${to ? esc(to.name) : "—"}` : ""}`,
-    t.direction !== "TRANSFER" ? `Kategori: ${cat ? esc(cat.name) : "—"}` : "",
+    `Tanggal: ${fmtDateTime(t.date)}`,
+    `Rekening: ${bank ? esc(bank.name) : "— (belum dipilih)"}${t.direction === "TRANSFER" ? ` → ${to ? esc(to.name) : "— (belum dipilih)"}` : ""}`,
+    t.direction !== "TRANSFER" ? `Kategori: ${cat ? esc(cat.name) : "— (belum dipilih)"}` : "",
+    stores.length > 1 || !store ? `Toko: ${store ? esc(store.name) : "— (belum dipilih)"}` : "",
     t.note ? `Catatan: ${esc(t.note.slice(0, 200))}` : "",
-    t.duplicateOfId ? "⚠️ Terindikasi duplikat dengan transaksi lain." : "",
   ].filter(Boolean);
+  if (dup) {
+    lines.push(
+      "",
+      "⚠️ <b>Mirip transaksi sebelumnya</b> (nominal & tanggal sama):",
+      `<b>${esc(dup.number)}</b> · ${STATUS_LABEL[dup.status]}`,
+      `${dirOf(dup.direction)} ${idr(dup.amount)} · ${fmtDateTime(dup.date)}`,
+      `Rekening: ${esc(banks.find((b) => b.id === dup.accountId)?.name ?? "—")}${dup.direction === "TRANSFER" ? ` → ${esc(banks.find((b) => b.id === dup.toAccountId)?.name ?? "—")}` : ""}${cats.find((c) => c.id === dup.categoryId) ? ` · ${esc(cats.find((c) => c.id === dup.categoryId)!.name)}` : ""}`,
+      ...(dup.note ? [`Catatan: ${esc(dup.note.slice(0, 120))}`] : []),
+      `Dibuat: ${fmtDateTime(dup.createdAt)}${dup.telegramChatId ? " via Telegram" : ""}${dup.proofPath ? " · ada foto bukti" : ""}`,
+    );
+  }
   const buttons: InlineButton[][] = [];
   if (t.status === "DIBUKUKAN" || t.status === "DITOLAK" || t.status === "DIBATALKAN") return { text: lines.join("\n"), buttons };
-  if (!t.accountId) {
-    lines.push("\nPilih rekening:");
-    buttons.push(...chunk(banks.map((b) => ({ text: b.name, callback_data: `acc:${t.id}:${b.id}` })), 2));
-  } else if (t.direction === "TRANSFER" && !t.toAccountId) {
-    lines.push("\nPilih rekening tujuan:");
-    buttons.push(...chunk(banks.filter((b) => b.id !== t.accountId).map((b) => ({ text: b.name, callback_data: `to:${t.id}:${b.id}` })), 2));
-  } else if (t.direction !== "TRANSFER" && !t.categoryId) {
-    lines.push("\nPilih kategori:");
-    buttons.push(...chunk(cats.slice(0, 12).map((c) => ({ text: c.name, callback_data: `cat:${t.id}:${c.id}` })), 2));
-  } else if (t.status === "PERLU_DITINJAU" && t.duplicateOfId) {
-    buttons.push([{ text: "Bukan duplikat, lanjutkan", callback_data: `rev:${t.id}` }]);
+  const missing = missingFields(t);
+  // Pilihan untuk data yang kurang (atau yang ingin diganti)
+  const need: Pick | null = pick ?? (!t.accountId ? "acc" : t.direction === "TRANSFER" && (!t.toAccountId || t.toAccountId === t.accountId) ? "to" : t.direction !== "TRANSFER" && !t.categoryId ? "cat" : !t.storeId ? "st" : null);
+  if (need === "acc") {
+    lines.push(`\n${pick ? "Ganti" : "Pilih"} rekening${t.direction === "TRANSFER" ? " asal" : ""}:`);
+    buttons.push(...chunk(banks.map((b) => ({ text: `${b.id === t.accountId ? "✓ " : ""}${b.name}`, callback_data: `acc:${t.id}:${b.id}` })), 2));
+  } else if (need === "to") {
+    lines.push(`\n${pick ? "Ganti" : "Pilih"} rekening tujuan:`);
+    buttons.push(...chunk(banks.filter((b) => b.id !== t.accountId).map((b) => ({ text: `${b.id === t.toAccountId ? "✓ " : ""}${b.name}`, callback_data: `to:${t.id}:${b.id}` })), 2));
+  } else if (need === "cat") {
+    lines.push(`\n${pick ? "Ganti" : "Pilih"} kategori:`);
+    buttons.push(...chunk(cats.slice(0, 16).map((c) => ({ text: `${c.id === t.categoryId ? "✓ " : ""}${c.name}`, callback_data: `cat:${t.id}:${c.id}` })), 2));
+  } else if (need === "st") {
+    lines.push(`\n${pick ? "Ganti" : "Pilih"} toko:`);
+    buttons.push(...chunk(stores.map((x) => ({ text: `${x.id === t.storeId ? "✓ " : ""}${x.name}`, callback_data: `st:${t.id}:${x.id}` })), 2));
   }
-  buttons.push([
-    ...(missingFields(t).length === 0 && !t.duplicateOfId ? [{ text: "✅ Konfirmasi", callback_data: `ok:${t.id}` }] : []),
-    { text: "❌ Batalkan", callback_data: `no:${t.id}` },
-  ]);
+  if (pick) {
+    buttons.push([{ text: "◀ Kembali", callback_data: `back:${t.id}` }]);
+    return { text: lines.join("\n"), buttons };
+  }
+  if (t.duplicateOfId) {
+    lines.push("\nApakah ini transaksi yang sama (terkirim dua kali)?");
+    buttons.push([{ text: "✅ Bukan duplikat, lanjutkan", callback_data: `rev:${t.id}` }], [{ text: "🗑 Ya duplikat, batalkan ini", callback_data: `no:${t.id}` }]);
+  }
+  // Data yang sudah terisi tetap bisa diganti
+  const edit: InlineButton[] = [];
+  if (t.accountId && need !== "acc") edit.push({ text: "✏️ Rekening", callback_data: `chg:${t.id}:acc` });
+  if (t.direction === "TRANSFER" && t.toAccountId && need !== "to") edit.push({ text: "✏️ Tujuan", callback_data: `chg:${t.id}:to` });
+  if (t.direction !== "TRANSFER" && t.categoryId && need !== "cat") edit.push({ text: "✏️ Kategori", callback_data: `chg:${t.id}:cat` });
+  if (stores.length > 1 && t.storeId && need !== "st") edit.push({ text: "✏️ Toko", callback_data: `chg:${t.id}:st` });
+  if (edit.length) buttons.push(...chunk(edit, 3));
+  if (missing.length === 0 && !t.duplicateOfId) buttons.push([{ text: "✅ Konfirmasi & bukukan", callback_data: `ok:${t.id}` }, { text: "❌ Batalkan", callback_data: `no:${t.id}` }]);
+  else if (!t.duplicateOfId) buttons.push([{ text: "❌ Batalkan", callback_data: `no:${t.id}` }]);
   return { text: lines.join("\n"), buttons };
 }
 
@@ -295,7 +332,14 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
   const actor = { id: ident.userId, name: ident.user.name, telegramId: ident.telegramUserId };
   // Melengkapi/membatalkan draft: hanya identitas yang boleh mengirim transaksi atau peninjau/penyetuju keuangan
   const canReview = ident.perms.has("finance.review") || ident.perms.has("finance.approve");
-  if (["acc", "to", "cat", "no"].includes(action) && !ident.canSubmit && !canReview) return answerCallback(cb.id, "Anda tidak berwenang mengubah transaksi");
+  if (["acc", "to", "cat", "st", "no", "chg"].includes(action) && !ident.canSubmit && !canReview) return answerCallback(cb.id, "Anda tidak berwenang mengubah transaksi");
+  // Tombol ✏️ / ◀ Kembali: hanya mengganti tampilan pilihan, belum mengubah data
+  if (action === "chg" || action === "back") {
+    if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan sudah tidak tersedia");
+    const m = await draftMessage(txId, action === "chg" && ["acc", "to", "cat", "st"].includes(value) ? (value as "acc" | "to" | "cat" | "st") : undefined);
+    await editTelegram(chatId, cb.message.message_id, m.text, m.buttons);
+    return answerCallback(cb.id, "");
+  }
   if (action === "no" && !canReview) {
     const own = await prisma.approvalLog.findFirst({ where: { transactionId: txId, action: "DIBUAT", actorUserId: ident.userId } });
     if (!own) return answerCallback(cb.id, "Hanya pembuat draft atau peninjau keuangan yang dapat membatalkan");
@@ -304,6 +348,7 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
     if (action === "acc") await updateTransaction(txId, { accountId: value }, actor);
     else if (action === "to") await updateTransaction(txId, { toAccountId: value }, actor);
     else if (action === "cat") await updateTransaction(txId, { categoryId: value }, actor);
+    else if (action === "st") await updateTransaction(txId, { storeId: value }, actor);
     else if (action === "rev") {
       if (!ident.perms.has("finance.review")) return answerCallback(cb.id, "Anda tidak berwenang meninjau");
       await prisma.$transaction(async (tx) => {
@@ -322,7 +367,7 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
       await approveAndBook(txId, actor, "Dikonfirmasi via Telegram");
     } else return answerCallback(cb.id, "Aksi tidak dikenal");
     // Setelah data dilengkapi, kembalikan ke Menunggu Konfirmasi bila sudah lengkap
-    if (["acc", "to", "cat", "rev"].includes(action)) {
+    if (["acc", "to", "cat", "st", "rev"].includes(action)) {
       const t = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: txId } });
       if (t.status === "PERLU_DITINJAU" && !t.duplicateOfId && missingFields(t).length === 0) await submitForConfirmation(txId, actor, "Dilengkapi via Telegram");
     }
