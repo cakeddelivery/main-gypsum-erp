@@ -50,6 +50,8 @@ export type TxInput = {
   telegramMessageId?: string | null;
   /** Rincian (opsional): satu transfer untuk beberapa keperluan; jumlahnya harus = nominal */
   splits?: SplitInput[] | null;
+  /** true = toko tidak diisi otomatis dengan toko default (withdraw yang tokonya belum jelas: ditanyakan) */
+  askStore?: boolean;
 };
 
 export type SplitInput = { categoryId?: string | null; amount: number; note?: string | null; itemId?: string | null; qty?: number | null };
@@ -123,7 +125,7 @@ export async function createTransaction(input: TxInput, source: TxSource, actor:
       const existing = await tx.financeTransaction.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
       if (existing) return { transaction: existing, duplicate: null, replayed: true };
     }
-    if (!input.storeId) {
+    if (!input.storeId && !input.askStore) {
       const def = await tx.setting.findUnique({ where: { key: "default_store_id" } });
       input.storeId = def?.value ?? null;
     }

@@ -44,7 +44,8 @@ export function TxForm(p: {
   const setSplit = (k: number, patch: Partial<Split>) => setSplits((o) => o.map((x, i) => (i === k ? { ...x, ...patch } : x)));
   // Toko hanya membedakan withdraw saldo penjual marketplace (transfer internal); selain itu selalu toko default.
   const isTransfer = v.direction === "TRANSFER";
-  const storeIn = (text?: string | null) => p.stores.find((s) => text?.toLowerCase().includes(s.name.toLowerCase()))?.id;
+  // Toko dari nama atau inisial (WD MG / WD DL)
+  const storeIn = (text?: string | null) => p.stores.find((s) => text?.toLowerCase().includes(s.name.toLowerCase()) || new RegExp(`\\b${(s as Opt & { code?: string }).code ?? "@@"}\\b`, "i").test(text ?? ""))?.id;
   return (
     <ActionForm action={p.action} className="space-y-4" onSuccess={() => setTimeout(close, 700)}>
       {v.id && <input type="hidden" name="id" value={v.id} />}

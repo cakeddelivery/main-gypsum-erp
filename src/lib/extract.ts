@@ -121,6 +121,26 @@ export function matchAccount(segment: string, accounts: ExtractAccount[]): strin
   return best?.id ?? null;
 }
 
+/**
+ * Toko dari inisial/nama: "WD MG shopee", "withdraw dunia lukis" → kode toko (MG / DL).
+ * Hanya kode toko sebagai kata utuh, atau nama tokonya.
+ */
+export function matchStore(text: string, stores: { id: string; code: string; name: string }[]): string | null {
+  const t = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+  for (const st of stores) {
+    const name = st.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (t.includes(` ${st.code.toLowerCase()} `) || (name && t.includes(` ${name} `))) return st.id;
+  }
+  return null;
+}
+
+/** Saldo penjual marketplace yang disebut di pesan withdraw ("wd shopee", "withdraw tiktok") */
+function marketplaceAccount(t: string, accounts: ExtractAccount[]): string | null {
+  const platform = /\btik\s?tok\b/.test(t) ? "tiktok" : /\bshopee\b(?!\s*pay)/.test(t) ? "shopee" : null;
+  if (!platform) return null;
+  return accounts.find((a) => /saldo|penjual|seller/i.test(`${a.code} ${a.name}`) && `${a.code} ${a.name}`.toLowerCase().replace(/\s/g, "").includes(platform))?.id ?? null;
+}
+
 /** Rekomendasi kategori berbasis kata kunci; mengembalikan id kategori dengan skor tertinggi */
 // Nama usaha/toko sering ikut ditulis di keterangan dan tidak boleh memicu kata kunci kategori (mis. "gypsum")
 const BUSINESS_NAMES = /\b(main\s*gypsum|dunia\s*lukis)\b/g;
@@ -160,6 +180,8 @@ export function extractTransaction(text: string, accounts: ExtractAccount[], cat
     const to = t.match(/ke\s+([a-z0-9 ]+?)(?:\s+(?:rp|sebesar|\d)|$)/);
     accountId = from ? matchAccount(from[1], accounts) : null;
     toAccountId = to ? matchAccount(to[1], accounts) : null;
+    // "WD MG shopee 500rb": withdraw tanpa kata "dari" = dari saldo penjual platform yang disebut
+    if (!accountId && /\b(wd|withdraw|penarikan|tarik saldo|tarik dana)\b/.test(t)) accountId = marketplaceAccount(t, accounts);
   } else {
     accountId = matchAccount(t, accounts);
   }

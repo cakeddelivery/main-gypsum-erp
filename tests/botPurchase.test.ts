@@ -176,3 +176,20 @@ describe("Rincian: satu transfer untuk beberapa keperluan", () => {
     void submitForConfirmation;
   });
 });
+
+describe("Withdraw MG / DL", () => {
+  it("'WD MG shopee' = withdraw dari saldo penjual Shopee untuk toko Main Gypsum; tanpa inisial toko ditanyakan", async () => {
+    const mg = await prisma.store.findUniqueOrThrow({ where: { code: "MG" } });
+    const seller = await prisma.bankAccount.findUniqueOrThrow({ where: { code: "SALDO_SHOPEE" } });
+    const amt = 300000 + (Date.now() % 997);
+    await say(`WD MG shopee ${amt} ke seabank`);
+    const t = await prisma.financeTransaction.findFirstOrThrow({ orderBy: { createdAt: "desc" } });
+    expect(t).toMatchObject({ direction: "TRANSFER", accountId: seller.id, storeId: mg.id });
+    sent.length = 0;
+    await say(`wd shopee ${amt + 1} ke seabank`);
+    const t2 = await prisma.financeTransaction.findFirstOrThrow({ orderBy: { createdAt: "desc" } });
+    expect(t2.storeId).toBeNull();
+    expect(sent.at(-1)?.buttons?.flat().some((b) => b.callback_data.startsWith(`st:${t2.id}:`))).toBe(true);
+    expect(sent.at(-1)?.text).toContain("pemasukan penjualan");
+  });
+});

@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 import { effectivePermissions } from "./rbac";
-import { extractTransaction, hasExplicitAmount, mergeReceipt } from "./extract";
+import { extractTransaction, hasExplicitAmount, matchStore, mergeReceipt } from "./extract";
 import { readReceipt, type ReceiptRead } from "./receipt";
 import { ocrReceipt } from "./ocrReceipt";
 import { type SplitInput, splitIssues, approveAndBook, createTransaction, FinanceError, rejectTransaction, STATUS_LABEL, submitForConfirmation, updateTransaction, missingFields } from "./finance";
@@ -123,7 +123,7 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
       buttons.push(...chunk(cats.slice(0, 16).map((c) => ({ text: `${c.id === sp.categoryId ? "✓ " : ""}${c.name}`, callback_data: `sc:${t.id}:${k}:${c.id}` })), 2));
     }
   } else if (need === "st") {
-    lines.push(`\n${pick ? "Ganti" : "Pilih"} toko:`);
+    lines.push(`\n${pick ? "Ganti" : "Pilih"} toko${t.direction === "TRANSFER" && bank?.marketplace ? " untuk withdraw ini (MG / DL)" : ""}:`);
     buttons.push(...chunk(stores.map((x) => ({ text: `${x.id === t.storeId ? "✓ " : ""}${x.name}`, callback_data: `st:${t.id}:${x.id}` })), 2));
   }
   if (pick) {
@@ -241,6 +241,10 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     await sendTelegram(chatId, `Saya belum bisa membaca ${!ex.amount ? "nominal" : "jenis transaksi (masuk/keluar/transfer)"} dari ${photo ? "foto & keterangan" : "pesan"} ini. Tulis ulang dengan lebih lengkap, misal: <i>bayar gypsum 2jt dari seabank</i>.`);
     return;
   }
+  // Withdraw saldo penjual: toko dibedakan dari inisial MG / DL (atau nama toko); bila tidak ada, ditanyakan
+  const seller = ex.direction === "TRANSFER" ? banks.find((b) => b.id === ex.accountId && b.marketplace) : null;
+  const stores = seller ? await prisma.store.findMany({ where: { active: true } }) : [];
+  const storeId = seller ? matchStore([text, receipt?.counterparty].filter(Boolean).join(" "), stores) : null;
   const draft: DraftInput = {
     direction: ex.direction,
     amount: ex.amount,
@@ -253,6 +257,8 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     proofPath,
     aiExtraction: receipt ? { ...ex, receipt } : ex,
     messageId: String(msg.message_id),
+    storeId,
+    askStore: !!seller && !storeId,
     splits: splits.length ? splits.map((x) => ({ categoryId: x.itemId ? null : x.categoryId, amount: x.amount, note: x.label, itemId: x.itemId, qty: x.qty })) : undefined,
   };
   const ctx = { i: ident, chatId };
@@ -301,6 +307,8 @@ type DraftInput = {
   proofPath: string | null;
   aiExtraction: unknown;
   messageId: string;
+  storeId?: string | null;
+  askStore?: boolean;
   splits?: SplitInput[];
 };
 
@@ -323,6 +331,8 @@ async function createDraft(chatId: string, ident: NonNullable<Awaited<ReturnType
       telegramChatId: chatId,
       telegramMessageId: d.messageId,
       splits: d.splits,
+      storeId: d.storeId ?? null,
+      askStore: d.askStore,
     },
     "TELEGRAM",
     { id: ident.userId, name: ident.user.name, telegramId: ident.telegramUserId },
