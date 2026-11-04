@@ -555,6 +555,12 @@ async function answer(ctx: Ctx, s: Session, v: string, fromText: boolean) {
   return present(ctx, await promptFor(s, ctx.i));
 }
 
+/** Mulai isian yang sudah terisi sebagian (mis. pembelian dikenali dari pesan/foto bukti) */
+export async function startPrefilledFlow(ctx: Ctx, s: Session) {
+  await save(s);
+  return present({ ...ctx, messageId: undefined }, await promptFor(s, ctx.i));
+}
+
 /** Tombol isian (callback_data diawali "f:") */
 export async function handleFlowCallback(i: BotIdent, cbId: string, chatId: string, messageId: number, data: string) {
   const [, a, b] = data.split(":");

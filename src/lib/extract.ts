@@ -66,16 +66,31 @@ export function extractTime(text: string): string | null {
   return null;
 }
 
+/** Satuan jumlah barang: angka di depannya adalah kuantitas, bukan nominal ("2000 pcs", "10 sak") */
+export const QTY_UNITS = "pcs|pc|biji|buah|bh|sak|zak|kg|kilo|kilogram|gram|gr|ons|lembar|lbr|dus|box|karton|roll|rol|meter|mtr|liter|ltr|pack|pak|bal|ikat|unit|botol|kaleng|galon|ton|set|lusin|kodi|rim|batang|btg|keping|kpg";
+
+/** Buang tanggal, jam & kuantitas barang dari teks agar angkanya tidak terbaca sebagai nominal */
+function stripNonAmounts(t: string) {
+  return t
+    .replace(/\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b/g, " ")
+    .replace(/\b\d{4}-\d{2}-\d{2}\b/g, " ")
+    .replace(/\b\d{1,2}\s+(?:jan|feb|mar|apr|mei|may|jun|jul|agu|agt|aug|sep|okt|oct|nov|des|dec)[a-z]*\.?(?:\s*\d{4})?\b/g, " ")
+    .replace(/\b(?:jam|pukul|pkl)\.?\s*\d{1,2}(?:[.:]\d{2})?\b/g, " ")
+    .replace(/(?<![\d.,])\d{1,2}[.:]\d{2}(?:[.:]\d{2})?\s*(?:wib|wita|wit)\b/g, " ")
+    .replace(/(?<![\d.,:])\d{1,2}:\d{2}(?::\d{2})?(?![\d.,:])/g, " ")
+    .replace(new RegExp(`\\b\\d[\\d.,]*\\s*(?:${QTY_UNITS})\\b`, "g"), " ")
+    .replace(/\b(?:tahun|thn|th)\.?\s*\d{4}\b/g, " ");
+}
+
+const EXPLICIT_AMOUNT = [/rp\.?\s*([\d.,]+(?:\s*(?:jt|juta|rb|ribu|k))?)/, /\b([\d.,]+\s*(?:jt|juta|rb|ribu|k))\b/, /(?:nominal|total|sebesar|jumlah|harga)\s*:?\s*(?:rp\.?\s*)?([\d.,]+)/];
+
+/**
+ * Nominal dari teks. Tanggal, tahun, jam, dan jumlah barang ("2000 pcs") diabaikan.
+ * Angka polos tanpa Rp/rb/jt hanya dianggap nominal bila berpemisah ribuan (10.000) atau minimal 5 digit.
+ */
 export function extractAmount(text: string): number | null {
-  const t = text.toLowerCase();
-  const patterns = [
-    /rp\.?\s*([\d.,]+(?:\s*(?:jt|juta|rb|ribu|k))?)/,
-    /\b([\d.,]+\s*(?:jt|juta|rb|ribu|k))\b/,
-    /(?:nominal|total|sebesar|jumlah)\s*:?\s*([\d.,]+)/,
-    /\b(\d{1,3}(?:\.\d{3})+)\b/,
-    /\b(\d{4,})\b/,
-  ];
-  for (const p of patterns) {
+  const t = stripNonAmounts(text.toLowerCase());
+  for (const p of [...EXPLICIT_AMOUNT, /\b(\d{1,3}(?:\.\d{3})+)\b/, /\b(\d{5,})\b/]) {
     const m = t.match(p);
     if (m) {
       const v = parseIDR(m[1].replace(/\s+/g, ""));
@@ -83,6 +98,15 @@ export function extractAmount(text: string): number | null {
     }
   }
   return null;
+}
+
+/** Nominal ditulis jelas (Rp, rb, jt, "nominal ..."): lebih diutamakan daripada hasil baca foto bukti */
+export function hasExplicitAmount(text: string): boolean {
+  const t = stripNonAmounts(text.toLowerCase());
+  return EXPLICIT_AMOUNT.some((p) => {
+    const m = t.match(p);
+    return !!m && (parseIDR(m[1].replace(/\s+/g, "")) ?? 0) > 0;
+  });
 }
 
 export function matchAccount(segment: string, accounts: ExtractAccount[]): string | null {
@@ -95,6 +119,26 @@ export function matchAccount(segment: string, accounts: ExtractAccount[]): strin
     }
   }
   return best?.id ?? null;
+}
+
+/**
+ * Toko dari inisial/nama: "WD MG shopee", "withdraw dunia lukis" → kode toko (MG / DL).
+ * Hanya kode toko sebagai kata utuh, atau nama tokonya.
+ */
+export function matchStore(text: string, stores: { id: string; code: string; name: string }[]): string | null {
+  const t = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+  for (const st of stores) {
+    const name = st.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    if (t.includes(` ${st.code.toLowerCase()} `) || (name && t.includes(` ${name} `))) return st.id;
+  }
+  return null;
+}
+
+/** Saldo penjual marketplace yang disebut di pesan withdraw ("wd shopee", "withdraw tiktok") */
+function marketplaceAccount(t: string, accounts: ExtractAccount[]): string | null {
+  const platform = /\btik\s?tok\b/.test(t) ? "tiktok" : /\bshopee\b(?!\s*pay)/.test(t) ? "shopee" : null;
+  if (!platform) return null;
+  return accounts.find((a) => /saldo|penjual|seller/i.test(`${a.code} ${a.name}`) && `${a.code} ${a.name}`.toLowerCase().replace(/\s/g, "").includes(platform))?.id ?? null;
 }
 
 /** Rekomendasi kategori berbasis kata kunci; mengembalikan id kategori dengan skor tertinggi */
@@ -120,7 +164,14 @@ export function extractTransaction(text: string, accounts: ExtractAccount[], cat
   let direction: Extraction["direction"] = null;
   if (/\b(transfer internal|pindah dana|pindah saldo|tarik saldo|tarik dana|pindahkan|withdraw|wd|penarikan)\b/.test(t)) direction = "TRANSFER";
   else if (/\b(masuk|terima|diterima|pemasukan|pendapatan|penjualan|cair|pencairan|dp dari)\b/.test(t)) direction = "MASUK";
-  else if (/\b(keluar|bayar|beli|pembelian|biaya|pengeluaran|belanja|ongkir|gaji|upah|isi ulang|refill|servis|service|sewa|tagihan)\b/.test(t)) direction = "KELUAR";
+  else if (/\b(keluar|bayar|beli|pembelian|biaya|pengeluaran|belanja|ongkir|gaji|upah|isi ulang|refill|servis|service|sewa|tagihan|angsur|angsuran|cicil|cicilan|nyicil|kulakan|hutang|utang|pelunasan)\b/.test(t)) direction = "KELUAR";
+  // "transfer/sisihkan dari seabank ke shopeepay": dua rekening sendiri = transfer internal
+  if (direction !== "TRANSFER" && direction !== "MASUK") {
+    const m = t.match(/dari\s+([a-z0-9 ]+?)\s+ke\s+([a-z0-9 ]+?)(?:\s+(?:rp|sebesar|\d)|$)/);
+    const a = m ? matchAccount(m[1], accounts) : null;
+    const b = m ? matchAccount(m[2], accounts) : null;
+    if (a && b && a !== b && (direction === null || /\b(transfer|tf|pindah|sisih|sisihkan|nabung|tabung|setor)\b/.test(t))) direction = "TRANSFER";
+  }
 
   let accountId: string | null = null;
   let toAccountId: string | null = null;
@@ -129,6 +180,8 @@ export function extractTransaction(text: string, accounts: ExtractAccount[], cat
     const to = t.match(/ke\s+([a-z0-9 ]+?)(?:\s+(?:rp|sebesar|\d)|$)/);
     accountId = from ? matchAccount(from[1], accounts) : null;
     toAccountId = to ? matchAccount(to[1], accounts) : null;
+    // "WD MG shopee 500rb": withdraw tanpa kata "dari" = dari saldo penjual platform yang disebut
+    if (!accountId && /\b(wd|withdraw|penarikan|tarik saldo|tarik dana)\b/.test(t)) accountId = marketplaceAccount(t, accounts);
   } else {
     accountId = matchAccount(t, accounts);
   }
@@ -158,7 +211,8 @@ export type ReceiptHint = { amount: number | null; date: string | null; time?: s
 export function mergeReceipt(ex: Extraction, text: string, rx: ReceiptHint | null, accounts: ExtractAccount[], categories: ExtractCategory[], now: Date = new Date()): Extraction {
   if (!rx) return ex;
   const direction = ex.direction ?? rx.direction;
-  const amount = ex.amount ?? rx.amount;
+  // Foto bukti transfer: nominal di bukti dipakai, kecuali caption menulis nominal dengan jelas (Rp/rb/jt)
+  const amount = hasExplicitAmount(text) ? ex.amount ?? rx.amount : rx.amount ?? ex.amount;
   const captionDate = extractDate(text, now);
   const date = captionDate ?? rx.date ?? ex.date;
   // Jam: yang ditulis di caption diutamakan, lalu jam di bukti (hanya bila tanggalnya juga dari bukti/sama)

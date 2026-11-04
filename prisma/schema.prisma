@@ -901,6 +901,8 @@ model BankAccount {
   coaAccount   CoaAccount @relation(fields: [coaAccountId], references: [id])
   aliases      String     @default("")
   active       Boolean    @default(true)
+  /// Saldo penjual marketplace (Shopee/TikTok): withdraw dari rekening ini sekaligus dicatat sebagai pemasukan penjualan
+  marketplace  Boolean    @default(false)
 }
 
 enum TxDirection {
@@ -966,10 +968,27 @@ model FinanceTransaction {
   telegramChatId      String?
   telegramMessageId   String?
   approvals           ApprovalLog[]
+  /// Rincian: satu transfer untuk beberapa keperluan (kategori/bahan baku berbeda)
+  splits              FinanceTxSplit[]
 
   @@index([fingerprint])
   @@index([status])
   @@index([deletedAt])
+}
+
+/// Rincian transaksi: jumlah semua baris = nominal transaksi. Baris dengan itemId = pembelian bahan baku (stok masuk)
+model FinanceTxSplit {
+  id            String             @id @default(cuid())
+  transactionId String
+  transaction   FinanceTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  categoryId    String?
+  amount        BigInt
+  note          String?
+  itemId        String?
+  qty           Decimal?           @db.Decimal(14, 3)
+  sortOrder     Int                @default(0)
+
+  @@index([transactionId])
 }
 
 model ApprovalLog {
@@ -1242,6 +1261,9 @@ model ReserveEntry {
   amount    BigInt
   journalId String?
   note      String?
+  /// Foto bukti transfer sisihan (penyimpanan privat)
+  proofPath String?
+  proofMime String?
   createdBy String
   createdAt DateTime    @default(now())
 

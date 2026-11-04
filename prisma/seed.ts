@@ -65,7 +65,7 @@ async function main() {
   ];
   const bank: Record<string, string> = {};
   for (const [code, name, coa, aliases] of banks) {
-    bank[code] = (await prisma.bankAccount.upsert({ where: { code }, create: { code, name, coaAccountId: acc[coa], aliases }, update: {} })).id;
+    bank[code] = (await prisma.bankAccount.upsert({ where: { code }, create: { code, name, coaAccountId: acc[coa], aliases, marketplace: code.startsWith("SALDO_") }, update: {} })).id;
   }
 
   const cats: [string, "MASUK" | "KELUAR", string, string][] = [

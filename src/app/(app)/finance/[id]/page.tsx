@@ -3,20 +3,22 @@ import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { dateStr, fmtDateTime, jakartaParts } from "@/lib/time";
-import { STATUS_LABEL, missingFields } from "@/lib/finance";
+import { STATUS_LABEL, missingFields, splitIssues } from "@/lib/finance";
 import { Badge, Card, ErrorBox, Field, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
+import { ProofPreview } from "@/components/ProofPreview";
 import { TxForm } from "../TxForm";
-import { approveTx, cancelTx, deleteTx, rejectTx, submitTx, updateTx } from "../actions";
+import { approveTx, cancelTx, changeStoreTx, deleteTx, rejectTx, submitTx, updateTx } from "../actions";
 
 export const metadata = { title: "Detail Transaksi" };
 
 export default async function TxDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ dup?: string }> }) {
   const user = await requirePerm("finance.view");
   const { id } = await params;
-  const t = await prisma.financeTransaction.findUnique({ where: { id }, include: { approvals: { orderBy: { at: "asc" } }, store: true } });
+  const t = await prisma.financeTransaction.findUnique({ where: { id }, include: { approvals: { orderBy: { at: "asc" } }, store: true, splits: { orderBy: { sortOrder: "asc" } } } });
+  const splitItems = t ? await prisma.item.findMany({ where: { id: { in: t.splits.map((x) => x.itemId).filter((x): x is string => !!x) } }, select: { id: true, name: true, unit: true } }) : [];
   if (!t) notFound();
   const [banks, categories, stores, dup, journal, def] = await Promise.all([
     prisma.bankAccount.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
@@ -27,7 +29,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
     prisma.setting.findUnique({ where: { key: "default_store_id" } }),
   ]);
   const editable = ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"].includes(t.status);
-  const missing = missingFields(t);
+  const missing = [...missingFields(t), ...splitIssues(t.amount, t.direction, t.splits)];
   const p = jakartaParts(t.date);
   const suggested = categories.find((c) => c.id === t.suggestedCategoryId);
   const ai = t.aiExtraction as { confidence?: number; missing?: string[] } | null;
@@ -47,16 +49,28 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
         <div className="space-y-5 lg:col-span-2">
           <Card title="Data transaksi" actions={editable && user.can("finance.create") && (
             <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah transaksi" wide>
-              <TxForm mode="edit" action={updateTx} banks={banks} categories={categories} stores={stores} defaultStoreId={def?.value} init={{ id: t.id, direction: t.direction, amount: Number(t.amount), date: dateStr(new Date(Date.UTC(p.year, p.month - 1, p.day))), time: `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`, accountId: t.accountId, toAccountId: t.toAccountId, categoryId: t.categoryId, storeId: t.storeId, counterparty: t.counterparty, note: t.note }} />
+              <TxForm mode="edit" action={updateTx} banks={banks} categories={categories} stores={stores} defaultStoreId={def?.value} init={{ id: t.id, direction: t.direction, amount: Number(t.amount), date: dateStr(new Date(Date.UTC(p.year, p.month - 1, p.day))), time: `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`, accountId: t.accountId, toAccountId: t.toAccountId, categoryId: t.categoryId, storeId: t.storeId, counterparty: t.counterparty, note: t.note, splits: t.splits.map((x) => ({ categoryId: x.categoryId, amount: Number(x.amount), note: x.note ?? "", itemId: x.itemId, itemName: splitItems.find((i) => i.id === x.itemId)?.name ?? null, qty: x.qty ? Number(x.qty) : null })) }} />
             </Modal>
           )}>
               <dl className="grid grid-cols-2 gap-y-2 text-sm">
                 <dt className="text-slate-500">Jenis</dt><dd>{t.direction}</dd>
                 <dt className="text-slate-500">Rekening</dt><dd>{banks.find((b) => b.id === t.accountId)?.name}{t.toAccountId && ` → ${banks.find((b) => b.id === t.toAccountId)?.name}`}</dd>
-                <dt className="text-slate-500">Kategori</dt><dd>{categories.find((c) => c.id === t.categoryId)?.name ?? "—"}</dd>
+                <dt className="text-slate-500">Kategori</dt><dd>{t.splits.length ? `${t.splits.length} rincian` : categories.find((c) => c.id === t.categoryId)?.name ?? "—"}</dd>
                 <dt className="text-slate-500">Pihak terkait</dt><dd>{t.counterparty ?? "—"}</dd>
                 <dt className="text-slate-500">Catatan</dt><dd>{t.note ?? "—"}</dd>
               </dl>
+              {t.splits.length > 0 && (
+                <table className="mt-4 w-full text-sm">
+                  <thead><tr className="text-left text-xs text-slate-500"><th>Rincian</th><th>Kategori</th><th className="text-right">Nominal</th></tr></thead>
+                  <tbody>
+                    {t.splits.map((x) => {
+                      const it = splitItems.find((i) => i.id === x.itemId);
+                      return <tr key={x.id}><td>{x.note ?? "—"}</td><td>{it ? `📦 Stok ${it.name} × ${Number(x.qty)} ${it.unit}` : categories.find((c) => c.id === x.categoryId)?.name ?? <span className="text-rose-600">belum dipilih</span>}</td><td className="text-right tabular-nums">{idr(x.amount)}</td></tr>;
+                    })}
+                    <tr className="border-t font-semibold"><td colSpan={2}>Total</td><td className="text-right tabular-nums">{idr(t.splits.reduce((a, x) => a + Number(x.amount), 0))}</td></tr>
+                  </tbody>
+                </table>
+              )}
           </Card>
           {t.rawText && <Card title="Pesan asli"><p className="whitespace-pre-wrap text-sm text-slate-600">{t.rawText}</p></Card>}
           {journal && (
@@ -70,10 +84,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
         <div className="space-y-5">
           {t.proofPath && (
             <Card title="Bukti (privat)">
-              {t.proofMime === "application/pdf" ? <a className="link text-sm" href={`/api/files/proof/${t.id}`} target="_blank">Buka PDF bukti</a> : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <a href={`/api/files/proof/${t.id}`} target="_blank"><img src={`/api/files/proof/${t.id}`} alt="Bukti transaksi" className="max-h-80 w-full rounded-lg object-contain" /></a>
-              )}
+              <ProofPreview thumb src={`/api/files/proof/${t.id}`} mime={t.proofMime} title={`Bukti ${t.number}`} />
             </Card>
           )}
           {editable && (
@@ -92,6 +103,19 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
                   </Modal>
                 )}
               </div>
+            </Card>
+          )}
+          {t.status === "DIBUKUKAN" && t.direction === "TRANSFER" && user.can("finance.approve") && stores.length > 1 && (
+            <Card title="Toko withdraw">
+              <p className="mb-3 text-sm">Toko: <b>{t.store?.name ?? "—"}</b></p>
+              <Modal trigger="Ganti toko" triggerClass="btn-secondary w-full" title="Ganti toko withdraw">
+                <ModalForm action={changeStoreTx} className="space-y-3">
+                  <input type="hidden" name="id" value={t.id} />
+                  <Field label="Toko (MG / DL)"><select name="storeId" defaultValue={t.storeId ?? ""} className="input">{stores.map((x) => <option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select></Field>
+                  <p className="text-xs text-slate-500">Jurnal lama dibalik lalu dibukukan ulang dengan toko baru. Saldo rekening tidak berubah.</p>
+                  <Submit pendingText="Menyimpan…">Simpan toko</Submit>
+                </ModalForm>
+              </Modal>
             </Card>
           )}
           {t.status === "DIBUKUKAN" && user.can("finance.approve") && (

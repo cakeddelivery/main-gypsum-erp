@@ -1,13 +1,14 @@
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
-import { fmtDay, todayStr } from "@/lib/time";
+import { dateStr, fmtDay, todayStr } from "@/lib/time";
 import { RESERVE_LABEL, reserveSummary } from "@/lib/reserve";
 import { Badge, Card, Empty, Field, PageHeader, Stat } from "@/components/ui";
 import { Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { reserveAll, reserveOne, saveFund, withdraw } from "./actions";
+import { attachProof, reserveAll, reserveOne, saveFund, withdraw } from "./actions";
+import { ProofPreview } from "@/components/ProofPreview";
 import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Dana Sisihan Harian" };
@@ -83,6 +84,7 @@ export default async function SisihanPage() {
                           <input type="hidden" name="fundId" value={f.id} />
                           <Field label="Tanggal"><input type="date" name="date" defaultValue={f.missing[f.missing.length - 1] ?? t} className="input" /></Field>
                           <Field label="Nominal" hint="Kosongkan untuk nominal harian"><input name="amount" inputMode="numeric" placeholder={String(Number(f.dailyAmount))} className="input" /></Field>
+                          <Field label="Bukti transfer (opsional)" hint="JPG/PNG/PDF, maks 5 MB"><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
                           {f.missing.length > 0 && <p className="text-xs text-slate-500">Belum disisihkan: {f.missing.map((d) => fmtDay(new Date(`${d}T00:00:00Z`))).join(", ")}</p>}
                           <Submit>Catat</Submit>
                         </ModalForm>
@@ -94,6 +96,7 @@ export default async function SisihanPage() {
                             <Field label="Tanggal"><input type="date" name="date" defaultValue={t} className="input" /></Field>
                             <Field label={`Nominal (saldo ${idr(f.balance)})`}><input name="amount" defaultValue={f.balance} inputMode="numeric" className="input" /></Field>
                             <Field label="Catatan"><input name="note" className="input" /></Field>
+                            <Field label="Bukti transfer (opsional)" hint="JPG/PNG/PDF, maks 5 MB"><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
                             <Submit>Bukukan</Submit>
                           </ModalForm>
                         </Modal>
@@ -110,7 +113,34 @@ export default async function SisihanPage() {
       )}
       <Card title="Riwayat terakhir">
         <ul className="divide-y divide-slate-100 text-sm">
-          {recent.map((e) => <li key={e.id} className="flex justify-between py-1.5"><span>{fmtDay(e.date)} · {e.fund.name} · {e.type === "SISIH" ? "disisihkan" : e.fund.kind === "OWNER" ? "diambil" : "dibayar ke pinjaman"}{e.note && ` · ${e.note}`}</span><span className={`tabular-nums ${e.type === "TARIK" ? "text-rose-600" : ""}`}>{idr(e.amount)}</span></li>)}
+          {recent.map((e) => {
+            // Sisihan lain pada tanggal & alur yang sama (mis. Cak Ed + Jojo) bisa dilampiri satu bukti sekaligus
+            const peers = recent.filter((x) => x.type === e.type && !x.proofPath && dateStr(x.date) === dateStr(e.date) && x.fund.fromBankId === e.fund.fromBankId && x.fund.toBankId === e.fund.toBankId);
+            return (
+              <li key={e.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
+                <span>{fmtDay(e.date)} · {e.fund.name} · {e.type === "SISIH" ? "disisihkan" : e.fund.kind === "OWNER" ? "diambil" : "dibayar ke pinjaman"}{e.note && ` · ${e.note}`}</span>
+                <span className="flex items-center gap-2">
+                  {e.proofPath ? (
+                    <ProofPreview src={`/api/files/reserve-proof/${e.id}`} mime={e.proofMime} title={`Bukti ${e.fund.name} ${fmtDay(e.date)}`} />
+                  ) : (
+                    <Modal trigger="+ Bukti" triggerClass="btn-secondary btn-sm" title={`Lampirkan bukti · ${fmtDay(e.date)}`}>
+                      <ModalForm action={attachProof} className="space-y-3">
+                        {peers.length > 1 ? (
+                          <fieldset className="space-y-1 text-sm">
+                            <legend className="label">Bukti ini untuk sisihan</legend>
+                            {peers.map((x) => <label key={x.id} className="flex items-center gap-2"><input type="checkbox" name="entryId" value={x.id} defaultChecked /> {x.fund.name} · {idr(x.amount)}</label>)}
+                          </fieldset>
+                        ) : <input type="hidden" name="entryId" value={e.id} />}
+                        <Field label="Foto bukti transfer" hint="JPG/PNG/PDF, maks 5 MB"><input type="file" name="proof" required accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
+                        <Submit>Lampirkan</Submit>
+                      </ModalForm>
+                    </Modal>
+                  )}
+                  <span className={`tabular-nums ${e.type === "TARIK" ? "text-rose-600" : ""}`}>{idr(e.amount)}</span>
+                </span>
+              </li>
+            );
+          })}
         </ul>
       </Card>
     </div>

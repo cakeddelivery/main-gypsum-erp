@@ -2,7 +2,8 @@ import crypto from "node:crypto";
 import { Prisma, type TxDirection, type TxSource, type TxStatus } from "@prisma/client";
 import { prisma } from "./db";
 import { nextNumber } from "./numbering";
-import { assertPeriodOpen, postJournal, reverseJournal, COA } from "./accounting";
+import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } from "./accounting";
+import { locationSettings, recordMovement } from "./stock";
 import { audit } from "./audit";
 import { addDays, dateStr, jakartaDateTime } from "./time";
 
@@ -19,6 +20,15 @@ export const STATUS_LABEL: Record<TxStatus, string> = {
 };
 
 export class FinanceError extends Error {}
+
+/** Pemasukan penjualan dari withdraw saldo penjual marketplace */
+export function withdrawIncomeLines(sellerCoaId: string, sellerName: string, amount: number): LineInput[] {
+  return [
+    { accountId: sellerCoaId, debit: amount, memo: `Penjualan ${sellerName} (withdraw)` },
+    { accountCode: COA.PENJUALAN, credit: amount, memo: `Penjualan ${sellerName} (withdraw)` },
+  ];
+}
+export const WITHDRAW_INCOME_SOURCE = "WITHDRAW_PENJUALAN";
 
 export type TxInput = {
   direction: TxDirection;
@@ -38,7 +48,30 @@ export type TxInput = {
   idempotencyKey?: string | null;
   telegramChatId?: string | null;
   telegramMessageId?: string | null;
+  /** Rincian (opsional): satu transfer untuk beberapa keperluan; jumlahnya harus = nominal */
+  splits?: SplitInput[] | null;
+  /** true = toko tidak diisi otomatis dengan toko default (withdraw yang tokonya belum jelas: ditanyakan) */
+  askStore?: boolean;
 };
+
+export type SplitInput = { categoryId?: string | null; amount: number; note?: string | null; itemId?: string | null; qty?: number | null };
+
+/** Masalah pada rincian: total tidak sama dengan nominal, atau baris tanpa kategori/bahan baku */
+export function splitIssues(amount: number | bigint, direction: TxDirection, splits: { amount: number | bigint; categoryId?: string | null; itemId?: string | null; qty?: unknown }[]): string[] {
+  if (!splits.length) return [];
+  const out: string[] = [];
+  if (direction === "TRANSFER") out.push("transfer internal tidak boleh punya rincian");
+  const sum = splits.reduce((t, x) => t + Number(x.amount), 0);
+  if (sum !== Number(amount)) out.push(`total rincian ${sum.toLocaleString("id-ID")} ≠ nominal ${Number(amount).toLocaleString("id-ID")}`);
+  if (splits.some((x) => !(Number(x.amount) > 0))) out.push("nominal rincian harus > 0");
+  if (splits.some((x) => !x.categoryId && !x.itemId)) out.push("kategori rincian");
+  if (splits.some((x) => x.itemId && !(Number(x.qty) > 0))) out.push("jumlah barang rincian");
+  if (direction === "MASUK" && splits.some((x) => x.itemId)) out.push("pemasukan tidak boleh berisi bahan baku");
+  return out;
+}
+
+const splitRows = (splits: SplitInput[]) =>
+  splits.map((x, i) => ({ categoryId: x.categoryId ?? null, amount: BigInt(Math.round(x.amount)), note: x.note?.slice(0, 200) ?? null, itemId: x.itemId ?? null, qty: x.itemId && x.qty ? new Prisma.Decimal(x.qty) : null, sortOrder: i }));
 
 export function fingerprint(direction: string, amount: number, date: Date, accountId?: string | null) {
   return crypto.createHash("sha256").update(`${direction}|${amount}|${dateStr(date)}|${accountId ?? "-"}`).digest("hex").slice(0, 32);
@@ -92,12 +125,15 @@ export async function createTransaction(input: TxInput, source: TxSource, actor:
       const existing = await tx.financeTransaction.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
       if (existing) return { transaction: existing, duplicate: null, replayed: true };
     }
-    if (!input.storeId) {
+    if (!input.storeId && !input.askStore) {
       const def = await tx.setting.findUnique({ where: { key: "default_store_id" } });
       input.storeId = def?.value ?? null;
     }
+    const splits = input.direction === "TRANSFER" ? [] : (input.splits ?? []).filter((x) => x.amount > 0);
+    // Kategori utama = kategori rincian terbesar (untuk daftar & laporan ringkas)
+    if (splits.length && !input.categoryId) input.categoryId = [...splits].filter((x) => x.categoryId).sort((a, b) => b.amount - a.amount)[0]?.categoryId ?? null;
     const dup = await findDuplicate(tx, input);
-    const missing = missingFields(input);
+    const missing = [...missingFields(input), ...splitIssues(input.amount, input.direction, splits)];
     let status: TxStatus = "DRAFT";
     if (source !== "MANUAL" || opts.submit) status = dup || missing.length ? "PERLU_DITINJAU" : "MENUNGGU_KONFIRMASI";
     const number = await nextNumber(tx, "TRX", input.date);
@@ -126,6 +162,7 @@ export async function createTransaction(input: TxInput, source: TxSource, actor:
         createdBy: actor.name,
         telegramChatId: input.telegramChatId ?? null,
         telegramMessageId: input.telegramMessageId ?? null,
+        splits: splits.length ? { create: splitRows(splits) } : undefined,
       },
     });
     await tx.approvalLog.create({
@@ -153,6 +190,14 @@ export async function updateTransaction(id: string, input: Partial<TxInput>, act
     };
     validateBasic({ ...merged, date: merged.date } as TxInput);
     if (merged.direction === "TRANSFER") merged.categoryId = null;
+    if (input.splits !== undefined) {
+      const splits = merged.direction === "TRANSFER" ? [] : (input.splits ?? []).filter((x) => x.amount > 0);
+      await tx.financeTxSplit.deleteMany({ where: { transactionId: id } });
+      if (splits.length) {
+        await tx.financeTxSplit.createMany({ data: splitRows(splits).map((r) => ({ ...r, transactionId: id })) });
+        if (input.categoryId === undefined || !merged.categoryId) merged.categoryId = [...splits].filter((x) => x.categoryId).sort((a, b) => b.amount - a.amount)[0]?.categoryId ?? merged.categoryId;
+      }
+    } else if (merged.direction === "TRANSFER") await tx.financeTxSplit.deleteMany({ where: { transactionId: id } });
     const dup = await findDuplicate(tx, merged, id);
     // Perubahan data menurunkan status ke PERLU_DITINJAU agar dikonfirmasi ulang
     const status: TxStatus = cur.status === "DRAFT" ? "DRAFT" : "PERLU_DITINJAU";
@@ -182,7 +227,7 @@ export async function submitForConfirmation(id: string, actor: Actor, note?: str
   return prisma.$transaction(async (tx) => {
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
     if (cur.status !== "DRAFT" && cur.status !== "PERLU_DITINJAU") throw new FinanceError("Status transaksi tidak dapat diajukan");
-    const missing = missingFields({ ...cur });
+    const missing = [...missingFields({ ...cur }), ...splitIssues(cur.amount, cur.direction, await tx.financeTxSplit.findMany({ where: { transactionId: id } }))];
     if (missing.length) throw new FinanceError(`Lengkapi data dahulu: ${missing.join(", ")}`);
     const t = await tx.financeTransaction.update({ where: { id }, data: { status: "MENUNGGU_KONFIRMASI" } });
     await tx.approvalLog.create({ data: { transactionId: id, action: cur.status === "DRAFT" ? "DIAJUKAN" : "DITINJAU", fromStatus: cur.status, toStatus: "MENUNGGU_KONFIRMASI", actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: note ?? null } });
@@ -215,11 +260,12 @@ export async function approveAndBook(id: string, actor: Actor & { id: string }, 
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
     if (cur.status === "DIBUKUKAN") throw new FinanceError("Transaksi sudah dibukukan");
     if (cur.status !== "MENUNGGU_KONFIRMASI") throw new FinanceError("Hanya transaksi berstatus Menunggu Konfirmasi yang dapat dibukukan");
-    const missing = missingFields(cur);
+    const splits = await tx.financeTxSplit.findMany({ where: { transactionId: id }, orderBy: { sortOrder: "asc" } });
+    const missing = [...missingFields(cur), ...splitIssues(cur.amount, cur.direction, splits)];
     if (missing.length) throw new FinanceError(`Data belum lengkap: ${missing.join(", ")}`);
     const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: cur.accountId! } });
     const amount = Number(cur.amount);
-    let lines;
+    let lines: LineInput[];
     if (cur.direction === "TRANSFER") {
       const to = await tx.bankAccount.findUniqueOrThrow({ where: { id: cur.toAccountId! } });
       // Transfer internal: hanya memindahkan saldo antar rekening (bukan pendapatan/beban)
@@ -227,6 +273,23 @@ export async function approveAndBook(id: string, actor: Actor & { id: string }, 
         { accountId: to.coaAccountId, debit: amount, memo: `Transfer dari ${bank.name}` },
         { accountId: bank.coaAccountId, credit: amount, memo: `Transfer ke ${to.name}` },
       ];
+      // Withdraw saldo penjual marketplace = hasil penjualan di Shopee/TikTok: sekaligus dicatat sebagai pemasukan
+      // (Dr Saldo Penjual / Cr Penjualan), sehingga saldo penjual tidak minus dan omzet toko tercatat
+      if (bank.marketplace) lines.unshift(...withdrawIncomeLines(bank.coaAccountId, bank.name, amount));
+    } else if (splits.length) {
+      // Rincian: satu sisi rekening sebesar nominal, sisi lain dipecah per kategori / persediaan bahan baku
+      const cats = await tx.txCategory.findMany({ where: { id: { in: splits.map((x) => x.categoryId).filter((x): x is string => !!x) } } });
+      const items = await tx.item.findMany({ where: { id: { in: splits.map((x) => x.itemId).filter((x): x is string => !!x) } } });
+      const parts: LineInput[] = splits.map((x) => {
+        const it = items.find((i) => i.id === x.itemId);
+        const cat = cats.find((c) => c.id === x.categoryId);
+        if (!it && cat && cat.direction !== cur.direction) throw new FinanceError(`Kategori ${cat.name} tidak sesuai jenis transaksi`);
+        const memo = (x.note ?? it?.name ?? cat?.name ?? "").slice(0, 120) || undefined;
+        const acc = it ? { accountCode: COA.PERSEDIAAN_BAHAN } : { accountId: cat!.coaAccountId };
+        return cur.direction === "MASUK" ? { ...acc, credit: Number(x.amount), memo } : { ...acc, debit: Number(x.amount), memo };
+      });
+      const label = cur.note?.slice(0, 120) ?? "Rincian";
+      lines = cur.direction === "MASUK" ? [{ accountId: bank.coaAccountId, debit: amount, memo: label }, ...parts] : [...parts, { accountId: bank.coaAccountId, credit: amount, memo: label }];
     } else {
       const cat = await tx.txCategory.findUniqueOrThrow({ where: { id: cur.categoryId! } });
       if (cat.direction !== cur.direction) throw new FinanceError("Kategori tidak sesuai jenis transaksi");
@@ -250,6 +313,19 @@ export async function approveAndBook(id: string, actor: Actor & { id: string }, 
       actor: { id: actor.id, name: actor.name },
       lines,
     });
+    // Baris bahan baku: stok masuk gudang bahan baku (nilai persediaan sudah di jurnal di atas)
+    const stockLines = cur.direction === "KELUAR" ? splits.filter((x) => x.itemId && Number(x.qty) > 0) : [];
+    if (stockLines.length) {
+      const { raw } = await locationSettings(tx);
+      if (!raw) throw new FinanceError("Lokasi gudang bahan baku belum diatur di Pengaturan");
+      for (const x of stockLines) {
+        const qty = Number(x.qty);
+        const unitCost = Math.round(Number(x.amount) / qty);
+        await recordMovement(tx, { type: "PENERIMAAN", itemId: x.itemId!, qty, toLocationId: raw, unitCost, ref: cur.number, note: `Rincian ${cur.number}`, date: cur.date }, { id: actor.id, name: actor.name });
+        const it = await tx.item.findUniqueOrThrow({ where: { id: x.itemId! } });
+        if (!it.lastCostAt || cur.date >= it.lastCostAt) await tx.item.update({ where: { id: it.id }, data: { prevCost: it.lastCost > BigInt(0) ? it.lastCost : BigInt(unitCost), lastCost: BigInt(unitCost), lastCostAt: cur.date } });
+      }
+    }
     const t = await tx.financeTransaction.update({ where: { id }, data: { status: "DIBUKUKAN", journalId: journal.id } });
     await tx.approvalLog.create({ data: { transactionId: id, action: "DISETUJUI_DIBUKUKAN", fromStatus: cur.status, toStatus: "DIBUKUKAN", actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: note ?? `Jurnal ${journal.number}` } });
     await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_DIBUKUKAN", "FinanceTransaction", id, { journal: journal.number, viaTelegram: actor.telegramId ?? null }, tx);
@@ -270,10 +346,47 @@ export async function cancelBookedTransaction(id: string, actor: Actor & { id: s
     if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi berstatus Dibukukan yang dapat dibatalkan");
     const date = await assertPeriodOpen(tx, cur.date).then(() => cur.date, () => now);
     const rev = await reverseJournal(tx, cur.journalId, date, { id: actor.id, name: actor.name }, `batal ${cur.number} — ${reason.trim()}`.slice(0, 150));
+    // Pemasukan penjualan susulan untuk withdraw lama (skrip perbaikan) ikut dibalik
+    for (const extra of await tx.journal.findMany({ where: { source: WITHDRAW_INCOME_SOURCE, sourceId: cur.id } })) {
+      if (!(await tx.journal.findFirst({ where: { reversalOfId: extra.id } }))) await reverseJournal(tx, extra.id, date, { id: actor.id, name: actor.name }, `batal ${cur.number}`);
+    }
+    // Bahan baku dari rincian ikut dikeluarkan lagi dari gudang
+    const stockIn = await tx.stockMovement.findMany({ where: { ref: cur.number, type: "PENERIMAAN" } });
+    for (const m of stockIn) await recordMovement(tx, { type: "PENGELUARAN", itemId: m.itemId, qty: Number(m.qty), fromLocationId: m.toLocationId, ref: `BATAL ${cur.number}`, note: `Pembatalan ${cur.number}`, date, allowNegative: true }, { id: actor.id, name: actor.name });
     const t = await tx.financeTransaction.update({ where: { id }, data: { status: "DIBATALKAN" } });
     await tx.approvalLog.create({ data: { transactionId: id, action: "DIBATALKAN", fromStatus: "DIBUKUKAN", toStatus: "DIBATALKAN", actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: `${reason.trim()} · jurnal pembalik ${rev.number}` } });
     await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_DIBATALKAN", "FinanceTransaction", id, { reason, reversal: rev.number }, tx);
     return { transaction: t, reversal: rev };
+  });
+}
+
+/**
+ * Ganti toko withdraw yang sudah dibukukan. Jurnal tidak boleh diubah, jadi jurnal lama dibalik lalu dibukukan
+ * ulang dengan toko baru (tanggal & baris sama). Saldo rekening tidak berubah; hanya laporan per toko yang pindah.
+ */
+export async function changeBookedStore(id: string, storeId: string, actor: Actor & { id: string }, now: Date = new Date()) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "FinanceTransaction" WHERE id = ${id} FOR UPDATE`;
+    const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
+    if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi Dibukukan yang tokonya diganti lewat menu ini; draft cukup diubah biasa");
+    if (cur.direction !== "TRANSFER") throw new FinanceError("Toko hanya membedakan withdraw (transfer internal)");
+    if (cur.storeId === storeId) throw new FinanceError("Toko sudah sama");
+    const store = await tx.store.findUniqueOrThrow({ where: { id: storeId } });
+    const date = await assertPeriodOpen(tx, cur.date).then(() => cur.date, () => now);
+    const who = { id: actor.id, name: actor.name };
+    const repost = async (journalId: string) => {
+      const j = await tx.journal.findUniqueOrThrow({ where: { id: journalId }, include: { lines: true } });
+      await reverseJournal(tx, j.id, date, who, `ganti toko ${cur.number} ke ${store.name}`);
+      return postJournal(tx, { date, storeId, description: j.description, source: j.source, sourceId: j.sourceId, actor: who, lines: j.lines.map((l) => ({ accountId: l.accountId, debit: Number(l.debit), credit: Number(l.credit), memo: l.memo ?? undefined })) });
+    };
+    const main = await repost(cur.journalId);
+    for (const extra of await tx.journal.findMany({ where: { source: WITHDRAW_INCOME_SOURCE, sourceId: cur.id } })) {
+      if (!(await tx.journal.findFirst({ where: { reversalOfId: extra.id } }))) await repost(extra.id);
+    }
+    const t = await tx.financeTransaction.update({ where: { id }, data: { storeId, journalId: main.id } });
+    await tx.approvalLog.create({ data: { transactionId: id, action: "DIUBAH", fromStatus: cur.status, toStatus: cur.status, actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: `Toko diganti ke ${store.name} · jurnal ${main.number}` } });
+    await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_GANTI_TOKO", "FinanceTransaction", id, { from: cur.storeId, to: storeId, journal: main.number }, tx);
+    return t;
   });
 }
 

@@ -2,6 +2,9 @@ import type { HandoverKind } from "@prisma/client";
 import { prisma } from "./db";
 import { giveAdvance, PayrollError } from "./payroll";
 import { createPurchase, termFor } from "./purchase";
+import { payPayable } from "./payables";
+import { applyReserveOption } from "./reserve";
+import { FinanceError } from "./finance";
 import { BoronganError, boronganScope, BORONGAN_ROLE_LABEL, createHandover, HANDOVER_LABEL, payLines, receiveHandover, recordResult, settlePoint, type Scope } from "./borongan";
 import { StockError } from "./stock";
 import { idr, parseIDR } from "./money";
@@ -164,6 +167,78 @@ const giveKasbon: FlowDef = {
 // =====================================================================
 // Pembelian bahan baku
 // =====================================================================
+
+/** Langkah berikutnya untuk isian pembelian yang sudah terisi dari pesan/bukti transfer */
+function nextPrefilled(s: Session): string {
+  const d = s.data;
+  if (!d.supName) return "sup";
+  if (d.itemId) return d.qty == null ? "qty" : "amt";
+  const lines = getLines(s);
+  if (!lines.length) return "item";
+  if (!d.pre) return "more";
+  const total = lines.reduce((t, l) => t + (l.amount ?? 0), 0);
+  if (d.paid == null) d.paid = total;
+  if (Number(d.paid) > 0 && !d.bankId) return "bank";
+  if (Number(d.paid) < total && !d.due) return "due";
+  return "confirm";
+}
+
+export type PurchasePrefill = {
+  item: { id: string; name: string; unit: string; supplierId: string | null };
+  others: { id: string; name: string }[];
+  qty: number | null;
+  amount: number | null;
+  bankId: string | null;
+  supplier: { id: string; name: string } | null;
+  date: string | null;
+  time: string | null;
+  note: string | null;
+  proofPath: string | null;
+  /** Data draft transaksi biasa, dipakai bila pengguna memilih "Bukan pembelian" */
+  tx: unknown;
+};
+
+/** Mulai isian pembelian dari pesan/foto yang dikenali menyebut bahan baku di master data */
+export async function prefilledPurchase(ctx: Ctx, p: PurchasePrefill): Promise<Session | null> {
+  if (!can(ctx.i, "finance.approve")) return null;
+  const bank = p.bankId ? await prisma.bankAccount.findUnique({ where: { id: p.bankId } }) : null;
+  const sup = p.supplier ?? (p.item.supplierId ? await prisma.supplier.findUnique({ where: { id: p.item.supplierId }, select: { id: true, name: true } }) : null);
+  const s: Session = {
+    chatId: ctx.chatId,
+    userId: ctx.i.userId,
+    flow: "beli",
+    step: "sup",
+    data: {
+      page: 0,
+      pre: 1,
+      lines: "[]",
+      supId: sup?.id ?? null,
+      supName: sup?.name ?? null,
+      supNew: 0,
+      itemId: p.item.id,
+      itemName: p.item.name,
+      unit: p.item.unit,
+      qty: p.qty,
+      preAmount: p.amount,
+      bankId: bank?.id ?? null,
+      bankName: bank?.name ?? null,
+      date: p.date,
+      time: p.time,
+      note: p.note ? p.note.slice(0, 200) : null,
+      proofPath: p.proofPath,
+      others: p.others.length ? JSON.stringify(p.others) : null,
+      tx: JSON.stringify(p.tx),
+    },
+  };
+  // Jumlah & nominal sudah ada: barang langsung masuk daftar
+  if (p.qty && p.amount) {
+    setLines(s, [{ itemId: p.item.id, name: p.item.name, unit: p.item.unit, qty: p.qty, amount: p.amount }]);
+    s.data.itemId = s.data.itemName = s.data.qty = s.data.preAmount = null;
+  }
+  s.step = nextPrefilled(s);
+  return s;
+}
+
 const purchase: FlowDef = {
   async start(ctx) {
     if (!can(ctx.i, "finance.approve")) return "Anda tidak berwenang mencatat pembelian";
@@ -182,31 +257,39 @@ const purchase: FlowDef = {
       d.bankName ? `Dari rekening: ${esc(String(d.bankName))}` : "",
       d.due ? `Jatuh tempo: ${fmtDate(dateOnly(String(d.due)))}` : "",
       d.note ? `Catatan: ${esc(String(d.note))}` : "",
+      d.date && d.date !== todayStr() ? `Tanggal: ${fmtDate(dateOnly(String(d.date)))}` : "",
+      d.pre ? "<i>Dikenali dari pesan/bukti transfer sesuai master bahan baku.</i>" : "",
     ].filter(Boolean).join("\n");
     const page = Number(d.page ?? 0);
+    // Pesan yang dikenali sebagai pembelian: tetap bisa dicatat sebagai transaksi biasa
+    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan pembelian, catat transaksi biasa", callback_data: "f:plain" }]] : [];
+    const others: { id: string; name: string }[] = d.others ? JSON.parse(String(d.others)) : [];
     switch (s.step) {
       case "sup": {
         const sups = await prisma.supplier.findMany({ where: { active: true }, orderBy: { name: "asc" }, skip: page * PAGE, take: PAGE + 1 });
-        return { text: `${head}\nPilih supplier, atau ✍️ ketik nama supplier baru:`, buttons: [...chunk(sups.slice(0, PAGE).map((x) => ({ text: x.name.slice(0, 30), callback_data: `f:${x.id}` })), 2), ...pager(page, sups.length > PAGE), cancelRow] };
+        return { text: `${head}\nPilih supplier, atau ✍️ ketik nama supplier baru:`, buttons: [...chunk(sups.slice(0, PAGE).map((x) => ({ text: x.name.slice(0, 30), callback_data: `f:${x.id}` })), 2), ...pager(page, sups.length > PAGE), ...plainRow, cancelRow] };
       }
       case "item":
         return itemPrompt(head);
       case "qty":
-        return { text: `${head}\n\n✍️ Ketik jumlah dalam <b>${esc(String(d.unit))}</b>, contoh <code>10</code>`, buttons: [cancelRow] };
+        return { text: `${head}\n\n✍️ Ketik jumlah dalam <b>${esc(String(d.unit))}</b>, contoh <code>10</code>`, buttons: [...plainRow, cancelRow] };
       case "amt":
-        return { text: `${head}\n\n✍️ Ketik <b>total harga</b> barang ini (Rp), contoh <code>850000</code> atau <code>850rb</code>`, buttons: [cancelRow] };
+        return { text: `${head}\n\n✍️ Ketik <b>total harga</b> barang ini (Rp), contoh <code>850000</code> atau <code>850rb</code>`, buttons: [...plainRow, cancelRow] };
       case "more":
         return { text: `${head}\n\nAda barang lain di nota ini?`, buttons: [[{ text: "➕ Tambah barang", callback_data: "f:add" }, { text: "Selesai ➡", callback_data: "f:done" }], cancelRow] };
       case "paid":
         return { text: `${head}\n\nBerapa yang dibayar sekarang? Pilih atau ✍️ ketik nominal (DP).`, buttons: [[{ text: `Lunas (${idr(total)})`, callback_data: "f:full" }], [{ text: "Belum bayar / tempo", callback_data: "f:zero" }], cancelRow] };
       case "bank":
-        return { text: `${head}\nDibayar dari rekening:`, buttons: [...(await bankButtons()), cancelRow] };
+        return { text: `${head}\nDibayar dari rekening:`, buttons: [...(await bankButtons()), ...plainRow, cancelRow] };
       case "due":
         return { text: `${head}\nJatuh tempo sisa utang:`, buttons: [[{ text: "7 hari", callback_data: "f:7" }, { text: "14 hari", callback_data: "f:14" }, { text: "30 hari", callback_data: "f:30" }], cancelRow] };
       case "note":
         return { text: `${head}\n\n✍️ Ketik catatan/no. nota, atau lewati.`, buttons: [[{ text: "Lewati", callback_data: "f:skip" }], cancelRow] };
       case "confirm":
-        return { text: `${head}\n\nSimpan pembelian ini? Stok masuk gudang bahan baku dan jurnal langsung tercatat.`, buttons: [[{ text: "✅ Simpan", callback_data: "f:ok" }, { text: "❌ Batal", callback_data: "f:x" }]] };
+        return {
+          text: `${head}\n\nSimpan pembelian ini? Stok masuk gudang bahan baku dan jurnal langsung tercatat.${others.length ? `\nBarang lain di pesan: ${others.map((o) => esc(o.name)).join(", ")}. Tekan ➕ bila ikut dibeli.` : ""}`,
+          buttons: [[{ text: "✅ Simpan", callback_data: "f:ok" }, { text: "➕ Tambah barang", callback_data: "f:add" }], ...plainRow, [{ text: "❌ Batal", callback_data: "f:x" }]],
+        };
     }
     return { text: head };
   },
@@ -230,7 +313,7 @@ const purchase: FlowDef = {
           d.supName = sup.name;
           d.supNew = 0;
         }
-        s.step = "item";
+        s.step = nextPrefilled(s);
         return null;
       case "item": {
         if (fromText) return itemChoices("<b>🛒 Pembelian bahan baku</b>", v);
@@ -248,7 +331,12 @@ const purchase: FlowDef = {
         const n = parseQty(v);
         if (n == null || !(n > 0)) return "Ketik jumlah lebih dari 0";
         d.qty = n;
-        s.step = "amt";
+        if (d.pre && d.preAmount) {
+          lines.push({ itemId: String(d.itemId), name: String(d.itemName), unit: String(d.unit), qty: n, amount: Number(d.preAmount) });
+          setLines(s, lines);
+          d.itemId = d.itemName = d.qty = d.preAmount = null;
+          s.step = nextPrefilled(s);
+        } else s.step = "amt";
         return null;
       }
       case "amt": {
@@ -257,7 +345,7 @@ const purchase: FlowDef = {
         lines.push({ itemId: String(d.itemId), name: String(d.itemName), unit: String(d.unit), qty: Number(d.qty), amount: n });
         setLines(s, lines);
         d.itemId = d.itemName = d.qty = null;
-        s.step = "more";
+        s.step = d.pre ? nextPrefilled(s) : "more";
         return null;
       }
       case "more":
@@ -276,7 +364,7 @@ const purchase: FlowDef = {
         if (!b) return "Pilih rekening dengan tombol";
         d.bankId = b.id;
         d.bankName = b.name;
-        s.step = Number(d.paid) < total ? "due" : "note";
+        s.step = Number(d.paid) < total ? "due" : d.pre ? "confirm" : "note";
         return null;
       }
       case "due": {
@@ -291,6 +379,13 @@ const purchase: FlowDef = {
         s.step = "confirm";
         return null;
       case "confirm": {
+        if (v === "add") {
+          // Tambah barang lain: lanjut isian biasa (jumlah dibayar ditanyakan ulang karena tagihan berubah)
+          d.pre = 0;
+          d.paid = null;
+          s.step = "item";
+          return null;
+        }
         if (v !== "ok") return "Tekan Simpan atau Batal";
         if (!can(ctx.i, "finance.approve")) return "Anda tidak berwenang";
         try {
@@ -303,13 +398,15 @@ const purchase: FlowDef = {
               supplierId: d.supId ? String(d.supId) : null,
               newSupplierName: d.supId ? null : String(d.supName),
               storeId: store.value,
-              date: jakartaDateTime(todayStr(), "12:00"),
+              date: jakartaDateTime(d.date ? String(d.date) : todayStr(), d.time ? String(d.time) : "12:00"),
               term,
               lines: lines.map((l) => ({ itemId: l.itemId, qty: l.qty, amount: l.amount })),
               paidNow: term === "BERTAHAP" ? paid : 0,
               bankAccountId: paid > 0 ? String(d.bankId) : null,
               dueDate: term !== "LUNAS" && d.due ? jakartaDateTime(String(d.due), "12:00") : null,
               note: [d.note ? String(d.note) : "", "via Telegram"].filter(Boolean).join(" · "),
+              proofPath: d.proofPath ? String(d.proofPath) : null,
+              proofMime: d.proofPath ? "image/jpeg" : null,
             },
             actorOf(ctx.i),
           );
@@ -724,4 +821,195 @@ const pay: FlowDef = {
   },
 };
 
-export const T3_FLOWS: Record<string, FlowDef> = { kas: kasbon, ksb: giveKasbon, beli: purchase, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay };
+// =====================================================================
+// Angsuran / pembayaran utang supplier (dari pesan atau foto bukti transfer)
+// =====================================================================
+export type PayablePrefill = { candidates: string[]; amount: number | null; bankId: string | null; date: string | null; time: string | null; note: string | null; proofPath: string | null; tx: unknown };
+
+/** Mulai isian bayar utang yang sudah terisi dari pesan/bukti transfer */
+export async function prefilledPayablePayment(ctx: Ctx, p: PayablePrefill): Promise<Session | null> {
+  if (!can(ctx.i, "accounting.post", "finance.approve")) return null;
+  const bank = p.bankId ? await prisma.bankAccount.findUnique({ where: { id: p.bankId } }) : null;
+  const s: Session = {
+    chatId: ctx.chatId,
+    userId: ctx.i.userId,
+    flow: "utang",
+    step: "pick",
+    data: { page: 0, cands: p.candidates.length ? JSON.stringify(p.candidates) : null, amount: p.amount, bankId: bank?.id ?? null, bankName: bank?.name ?? null, date: p.date, time: p.time, note: p.note ? p.note.slice(0, 200) : null, proofPath: p.proofPath, tx: JSON.stringify(p.tx) },
+  };
+  if (p.candidates.length === 1) await pickPayable(s, p.candidates[0]);
+  s.step = nextPayStep(s);
+  return s;
+}
+
+async function pickPayable(s: Session, id: string) {
+  const p = await prisma.payable.findUnique({ where: { id }, include: { supplier: { select: { name: true } } } });
+  if (!p || p.paid >= p.amount) return false;
+  s.data.payId = p.id;
+  s.data.payName = `${p.number} · ${p.supplier?.name ?? p.vendor}`;
+  s.data.remaining = Number(p.amount - p.paid);
+  return true;
+}
+
+function nextPayStep(s: Session) {
+  const d = s.data;
+  if (!d.payId) return "pick";
+  if (!d.amount || Number(d.amount) > Number(d.remaining)) return "amt";
+  if (!d.bankId) return "bank";
+  return "confirm";
+}
+
+const payDebt: FlowDef = {
+  async start(ctx) {
+    if (!can(ctx.i, "accounting.post", "finance.approve")) return "Anda tidak berwenang mencatat pembayaran utang";
+    return { chatId: ctx.chatId, userId: ctx.i.userId, flow: "utang", step: "pick", data: { page: 0 } };
+  },
+  async prompt(s) {
+    const d = s.data;
+    const rem = Number(d.remaining ?? 0);
+    const head = [
+      "<b>💳 Bayar / angsur utang supplier</b>",
+      d.payName ? `Utang: ${esc(String(d.payName))}\nSisa sebelum bayar: ${idr(rem)}` : "",
+      d.amount ? `Dibayar: <b>${idr(Number(d.amount))}</b>${rem ? ` · sisa setelah ini ${idr(Math.max(0, rem - Number(d.amount)))}` : ""}` : "",
+      d.bankName ? `Dari rekening: ${esc(String(d.bankName))}` : "",
+      d.date && d.date !== todayStr() ? `Tanggal: ${fmtDate(dateOnly(String(d.date)))}` : "",
+      d.tx ? "<i>Dikenali dari pesan/bukti transfer sebagai angsuran utang.</i>" : "",
+    ].filter(Boolean).join("\n");
+    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan bayar utang, catat transaksi biasa", callback_data: "f:plain" }]] : [];
+    switch (s.step) {
+      case "pick": {
+        const cands: string[] = d.cands ? JSON.parse(String(d.cands)) : [];
+        const rows = await prisma.payable.findMany({ where: cands.length ? { id: { in: cands } } : {}, include: { supplier: { select: { name: true } } }, orderBy: { date: "desc" }, take: 100 });
+        const open = rows.filter((p) => p.paid < p.amount).slice(0, 12);
+        if (!open.length) return { text: `${head}\n\nTidak ada utang yang belum lunas.`, buttons: [...plainRow, cancelRow] };
+        return { text: `${head}\n\nPilih utang yang dibayar:`, buttons: [...open.map((p) => [{ text: `${p.number} · ${(p.supplier?.name ?? p.vendor).slice(0, 18)} · sisa ${idr(Number(p.amount - p.paid))}`.slice(0, 60), callback_data: `f:${p.id}` }]), ...(cands.length ? [[{ text: "📋 Lihat semua utang", callback_data: "f:all" }]] : []), ...plainRow, cancelRow] };
+      }
+      case "amt":
+        return { text: `${head}\n\n✍️ Ketik nominal yang dibayar (maks. ${idr(rem)}), contoh <code>2000000</code> atau <code>2jt</code>`, buttons: [[{ text: `Lunasi (${idr(rem)})`, callback_data: "f:full" }], ...plainRow, cancelRow] };
+      case "bank":
+        return { text: `${head}\nDibayar dari rekening:`, buttons: [...(await bankButtons()), ...plainRow, cancelRow] };
+      case "confirm":
+        return { text: `${head}\n\nSimpan pembayaran utang ini? Jurnal langsung tercatat dan sisa utang berkurang.`, buttons: [[{ text: "✅ Simpan", callback_data: "f:ok" }], [{ text: "✏️ Ubah nominal", callback_data: "f:editamt" }], ...plainRow, [{ text: "❌ Batal", callback_data: "f:x" }]] };
+    }
+    return { text: head };
+  },
+  async answer(ctx, s, v, fromText) {
+    const d = s.data;
+    switch (s.step) {
+      case "pick":
+        if (fromText) return "Pilih utang dengan tombol";
+        if (v === "all") {
+          d.cands = null;
+          return null;
+        }
+        if (!(await pickPayable(s, v))) return "Utang tidak ditemukan atau sudah lunas";
+        s.step = nextPayStep(s);
+        return null;
+      case "amt": {
+        const n = !fromText && v === "full" ? Number(d.remaining) : parseIDR(v);
+        if (!n || n <= 0 || n > Number(d.remaining)) return `Nominal harus 1 – ${idr(Number(d.remaining))}`;
+        d.amount = n;
+        s.step = nextPayStep(s);
+        return null;
+      }
+      case "bank": {
+        const b = fromText ? null : await prisma.bankAccount.findUnique({ where: { id: v } });
+        if (!b) return "Pilih rekening dengan tombol";
+        d.bankId = b.id;
+        d.bankName = b.name;
+        s.step = nextPayStep(s);
+        return null;
+      }
+      case "confirm": {
+        if (v === "editamt") {
+          s.step = "amt";
+          return null;
+        }
+        if (v !== "ok") return "Tekan Simpan atau Batal";
+        if (!can(ctx.i, "accounting.post", "finance.approve")) return "Anda tidak berwenang";
+        try {
+          const r = await payPayable({ payableId: String(d.payId), amount: Number(d.amount), bankAccountId: String(d.bankId), date: jakartaDateTime(d.date ? String(d.date) : todayStr(), d.time ? String(d.time) : "12:00") }, actorOf(ctx.i));
+          d.remaining = r.remaining;
+        } catch (e) {
+          return errMsg(e);
+        }
+        return "done";
+      }
+    }
+    return null;
+  },
+  async finish(_ctx, s) {
+    const d = s.data;
+    const rem = Number(d.remaining);
+    return { text: `✅ <b>Pembayaran utang tercatat</b>\n${esc(String(d.payName))}\nDibayar ${idr(Number(d.amount))} dari ${esc(String(d.bankName))}\n${rem > 0 ? `Sisa utang: <b>${idr(rem)}</b>` : "Utang sudah <b>lunas</b> 🎉"}`, buttons: [menuBtn] };
+  },
+};
+
+// =====================================================================
+// Dana sisihan dari bukti transfer (dikenali dari nominal & rekening)
+// =====================================================================
+type ReserveOpt = { fundIds: string[]; dates: string[]; amount: number; label: string };
+const fmtDates = (ds: string[]) => ds.map((x) => fmtDate(dateOnly(x))).join(", ");
+
+/** Mulai konfirmasi sisihan dari bukti transfer. `sure` = langsung ke konfirmasi; selain itu pilih dananya */
+export async function prefilledReserve(ctx: Ctx, p: { options: ReserveOpt[]; sure: boolean; proofPath: string | null; tx: unknown }): Promise<Session | null> {
+  if (!can(ctx.i, "finance.approve") || !p.options.length) return null;
+  return { chatId: ctx.chatId, userId: ctx.i.userId, flow: "sish", step: p.sure ? "confirm" : "pick", data: { opts: JSON.stringify(p.options), pick: p.sure ? 0 : null, proofPath: p.proofPath, tx: JSON.stringify(p.tx) } };
+}
+
+const reserveFromProof: FlowDef = {
+  async start() {
+    return "Kirim foto bukti transfer sisihan, nanti saya cocokkan dengan dana sisihan.";
+  },
+  async prompt(s) {
+    const d = s.data;
+    const opts: ReserveOpt[] = JSON.parse(String(d.opts ?? "[]"));
+    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan sisihan, catat transaksi biasa", callback_data: "f:plain" }]] : [];
+    const head = `<b>🏦 Dana sisihan</b>\nBukti transfer ${idr(opts[0]?.amount ?? 0)}${d.proofPath ? " (foto dilampirkan)" : ""}`;
+    if (s.step === "pick") {
+      return { text: `${head}\n\nNominal ini cocok dengan beberapa dana sisihan. Untuk dana yang mana?`, buttons: [...opts.map((o, k) => [{ text: `${o.label} (${o.dates.map((x) => x.slice(8)).join(",")})`.slice(0, 60), callback_data: `f:o${k}` }]), ...plainRow, cancelRow] };
+    }
+    const o = opts[Number(d.pick ?? 0)];
+    const funds = await prisma.reserveFund.findMany({ where: { id: { in: o.fundIds } } });
+    const done = await prisma.reserveEntry.findMany({ where: { fundId: { in: o.fundIds }, type: "SISIH", date: { in: o.dates.map((x) => dateOnly(x)) } } });
+    const already = done.length === o.fundIds.length * o.dates.length;
+    return {
+      text: `${head}\n\nDikenali sebagai sisihan <b>${esc(funds.map((f) => f.name).join(" + "))}</b>\nTanggal: ${fmtDates(o.dates)}\n${already ? "Sisihan tanggal tsb sudah tercatat, bukti transfer akan dilampirkan (tidak ada jurnal baru)." : done.length ? "Sebagian sudah tercatat: yang sudah hanya dilampiri bukti, sisanya dicatat sekarang." : "Sisihan akan dicatat dan bukti transfer dilampirkan."}\n\nBenar?`,
+      buttons: [[{ text: "✅ Benar, simpan", callback_data: "f:ok" }], ...(opts.length > 1 ? [[{ text: "🔁 Pilih dana lain", callback_data: "f:pick" }]] : []), ...plainRow, [{ text: "❌ Batal", callback_data: "f:x" }]],
+    };
+  },
+  async answer(ctx, s, v, fromText) {
+    const d = s.data;
+    if (fromText) return "Pilih dengan tombol";
+    if (s.step === "pick") {
+      const k = Number(v.replace(/^o/, ""));
+      const opts: ReserveOpt[] = JSON.parse(String(d.opts ?? "[]"));
+      if (!opts[k]) return "Pilihan tidak dikenal";
+      d.pick = k;
+      s.step = "confirm";
+      return null;
+    }
+    if (v === "pick") {
+      s.step = "pick";
+      return null;
+    }
+    if (v !== "ok") return "Tekan Simpan atau Batal";
+    if (!can(ctx.i, "finance.approve")) return "Anda tidak berwenang";
+    const opts: ReserveOpt[] = JSON.parse(String(d.opts ?? "[]"));
+    try {
+      const r = await applyReserveOption(opts[Number(d.pick ?? 0)], d.proofPath ? { path: String(d.proofPath), mime: "image/jpeg" } : null, actorOf(ctx.i));
+      d.posted = r.posted;
+      d.attached = r.attached;
+    } catch (e) {
+      return e instanceof FinanceError ? e.message : errMsg(e);
+    }
+    return "done";
+  },
+  async finish(_ctx, s) {
+    const d = s.data;
+    const o: ReserveOpt = JSON.parse(String(d.opts))[Number(d.pick ?? 0)];
+    return { text: `✅ <b>Sisihan tersimpan</b>\n${esc(o.label)} · ${fmtDates(o.dates)}\n${Number(d.posted) ? `${d.posted} sisihan baru dicatat. ` : ""}${Number(d.attached) ? `Bukti dilampirkan ke ${d.attached} sisihan yang sudah ada.` : ""}`, buttons: [menuBtn] };
+  },
+};
+
+export const T3_FLOWS: Record<string, FlowDef> = { kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay };
