@@ -109,6 +109,12 @@ export const reclassifyTx = action("finance.approve", async (fd, user) => {
   return "Pencatatan diubah";
 }, ["/finance", "/", "/akuntansi"]);
 
+/** Pindah rekening transaksi dibukukan (salah pilih rekening) */
+export const changeAccountTx = action("finance.approve", async (fd, user) => {
+  await reclassifyBooked(str(fd, "id"), { accountId: str(fd, "accountId") }, { id: user.id, name: user.name });
+  return "Rekening diganti";
+}, ["/finance", "/", "/akuntansi"]);
+
 export const deleteTx = action("finance.approve", async (fd, user) => {
   const ids = fd.getAll("id").map(String).filter(Boolean);
   const n = await deleteClosedTransactions(ids, { id: user.id, name: user.name });

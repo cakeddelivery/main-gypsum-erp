@@ -140,6 +140,22 @@ describe("Ubah kategori transaksi dibukukan", () => {
     expect(Number(pay.amount - pay.paid)).toBe(12_000_000);
     expect((await prisma.financeTransaction.findUniqueOrThrow({ where: { id: transaction.id } })).categoryId).toBe(iuran.id);
     await expect(reclassifyBooked(transaction.id, { categoryId: iuran.id }, owner)).rejects.toThrow("sudah sama");
+
+    // Salah pilih rekening: pindah dari Seabank ke Kas Tunai, kategori & hutang tetap
+    const kas = await prisma.bankAccount.findFirstOrThrow({ where: { active: true, id: { not: seabank } }, include: { coaAccount: true } });
+    const cashBal = async (code: string) => {
+      const a = await prisma.journalLine.aggregate({ where: { account: { code } }, _sum: { debit: true, credit: true } });
+      return Number(a._sum.debit) - Number(a._sum.credit);
+    };
+    const sea = await prisma.bankAccount.findUniqueOrThrow({ where: { id: seabank }, include: { coaAccount: true } });
+    const [s0, k0] = [await cashBal(sea.coaAccount.code), await cashBal(kas.coaAccount.code)];
+    await reclassifyBooked(transaction.id, { accountId: kas.id }, owner);
+    const moved = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: transaction.id } });
+    expect(moved.accountId).toBe(kas.id);
+    expect(moved.categoryId).toBe(iuran.id);
+    expect(await cashBal(sea.coaAccount.code)).toBe(s0 + 3_000_000);
+    expect(await cashBal(kas.coaAccount.code)).toBe(k0 - 3_000_000);
+    await expect(reclassifyBooked(transaction.id, { accountId: kas.id }, owner)).rejects.toThrow("sudah sama");
   });
 });
 

@@ -10,7 +10,7 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ProofPreview } from "@/components/ProofPreview";
 import { TxForm } from "../TxForm";
-import { approveTx, cancelTx, changeStoreTx, deleteTx, reclassifyTx, rejectTx, submitTx, updateTx } from "../actions";
+import { approveTx, cancelTx, changeAccountTx, changeStoreTx, deleteTx, reclassifyTx, rejectTx, submitTx, updateTx } from "../actions";
 
 export const metadata = { title: "Detail Transaksi" };
 
@@ -118,6 +118,19 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
                   <Field label="Toko (MG / DL)"><select name="storeId" defaultValue={t.storeId ?? ""} className="input">{stores.map((x) => <option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select></Field>
                   <p className="text-xs text-slate-500">Jurnal lama dibalik lalu dibukukan ulang dengan toko baru. Saldo rekening tidak berubah.</p>
                   <Submit pendingText="Menyimpan…">Simpan toko</Submit>
+                </ModalForm>
+              </Modal>
+            </Card>
+          )}
+          {t.status === "DIBUKUKAN" && t.direction !== "TRANSFER" && user.can("finance.approve") && (
+            <Card title="Ubah rekening">
+              <p className="mb-3 text-xs text-slate-500">Salah pilih rekening? Jurnal lama dibalik lalu dibukukan ulang dari rekening yang benar. Saldo kedua rekening ikut menyesuaikan.</p>
+              <Modal trigger="Ubah rekening" triggerClass="btn-secondary w-full" title="Ubah rekening transaksi dibukukan">
+                <ModalForm action={changeAccountTx} className="space-y-3">
+                  <input type="hidden" name="id" value={t.id} />
+                  <p className="text-sm text-slate-600">{t.number} · {idr(t.amount)} · {t.note ?? t.counterparty ?? ""}</p>
+                  <Field label="Rekening"><select name="accountId" defaultValue={t.accountId ?? ""} className="input" required>{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
+                  <Submit pendingText="Menyimpan…">Simpan rekening</Submit>
                 </ModalForm>
               </Modal>
             </Card>
