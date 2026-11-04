@@ -151,6 +151,11 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
   return { text: lines.join("\n"), buttons };
 }
 
+function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  return Promise.race([p, new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error(msg)), ms)))]).finally(() => clearTimeout(timer));
+}
+
 function chunk<T>(arr: T[], n: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
@@ -216,13 +221,14 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   let splits = extractSplits(text, cats, materials, ex.direction);
   if (photo && (splits.length || !hasExplicitAmount(text) || !ex.direction || !ex.accountId)) {
     await chatAction(chatId, "typing").catch(() => {});
-    receipt = await readReceipt(photo, text, banks).catch((e) => {
+    // Batasi waktu baca AI agar balasan tidak tertahan (Nginx/Telegram memutus permintaan yang terlalu lama)
+    receipt = await withTimeout(readReceipt(photo, text, banks), 35_000, "AI membaca foto terlalu lama").catch((e) => {
       console.error("readReceipt:", e instanceof Error ? e.message : e);
       return null;
     });
     // AI tidak terpasang / kuota habis / tidak menemukan nominal → baca foto dengan OCR di server
     if (!receipt?.amount || !receipt.direction || !receipt.account) {
-      const ocr = await ocrReceipt(photo, banks).catch((e) => {
+      const ocr = await withTimeout(ocrReceipt(photo, banks), 20_000, "OCR terlalu lama").catch((e) => {
         console.error("ocrReceipt:", e instanceof Error ? e.message : e);
         return null;
       });

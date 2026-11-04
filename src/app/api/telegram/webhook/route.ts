@@ -4,6 +4,7 @@ import { handleTelegramUpdate } from "@/lib/bot";
 import { prisma } from "@/lib/db";
 import { MENU_TEXT } from "@/lib/botMenu";
 import { hasActiveFlow } from "@/lib/botFlow";
+import { esc, sendTelegram } from "@/lib/telegram";
 
 /**
  * Webhook Telegram Bot API. Diverifikasi dengan header X-Telegram-Bot-Api-Secret-Token.
@@ -31,7 +32,14 @@ export async function POST(req: Request) {
       await handleTelegramUpdate(update);
     }
   } catch (e) {
-    await prisma.notificationLog.create({ data: { channel: "TELEGRAM", type: "WEBHOOK", status: "GAGAL", error: (e as Error).message.slice(0, 500), payload: JSON.stringify(update).slice(0, 2000) } });
+    const err = e instanceof Error ? e.message : String(e);
+    console.error("telegram webhook:", e);
+    await prisma.notificationLog.create({ data: { channel: "TELEGRAM", type: "WEBHOOK", status: "GAGAL", error: err.slice(0, 500), payload: JSON.stringify(update).slice(0, 2000) } }).catch(() => {});
+    // Bot tidak boleh diam: beri tahu pengirim bahwa pesan/foto gagal diproses
+    const chatId = update.message?.chat?.id ?? update.callback_query?.message?.chat?.id;
+    if (chatId != null) {
+      await sendTelegram(String(chatId), `⚠️ Maaf, ${update.message?.photo ? "foto" : "pesan"} ini gagal diproses (${esc(err.slice(0, 120))}).\nCoba kirim ulang, atau catat lewat web: Transaksi › Tambah.`).catch(() => {});
+    }
   }
   // Selalu 200 agar Telegram tidak mengulang update tanpa henti; kesalahan tercatat di log
   return NextResponse.json({ ok: true });
