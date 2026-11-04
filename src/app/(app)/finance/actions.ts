@@ -36,7 +36,22 @@ async function readForm(fd: FormData): Promise<TxInput> {
     rawText: optStr(fd, "rawText"),
     proofPath,
     proofMime,
+    splits: readSplits(fd),
   };
+}
+
+/** Rincian dari form (undefined = form tanpa bagian rincian, rincian lama tidak diubah) */
+function readSplits(fd: FormData): TxInput["splits"] {
+  if (!fd.get("splitsOn")) return undefined;
+  const all = (k: string) => fd.getAll(k).map(String);
+  const notes = all("splitNote");
+  const cats = all("splitCat");
+  const amounts = all("splitAmount");
+  const items = all("splitItem");
+  const qtys = all("splitQty");
+  return notes
+    .map((note, i) => ({ note: note.trim() || null, categoryId: cats[i] || null, amount: Number((amounts[i] ?? "").replace(/\D/g, "")) || 0, itemId: items[i] || null, qty: qtys[i] ? Number(qtys[i]) : null }))
+    .filter((x) => x.amount > 0);
 }
 
 export const createTx = action(

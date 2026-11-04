@@ -15,6 +15,8 @@ vi.mock("@/lib/telegram", async (orig) => {
 import { prisma } from "@/lib/db";
 import { handleTelegramUpdate } from "@/lib/bot";
 import { createPurchase } from "@/lib/purchase";
+import { approveAndBook, cancelBookedTransaction, submitForConfirmation } from "@/lib/finance";
+import { itemTotals } from "@/lib/stock";
 import { todayStr, jakartaDateTime } from "@/lib/time";
 
 const TG = 777001;
@@ -141,5 +143,36 @@ describe("Bot: draft duplikat", () => {
     await tap(`rev:${second.id}`);
     const after = sent.at(-1)!;
     expect(after.buttons!.flat().some((b) => b.callback_data === `ok:${second.id}`)).toBe(true);
+  });
+});
+
+describe("Rincian: satu transfer untuk beberapa keperluan", () => {
+  it("bot memecah caption, kategori kosong ditanyakan, jurnal dipecah & stok masuk", async () => {
+    const it = await prisma.item.findUniqueOrThrow({ where: { sku: "BB-UJI-PLASTIK" } });
+    sent.length = 0;
+    const tag = Date.now() % 100000;
+    await say(`plastik uji kemasan 100 pcs 50rb\ngalon cleo ${tag}\nongkir gypsum 10rb\ndari seabank`);
+    const t = await prisma.financeTransaction.findFirstOrThrow({ orderBy: { createdAt: "desc" }, include: { splits: { orderBy: { sortOrder: "asc" } } } });
+    expect(t.splits).toHaveLength(3);
+    expect(Number(t.amount)).toBe(50000 + tag + 10000);
+    expect(t.splits[0].itemId).toBe(it.id);
+    const msg = sent.at(-1)!;
+    expect(msg.text).toContain("Rincian (3)");
+    // Galon belum berkategori -> tombol pilihan kategori rincian 2
+    const sc = msg.buttons!.flat().find((b) => b.callback_data.startsWith(`sc:${t.id}:1:`));
+    expect(sc).toBeTruthy();
+    await tap(sc!.callback_data);
+    const t2 = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: t.id } });
+    expect(t2.status).toBe("MENUNGGU_KONFIRMASI");
+    const u = await prisma.user.findUniqueOrThrow({ where: { username: "owner" } });
+    const before = (await itemTotals()).get(it.id) ?? 0;
+    const { journal } = await approveAndBook(t.id, { id: u.id, name: u.name });
+    const jl = await prisma.journalLine.findMany({ where: { journalId: journal.id } });
+    expect(jl.length).toBe(4);
+    expect(jl.reduce((a, l) => a + Number(l.debit), 0)).toBe(Number(t.amount));
+    expect((await itemTotals()).get(it.id)).toBe(before + 100);
+    await cancelBookedTransaction(t.id, { id: u.id, name: u.name }, "uji");
+    expect((await itemTotals()).get(it.id)).toBe(before);
+    void submitForConfirmation;
   });
 });

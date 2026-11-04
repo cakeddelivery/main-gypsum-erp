@@ -8,7 +8,8 @@ import type { Extraction } from "@/lib/extract";
 
 type Opt = { id: string; name: string };
 type Cat = Opt & { direction: string };
-type Init = { id?: string; direction?: string; amount?: number; date?: string; time?: string; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; storeId?: string | null; counterparty?: string | null; note?: string | null; rawText?: string | null };
+type Init = { id?: string; direction?: string; amount?: number; date?: string; time?: string; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; storeId?: string | null; counterparty?: string | null; note?: string | null; rawText?: string | null; splits?: Split[] };
+type Split = { categoryId: string | null; amount: number | ""; note: string; itemId?: string | null; itemName?: string | null; qty?: number | null };
 
 export function TxForm(p: {
   action: (prev: ActionResult | null, fd: FormData) => Promise<ActionResult>;
@@ -37,6 +38,10 @@ export function TxForm(p: {
   }, [timeAuto]);
   const set = (k: keyof Init) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setV((o) => ({ ...o, [k]: e.target.value }));
   const cats = p.categories.filter((c) => c.direction === v.direction);
+  // Rincian: satu transfer dipecah ke beberapa kategori (jumlahnya harus = nominal)
+  const [splits, setSplits] = useState<Split[]>(p.init.splits ?? []);
+  const splitSum = splits.reduce((t, x) => t + (Number(x.amount) || 0), 0);
+  const setSplit = (k: number, patch: Partial<Split>) => setSplits((o) => o.map((x, i) => (i === k ? { ...x, ...patch } : x)));
   // Toko hanya membedakan withdraw saldo penjual marketplace (transfer internal); selain itu selalu toko default.
   const isTransfer = v.direction === "TRANSFER";
   const storeIn = (text?: string | null) => p.stores.find((s) => text?.toLowerCase().includes(s.name.toLowerCase()))?.id;
@@ -101,6 +106,8 @@ export function TxForm(p: {
           <label><span className="label">Ke rekening</span>
             <select name="toAccountId" value={v.toAccountId ?? ""} onChange={set("toAccountId")} className="input"><option value="">— pilih —</option>{p.banks.filter((b) => b.id !== v.accountId).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
           </label>
+        ) : splits.length ? (
+          <div><span className="label">Kategori</span><p className="py-2 text-sm text-slate-500">Dari rincian di bawah</p></div>
         ) : (
           <label><span className="label">Kategori</span>
             <select name="categoryId" value={v.categoryId ?? ""} onChange={set("categoryId")} className="input"><option value="">— pilih —</option>{cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
@@ -110,6 +117,37 @@ export function TxForm(p: {
         <label className="col-span-2 md:col-span-1"><span className="label">Bukti (JPG/PNG/PDF, maks 5 MB)</span><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></label>
         <label className="col-span-2 md:col-span-3"><span className="label">Catatan</span><textarea name="note" value={v.note ?? ""} onChange={set("note")} rows={2} className="input" /></label>
       </div>
+      {!isTransfer && (
+        <div className="rounded-lg border border-slate-200 p-3">
+          <input type="hidden" name="splitsOn" value="1" />
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="label !mb-0">Rincian (opsional) — satu transfer untuk beberapa keperluan</span>
+            <button type="button" className="btn-secondary btn-sm" onClick={() => setSplits((o): Split[] => [...(o.length ? o : [{ categoryId: v.categoryId ?? null, amount: (Number(v.amount) || "") as number | "", note: "" }]), { categoryId: null, amount: "", note: "" }])}>+ Rincian</button>
+          </div>
+          {splits.length > 0 && (
+            <div className="mt-2 space-y-2">
+              {splits.map((x, k) => (
+                <div key={k} className="grid grid-cols-12 items-center gap-2">
+                  <input type="hidden" name="splitItem" value={x.itemId ?? ""} />
+                  <input type="hidden" name="splitQty" value={x.qty ?? ""} />
+                  <input name="splitNote" value={x.note} onChange={(e) => setSplit(k, { note: e.target.value })} className="input col-span-12 sm:col-span-4" placeholder="Keterangan, cth: galon" />
+                  {x.itemId ? (
+                    <span className="col-span-7 text-sm sm:col-span-4">📦 Stok {x.itemName} × {x.qty}<input type="hidden" name="splitCat" value="" /></span>
+                  ) : (
+                    <select name="splitCat" value={x.categoryId ?? ""} onChange={(e) => setSplit(k, { categoryId: e.target.value || null })} className="input col-span-7 sm:col-span-4" data-plain=""><option value="">— kategori —</option>{cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+                  )}
+                  <input name="splitAmount" value={x.amount} onChange={(e) => setSplit(k, { amount: e.target.value === "" ? "" : Number(e.target.value.replace(/\D/g, "")) })} inputMode="numeric" className="input col-span-4 sm:col-span-3" placeholder="Nominal" />
+                  <button type="button" className="col-span-1 text-slate-400 hover:text-rose-600" title="Hapus rincian" onClick={() => setSplits((o) => o.filter((_, i) => i !== k))}>✕</button>
+                </div>
+              ))}
+              <p className={`text-xs ${splitSum === Number(v.amount) ? "text-emerald-700" : "text-rose-600"}`}>
+                Total rincian Rp {splitSum.toLocaleString("id-ID")} {splitSum === Number(v.amount) ? "= nominal ✓" : `≠ nominal Rp ${Number(v.amount || 0).toLocaleString("id-ID")}`}
+                {splitSum !== Number(v.amount) && splitSum > 0 && <button type="button" className="link ml-2" onClick={() => setV((o) => ({ ...o, amount: splitSum }))}>Pakai total rincian</button>}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
       {isTransfer && <p className="rounded-lg bg-slate-50 p-2 text-xs text-slate-600">Transfer internal hanya memindahkan saldo antar rekening — tidak dicatat sebagai pendapatan atau beban. Pilih toko bila ini withdraw saldo penjual marketplace.</p>}
       <div className="flex flex-wrap justify-end gap-2">
         {p.mode === "create" ? (

@@ -1,5 +1,6 @@
 import { prisma } from "./db";
-import { QTY_UNITS } from "./extract";
+import { QTY_UNITS, suggestCategory, type ExtractCategory } from "./extract";
+import { parseIDR } from "./money";
 
 /**
  * Pesan/foto bukti pembelian bahan baku di bot Telegram: dikenali dari master bahan baku
@@ -89,4 +90,40 @@ export function detectPayablePayment(text: string, payables: PayableCandidate[],
     .sort((a, b) => b.s - a.s);
   const top = ranked.length ? ranked.filter((x) => x.s === ranked[0].s).map((x) => x.p) : [];
   return { matches: top };
+}
+
+// ---------- Rincian: satu transfer untuk beberapa keperluan ----------
+export type SplitGuess = { label: string; amount: number; categoryId: string | null; itemId: string | null; qty: number | null };
+
+/** Barang master yang paling cocok dengan satu baris teks */
+export function matchItem(text: string, items: PurchaseItem[]): PurchaseItem | null {
+  const t = norm(text);
+  return items.map((item) => ({ item, s: score(item, t) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s)[0]?.item ?? null;
+}
+
+const LINE_AMOUNT = /^(.*?)[\s:=-]*\b(?:rp\.?\s*)?(\d[\d.,]*\s*(?:k|rb|ribu|jt|juta)?)\s*$/i;
+
+/**
+ * Pecah caption menjadi rincian, satu keperluan per baris: "beli dus bekas 5k / galon cleo 20k / ongkir gypsum 10k".
+ * Minimal 2 baris bernominal. Baris yang menyebut bahan baku + jumlahnya ("kardus 50 pcs 100rb") menjadi stok masuk;
+ * baris lain diberi kategori dari kata kuncinya (null = ditanyakan ke pengguna).
+ */
+export function extractSplits(text: string, categories: ExtractCategory[], items: PurchaseItem[], direction: string | null): SplitGuess[] {
+  if (direction === "TRANSFER" || direction === "MASUK") return [];
+  const rows = text.split(/\n|;|,(?!\d{3})/).map((x) => x.trim()).filter(Boolean);
+  const out: SplitGuess[] = [];
+  for (const row of rows) {
+    const m = row.match(LINE_AMOUNT);
+    if (!m) continue;
+    const raw = m[2].replace(/\s+/g, "").toLowerCase();
+    // Angka polos kecil tanpa satuan rupiah (mis. "2") bukan nominal; jumlah barang ("50 pcs") juga bukan
+    if (!/[a-z]/.test(raw) && !/\d{1,3}(\.\d{3})+/.test(raw) && raw.replace(/\D/g, "").length < 4) continue;
+    const amount = parseIDR(raw.replace(/k$/, "rb"));
+    if (!amount || amount <= 0) continue;
+    const label = m[1].replace(/^(beli|bayar|untuk|buat)\s+/i, "").trim() || row;
+    const qty = extractQty(m[1]);
+    const item = qty ? matchItem(m[1], items) : null;
+    out.push({ label: label.slice(0, 80), amount, categoryId: suggestCategory(m[1], "KELUAR", categories), itemId: item?.id ?? null, qty: item ? qty : null });
+  }
+  return out.length >= 2 ? out : [];
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { extractAmount, extractTransaction, hasExplicitAmount, mergeReceipt } from "@/lib/extract";
-import { detectPurchase, extractQty, type PurchaseItem } from "@/lib/botPurchase";
+import { detectPurchase, extractQty, extractSplits, type PurchaseItem } from "@/lib/botPurchase";
 
 const items: PurchaseItem[] = [
   { id: "g", sku: "BB-0001", name: "Gypsum", unit: "sak", supplierId: null },
@@ -52,5 +52,28 @@ describe("deteksi pembelian bahan baku dari master data", () => {
     expect(detectPurchase("terima pembayaran gypsum 10 sak", items, "MASUK")).toBeNull();
     expect(detectPurchase("beli bensin 2 liter", items, "KELUAR")).toBeNull();
     expect(detectPurchase("bayar gypsum 10 sak", items, "KELUAR")?.item.id).toBe("g");
+  });
+});
+
+describe("rincian dari caption per baris", () => {
+  const cats = [
+    { id: "ongkir", name: "Ongkos Kirim", direction: "KELUAR" as const, keywords: "ongkir,ongkos kirim" },
+    { id: "bahan", name: "Pembelian Bahan Baku", direction: "KELUAR" as const, keywords: "dus,kardus,plastik" },
+    { id: "lain", name: "Beban Lain-lain", direction: "KELUAR" as const, keywords: "lain-lain" },
+  ];
+  it("memecah 3 baris dengan nominal k", () => {
+    const s = extractSplits("beli dus bekas 5k\ngalon cleo 20k\nongkir gypsum 10k", cats, items, "KELUAR");
+    expect(s.map((x) => x.amount)).toEqual([5000, 20000, 10000]);
+    expect(s[0]).toMatchObject({ label: "dus bekas", categoryId: "bahan" });
+    expect(s[1].categoryId).toBeNull();
+    expect(s[2].categoryId).toBe("ongkir");
+  });
+  it("baris bahan baku + jumlah menjadi stok", () => {
+    const s = extractSplits("plastik kemasan 200 pcs 150rb\nongkir 10rb", cats, items, "KELUAR");
+    expect(s[0]).toMatchObject({ itemId: "pl", qty: 200, amount: 150000 });
+  });
+  it("satu baris saja bukan rincian", () => {
+    expect(extractSplits("bayar listrik 350rb", cats, items, "KELUAR")).toEqual([]);
+    expect(extractSplits("terima 100rb\njual 50rb", cats, items, "MASUK")).toEqual([]);
   });
 });

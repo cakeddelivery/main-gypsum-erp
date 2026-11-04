@@ -3,7 +3,7 @@ import { effectivePermissions } from "./rbac";
 import { extractTransaction, hasExplicitAmount, mergeReceipt } from "./extract";
 import { readReceipt, type ReceiptRead } from "./receipt";
 import { ocrReceipt } from "./ocrReceipt";
-import { approveAndBook, createTransaction, FinanceError, rejectTransaction, STATUS_LABEL, submitForConfirmation, updateTransaction, missingFields } from "./finance";
+import { type SplitInput, splitIssues, approveAndBook, createTransaction, FinanceError, rejectTransaction, STATUS_LABEL, submitForConfirmation, updateTransaction, missingFields } from "./finance";
 import { answerCallback, chatAction, downloadTelegramFile, editTelegram, esc, sendTelegram, type InlineButton } from "./telegram";
 import { saveProof } from "./storage";
 import { idr } from "./money";
@@ -11,7 +11,7 @@ import { fmtDate, fmtDateTime, jakartaDateTime, txTime } from "./time";
 import { dailyRecapText } from "./jobs";
 import { handleMenuCallback, handleMenuCommand, MENU_TEXT } from "./botMenu";
 import { clearSession, getSession, handleFlowCallback, handleFlowLocation, handleFlowText, startPrefilledFlow, type TgLocation } from "./botFlow";
-import { detectPurchase, rawMaterials } from "./botPurchase";
+import { detectPurchase, extractSplits, rawMaterials } from "./botPurchase";
 import { prefilledPayablePayment, prefilledPurchase, prefilledReserve } from "./botFlow3";
 import { detectPayablePayment } from "./botPurchase";
 import { openPayables } from "./payables";
@@ -44,7 +44,7 @@ async function identityOf(tgId: number) {
   return { ...ident, perms };
 }
 
-type Pick = "acc" | "to" | "cat" | "st";
+type Pick = "acc" | "to" | "cat" | "st" | `s${number}`;
 
 /**
  * Ringkasan draft + tombol interaktif: data yang kurang langsung diberi pilihan (rekening, tujuan, kategori, toko),
@@ -52,7 +52,8 @@ type Pick = "acc" | "to" | "cat" | "st";
  * `pick` = tampilkan pilihan untuk mengganti field tsb (tombol ✏️).
  */
 export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: string; buttons: InlineButton[][] }> {
-  const t = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: txId } });
+  const t = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: txId }, include: { splits: { orderBy: { sortOrder: "asc" } } } });
+  const splitItems = await prisma.item.findMany({ where: { id: { in: t.splits.map((x) => x.itemId).filter((x): x is string => !!x) } }, select: { id: true, name: true, unit: true } });
   const [banks, cats, stores, dup] = await Promise.all([
     prisma.bankAccount.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
     prisma.txCategory.findMany({ where: { active: true, direction: t.direction }, orderBy: { name: "asc" } }),
@@ -70,7 +71,17 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
     `Nominal: <b>${idr(t.amount)}</b>`,
     `Tanggal: ${fmtDateTime(t.date)}`,
     `Rekening: ${bank ? esc(bank.name) : "— (belum dipilih)"}${t.direction === "TRANSFER" ? ` → ${to ? esc(to.name) : "— (belum dipilih)"}` : ""}`,
-    t.direction !== "TRANSFER" ? `Kategori: ${cat ? esc(cat.name) : "— (belum dipilih)"}` : "",
+    t.direction !== "TRANSFER" && !t.splits.length ? `Kategori: ${cat ? esc(cat.name) : "— (belum dipilih)"}` : "",
+    ...(t.splits.length
+      ? [
+          `Rincian (${t.splits.length}):`,
+          ...t.splits.map((x, k) => {
+            const it = splitItems.find((i) => i.id === x.itemId);
+            const c = cats.find((cc) => cc.id === x.categoryId);
+            return `${k + 1}. ${esc(x.note ?? "")} · <b>${idr(x.amount)}</b> → ${it ? `📦 stok ${esc(it.name)} ${Number(x.qty)} ${esc(it.unit)}` : c ? esc(c.name) : "<i>kategori belum dipilih</i>"}`;
+          }),
+        ]
+      : []),
     stores.length > 1 || !store ? `Toko: ${store ? esc(store.name) : "— (belum dipilih)"}` : "",
     t.note ? `Catatan: ${esc(t.note.slice(0, 200))}` : "",
   ].filter(Boolean);
@@ -87,9 +98,13 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
   }
   const buttons: InlineButton[][] = [];
   if (t.status === "DIBUKUKAN" || t.status === "DITOLAK" || t.status === "DIBATALKAN") return { text: lines.join("\n"), buttons };
-  const missing = missingFields(t);
+  const issues = splitIssues(t.amount, t.direction, t.splits);
+  const missing = [...missingFields(t), ...issues];
+  const splitSum = t.splits.reduce((a, x) => a + Number(x.amount), 0);
+  if (t.splits.length && splitSum !== Number(t.amount)) lines.push(`\n⚠️ Total rincian ${idr(splitSum)} tidak sama dengan nominal ${idr(t.amount)}.`);
+  const noCat = t.splits.findIndex((x) => !x.categoryId && !x.itemId);
   // Pilihan untuk data yang kurang (atau yang ingin diganti)
-  const need: Pick | null = pick ?? (!t.accountId ? "acc" : t.direction === "TRANSFER" && (!t.toAccountId || t.toAccountId === t.accountId) ? "to" : t.direction !== "TRANSFER" && !t.categoryId ? "cat" : !t.storeId ? "st" : null);
+  const need: Pick | null = pick ?? (noCat >= 0 && t.accountId ? (`s${noCat}` as Pick) : null) ?? (!t.accountId ? "acc" : t.direction === "TRANSFER" && (!t.toAccountId || t.toAccountId === t.accountId) ? "to" : t.direction !== "TRANSFER" && !t.categoryId ? "cat" : !t.storeId ? "st" : null);
   if (need === "acc") {
     lines.push(`\n${pick ? "Ganti" : "Pilih"} rekening${t.direction === "TRANSFER" ? " asal" : ""}:`);
     buttons.push(...chunk(banks.map((b) => ({ text: `${b.id === t.accountId ? "✓ " : ""}${b.name}`, callback_data: `acc:${t.id}:${b.id}` })), 2));
@@ -99,6 +114,13 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
   } else if (need === "cat") {
     lines.push(`\n${pick ? "Ganti" : "Pilih"} kategori:`);
     buttons.push(...chunk(cats.slice(0, 16).map((c) => ({ text: `${c.id === t.categoryId ? "✓ " : ""}${c.name}`, callback_data: `cat:${t.id}:${c.id}` })), 2));
+  } else if (need?.startsWith("s") && need !== "st") {
+    const k = Number(need.slice(1));
+    const sp = t.splits[k];
+    if (sp) {
+      lines.push(`\n${pick ? "Ganti" : "Pilih"} kategori untuk rincian ${k + 1} (<i>${esc(sp.note ?? "")}</i> ${idr(sp.amount)}):`);
+      buttons.push(...chunk(cats.slice(0, 16).map((c) => ({ text: `${c.id === sp.categoryId ? "✓ " : ""}${c.name}`, callback_data: `sc:${t.id}:${k}:${c.id}` })), 2));
+    }
   } else if (need === "st") {
     lines.push(`\n${pick ? "Ganti" : "Pilih"} toko:`);
     buttons.push(...chunk(stores.map((x) => ({ text: `${x.id === t.storeId ? "✓ " : ""}${x.name}`, callback_data: `st:${t.id}:${x.id}` })), 2));
@@ -115,9 +137,14 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
   const edit: InlineButton[] = [];
   if (t.accountId && need !== "acc") edit.push({ text: "✏️ Rekening", callback_data: `chg:${t.id}:acc` });
   if (t.direction === "TRANSFER" && t.toAccountId && need !== "to") edit.push({ text: "✏️ Tujuan", callback_data: `chg:${t.id}:to` });
-  if (t.direction !== "TRANSFER" && t.categoryId && need !== "cat") edit.push({ text: "✏️ Kategori", callback_data: `chg:${t.id}:cat` });
+  if (t.direction !== "TRANSFER" && t.categoryId && need !== "cat" && !t.splits.length) edit.push({ text: "✏️ Kategori", callback_data: `chg:${t.id}:cat` });
+  t.splits.forEach((x, k) => {
+    if (!x.itemId && x.categoryId && need !== `s${k}`) edit.push({ text: `✏️ Rincian ${k + 1}`, callback_data: `chg:${t.id}:s${k}` });
+  });
   if (stores.length > 1 && t.storeId && need !== "st") edit.push({ text: "✏️ Toko", callback_data: `chg:${t.id}:st` });
   if (edit.length) buttons.push(...chunk(edit, 3));
+  if (t.splits.length && splitSum !== Number(t.amount)) buttons.push([{ text: `Pakai total rincian (${idr(splitSum)})`, callback_data: `sa:${t.id}` }]);
+  if (t.splits.length) buttons.push([{ text: "🔗 Gabung jadi 1 kategori", callback_data: `sx:${t.id}` }]);
   if (missing.length === 0 && !t.duplicateOfId) buttons.push([{ text: "✅ Konfirmasi & bukukan", callback_data: `ok:${t.id}` }, { text: "❌ Batalkan", callback_data: `no:${t.id}` }]);
   else if (!t.duplicateOfId) buttons.push([{ text: "❌ Batalkan", callback_data: `no:${t.id}` }]);
   return { text: lines.join("\n"), buttons };
@@ -183,7 +210,10 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   // Foto bukti + caption keterangan: nominal, tanggal & rekening dibaca dari foto
   let receipt: ReceiptRead | null = null;
   // Nominal dari caption hanya dipercaya bila ditulis jelas (Rp/rb/jt); angka lain bisa jumlah barang atau tahun
-  if (photo && (!hasExplicitAmount(text) || !ex.direction || !ex.accountId)) {
+  // Rincian per baris ("dus bekas 5k / galon 20k / ongkir 10k"): nominal total diambil dari bukti transfer
+  const materials = await rawMaterials();
+  let splits = extractSplits(text, cats, materials, ex.direction);
+  if (photo && (splits.length || !hasExplicitAmount(text) || !ex.direction || !ex.accountId)) {
     await chatAction(chatId, "typing").catch(() => {});
     receipt = await readReceipt(photo, text, banks).catch((e) => {
       console.error("readReceipt:", e instanceof Error ? e.message : e);
@@ -199,6 +229,13 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     }
   }
   ex = mergeReceipt(ex, text, receipt, banks, cats);
+  if (splits.length) {
+    splits = extractSplits(text, cats, materials, ex.direction ?? "KELUAR");
+    if (splits.length) {
+      ex.direction = ex.direction ?? "KELUAR";
+      ex.amount = receipt?.amount ?? splits.reduce((t, x) => t + x.amount, 0);
+    }
+  }
   if (!ex.amount || !ex.direction) {
     await sendTelegram(chatId, `Saya belum bisa membaca ${!ex.amount ? "nominal" : "jenis transaksi (masuk/keluar/transfer)"} dari ${photo ? "foto & keterangan" : "pesan"} ini. Tulis ulang dengan lebih lengkap, misal: <i>bayar gypsum 2jt dari seabank</i>.`);
     return;
@@ -215,11 +252,12 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     proofPath,
     aiExtraction: receipt ? { ...ex, receipt } : ex,
     messageId: String(msg.message_id),
+    splits: splits.length ? splits.map((x) => ({ categoryId: x.itemId ? null : x.categoryId, amount: x.amount, note: x.label, itemId: x.itemId, qty: x.qty })) : undefined,
   };
   const ctx = { i: ident, chatId };
   const basis = [text, receipt?.counterparty].filter(Boolean).join(" ");
   // Bukti transfer dana sisihan (nominal = kelipatan sisihan harian, rekening sesuai alur dana)
-  if ((ex.direction === "TRANSFER" || ex.direction === "KELUAR") && ident.perms.has("finance.approve")) {
+  if (!splits.length && (ex.direction === "TRANSFER" || ex.direction === "KELUAR") && ident.perms.has("finance.approve")) {
     const m = await matchReserveTransfer({ amount: ex.amount, fromBankId: ex.accountId, toBankId: ex.direction === "TRANSFER" ? ex.toAccountId : null, date: ex.date!, text: basis });
     if (m) {
       const session = await prefilledReserve(ctx, { options: m.options, sure: m.sure, proofPath, tx: draft });
@@ -227,7 +265,7 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     }
   }
   // Angsuran / pembayaran utang supplier ("angsur kardus"): langsung ke isian bayar utang
-  if (ex.direction === "KELUAR" && (ident.perms.has("accounting.post") || ident.perms.has("finance.approve"))) {
+  if (!splits.length && ex.direction === "KELUAR" && (ident.perms.has("accounting.post") || ident.perms.has("finance.approve"))) {
     const hit = detectPayablePayment(basis, await openPayables(), ex.direction);
     if (hit) {
       const session = await prefilledPayablePayment(ctx, { candidates: hit.matches.map((p) => p.id), amount: ex.amount, bankId: ex.accountId, date: ex.date, time: txTime(ex.date!, ex.time), note: text || null, proofPath, tx: draft });
@@ -235,8 +273,8 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     }
   }
   // Pembelian bahan baku sesuai master data: langsung ke isian Pembelian (stok + utang/kas), bukan draft biasa
-  if (ex.direction === "KELUAR" && ident.perms.has("finance.approve")) {
-    const hit = detectPurchase([text, receipt?.counterparty].filter(Boolean).join(" "), await rawMaterials(), ex.direction);
+  if (!splits.length && ex.direction === "KELUAR" && ident.perms.has("finance.approve")) {
+    const hit = detectPurchase([text, receipt?.counterparty].filter(Boolean).join(" "), materials, ex.direction);
     if (hit) {
       const supplier = await matchSupplier([text, receipt?.counterparty].filter(Boolean).join(" "));
       const session = await prefilledPurchase(
@@ -262,6 +300,7 @@ type DraftInput = {
   proofPath: string | null;
   aiExtraction: unknown;
   messageId: string;
+  splits?: SplitInput[];
 };
 
 async function createDraft(chatId: string, ident: NonNullable<Awaited<ReturnType<typeof identityOf>>>, d: DraftInput) {
@@ -282,6 +321,7 @@ async function createDraft(chatId: string, ident: NonNullable<Awaited<ReturnType
       idempotencyKey: `tg:${chatId}:${d.messageId}`,
       telegramChatId: chatId,
       telegramMessageId: d.messageId,
+      splits: d.splits,
     },
     "TELEGRAM",
     { id: ident.userId, name: ident.user.name, telegramId: ident.telegramUserId },
@@ -332,11 +372,11 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
   const actor = { id: ident.userId, name: ident.user.name, telegramId: ident.telegramUserId };
   // Melengkapi/membatalkan draft: hanya identitas yang boleh mengirim transaksi atau peninjau/penyetuju keuangan
   const canReview = ident.perms.has("finance.review") || ident.perms.has("finance.approve");
-  if (["acc", "to", "cat", "st", "no", "chg"].includes(action) && !ident.canSubmit && !canReview) return answerCallback(cb.id, "Anda tidak berwenang mengubah transaksi");
+  if (["acc", "to", "cat", "st", "no", "chg", "sc", "sa", "sx"].includes(action) && !ident.canSubmit && !canReview) return answerCallback(cb.id, "Anda tidak berwenang mengubah transaksi");
   // Tombol ✏️ / ◀ Kembali: hanya mengganti tampilan pilihan, belum mengubah data
   if (action === "chg" || action === "back") {
     if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan sudah tidak tersedia");
-    const m = await draftMessage(txId, action === "chg" && ["acc", "to", "cat", "st"].includes(value) ? (value as "acc" | "to" | "cat" | "st") : undefined);
+    const m = await draftMessage(txId, action === "chg" && (["acc", "to", "cat", "st"].includes(value) || /^s\d+$/.test(value)) ? (value as Pick) : undefined);
     await editTelegram(chatId, cb.message.message_id, m.text, m.buttons);
     return answerCallback(cb.id, "");
   }
@@ -349,6 +389,18 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
     else if (action === "to") await updateTransaction(txId, { toAccountId: value }, actor);
     else if (action === "cat") await updateTransaction(txId, { categoryId: value }, actor);
     else if (action === "st") await updateTransaction(txId, { storeId: value }, actor);
+    else if (action === "sc" || action === "sa" || action === "sx") {
+      const cur = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: txId }, include: { splits: { orderBy: { sortOrder: "asc" } } } });
+      const rows = cur.splits.map((x) => ({ categoryId: x.categoryId, amount: Number(x.amount), note: x.note, itemId: x.itemId, qty: x.qty ? Number(x.qty) : null }));
+      if (action === "sc") {
+        const k = Number(value);
+        const catId = (cb.data ?? "").split(":")[3];
+        if (!rows[k] || !catId) return answerCallback(cb.id, "Rincian tidak ditemukan");
+        rows[k] = { ...rows[k], categoryId: catId, itemId: null, qty: null };
+        await updateTransaction(txId, { splits: rows, categoryId: null }, actor);
+      } else if (action === "sa") await updateTransaction(txId, { amount: rows.reduce((a, x) => a + x.amount, 0) }, actor);
+      else await updateTransaction(txId, { splits: [] }, actor);
+    }
     else if (action === "rev") {
       if (!ident.perms.has("finance.review")) return answerCallback(cb.id, "Anda tidak berwenang meninjau");
       await prisma.$transaction(async (tx) => {
@@ -367,9 +419,10 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
       await approveAndBook(txId, actor, "Dikonfirmasi via Telegram");
     } else return answerCallback(cb.id, "Aksi tidak dikenal");
     // Setelah data dilengkapi, kembalikan ke Menunggu Konfirmasi bila sudah lengkap
-    if (["acc", "to", "cat", "st", "rev"].includes(action)) {
+    if (["acc", "to", "cat", "st", "rev", "sc", "sa", "sx"].includes(action)) {
       const t = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: txId } });
-      if (t.status === "PERLU_DITINJAU" && !t.duplicateOfId && missingFields(t).length === 0) await submitForConfirmation(txId, actor, "Dilengkapi via Telegram");
+      const sp = await prisma.financeTxSplit.findMany({ where: { transactionId: txId } });
+      if (t.status === "PERLU_DITINJAU" && !t.duplicateOfId && missingFields(t).length === 0 && splitIssues(t.amount, t.direction, sp).length === 0) await submitForConfirmation(txId, actor, "Dilengkapi via Telegram");
     }
     const m = await draftMessage(txId);
     if (chatId && cb.message) await editTelegram(chatId, cb.message.message_id, m.text, m.buttons);
