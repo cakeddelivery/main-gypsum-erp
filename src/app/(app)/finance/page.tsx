@@ -22,10 +22,11 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
   const user = await requirePerm("finance.view");
   const sp = await searchParams;
   const status = STATUSES.includes(sp.status as TxStatus) ? (sp.status as TxStatus) : undefined;
+  const sellerIds = sp.direction === "WD" ? (await prisma.bankAccount.findMany({ where: { marketplace: true }, select: { id: true } })).map((b) => b.id) : [];
   const where: Prisma.FinanceTransactionWhereInput = {
     deletedAt: null,
     ...(sp.source ? { source: sp.source as never } : {}),
-    ...(sp.direction ? { direction: sp.direction as never } : {}),
+    ...(sp.direction === "WD" ? { direction: "TRANSFER" as const, accountId: { in: sellerIds } } : sp.direction ? { direction: sp.direction as never } : {}),
 
     ...(sp.store ? { storeId: sp.store } : {}),
     ...(sp.from || sp.to ? { date: { ...(sp.from ? { gte: jakartaDateTime(sp.from, "00:00") } : {}), ...(sp.to ? { lt: new Date(jakartaDateTime(sp.to, "00:00").getTime() + 86400000) } : {}) } } : {}),
@@ -44,6 +45,9 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
     prisma.setting.findUnique({ where: { key: "default_store_id" } }),
   ]);
   const name = (list: { id: string; name: string }[], id: string | null) => list.find((x) => x.id === id)?.name ?? "—";
+  // Withdraw saldo penjual marketplace = pemasukan penjualan toko (MG / DL)
+  const isWd = (t: { direction: string; accountId: string | null }) => t.direction === "TRANSFER" && !!banks.find((b) => b.id === t.accountId)?.marketplace;
+  const wdLabel = (t: { storeId: string | null }) => `Pemasukan penjualan · ${stores.find((x) => x.id === t.storeId)?.code ?? "toko?"}`;
   const qs = (s?: string) => { const u = new URLSearchParams(Object.entries({ ...sp, baru: undefined, status: s }).filter(([, v]) => v) as [string, string][]); return `/finance?${u}`; };
   return (
     <div>
@@ -67,7 +71,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
         {status && <input type="hidden" name="status" value={status} />}
         <Field label="Cari"><input name="q" defaultValue={sp.q} className="input" placeholder="No. / catatan / pihak" /></Field>
         <Field label="Sumber"><select name="source" defaultValue={sp.source ?? ""} className="input"><option value="">Semua</option>{Object.entries(SOURCE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
-        <Field label="Jenis"><select name="direction" defaultValue={sp.direction ?? ""} className="input"><option value="">Semua</option><option value="MASUK">Masuk</option><option value="KELUAR">Keluar</option><option value="TRANSFER">Transfer</option></select></Field>
+        <Field label="Jenis"><select name="direction" defaultValue={sp.direction ?? ""} className="input"><option value="">Semua</option><option value="MASUK">Masuk</option><option value="KELUAR">Keluar</option><option value="TRANSFER">Transfer</option><option value="WD">Withdraw (pemasukan)</option></select></Field>
         <Field label="Rekening"><select name="account" defaultValue={sp.account ?? ""} className="input"><option value="">Semua</option>{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
         <Field label="Toko (withdraw)"><select name="store" defaultValue={sp.store ?? ""} className="input"><option value="">Semua</option>{stores.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
         <Field label="Dari"><input type="date" name="from" defaultValue={sp.from} className="input" /></Field>
@@ -80,8 +84,8 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
               <li key={t.id}>
                 <Link href={`/finance/${t.id}`} className="card block p-3">
                   <div className="flex items-start justify-between gap-2">
-                    <div><div className="text-xs text-slate-400">{t.number} · {SOURCE[t.source]}</div><div className="text-sm font-medium">{t.note || name(cats, t.categoryId)}</div></div>
-                    <div className={`text-right font-semibold tabular-nums ${t.direction === "MASUK" ? "text-emerald-600" : t.direction === "KELUAR" ? "text-rose-600" : "text-slate-700"}`}>{t.direction === "KELUAR" ? "−" : t.direction === "MASUK" ? "+" : "⇄"}{idr(t.amount)}</div>
+                    <div><div className="text-xs text-slate-400">{t.number} · {SOURCE[t.source]}</div><div className="text-sm font-medium">{t.note || name(cats, t.categoryId)}</div>{isWd(t) && <div className="text-xs text-emerald-700">Withdraw · {wdLabel(t)}</div>}</div>
+                    <div className={`text-right font-semibold tabular-nums ${t.direction === "MASUK" || isWd(t) ? "text-emerald-600" : t.direction === "KELUAR" ? "text-rose-600" : "text-slate-700"}`}>{t.direction === "KELUAR" ? "−" : t.direction === "MASUK" || isWd(t) ? "+" : "⇄"}{idr(t.amount)}</div>
                   </div>
                   <div className="mt-1 flex items-center justify-between text-xs text-slate-500"><span>{fmtDateTime(t.date)} · {name(banks, t.accountId)}</span><Badge tone={TONE[t.status]}>{STATUS_LABEL[t.status]}</Badge></div>
                 </Link>
@@ -95,11 +99,11 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
                 {rows.map((t) => (
                   <tr key={t.id}>
                     <td><Link className="link font-mono text-xs" href={`/finance/${t.id}`}>{t.number}</Link>{t.duplicateOfId && <span title="Terindikasi duplikat" className="ml-1">⚠️</span>}{t.proofPath && <span title="Ada bukti" className="ml-1">📎</span>}</td>
-                    <td>{fmtDateTime(t.date)}</td><td>{t.direction === "MASUK" ? "Masuk" : t.direction === "KELUAR" ? "Keluar" : "Transfer"}</td>
-                    <td className={`num font-medium ${t.direction === "MASUK" ? "text-emerald-600" : t.direction === "KELUAR" ? "text-rose-600" : ""}`}>{idr(t.amount)}</td>
+                    <td>{fmtDateTime(t.date)}</td><td>{isWd(t) ? <span className="text-emerald-700">Withdraw</span> : t.direction === "MASUK" ? "Masuk" : t.direction === "KELUAR" ? "Keluar" : "Transfer"}</td>
+                    <td className={`num font-medium ${t.direction === "MASUK" || isWd(t) ? "text-emerald-600" : t.direction === "KELUAR" ? "text-rose-600" : ""}`}>{isWd(t) ? "+" : ""}{idr(t.amount)}</td>
                     <td><Badge tone={TONE[t.status]}>{STATUS_LABEL[t.status]}</Badge></td>
                     <td>{name(banks, t.accountId)}{t.direction === "TRANSFER" && ` → ${name(banks, t.toAccountId)}`}</td>
-                    <td>{t.direction === "TRANSFER" ? "—" : name(cats, t.categoryId)}</td>
+                    <td>{isWd(t) ? <span className={t.storeId ? "text-emerald-700" : "text-amber-700"}>{wdLabel(t)}</span> : t.direction === "TRANSFER" ? "—" : name(cats, t.categoryId)}</td>
                     <td>{SOURCE[t.source]}</td>
                     <td className="max-w-[180px] truncate">{t.note}</td>
                   </tr>
