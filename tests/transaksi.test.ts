@@ -87,3 +87,27 @@ describe("Hapus transaksi dibatalkan/ditolak", () => {
     await expect(deleteClosedTransactions([booked.id], actor)).rejects.toThrow(/sudah dihapus/);
   });
 });
+
+describe("Withdraw saldo penjual marketplace = pemasukan penjualan", () => {
+  it("saldo penjual tidak minus, rekening tujuan bertambah, omzet tercatat; batal mengembalikan semuanya", async () => {
+    const u = await prisma.user.findUniqueOrThrow({ where: { username: "owner" } });
+    const actor = { id: u.id, name: u.name };
+    const seller = await prisma.bankAccount.findUniqueOrThrow({ where: { code: "SALDO_SHOPEE" } });
+    expect(seller.marketplace).toBe(true);
+    const bank = await prisma.bankAccount.findUniqueOrThrow({ where: { code: "SEABANK" } });
+    const date = jakartaDateTime("2026-11-04", "10:00");
+    const range = { start: jakartaDateTime("2026-11-04", "00:00"), end: jakartaDateTime("2026-11-05", "00:00") };
+    const bal = async (id: string) => (await bankBalances()).find((b) => b.id === id)!.balance;
+    const [s0, b0, rev0] = [await bal(seller.id), await bal(bank.id), (await profitLoss(range)).revenue.reduce((a, r) => a + r.amount, 0)];
+    const { transaction } = await createTransaction({ direction: "TRANSFER", amount: 777_000, date, accountId: seller.id, toAccountId: bank.id }, "TELEGRAM", actor);
+    await approveAndBook(transaction.id, actor);
+    expect(await bal(seller.id)).toBe(s0);
+    expect(await bal(bank.id)).toBe(b0 + 777_000);
+    expect((await profitLoss(range)).revenue.reduce((a, r) => a + r.amount, 0)).toBe(rev0 + 777_000);
+    const moves = await cashMovements(range.start, range.end);
+    expect(moves.some((m) => m.memo.includes(transaction.number) && m.amount === 777_000)).toBe(true);
+    await cancelBookedTransaction(transaction.id, actor, "uji");
+    expect(await bal(bank.id)).toBe(b0);
+    expect((await profitLoss(range)).revenue.reduce((a, r) => a + r.amount, 0)).toBe(rev0);
+  });
+});

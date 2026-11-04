@@ -84,6 +84,7 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
       : []),
     stores.length > 1 || !store ? `Toko: ${store ? esc(store.name) : "— (belum dipilih)"}` : "",
     t.note ? `Catatan: ${esc(t.note.slice(0, 200))}` : "",
+    t.direction === "TRANSFER" && bank?.marketplace ? `💰 Withdraw saldo penjual: otomatis dicatat juga sebagai pemasukan penjualan ${idr(t.amount)}` : "",
   ].filter(Boolean);
   if (dup) {
     lines.push(

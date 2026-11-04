@@ -48,7 +48,7 @@ export const saveShift = action("settings.manage", async (fd, user) => {
 
 export const saveBank = action("settings.manage", async (fd, user) => {
   const id = optStr(fd, "id");
-  const data = { name: z.string().min(2).parse(str(fd, "name")), coaAccountId: str(fd, "coaAccountId"), aliases: str(fd, "aliases").toLowerCase(), active: id ? bool(fd, "active") : true };
+  const data = { name: z.string().min(2).parse(str(fd, "name")), coaAccountId: str(fd, "coaAccountId"), aliases: str(fd, "aliases").toLowerCase(), active: id ? bool(fd, "active") : true, marketplace: bool(fd, "marketplace") };
   const coa = await prisma.coaAccount.findUniqueOrThrow({ where: { id: data.coaAccountId } });
   if (!coa.isCash) throw new Error("Akun COA rekening harus akun kas/bank");
   // Satu rekening = satu akun COA. Bila dipakai bersama, saldo kedua rekening tercampur dan total saldo terhitung dobel.

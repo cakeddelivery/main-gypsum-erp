@@ -901,6 +901,8 @@ model BankAccount {
   coaAccount   CoaAccount @relation(fields: [coaAccountId], references: [id])
   aliases      String     @default("")
   active       Boolean    @default(true)
+  /// Saldo penjual marketplace (Shopee/TikTok): withdraw dari rekening ini sekaligus dicatat sebagai pemasukan penjualan
+  marketplace  Boolean    @default(false)
 }
 
 enum TxDirection {

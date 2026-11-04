@@ -21,6 +21,15 @@ export const STATUS_LABEL: Record<TxStatus, string> = {
 
 export class FinanceError extends Error {}
 
+/** Pemasukan penjualan dari withdraw saldo penjual marketplace */
+export function withdrawIncomeLines(sellerCoaId: string, sellerName: string, amount: number): LineInput[] {
+  return [
+    { accountId: sellerCoaId, debit: amount, memo: `Penjualan ${sellerName} (withdraw)` },
+    { accountCode: COA.PENJUALAN, credit: amount, memo: `Penjualan ${sellerName} (withdraw)` },
+  ];
+}
+export const WITHDRAW_INCOME_SOURCE = "WITHDRAW_PENJUALAN";
+
 export type TxInput = {
   direction: TxDirection;
   amount: number;
@@ -262,6 +271,9 @@ export async function approveAndBook(id: string, actor: Actor & { id: string }, 
         { accountId: to.coaAccountId, debit: amount, memo: `Transfer dari ${bank.name}` },
         { accountId: bank.coaAccountId, credit: amount, memo: `Transfer ke ${to.name}` },
       ];
+      // Withdraw saldo penjual marketplace = hasil penjualan di Shopee/TikTok: sekaligus dicatat sebagai pemasukan
+      // (Dr Saldo Penjual / Cr Penjualan), sehingga saldo penjual tidak minus dan omzet toko tercatat
+      if (bank.marketplace) lines.unshift(...withdrawIncomeLines(bank.coaAccountId, bank.name, amount));
     } else if (splits.length) {
       // Rincian: satu sisi rekening sebesar nominal, sisi lain dipecah per kategori / persediaan bahan baku
       const cats = await tx.txCategory.findMany({ where: { id: { in: splits.map((x) => x.categoryId).filter((x): x is string => !!x) } } });
@@ -332,6 +344,10 @@ export async function cancelBookedTransaction(id: string, actor: Actor & { id: s
     if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi berstatus Dibukukan yang dapat dibatalkan");
     const date = await assertPeriodOpen(tx, cur.date).then(() => cur.date, () => now);
     const rev = await reverseJournal(tx, cur.journalId, date, { id: actor.id, name: actor.name }, `batal ${cur.number} — ${reason.trim()}`.slice(0, 150));
+    // Pemasukan penjualan susulan untuk withdraw lama (skrip perbaikan) ikut dibalik
+    for (const extra of await tx.journal.findMany({ where: { source: WITHDRAW_INCOME_SOURCE, sourceId: cur.id } })) {
+      if (!(await tx.journal.findFirst({ where: { reversalOfId: extra.id } }))) await reverseJournal(tx, extra.id, date, { id: actor.id, name: actor.name }, `batal ${cur.number}`);
+    }
     // Bahan baku dari rincian ikut dikeluarkan lagi dari gudang
     const stockIn = await tx.stockMovement.findMany({ where: { ref: cur.number, type: "PENERIMAAN" } });
     for (const m of stockIn) await recordMovement(tx, { type: "PENGELUARAN", itemId: m.itemId, qty: Number(m.qty), fromLocationId: m.toLocationId, ref: `BATAL ${cur.number}`, note: `Pembatalan ${cur.number}`, date, allowNegative: true }, { id: actor.id, name: actor.name });
