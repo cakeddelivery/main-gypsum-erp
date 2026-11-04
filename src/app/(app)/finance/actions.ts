@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int } from "@/lib/action";
-import { changeBookedStore, cancelBookedTransaction, deleteClosedTransactions, approveAndBook, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
+import { changeBookedStore, reclassifyBooked, cancelBookedTransaction, deleteClosedTransactions, approveAndBook, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
 import { saveProof } from "@/lib/storage";
 import { extractTransaction } from "@/lib/extract";
 import { jakartaDateTime, txTime } from "@/lib/time";
@@ -98,6 +98,15 @@ export const cancelTx = action("finance.approve", async (fd, user) => {
 export const changeStoreTx = action("finance.approve", async (fd, user) => {
   await changeBookedStore(str(fd, "id"), str(fd, "storeId"), { id: user.id, name: user.name });
   return "Toko diganti";
+}, ["/finance", "/", "/akuntansi"]);
+
+/** Ubah kategori transaksi dibukukan, atau jadikan pembayaran hutang / cicilan pinjaman */
+export const reclassifyTx = action("finance.approve", async (fd, user) => {
+  const [kind, target] = str(fd, "target").split(":");
+  if (!target) throw new Error("Pilih kategori atau hutang");
+  const interest = str(fd, "interest") ? int(fd, "interest") : null;
+  await reclassifyBooked(str(fd, "id"), kind === "pay" ? { payableId: target, interest } : { categoryId: target }, { id: user.id, name: user.name });
+  return "Pencatatan diubah";
 }, ["/finance", "/", "/akuntansi"]);
 
 export const deleteTx = action("finance.approve", async (fd, user) => {

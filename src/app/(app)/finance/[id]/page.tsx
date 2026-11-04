@@ -10,7 +10,7 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ProofPreview } from "@/components/ProofPreview";
 import { TxForm } from "../TxForm";
-import { approveTx, cancelTx, changeStoreTx, deleteTx, rejectTx, submitTx, updateTx } from "../actions";
+import { approveTx, cancelTx, changeStoreTx, deleteTx, reclassifyTx, rejectTx, submitTx, updateTx } from "../actions";
 
 export const metadata = { title: "Detail Transaksi" };
 
@@ -28,6 +28,9 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
     t.journalId ? prisma.journal.findUnique({ where: { id: t.journalId }, include: { lines: { include: { account: true } } } }) : null,
     prisma.setting.findUnique({ where: { key: "default_store_id" } }),
   ]);
+  const payable = t.payableId ? await prisma.payable.findUnique({ where: { id: t.payableId } }) : null;
+  const reclassable = t.status === "DIBUKUKAN" && t.direction !== "TRANSFER" && !t.splits.length && user.can("finance.approve");
+  const openPay = reclassable && t.direction === "KELUAR" ? (await prisma.payable.findMany({ orderBy: { date: "desc" }, include: { supplier: { select: { name: true } } } })).filter((x) => x.paid < x.amount || x.id === t.payableId) : [];
   const editable = ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"].includes(t.status);
   const missing = [...missingFields(t), ...splitIssues(t.amount, t.direction, t.splits)];
   const p = jakartaParts(t.date);
@@ -56,7 +59,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
                 <dt className="text-slate-500">Jenis</dt><dd>{t.direction}</dd>
                 <dt className="text-slate-500">Rekening</dt><dd>{banks.find((b) => b.id === t.accountId)?.name}{t.toAccountId && ` → ${banks.find((b) => b.id === t.toAccountId)?.name}`}</dd>
                 {t.direction === "TRANSFER" && banks.find((b) => b.id === t.accountId)?.marketplace && <><dt className="text-slate-500">Pemasukan</dt><dd className="text-emerald-700">Penjualan {t.store?.name ?? "(toko belum dipilih)"} {idr(t.amount)} · dari withdraw saldo penjual</dd></>}
-                <dt className="text-slate-500">Kategori</dt><dd>{t.splits.length ? `${t.splits.length} rincian` : categories.find((c) => c.id === t.categoryId)?.name ?? "—"}</dd>
+                <dt className="text-slate-500">Kategori</dt><dd>{payable ? <>{payable.kind === "PINJAMAN" ? "Cicilan pinjaman" : "Bayar hutang"} <b>{payable.number}</b> {payable.vendor}<div className="text-xs text-slate-500">Pokok {idr(Number(t.amount - t.payInterest))}{t.payInterest > BigInt(0) ? ` · bunga/biaya ${idr(t.payInterest)}` : ""} · sisa hutang {idr(payable.amount - payable.paid)}</div></> : t.splits.length ? `${t.splits.length} rincian` : categories.find((c) => c.id === t.categoryId)?.name ?? "—"}</dd>
                 <dt className="text-slate-500">Pihak terkait</dt><dd>{t.counterparty ?? "—"}</dd>
                 <dt className="text-slate-500">Catatan</dt><dd>{t.note ?? "—"}</dd>
               </dl>
@@ -115,6 +118,26 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
                   <Field label="Toko (MG / DL)"><select name="storeId" defaultValue={t.storeId ?? ""} className="input">{stores.map((x) => <option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select></Field>
                   <p className="text-xs text-slate-500">Jurnal lama dibalik lalu dibukukan ulang dengan toko baru. Saldo rekening tidak berubah.</p>
                   <Submit pendingText="Menyimpan…">Simpan toko</Submit>
+                </ModalForm>
+              </Modal>
+            </Card>
+          )}
+          {reclassable && (
+            <Card title="Ubah kategori">
+              <p className="mb-3 text-xs text-slate-500">Salah kategori, atau ternyata bayar hutang / cicilan pinjaman? Jurnal lama dibalik lalu dibukukan ulang. Saldo rekening tidak berubah.</p>
+              <Modal trigger="Ubah kategori" triggerClass="btn-secondary w-full" title="Ubah kategori transaksi dibukukan">
+                <ModalForm action={reclassifyTx} className="space-y-3">
+                  <input type="hidden" name="id" value={t.id} />
+                  <p className="text-sm text-slate-600">{t.number} · {idr(t.amount)} · {t.note ?? t.counterparty ?? ""}</p>
+                  <Field label="Dicatat sebagai">
+                    <select name="target" defaultValue={t.payableId ? `pay:${t.payableId}` : t.categoryId ? `cat:${t.categoryId}` : ""} className="input" required>
+                      <option value="" disabled>— pilih —</option>
+                      {openPay.length > 0 && <optgroup label="Bayar hutang / cicilan pinjaman">{openPay.map((x) => <option key={x.id} value={`pay:${x.id}`}>{x.kind === "PINJAMAN" ? "Pinjaman" : "Hutang"} {x.number} · {x.supplier?.name ?? x.vendor} · sisa {idr(x.amount - x.paid)}</option>)}</optgroup>}
+                      <optgroup label="Kategori">{categories.filter((c) => c.direction === t.direction).map((c) => <option key={c.id} value={`cat:${c.id}`}>{c.name}</option>)}</optgroup>
+                    </select>
+                  </Field>
+                  {t.direction === "KELUAR" && <Field label="Bunga / biaya (khusus bayar pinjaman)" hint="Kosong = otomatis dari jadwal cicilan bila nominalnya sama; sisanya mengurangi pokok hutang"><input name="interest" inputMode="numeric" className="input" placeholder="otomatis" /></Field>}
+                  <Submit pendingText="Menyimpan…">Simpan</Submit>
                 </ModalForm>
               </Modal>
             </Card>

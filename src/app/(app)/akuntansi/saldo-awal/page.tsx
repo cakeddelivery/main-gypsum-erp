@@ -15,7 +15,7 @@ export default async function SaldoAwal() {
   const accounts = await prisma.coaAccount.findMany({ where: { active: true, type: { in: ["ASET", "KEWAJIBAN", "EKUITAS"] } }, orderBy: { code: "asc" } });
   return (
     <div className="space-y-5">
-      <PageHeader title="Saldo awal & penyesuaian" subtitle="Masukkan saldo pembukaan rekening, piutang, utang, persediaan, dan modal" actions={
+      <PageHeader title="Saldo awal & penyesuaian" subtitle="Masukkan saldo pembukaan rekening, piutang, hutang, persediaan, dan modal" actions={
         <Modal trigger="+ Saldo awal" title="Input saldo awal" wide>
         <ModalForm action={openingBalance} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">

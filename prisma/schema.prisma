@@ -970,6 +970,10 @@ model FinanceTransaction {
   approvals           ApprovalLog[]
   /// Rincian: satu transfer untuk beberapa keperluan (kategori/bahan baku berbeda)
   splits              FinanceTxSplit[]
+  /// Pembayaran hutang supplier / cicilan pinjaman: nominal = pokok + payInterest (bunga/biaya → beban bunga)
+  payableId           String?
+  payable             Payable?      @relation(fields: [payableId], references: [id])
+  payInterest         BigInt        @default(0)
 
   @@index([fingerprint])
   @@index([status])
@@ -1082,6 +1086,7 @@ model CoaAccount {
   lines      JournalLine[]
   banks      BankAccount[]
   categories TxCategory[]
+  payables   Payable[]
 }
 
 model Journal {
@@ -1167,6 +1172,13 @@ model Payable {
   note       String?
   journalId  String?
   createdAt  DateTime    @default(now())
+  /// Akun COA hutang (kosong = Hutang Usaha / Hutang Pinjaman Modal sesuai jenis)
+  coaAccountId String?
+  coaAccount   CoaAccount? @relation(fields: [coaAccountId], references: [id])
+  /// Jadwal cicilan pinjaman (opsional): jumlah cicilan & total bunga/biaya cicilan → pokok + bunga per cicilan
+  installments  Int?
+  interestTotal BigInt?
+  payments      FinanceTransaction[]
 }
 
 model FixedAsset {

@@ -54,7 +54,7 @@ export default async function AnalitikPage() {
             <li className="flex justify-between py-1.5 font-semibold"><span>Total</span><span className="tabular-nums">{idr(s.obligations30)}</span></li>
           </ul>
           <div className="mt-4 space-y-1 text-sm">
-            <div className="flex justify-between"><span>Utang supplier</span><span className="tabular-nums">{idr(s.supplierDebt)}</span></div>
+            <div className="flex justify-between"><span>Hutang supplier</span><span className="tabular-nums">{idr(s.supplierDebt)}</span></div>
             <div className="flex justify-between"><span>Pinjaman modal</span><span className="tabular-nums">{idr(s.loanDebt)}</span></div>
             <div className="flex justify-between"><span>Piutang</span><span className="tabular-nums">{idr(s.receivables)}</span></div>
             <div className="flex justify-between"><span>Kasbon karyawan</span><span className="tabular-nums">{idr(s.advances)}</span></div>

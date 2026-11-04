@@ -26,7 +26,7 @@ export default async function PembelianPage() {
   const payables = await prisma.payable.findMany({ where: { id: { in: purchases.map((p) => p.payableId).filter((x): x is string => !!x) } } });
   return (
     <div className="space-y-5">
-      <PageHeader title="Pembelian bahan baku" subtitle="Satu supplier, banyak item. Nominal kurang dari tagihan otomatis jadi hutang. Stok, jurnal, dan utang tercatat sekaligus." actions={user.can("finance.approve") && (
+      <PageHeader title="Pembelian bahan baku" subtitle="Satu supplier, banyak item. Nominal kurang dari tagihan otomatis jadi hutang. Stok, jurnal, dan hutang tercatat sekaligus." actions={user.can("finance.approve") && (
         <Modal trigger="+ Pembelian" title="Pembelian baru" wide>
           <ModalForm action={savePurchase}>
             <PurchaseFields items={items.map((i) => ({ id: i.id, sku: i.sku, name: i.name, unit: i.unit, lastCost: latestCost(i) }))} suppliers={suppliers} banks={banks} today={todayStr()} defaultBank={banks.find((b) => b.code === "SEABANK")?.id} />
