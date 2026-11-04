@@ -323,6 +323,26 @@ async function applyPayable(tx: Tx, cur: Pick<TxRow, "payableId" | "amount" | "p
   await tx.payable.update({ where: { id: p.id }, data: { paid: { increment: BigInt(sign * principal) } } });
 }
 
+/**
+ * Pembayaran hutang dari rekening simpanan dana sisihan (Tabungan cicilan pinjaman, mis. Seabank 0006):
+ * saldo tabungannya ikut berkurang (catatan TARIK tanpa jurnal tambahan; jurnalnya = jurnal transaksi ini).
+ */
+async function syncLoanSaving(tx: Tx, cur: Pick<TxRow, "payableId" | "accountId" | "amount" | "date" | "number">, journalId: string, actorName: string) {
+  if (!cur.payableId || !cur.accountId) return;
+  if ((await tx.payable.findUnique({ where: { id: cur.payableId } }))?.kind !== "PINJAMAN") return;
+  const funds = await tx.reserveFund.findMany({ where: { kind: "LOAN_SAVING", toBankId: cur.accountId }, orderBy: [{ active: "desc" }, { createdAt: "asc" }] });
+  let left = Number(cur.amount);
+  for (const f of funds) {
+    if (left <= 0) break;
+    const sums = await tx.reserveEntry.groupBy({ by: ["type"], where: { fundId: f.id }, _sum: { amount: true } });
+    const bal = Number(sums.find((r) => r.type === "SISIH")?._sum.amount ?? 0) - Number(sums.find((r) => r.type === "TARIK")?._sum.amount ?? 0);
+    const take = Math.min(left, bal);
+    if (take <= 0) continue;
+    await tx.reserveEntry.create({ data: { fundId: f.id, date: new Date(`${dateStr(cur.date)}T00:00:00Z`), type: "TARIK", amount: BigInt(take), journalId, note: `Bayar hutang ${cur.number}`, createdBy: actorName } });
+    left -= take;
+  }
+}
+
 async function bookInTx(tx: Tx, id: string, actor: Actor & { id: string }, note?: string) {
   {
     // Kunci baris untuk mencegah pembukuan ganda saat konfirmasi bersamaan
@@ -344,6 +364,7 @@ async function bookInTx(tx: Tx, id: string, actor: Actor & { id: string }, note?
       actor: { id: actor.id, name: actor.name },
       lines,
     });
+    await syncLoanSaving(tx, cur, journal.id, actor.name);
     // Baris bahan baku: stok masuk gudang bahan baku (nilai persediaan sudah di jurnal di atas)
     const stockLines = cur.direction === "KELUAR" ? splits.filter((x) => x.itemId && Number(x.qty) > 0) : [];
     if (stockLines.length) {
@@ -377,8 +398,9 @@ export async function cancelBookedTransaction(id: string, actor: Actor & { id: s
     if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi berstatus Dibukukan yang dapat dibatalkan");
     const date = await assertPeriodOpen(tx, cur.date).then(() => cur.date, () => now);
     const rev = await reverseJournal(tx, cur.journalId, date, { id: actor.id, name: actor.name }, `batal ${cur.number} — ${reason.trim()}`.slice(0, 150));
-    // Pembayaran hutang dibatalkan: sisa hutangnya kembali
+    // Pembayaran hutang dibatalkan: sisa hutangnya kembali, saldo tabungan cicilan juga
     await applyPayable(tx, cur, -1);
+    await tx.reserveEntry.deleteMany({ where: { journalId: cur.journalId, type: "TARIK" } });
     // Pemasukan penjualan susulan untuk withdraw lama (skrip perbaikan) ikut dibalik
     for (const extra of await tx.journal.findMany({ where: { source: WITHDRAW_INCOME_SOURCE, sourceId: cur.id } })) {
       if (!(await tx.journal.findFirst({ where: { reversalOfId: extra.id } }))) await reverseJournal(tx, extra.id, date, { id: actor.id, name: actor.name }, `batal ${cur.number}`);
@@ -459,11 +481,13 @@ export async function reclassifyBooked(id: string, target: Reclass, actor: Actor
     const who = { id: actor.id, name: actor.name };
     await reverseJournal(tx, cur.journalId, date, who, `ubah pencatatan ${cur.number}`);
     await applyPayable(tx, cur, -1);
+    await tx.reserveEntry.deleteMany({ where: { journalId: cur.journalId, type: "TARIK" } });
     const updated = await tx.financeTransaction.update({ where: { id }, data });
     const lines = await txJournalLines(tx, updated);
     await applyPayable(tx, updated, 1);
     const j = await postJournal(tx, { date, storeId: cur.storeId!, description: `${cur.number} ${cur.note ?? ""}`.trim().slice(0, 200), source: "FINANCE", sourceId: cur.id, actor: who, lines });
     const t = await tx.financeTransaction.update({ where: { id }, data: { journalId: j.id } });
+    await syncLoanSaving(tx, updated, j.id, actor.name);
     await tx.approvalLog.create({ data: { transactionId: id, action: "DIUBAH", fromStatus: cur.status, toStatus: cur.status, actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: `${label} · jurnal ${j.number}`.slice(0, 300) } });
     await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_DIKLASIFIKASI_ULANG", "FinanceTransaction", id, { before: { categoryId: cur.categoryId, payableId: cur.payableId }, after: data, journal: j.number }, tx);
     return t;
