@@ -55,6 +55,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
               <dl className="grid grid-cols-2 gap-y-2 text-sm">
                 <dt className="text-slate-500">Jenis</dt><dd>{t.direction}</dd>
                 <dt className="text-slate-500">Rekening</dt><dd>{banks.find((b) => b.id === t.accountId)?.name}{t.toAccountId && ` → ${banks.find((b) => b.id === t.toAccountId)?.name}`}</dd>
+                {t.direction === "TRANSFER" && banks.find((b) => b.id === t.accountId)?.marketplace && <><dt className="text-slate-500">Pemasukan</dt><dd className="text-emerald-700">Penjualan {t.store?.name ?? "(toko belum dipilih)"} {idr(t.amount)} · dari withdraw saldo penjual</dd></>}
                 <dt className="text-slate-500">Kategori</dt><dd>{t.splits.length ? `${t.splits.length} rincian` : categories.find((c) => c.id === t.categoryId)?.name ?? "—"}</dd>
                 <dt className="text-slate-500">Pihak terkait</dt><dd>{t.counterparty ?? "—"}</dd>
                 <dt className="text-slate-500">Catatan</dt><dd>{t.note ?? "—"}</dd>
