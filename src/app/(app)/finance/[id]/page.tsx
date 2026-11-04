@@ -10,7 +10,7 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ProofPreview } from "@/components/ProofPreview";
 import { TxForm } from "../TxForm";
-import { approveTx, cancelTx, deleteTx, rejectTx, submitTx, updateTx } from "../actions";
+import { approveTx, cancelTx, changeStoreTx, deleteTx, rejectTx, submitTx, updateTx } from "../actions";
 
 export const metadata = { title: "Detail Transaksi" };
 
@@ -103,6 +103,19 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
                   </Modal>
                 )}
               </div>
+            </Card>
+          )}
+          {t.status === "DIBUKUKAN" && t.direction === "TRANSFER" && user.can("finance.approve") && stores.length > 1 && (
+            <Card title="Toko withdraw">
+              <p className="mb-3 text-sm">Toko: <b>{t.store?.name ?? "—"}</b></p>
+              <Modal trigger="Ganti toko" triggerClass="btn-secondary w-full" title="Ganti toko withdraw">
+                <ModalForm action={changeStoreTx} className="space-y-3">
+                  <input type="hidden" name="id" value={t.id} />
+                  <Field label="Toko (MG / DL)"><select name="storeId" defaultValue={t.storeId ?? ""} className="input">{stores.map((x) => <option key={x.id} value={x.id}>{x.code} · {x.name}</option>)}</select></Field>
+                  <p className="text-xs text-slate-500">Jurnal lama dibalik lalu dibukukan ulang dengan toko baru. Saldo rekening tidak berubah.</p>
+                  <Submit pendingText="Menyimpan…">Simpan toko</Submit>
+                </ModalForm>
+              </Modal>
             </Card>
           )}
           {t.status === "DIBUKUKAN" && user.can("finance.approve") && (

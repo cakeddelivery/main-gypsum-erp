@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int } from "@/lib/action";
-import { cancelBookedTransaction, deleteClosedTransactions, approveAndBook, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
+import { changeBookedStore, cancelBookedTransaction, deleteClosedTransactions, approveAndBook, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
 import { saveProof } from "@/lib/storage";
 import { extractTransaction } from "@/lib/extract";
 import { jakartaDateTime, txTime } from "@/lib/time";
@@ -93,6 +93,11 @@ export const rejectTx = action(["finance.review", "finance.approve"], async (fd,
 export const cancelTx = action("finance.approve", async (fd, user) => {
   const { reversal } = await cancelBookedTransaction(str(fd, "id"), { id: user.id, name: user.name }, str(fd, "reason"));
   return `Transaksi dibatalkan (jurnal pembalik ${reversal.number})`;
+}, ["/finance", "/", "/akuntansi"]);
+
+export const changeStoreTx = action("finance.approve", async (fd, user) => {
+  await changeBookedStore(str(fd, "id"), str(fd, "storeId"), { id: user.id, name: user.name });
+  return "Toko diganti";
 }, ["/finance", "/", "/akuntansi"]);
 
 export const deleteTx = action("finance.approve", async (fd, user) => {

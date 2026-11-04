@@ -360,6 +360,36 @@ export async function cancelBookedTransaction(id: string, actor: Actor & { id: s
   });
 }
 
+/**
+ * Ganti toko withdraw yang sudah dibukukan. Jurnal tidak boleh diubah, jadi jurnal lama dibalik lalu dibukukan
+ * ulang dengan toko baru (tanggal & baris sama). Saldo rekening tidak berubah; hanya laporan per toko yang pindah.
+ */
+export async function changeBookedStore(id: string, storeId: string, actor: Actor & { id: string }, now: Date = new Date()) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "FinanceTransaction" WHERE id = ${id} FOR UPDATE`;
+    const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
+    if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi Dibukukan yang tokonya diganti lewat menu ini; draft cukup diubah biasa");
+    if (cur.direction !== "TRANSFER") throw new FinanceError("Toko hanya membedakan withdraw (transfer internal)");
+    if (cur.storeId === storeId) throw new FinanceError("Toko sudah sama");
+    const store = await tx.store.findUniqueOrThrow({ where: { id: storeId } });
+    const date = await assertPeriodOpen(tx, cur.date).then(() => cur.date, () => now);
+    const who = { id: actor.id, name: actor.name };
+    const repost = async (journalId: string) => {
+      const j = await tx.journal.findUniqueOrThrow({ where: { id: journalId }, include: { lines: true } });
+      await reverseJournal(tx, j.id, date, who, `ganti toko ${cur.number} ke ${store.name}`);
+      return postJournal(tx, { date, storeId, description: j.description, source: j.source, sourceId: j.sourceId, actor: who, lines: j.lines.map((l) => ({ accountId: l.accountId, debit: Number(l.debit), credit: Number(l.credit), memo: l.memo ?? undefined })) });
+    };
+    const main = await repost(cur.journalId);
+    for (const extra of await tx.journal.findMany({ where: { source: WITHDRAW_INCOME_SOURCE, sourceId: cur.id } })) {
+      if (!(await tx.journal.findFirst({ where: { reversalOfId: extra.id } }))) await repost(extra.id);
+    }
+    const t = await tx.financeTransaction.update({ where: { id }, data: { storeId, journalId: main.id } });
+    await tx.approvalLog.create({ data: { transactionId: id, action: "DIUBAH", fromStatus: cur.status, toStatus: cur.status, actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: `Toko diganti ke ${store.name} · jurnal ${main.number}` } });
+    await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_GANTI_TOKO", "FinanceTransaction", id, { from: cur.storeId, to: storeId, journal: main.number }, tx);
+    return t;
+  });
+}
+
 const DELETABLE: TxStatus[] = ["DIBATALKAN", "DITOLAK"];
 
 /**
