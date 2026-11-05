@@ -17,6 +17,7 @@
     "audit:saldo": "tsx scripts/audit-saldo.ts",
     "koreksi:saldo-nov": "tsx scripts/koreksi-saldo-nov.ts",
     "catat:bunga": "tsx scripts/catat-bunga.ts",
+    "koreksi:transaksi-nov": "tsx scripts/koreksi-transaksi-nov.ts",
     "rapikan:kode": "tsx scripts/rapikan-kode.ts",
     "pisahkan:rekening": "tsx scripts/pisahkan-coa-rekening.ts",
     "withdraw:pemasukan": "tsx scripts/withdraw-pemasukan.ts",
