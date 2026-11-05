@@ -6,9 +6,10 @@
  *
  * Isi jurnal (tanggal 1 Nov 2026):
  *   Dr Seabank 0006 3.000.000  - pembayaran Mas Rizal September memotong rekening, padahal saldo awal 1 Nov sudah memperhitungkannya
- *   Dr ShopeePay      200.000  - "Atur saldo" 4 Nov menetralkan sisihan kompensasi 3 Nov
+ *   Dr ShopeePay      149.605  - +200.000 sisihan kompensasi 3 Nov yang ternetralkan "Atur saldo" 4 Nov,
+ *                                 -50.395 saldo awal disamakan: per 4 Nov = sisihan 800.000 + bunga Okt 725 (mutasi campur pribadi)
  *   Cr Seabank 5984   240.000  - "Atur saldo" 4 Nov menetralkan LPG 40rb + sisihan 200rb tanggal 3 Nov
- *   Cr Ekuitas Saldo Awal 2.960.000
+ *   Cr Ekuitas Saldo Awal 2.909.605
  *
  * WAJIB backup dulu: npm run backup
  */
@@ -57,15 +58,15 @@ async function main() {
   await assertPeriodOpen(prisma, date);
   const lines = [
     { accountId: s0006.coaAccountId, debit: 3_000_000, memo: "Pembayaran Mas Rizal Sept sudah tercermin di saldo awal 1 Nov" },
-    { accountId: spay.coaAccountId, debit: 200_000, memo: "Sisihan kompensasi 3 Nov ternetralkan oleh JU-202611-0005" },
+    { accountId: spay.coaAccountId, debit: 149_605, memo: "Sisihan 3 Nov ternetralkan JU-202611-0005 (+200.000) & saldo awal disesuaikan (-50.395)" },
     { accountId: s5984.coaAccountId, credit: 240_000, memo: "LPG 40rb + sisihan 200rb 3 Nov ternetralkan oleh JU-202611-0005" },
-    { accountCode: COA.EKUITAS_SALDO_AWAL, credit: 2_960_000, memo: "Penyeimbang koreksi saldo awal" },
+    { accountCode: COA.EKUITAS_SALDO_AWAL, credit: 2_909_605, memo: "Penyeimbang koreksi saldo awal" },
   ];
   const before = { s5984: await balance(s5984.coaAccountId), s0006: await balance(s0006.coaAccountId), spay: await balance(spay.coaAccountId) };
   console.log("Saldo aplikasi  sekarang  →  sesudah koreksi");
   console.log(`  ${s5984.name}: ${idr(before.s5984)} → ${idr(before.s5984 - 240_000)}`);
   console.log(`  ${s0006.name}: ${idr(before.s0006)} → ${idr(before.s0006 + 3_000_000)}`);
-  console.log(`  ${spay.name}: ${idr(before.spay)} → ${idr(before.spay + 200_000)}`);
+  console.log(`  ${spay.name}: ${idr(before.spay)} → ${idr(before.spay + 149_605)}`);
 
   if (!apply) {
     console.log("\nIni baru PRATINJAU. Untuk menyimpan: npm run backup  lalu jalankan lagi dengan --jalankan");
@@ -74,7 +75,7 @@ async function main() {
   const owner = await prisma.user.findFirst({ where: { role: "OWNER", active: true } });
   const actor = { id: owner?.id ?? "skrip", name: "skrip koreksi-saldo-nov" };
   const j = await prisma.$transaction((tx) =>
-    postJournal(tx, { date, storeId: null, description: "Koreksi saldo awal hasil audit 5 Nov (pembayaran Rizal Sept & penyesuaian 4 Nov)", source: "SALDO_AWAL", sourceId: SOURCE_ID, actor, lines }),
+    postJournal(tx, { date, storeId: null, description: "Koreksi saldo awal hasil audit 5 Nov (pembayaran Rizal Sept, penyesuaian 4 Nov & saldo awal ShopeePay)", source: "SALDO_AWAL", sourceId: SOURCE_ID, actor, lines }),
   );
   console.log(`\nTersimpan: ${j.number}`);
 }
