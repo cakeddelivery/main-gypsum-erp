@@ -14,6 +14,7 @@
     "test": "bash tests/global-reset.sh && vitest run",
     "typecheck": "tsc --noEmit",
     "kosongkan": "tsx scripts/kosongkan-data.ts",
+    "audit:saldo": "tsx scripts/audit-saldo.ts",
     "rapikan:kode": "tsx scripts/rapikan-kode.ts",
     "pisahkan:rekening": "tsx scripts/pisahkan-coa-rekening.ts",
     "withdraw:pemasukan": "tsx scripts/withdraw-pemasukan.ts",
