@@ -118,13 +118,13 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
     buttons.push(...chunk(banks.filter((b) => b.id !== t.accountId).map((b) => ({ text: `${b.id === t.toAccountId ? "✓ " : ""}${b.name}`, callback_data: `to:${t.id}:${b.id}` })), 2));
   } else if (need === "cat") {
     lines.push(`\n${pick ? "Ganti" : "Pilih"} kategori:`);
-    buttons.push(...chunk(cats.slice(0, 16).map((c) => ({ text: `${c.id === t.categoryId ? "✓ " : ""}${c.name}`, callback_data: `cat:${t.id}:${cbId(c.id)}` })), 2));
+    buttons.push(...chunk(cats.slice(0, 40).map((c) => ({ text: `${c.id === t.categoryId ? "✓ " : ""}${c.name}`, callback_data: `cat:${t.id}:${cbId(c.id)}` })), 2));
   } else if (need?.startsWith("s") && need !== "st") {
     const k = Number(need.slice(1));
     const sp = t.splits[k];
     if (sp) {
       lines.push(`\n${pick ? "Ganti" : "Pilih"} kategori untuk rincian ${k + 1} (<i>${esc(sp.note ?? "")}</i> ${idr(sp.amount)}):`);
-      buttons.push(...chunk(cats.slice(0, 16).map((c) => ({ text: `${c.id === sp.categoryId ? "✓ " : ""}${c.name}`, callback_data: `sc:${t.id}:${k}:${cbId(c.id)}` })), 2));
+      buttons.push(...chunk(cats.slice(0, 40).map((c) => ({ text: `${c.id === sp.categoryId ? "✓ " : ""}${c.name}`, callback_data: `sc:${t.id}:${k}:${cbId(c.id)}` })), 2));
     }
   } else if (need === "st") {
     lines.push(`\n${pick ? "Ganti" : "Pilih"} toko${t.direction === "TRANSFER" && bank?.marketplace ? " untuk withdraw ini (MG / DL)" : ""}:`);
