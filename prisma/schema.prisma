@@ -41,6 +41,7 @@ model Store {
   products       Product[]
   journals       Journal[]
   transactions   FinanceTransaction[]
+  sales          Sale[]
 }
 
 model Division {
@@ -669,6 +670,7 @@ model Customer {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  sales     Sale[]
 }
 
 model GypsumCharacter {
@@ -733,6 +735,7 @@ model Item {
   handoverLines     BoronganHandoverLine[]
   recipeLabor       RecipeLabor[]
   recipeOverhead    RecipeOverhead[]
+  saleLines         SaleLine[]
 }
 
 enum MovementType {
@@ -919,15 +922,16 @@ model PriceHistory {
 // ============ FINANCE ============
 
 model BankAccount {
-  id           String     @id @default(cuid())
-  code         String     @unique
+  id           String        @id @default(cuid())
+  code         String        @unique
   name         String
   coaAccountId String
-  coaAccount   CoaAccount @relation(fields: [coaAccountId], references: [id])
-  aliases      String     @default("")
-  active       Boolean    @default(true)
+  coaAccount   CoaAccount    @relation(fields: [coaAccountId], references: [id])
+  aliases      String        @default("")
+  active       Boolean       @default(true)
   /// Saldo penjual marketplace (Shopee/TikTok): withdraw dari rekening ini sekaligus dicatat sebagai pemasukan penjualan
-  marketplace  Boolean    @default(false)
+  marketplace  Boolean       @default(false)
+  salePayments SalePayment[]
 }
 
 enum TxDirection {
@@ -1188,6 +1192,9 @@ model AccountingPeriod {
 
 model Receivable {
   id        String    @id @default(cuid())
+  /// Piutang dari penjualan (sisa yang belum dibayar pelanggan)
+  saleId    String?   @unique
+  sale      Sale?     @relation(fields: [saleId], references: [id])
   number    String    @unique
   customer  String
   storeId   String
@@ -1376,4 +1383,84 @@ model ItemCategory {
   sortOrder Int      @default(0)
 
   @@unique([type, name])
+}
+
+// ============ PENJUALAN ============
+
+/// Penjualan offline (pelanggan langsung / WhatsApp). Marketplace tidak dicatat di sini: pendapatannya dari withdraw, HPP-nya dari opname akhir bulan.
+model Sale {
+  id           String        @id @default(cuid())
+  /// Nomor otomatis JUAL-202611-0001
+  number       String        @unique
+  date         DateTime
+  storeId      String
+  store        Store         @relation(fields: [storeId], references: [id])
+  customerId   String?
+  customer     Customer?     @relation(fields: [customerId], references: [id])
+  /// Nama pelanggan saat transaksi (tetap terbaca walau master pelanggan diubah)
+  customerName String
+  /// Jumlah harga semua baris
+  subtotal     BigInt
+  /// Diskon per nota (mengurangi pendapatan penjualan)
+  discount     BigInt        @default(0)
+  /// Ongkir yang ditagih ke pembeli → Pendapatan Ongkir 4-1300
+  shipping     BigInt        @default(0)
+  /// Tagihan = subtotal − diskon + ongkir
+  total        BigInt
+  /// Sudah dibayar (pembayaran awal + cicilan)
+  paid         BigInt        @default(0)
+  dueDate      DateTime?
+  /// Jurnal penjualan (pendapatan + pembayaran awal + piutang)
+  journalId    String?
+  /// Total HPP (keluar stok barang jadi)
+  hpp          BigInt        @default(0)
+  note         String?
+  createdBy    String
+  createdAt    DateTime      @default(now())
+  /// Dibatalkan: jurnal dibalik, stok kembali, dokumen tetap tersimpan
+  cancelledAt  DateTime?
+  cancelReason String?
+  lines        SaleLine[]
+  payments     SalePayment[]
+  receivable   Receivable?
+
+  @@index([date])
+  @@index([customerId])
+}
+
+model SaleLine {
+  id       String  @id @default(cuid())
+  saleId   String
+  sale     Sale    @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  /// Barang jadi yang keluar dari gudang
+  itemId   String
+  item     Item    @relation(fields: [itemId], references: [id])
+  qty      Decimal @db.Decimal(14, 3)
+  price    BigInt
+  amount   BigInt
+  /// Harga pokok rata-rata per unit saat dijual
+  unitCost BigInt  @default(0)
+}
+
+/// Pembayaran penjualan: pembayaran awal (journalId = jurnal penjualan) dan cicilan piutang
+model SalePayment {
+  id            String      @id @default(cuid())
+  saleId        String
+  sale          Sale        @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  date          DateTime
+  amount        BigInt
+  bankAccountId String
+  bank          BankAccount @relation(fields: [bankAccountId], references: [id])
+  /// true = dibayar saat penjualan dicatat (jurnalnya menyatu dengan jurnal penjualan)
+  initial       Boolean     @default(false)
+  journalId     String?
+  note          String?
+  proofPath     String?
+  proofMime     String?
+  createdBy     String
+  createdAt     DateTime    @default(now())
+  cancelledAt   DateTime?
+  cancelReason  String?
+
+  @@index([saleId])
 }

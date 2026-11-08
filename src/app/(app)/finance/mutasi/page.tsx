@@ -15,7 +15,7 @@ export const metadata = { title: "Mutasi Rekening" };
 const SOURCE: Record<string, string> = {
   FINANCE: "Transaksi", PAYROLL_AKRUAL: "Gaji terutang", PEMBELIAN: "Pembelian", UTANG: "Bayar hutang", PINJAMAN: "Pinjaman", PAYROLL: "Gaji", KASBON: "Kasbon",
   BORONGAN: "Upah borongan", SISIHAN: "Dana sisihan", SALDO_AWAL: "Saldo awal/penyesuaian", PEMBALIK: "Pembatalan", PIUTANG: "Piutang",
-  ASET: "Aset", MANUAL: "Jurnal manual", PENYESUAIAN: "Penyesuaian", WITHDRAW_PENJUALAN: "Withdraw",
+  ASET: "Aset", MANUAL: "Jurnal manual", PENYESUAIAN: "Penyesuaian", WITHDRAW_PENJUALAN: "Withdraw", PENJUALAN: "Penjualan",
 };
 
 /**
