@@ -3,7 +3,7 @@ import { prisma } from "./db";
 import { audit } from "./audit";
 import { COA, assertPeriodOpen, postJournal, reverseJournal } from "./accounting";
 import { nextNumber } from "./numbering";
-import { INVENTORY_COA, StockError, locationSettings, qtyAt, recordMovement } from "./stock";
+import { INVENTORY_COA, StockError, locationSettings, qtyAt, recordMovement, reverseMovementsByRef } from "./stock";
 import { bomStockQty } from "./unitcost";
 
 type Tx = Prisma.TransactionClient;
@@ -153,9 +153,26 @@ export type ResultInput = { pointId: string; workerId: string; taskId: string; d
  * - upah dicatat per pekerja/koordinator/driver, dibayar nanti lewat Bayar Upah
  */
 export async function recordResult(input: ResultInput, actor: Actor, scope: Scope) {
+  return prisma.$transaction((tx) => recordResultTx(tx, input, actor, scope));
+}
+
+/**
+ * Setoran beberapa pekerja sekaligus dalam SATU transaksi: bila satu baris gagal
+ * (mis. bahan tidak cukup), tidak ada setoran yang tersimpan sebagian.
+ */
+export async function recordResults(inputs: ResultInput[], actor: Actor, scope: Scope) {
+  if (!inputs.length) throw new BoronganError("Isi jumlah hasil minimal satu pekerja");
+  return prisma.$transaction(async (tx) => {
+    const out = [];
+    for (const input of inputs) out.push(await recordResultTx(tx, input, actor, scope));
+    return out;
+  }, { timeout: 30000 });
+}
+
+async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: Scope) {
   assertPoint(scope, input.pointId);
   if (!Number.isInteger(input.qty) || input.qty <= 0) throw new BoronganError("Jumlah hasil harus bilangan bulat lebih dari 0");
-  return prisma.$transaction(async (tx) => {
+  {
     const point = await tx.boronganPoint.findUniqueOrThrow({ where: { id: input.pointId } });
     const worker = await tx.boronganPerson.findUniqueOrThrow({ where: { id: input.workerId } });
     if (worker.role !== "PEKERJA" || worker.pointId !== point.id || !worker.active) throw new BoronganError("Pekerja tidak terdaftar aktif di titik ini");
@@ -207,19 +224,19 @@ export async function recordResult(input: ResultInput, actor: Actor, scope: Scop
     }
     await audit(actor, "HASIL_BORONGAN", "BoronganResult", r.id, { number, point: point.code, worker: worker.name, task: task.code, qty: input.qty }, tx);
     return r;
-  });
+  }
 }
 
 /** Hapus setoran yang belum dibayar: stok & jurnal dibalik */
 export async function deleteResult(id: string, actor: Actor, scope: Scope) {
   return prisma.$transaction(async (tx) => {
+    // Kunci baris: dua permintaan hapus bersamaan tidak boleh membalik stok dua kali
+    const locked = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "BoronganResult" WHERE id = ${id} FOR UPDATE`;
+    if (!locked.length) throw new BoronganError("Setoran sudah dihapus");
     const r = await tx.boronganResult.findUniqueOrThrow({ where: { id } });
     assertPoint(scope, r.pointId);
     if (r.settlementId) throw new BoronganError("Upah setoran ini sudah dibayar, tidak bisa dihapus");
-    const moves = await tx.stockMovement.findMany({ where: { ref: `HSB:${id}` } });
-    for (const mv of moves) {
-      await tx.stockMovement.create({ data: { date: new Date(), type: "PENYESUAIAN", itemId: mv.itemId, fromLocationId: mv.toLocationId, toLocationId: mv.fromLocationId, qty: mv.qty, unitCost: mv.unitCost, ref: `BATAL-HSB:${id}`, note: "Setoran borongan dihapus", createdBy: actor.name } });
-    }
+    await reverseMovementsByRef(tx, `HSB:${id}`, `BATAL-HSB:${id}`, "Setoran borongan dihapus", actor);
     const journals = await tx.journal.findMany({ where: { source: "BORONGAN", sourceId: id, reversalOfId: null } });
     for (const j of journals) await reverseJournal(tx, j.id, new Date(), actor, "Setoran borongan dihapus");
     await tx.boronganResult.delete({ where: { id } });

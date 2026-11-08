@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Role } from "@prisma/client";
 import { prisma } from "./db";
-import { postProductionStock, STAGES } from "./stock";
+import { postProductionStock, reverseProductionStock, STAGES } from "./stock";
 import { REJECT_REASONS } from "./reject";
 import { audit } from "./audit";
 import { dateOnly } from "./time";
@@ -41,6 +41,22 @@ export async function recordProductionEntry(input: EntryInput, user: Actor) {
     const e = await tx.productionEntry.create({ data: { ...data, stage: data.stage as (typeof STAGES)[number], date: dateOnly(data.date), note: input.note ?? null, createdBy: user.name } });
     await postProductionStock(tx, e.id, user);
     await audit(user, "PRODUKSI_DICATAT", "ProductionEntry", e.id, data, tx);
+    return e;
+  });
+}
+
+/**
+ * Hapus entri produksi: stok, harga rata-rata, dan jurnal dibalik dalam satu transaksi.
+ * Baris entri dikunci dulu agar dua klik "Hapus" bersamaan tidak membalik stok dua kali.
+ */
+export async function deleteProductionEntry(id: string, actor: { id: string; name: string }) {
+  return prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "ProductionEntry" WHERE id = ${id} FOR UPDATE`;
+    if (!locked.length) throw new Error("Entri produksi sudah dihapus");
+    const e = await tx.productionEntry.findUniqueOrThrow({ where: { id } });
+    if (e.stockPosted) await reverseProductionStock(tx, id, actor);
+    await tx.productionEntry.delete({ where: { id } });
+    await audit(actor, "PRODUKSI_DIHAPUS", "ProductionEntry", id, e, tx);
     return e;
   });
 }

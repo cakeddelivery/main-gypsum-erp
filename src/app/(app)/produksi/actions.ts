@@ -2,8 +2,8 @@
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, str, int, optStr, bool } from "@/lib/action";
-import { reverseProductionStock, STAGES } from "@/lib/stock";
-import { EntryForbidden, recordProductionEntry } from "@/lib/productionEntry";
+import { STAGES } from "@/lib/stock";
+import { EntryForbidden, deleteProductionEntry, recordProductionEntry } from "@/lib/productionEntry";
 import { REJECT_REASONS } from "@/lib/reject";
 import { audit } from "@/lib/audit";
 import { ForbiddenError } from "@/lib/auth";
@@ -40,12 +40,7 @@ export const deleteEntry = action(
   "production.edit",
   async (fd, user) => {
     const id = str(fd, "id");
-    await prisma.$transaction(async (tx) => {
-      const e = await tx.productionEntry.findUniqueOrThrow({ where: { id } });
-      if (e.stockPosted) await reverseProductionStock(tx, id, user);
-      await tx.productionEntry.delete({ where: { id } });
-      await audit(user, "PRODUKSI_DIHAPUS", "ProductionEntry", id, e, tx);
-    });
+    await deleteProductionEntry(id, user);
     return "Entri dihapus dan stok/jurnal dibalik";
   },
   ["/produksi"],

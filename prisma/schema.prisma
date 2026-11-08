@@ -762,6 +762,8 @@ model StockMovement {
   journalId      String?
 
   @@index([itemId, date])
+  @@index([ref])
+  @@index([date])
 }
 
 enum RequestStatus {

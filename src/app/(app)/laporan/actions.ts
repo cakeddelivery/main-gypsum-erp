@@ -8,7 +8,7 @@ import { audit } from "@/lib/audit";
 import { dateOnly, fmtDay } from "@/lib/time";
 import { assertPerm, ForbiddenError } from "@/lib/auth";
 import { sendTelegram, telegramConfigured, esc } from "@/lib/telegram";
-import { STAGE_LABEL, itemTotals, locationSettings, recordMovement } from "@/lib/stock";
+import { STAGE_LABEL, itemQty, locationSettings, recordMovement } from "@/lib/stock";
 import { saveProof } from "@/lib/storage";
 import { isDone, isTemplate, needsOrder, parseWork, summaryOf, toEntries, workLines, type ChecklistEntry, type StockCountRow } from "@/lib/shiftReport";
 
@@ -162,12 +162,11 @@ async function applyStockCount(report: { id: string; stockApplied: boolean; stoc
   if (report.stockApplied && !prev) return 0;
   let n = 0;
   await prisma.$transaction(async (tx) => {
-    const totals = await itemTotals(tx);
     const applied = new Map((prev ?? []).map((p) => [p.itemId, p.qty]));
     for (const row of rows) {
       if (row.qty == null) continue;
       const before = applied.get(row.itemId);
-      const diff = Math.round((before != null ? row.qty - before : row.qty - (totals.get(row.itemId) ?? 0)) * 1000) / 1000;
+      const diff = Math.round((before != null ? row.qty - before : row.qty - (await itemQty(tx, row.itemId))) * 1000) / 1000;
       if (diff === 0) continue;
       await recordMovement(tx, { type: "PENYESUAIAN", itemId: row.itemId, qty: Math.abs(diff), fromLocationId: raw, increase: diff > 0, allowNegative: true, ref: `LAP:${report.id}`, note: before != null ? "Revisi stock opname laporan shift" : "Stock opname laporan shift", date }, user);
       n++;

@@ -31,14 +31,16 @@ export const MOVEMENT_LABEL: Record<MovementType, string> = {
   HASIL_PRODUKSI: "Hasil Produksi",
 };
 
-/** Saldo stok per item per lokasi */
+/** Saldo stok per item per lokasi. Filter item dipasang di tiap cabang UNION agar memakai index (bukan scan penuh). */
 export async function stockBalances(db: DB = prisma, itemId?: string) {
+  const byTo = itemId ? Prisma.sql`AND "itemId" = ${itemId}` : Prisma.empty;
+  const byFrom = itemId ? Prisma.sql`AND "itemId" = ${itemId}` : Prisma.empty;
   const rows = await db.$queryRaw<{ itemId: string; locationId: string; qty: Prisma.Decimal }[]>`
     SELECT "itemId", "locationId", SUM(q) AS qty FROM (
-      SELECT "itemId", "toLocationId" AS "locationId", qty AS q FROM "StockMovement" WHERE "toLocationId" IS NOT NULL
+      SELECT "itemId", "toLocationId" AS "locationId", qty AS q FROM "StockMovement" WHERE "toLocationId" IS NOT NULL ${byTo}
       UNION ALL
-      SELECT "itemId", "fromLocationId" AS "locationId", -qty AS q FROM "StockMovement" WHERE "fromLocationId" IS NOT NULL
-    ) m ${itemId ? Prisma.sql`WHERE "itemId" = ${itemId}` : Prisma.empty}
+      SELECT "itemId", "fromLocationId" AS "locationId", -qty AS q FROM "StockMovement" WHERE "fromLocationId" IS NOT NULL ${byFrom}
+    ) m
     GROUP BY "itemId", "locationId"`;
   return rows.map((r) => ({ itemId: r.itemId, locationId: r.locationId, qty: Number(r.qty) }));
 }
@@ -50,9 +52,30 @@ export async function itemTotals(db: DB = prisma) {
   return m;
 }
 
+/** Total stok satu barang di semua lokasi (hanya membaca mutasi barang itu) */
+export async function itemQty(db: DB, itemId: string) {
+  const rows = await db.$queryRaw<{ qty: Prisma.Decimal | null }[]>`
+    SELECT SUM(CASE WHEN "toLocationId" IS NOT NULL THEN qty ELSE 0 END) - SUM(CASE WHEN "fromLocationId" IS NOT NULL THEN qty ELSE 0 END) AS qty
+    FROM "StockMovement" WHERE "itemId" = ${itemId}`;
+  return Number(rows[0]?.qty ?? 0);
+}
+
 export async function qtyAt(db: DB, itemId: string, locationId: string) {
-  const rows = await stockBalances(db, itemId);
-  return rows.find((r) => r.locationId === locationId)?.qty ?? 0;
+  const rows = await db.$queryRaw<{ qty: Prisma.Decimal | null }[]>`
+    SELECT SUM(CASE WHEN "toLocationId" = ${locationId} THEN qty ELSE 0 END) - SUM(CASE WHEN "fromLocationId" = ${locationId} THEN qty ELSE 0 END) AS qty
+    FROM "StockMovement" WHERE "itemId" = ${itemId} AND ("toLocationId" = ${locationId} OR "fromLocationId" = ${locationId})`;
+  return Number(rows[0]?.qty ?? 0);
+}
+
+/**
+ * Kunci baris barang (SELECT ... FOR UPDATE) sampai transaksi selesai.
+ * Semua mutasi stok barang yang sama jadi antre satu per satu: cek "stok cukup" dan harga rata-rata
+ * tidak bisa dibaca bersamaan oleh dua permintaan. Urutan id dibuat tetap agar tidak saling mengunci (deadlock).
+ */
+export async function lockItems(tx: Tx, itemIds: string[]) {
+  const ids = [...new Set(itemIds)].sort();
+  if (!ids.length) return;
+  await tx.$queryRaw`SELECT id FROM "Item" WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`;
 }
 
 export async function lowStockItems(db: DB = prisma) {
@@ -116,6 +139,8 @@ export type MoveInput = {
  */
 export async function recordMovement(tx: Tx, m: MoveInput, actor: Actor) {
   if (!(m.qty > 0)) throw new StockError("Jumlah harus lebih dari 0");
+  // Kunci dulu, baru baca: stok & harga rata-rata yang dibaca di bawah sudah pasti terbaru
+  await lockItems(tx, [m.itemId]);
   const item = await tx.item.findUniqueOrThrow({ where: { id: m.itemId } });
   let from = m.fromLocationId ?? null;
   let to = m.toLocationId ?? null;
@@ -149,8 +174,7 @@ export async function recordMovement(tx: Tx, m: MoveInput, actor: Actor) {
   if (m.type === "PENERIMAAN" || m.type === "HASIL_PRODUKSI") {
     unitCost = m.unitCost ?? unitCost;
     // Harga rata-rata bergerak (moving average)
-    const totals = await itemTotals(tx);
-    const curQty = Math.max(0, totals.get(item.id) ?? 0);
+    const curQty = Math.max(0, await itemQty(tx, item.id));
     const newAvg = curQty + m.qty > 0 ? Math.round((curQty * Number(item.avgCost) + m.qty * unitCost) / (curQty + m.qty)) : unitCost;
     await tx.item.update({ where: { id: item.id }, data: { avgCost: BigInt(newAvg) } });
   }
@@ -286,15 +310,53 @@ export async function postProductionStock(tx: Tx, entryId: string, actor: Actor)
   await tx.productionEntry.update({ where: { id: e.id }, data: { stockPosted: true } });
 }
 
-/** Hapus entri produksi: balik mutasi stok & jurnal terkait (jejak tetap tersimpan). */
-export async function reverseProductionStock(tx: Tx, entryId: string, actor: Actor) {
-  const moves = await tx.stockMovement.findMany({ where: { ref: `PRD:${entryId}` } });
+/** Harga rata-rata baru bila stok `qty` dengan harga `unitCost` dikeluarkan kembali (kebalikan rata-rata bergerak) */
+export function avgAfterRemoval(curQty: number, avg: number, qty: number, unitCost: number) {
+  const rest = curQty - qty;
+  // Stok habis/minus: tidak ada sisa untuk dirata-rata, harga terakhir dipertahankan
+  if (rest <= 0.0005) return avg;
+  return Math.max(0, Math.round((curQty * avg - qty * unitCost) / rest));
+}
+
+/** Harga rata-rata baru bila stok `qty` dengan harga `unitCost` masuk kembali */
+export function avgAfterReturn(curQty: number, avg: number, qty: number, unitCost: number) {
+  const cur = Math.max(0, curQty);
+  return cur + qty > 0 ? Math.round((cur * avg + qty * unitCost) / (cur + qty)) : unitCost;
+}
+
+/**
+ * Balik semua mutasi stok dengan `ref` tertentu (hapus produksi / setoran borongan).
+ * Selain kuantitas, harga pokok rata-rata (avgCost) ikut dikembalikan:
+ * - barang yang dulu MASUK (hasil produksi) dikeluarkan lagi → rata-rata dihitung ulang tanpa barang itu
+ * - barang yang dulu KELUAR (konsumsi bahan) dikembalikan dengan harga saat keluar
+ * Jurnalnya dibalik terpisah oleh pemanggil.
+ */
+export async function reverseMovementsByRef(tx: Tx, ref: string, reversalRef: string, note: string, actor: Actor) {
+  const moves = await tx.stockMovement.findMany({ where: { ref }, orderBy: { id: "asc" } });
+  await lockItems(tx, moves.map((m) => m.itemId));
   for (const mv of moves) {
+    const qty = Number(mv.qty);
+    const unitCost = Number(mv.unitCost);
+    const incoming = !!mv.toLocationId && !mv.fromLocationId;
+    const outgoing = !!mv.fromLocationId && !mv.toLocationId;
+    if (incoming || outgoing) {
+      const item = await tx.item.findUniqueOrThrow({ where: { id: mv.itemId } });
+      const cur = await itemQty(tx, mv.itemId);
+      const avg = Number(item.avgCost);
+      const next = incoming ? avgAfterRemoval(cur, avg, qty, unitCost) : avgAfterReturn(cur, avg, qty, unitCost);
+      if (next !== avg) await tx.item.update({ where: { id: item.id }, data: { avgCost: BigInt(next) } });
+    }
     await tx.stockMovement.create({
-      data: { date: new Date(), type: "PENYESUAIAN", itemId: mv.itemId, fromLocationId: mv.toLocationId, toLocationId: mv.fromLocationId, qty: mv.qty, unitCost: mv.unitCost, ref: `BATAL-PRD:${entryId}`, note: "Pembatalan entri produksi", createdBy: actor.name },
+      data: { date: new Date(), type: "PENYESUAIAN", itemId: mv.itemId, fromLocationId: mv.toLocationId, toLocationId: mv.fromLocationId, qty: mv.qty, unitCost: mv.unitCost, ref: reversalRef, note, createdBy: actor.name },
     });
   }
-  const journals = await tx.journal.findMany({ where: { source: "PRODUKSI", sourceId: entryId } });
+  return moves.length;
+}
+
+/** Hapus entri produksi: balik mutasi stok (termasuk harga rata-rata) & jurnal terkait (jejak tetap tersimpan). */
+export async function reverseProductionStock(tx: Tx, entryId: string, actor: Actor) {
+  await reverseMovementsByRef(tx, `PRD:${entryId}`, `BATAL-PRD:${entryId}`, "Pembatalan entri produksi", actor);
+  const journals = await tx.journal.findMany({ where: { source: "PRODUKSI", sourceId: entryId, reversalOfId: null } });
   for (const j of journals) await reverseJournal(tx, j.id, new Date(), actor, "Entri produksi dihapus");
 }
 
