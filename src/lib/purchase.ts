@@ -1,6 +1,6 @@
 import type { PaymentTerm } from "@prisma/client";
 import { prisma } from "./db";
-import { autoCode } from "./codes";
+import { resolveSupplier } from "./suppliers";
 import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } from "./accounting";
 import { nextNumber } from "./numbering";
 import { audit } from "./audit";
@@ -71,13 +71,9 @@ export async function createPurchase(input: PurchaseInput, actor: Actor) {
   if (paid > 0 && !input.bankAccountId) throw new StockError("Pilih rekening pembayaran");
   if (debt > 0 && !input.dueDate) throw new StockError("Isi tanggal jatuh tempo untuk sisa pembayaran");
   return prisma.$transaction(async (tx) => {
-    let supplier = input.supplierId ? await tx.supplier.findUniqueOrThrow({ where: { id: input.supplierId } }) : null;
-    const newName = input.newSupplierName?.trim();
-    if (!supplier && newName) {
-      supplier = (await tx.supplier.findFirst({ where: { name: { equals: newName, mode: "insensitive" } } })) ?? (await tx.supplier.create({ data: { name: newName, code: await autoCode.supplier(tx) } }));
-      await audit(actor, "SUPPLIER_DISIMPAN", "Supplier", supplier.id, { name: newName, from: "pembelian" }, tx);
-    }
-    const vendor = input.vendor || supplier?.name;
+    // Nama supplier yang diketik dicocokkan dengan master (termasuk nama lain) agar tidak dobel dengan menu Hutang
+    const supplier = await resolveSupplier(tx, { supplierId: input.supplierId, name: input.newSupplierName || input.vendor }, actor, "pembelian");
+    const vendor = supplier?.name || input.vendor;
     if (!vendor) throw new StockError("Supplier wajib diisi");
     const { raw } = await locationSettings(tx);
     if (!raw) throw new StockError("Lokasi gudang bahan baku belum diatur di Pengaturan");

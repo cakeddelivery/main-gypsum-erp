@@ -3,9 +3,13 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int } from "@/lib/action";
-import { changeBookedStore, reclassifyBooked, cancelBookedTransaction, deleteClosedTransactions, approveAndBook, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
+import { attachTransactionProof, linkBookedTransfer, setReserveLink, changeBookedStore, reclassifyBooked, cancelBookedTransaction, deleteClosedTransactions, approveAndBook, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
 import { saveProof } from "@/lib/storage";
+import { reserveOptions } from "@/lib/reserveSync";
+import { todayStr } from "@/lib/time";
 import { extractTransaction } from "@/lib/extract";
+import { detectPayablePayment } from "@/lib/botPurchase";
+import { openPayables } from "@/lib/payables";
 import { jakartaDateTime, txTime } from "@/lib/time";
 import { assertPerm } from "@/lib/auth";
 import type { TxDirection } from "@prisma/client";
@@ -37,6 +41,8 @@ async function readForm(fd: FormData): Promise<TxInput> {
     proofPath,
     proofMime,
     splits: readSplits(fd),
+    payableId: direction === "KELUAR" ? optStr(fd, "payableId") : null,
+    payInterest: direction === "KELUAR" && str(fd, "payInterest") ? int(fd, "payInterest") : null,
   };
 }
 
@@ -135,5 +141,47 @@ export const deleteAllClosedTx = action("finance.approve", async (fd, user) => {
 export async function extractAction(text: string) {
   await assertPerm("finance.create");
   const [banks, cats] = await Promise.all([prisma.bankAccount.findMany({ where: { active: true } }), prisma.txCategory.findMany({ where: { active: true } })]);
-  return extractTransaction(text, banks, cats);
+  const ex = extractTransaction(text, banks, cats);
+  // "angsur kardus", "bayar hutang afdhol": langsung dipasangkan ke hutang supplier / pinjaman yang belum lunas
+  const hit = ex.direction === "KELUAR" ? detectPayablePayment(text, await openPayables(), ex.direction, ex.amount) : null;
+  if (hit?.matches.length === 1) {
+    ex.payableId = hit.matches[0].id;
+    ex.missing = ex.missing.filter((m) => m !== "kategori");
+  }
+  return ex;
 }
+
+/** Pilihan dana sisihan untuk transfer (dihitung ulang di server dari rekening & nominal transaksi) */
+async function reserveChoice(id: string, pick: string, toAccountId?: string | null) {
+  const t = await prisma.financeTransaction.findUniqueOrThrow({ where: { id } });
+  const m = await reserveOptions(prisma, { amount: Number(t.amount), fromBankId: t.accountId, toBankId: toAccountId ?? t.toAccountId, date: todayStr(t.date), text: [t.note, t.rawText, t.counterparty].filter(Boolean).join(" "), excludeTxId: t.id });
+  const o = m?.options[Number(pick)];
+  if (!o) throw new Error("Pilihan dana sisihan sudah tidak berlaku, muat ulang halaman");
+  return o.parts;
+}
+
+/** Transfer belum dibukukan: pilih dana sisihan, transfer biasa, atau otomatis */
+export const setReserveTx = action("finance.create", async (fd, user) => {
+  const id = str(fd, "id");
+  const pick = str(fd, "pick");
+  await setReserveLink(id, pick === "auto" ? null : pick === "skip" ? { skip: true } : { parts: await reserveChoice(id, pick) }, { id: user.id, name: user.name });
+  return pick === "skip" ? "Dicatat sebagai transfer biasa" : pick === "auto" ? "Dana sisihan dicocokkan otomatis saat dibukukan" : "Dana sisihan dipilih";
+}, ["/finance"]);
+
+/** Transfer yang sudah dibukukan dihubungkan ke dana sisihan (data lama) */
+export const linkReserveTx = action("finance.approve", async (fd, user) => {
+  const id = str(fd, "id");
+  const toAccountId = optStr(fd, "toAccountId");
+  const r = await linkBookedTransfer(id, { parts: await reserveChoice(id, str(fd, "pick"), toAccountId), toAccountId }, { id: user.id, name: user.name });
+  return `Tersinkron ke dana sisihan (${r.created + r.absorbed} sisihan, bukti ikut terlampir)`;
+}, ["/finance", "/finance/sisihan", "/", "/akuntansi"]);
+
+/** Lampirkan / ganti bukti transaksi (juga yang sudah dibukukan); ikut ke sisihan yang tersambung */
+export const attachProofTx = action("finance.create", async (fd, user) => {
+  const file = fd.get("proof");
+  if (!(file && typeof file === "object" && "arrayBuffer" in file && file.size > 0)) throw new Error("Pilih foto bukti");
+  if (!["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(file.type)) throw new Error("Bukti harus JPG, PNG, WEBP, atau PDF");
+  const path = await saveProof(Buffer.from(await file.arrayBuffer()), file.type);
+  const n = await attachTransactionProof(str(fd, "id"), { path, mime: file.type }, { id: user.id, name: user.name });
+  return n ? `Bukti dilampirkan (juga ke ${n} sisihan)` : "Bukti dilampirkan";
+}, ["/finance", "/finance/sisihan"]);

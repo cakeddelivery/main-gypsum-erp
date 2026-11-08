@@ -5,8 +5,9 @@ import { nextNumber } from "./numbering";
 import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } from "./accounting";
 import { locationSettings, recordMovement } from "./stock";
 import { audit } from "./audit";
-import { addDays, dateStr, jakartaDateTime } from "./time";
+import { addDays, dateStr, jakartaDateTime, todayStr } from "./time";
 import { liabilityAccountId, payableLines, splitPayment } from "./payables";
+import { applyReserveLink, parseLink, reserveAccrualLines, reserveOptions, validateLink, type ReserveLink, type ReservePart } from "./reserveSync";
 
 type Tx = Prisma.TransactionClient;
 export type Actor = { id: string | null; name: string; telegramId?: string };
@@ -53,6 +54,11 @@ export type TxInput = {
   splits?: SplitInput[] | null;
   /** true = toko tidak diisi otomatis dengan toko default (withdraw yang tokonya belum jelas: ditanyakan) */
   askStore?: boolean;
+  /** Pengeluaran untuk membayar hutang supplier / cicilan pinjaman (pokok = nominal − bunga) */
+  payableId?: string | null;
+  payInterest?: number | null;
+  /** Transfer dana sisihan: rincian sisihan, atau skip = transfer biasa; kosong = dicocokkan otomatis saat dibukukan */
+  reserveLink?: ReserveLink | null;
 };
 
 export type SplitInput = { categoryId?: string | null; amount: number; note?: string | null; itemId?: string | null; qty?: number | null };
@@ -133,6 +139,12 @@ export async function createTransaction(input: TxInput, source: TxSource, actor:
     const splits = input.direction === "TRANSFER" ? [] : (input.splits ?? []).filter((x) => x.amount > 0);
     // Kategori utama = kategori rincian terbesar (untuk daftar & laporan ringkas)
     if (splits.length && !input.categoryId) input.categoryId = [...splits].filter((x) => x.categoryId).sort((a, b) => b.amount - a.amount)[0]?.categoryId ?? null;
+    if (input.direction === "KELUAR" && input.payableId && !splits.length) {
+      // Bayar hutang / cicilan: kategori tidak dipakai (jurnal ke akun hutangnya)
+      const p = await tx.payable.findUniqueOrThrow({ where: { id: input.payableId } });
+      if (p.paid >= p.amount) throw new FinanceError(`Hutang ${p.number} sudah lunas`);
+      input.categoryId = null;
+    } else input.payableId = null;
     const dup = await findDuplicate(tx, input);
     const missing = [...missingFields(input), ...splitIssues(input.amount, input.direction, splits)];
     let status: TxStatus = "DRAFT";
@@ -164,6 +176,9 @@ export async function createTransaction(input: TxInput, source: TxSource, actor:
         telegramChatId: input.telegramChatId ?? null,
         telegramMessageId: input.telegramMessageId ?? null,
         splits: splits.length ? { create: splitRows(splits) } : undefined,
+        payableId: input.direction === "KELUAR" && !splits.length ? input.payableId ?? null : null,
+        payInterest: BigInt(input.direction === "KELUAR" && input.payableId ? Math.max(0, Math.round(input.payInterest ?? 0)) : 0),
+        reserveLink: input.direction === "TRANSFER" && input.reserveLink ? (input.reserveLink as Prisma.InputJsonValue) : undefined,
       },
     });
     await tx.approvalLog.create({
@@ -188,7 +203,10 @@ export async function updateTransaction(id: string, input: Partial<TxInput>, act
       toAccountId: input.toAccountId !== undefined ? input.toAccountId : cur.toAccountId,
       categoryId: input.categoryId !== undefined ? input.categoryId : cur.categoryId,
       storeId: input.storeId !== undefined ? input.storeId : cur.storeId,
+      payableId: input.payableId !== undefined ? input.payableId : cur.payableId,
     };
+    if (merged.direction !== "KELUAR") merged.payableId = null;
+    if (merged.payableId) merged.categoryId = null;
     validateBasic({ ...merged, date: merged.date } as TxInput);
     if (merged.direction === "TRANSFER") merged.categoryId = null;
     if (input.splits !== undefined) {
@@ -212,6 +230,8 @@ export async function updateTransaction(id: string, input: Partial<TxInput>, act
         note: input.note !== undefined ? input.note : undefined,
         proofPath: input.proofPath ?? undefined,
         proofMime: input.proofMime ?? undefined,
+        payInterest: merged.payableId ? (input.payInterest != null ? BigInt(Math.max(0, Math.round(input.payInterest))) : undefined) : BigInt(0),
+        reserveLink: merged.direction !== "TRANSFER" ? Prisma.DbNull : input.reserveLink !== undefined ? (input.reserveLink ? (input.reserveLink as Prisma.InputJsonValue) : Prisma.DbNull) : undefined,
         fingerprint: fingerprint(merged.direction, merged.amount, merged.date, merged.accountId),
         duplicateOfId: dup?.id ?? null,
         status,
@@ -261,7 +281,7 @@ export async function approveAndBook(id: string, actor: Actor & { id: string }, 
 type TxRow = Prisma.FinanceTransactionGetPayload<object>;
 
 /** Baris jurnal transaksi (rekening ↔ kategori / rincian / hutang). Hutang: Dr Hutang pokok + Dr Beban Bunga / Cr rekening */
-async function txJournalLines(tx: Tx, cur: TxRow): Promise<LineInput[]> {
+async function txJournalLines(tx: Tx, cur: TxRow, reserveParts: ReservePart[] = []): Promise<LineInput[]> {
   const splits = await tx.financeTxSplit.findMany({ where: { transactionId: cur.id }, orderBy: { sortOrder: "asc" } });
   const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: cur.accountId! } });
   const amount = Number(cur.amount);
@@ -280,6 +300,8 @@ async function txJournalLines(tx: Tx, cur: TxRow): Promise<LineInput[]> {
     // Withdraw saldo penjual marketplace = hasil penjualan di Shopee/TikTok: sekaligus dicatat sebagai pemasukan
     // (Dr Saldo Penjual / Cr Penjualan), sehingga saldo penjual tidak minus dan omzet toko tercatat
     if (bank.marketplace) lines.unshift(...withdrawIncomeLines(bank.coaAccountId, bank.name, amount));
+    // Transfer dana sisihan kompensasi owner: sekaligus dicatat sebagai beban kompensasi (titipan owner)
+    lines.push(...(await reserveAccrualLines(tx, reserveParts)));
     return lines;
   }
   if (splits.length) {
@@ -343,6 +365,24 @@ async function syncLoanSaving(tx: Tx, cur: Pick<TxRow, "payableId" | "accountId"
   }
 }
 
+/**
+ * Dana sisihan untuk transfer yang akan dibukukan: rincian yang sudah dipilih (dicek ulang), atau dicocokkan
+ * otomatis dari rekening & nominal bila hasilnya cukup yakin. Transfer biasa / tidak cocok = tanpa sisihan.
+ */
+async function resolveReserveLink(tx: Tx, cur: TxRow): Promise<ReservePart[]> {
+  if (cur.direction !== "TRANSFER" || !cur.accountId || !cur.toAccountId) return [];
+  const link = parseLink(cur.reserveLink);
+  if (link && "skip" in link) return [];
+  if (link) {
+    await validateLink(tx, cur, link.parts).catch((e) => {
+      throw new FinanceError(e instanceof Error ? e.message : String(e));
+    });
+    return link.parts;
+  }
+  const m = await reserveOptions(tx, { amount: Number(cur.amount), fromBankId: cur.accountId, toBankId: cur.toAccountId, date: todayStr(cur.date), text: [cur.note, cur.rawText, cur.counterparty].filter(Boolean).join(" "), excludeTxId: cur.id });
+  return m?.sure ? m.options[0].parts : [];
+}
+
 async function bookInTx(tx: Tx, id: string, actor: Actor & { id: string }, note?: string) {
   {
     // Kunci baris untuk mencegah pembukuan ganda saat konfirmasi bersamaan
@@ -353,7 +393,9 @@ async function bookInTx(tx: Tx, id: string, actor: Actor & { id: string }, note?
     const splits = await tx.financeTxSplit.findMany({ where: { transactionId: id }, orderBy: { sortOrder: "asc" } });
     const missing = [...missingFields(cur), ...splitIssues(cur.amount, cur.direction, splits)];
     if (missing.length) throw new FinanceError(`Data belum lengkap: ${missing.join(", ")}`);
-    const lines = await txJournalLines(tx, cur);
+    const reserveParts = await resolveReserveLink(tx, cur);
+    if (reserveParts.length) await tx.financeTransaction.update({ where: { id }, data: { reserveLink: { parts: reserveParts } as Prisma.InputJsonValue } });
+    const lines = await txJournalLines(tx, cur, reserveParts);
     await applyPayable(tx, cur, 1);
     const journal = await postJournal(tx, {
       date: cur.date,
@@ -365,6 +407,7 @@ async function bookInTx(tx: Tx, id: string, actor: Actor & { id: string }, note?
       lines,
     });
     await syncLoanSaving(tx, cur, journal.id, actor.name);
+    if (reserveParts.length) await applyReserveLink(tx, cur, reserveParts, journal.id, { id: actor.id, name: actor.name });
     // Baris bahan baku: stok masuk gudang bahan baku (nilai persediaan sudah di jurnal di atas)
     const stockLines = cur.direction === "KELUAR" ? splits.filter((x) => x.itemId && Number(x.qty) > 0) : [];
     if (stockLines.length) {
@@ -401,6 +444,8 @@ export async function cancelBookedTransaction(id: string, actor: Actor & { id: s
     // Pembayaran hutang dibatalkan: sisa hutangnya kembali, saldo tabungan cicilan juga
     await applyPayable(tx, cur, -1);
     await tx.reserveEntry.deleteMany({ where: { journalId: cur.journalId, type: "TARIK" } });
+    // Sisihan yang dicatat dari transfer ini ikut batal (jurnalnya sudah dibalik di atas)
+    await tx.reserveEntry.deleteMany({ where: { transactionId: cur.id, type: "SISIH" } });
     // Pemasukan penjualan susulan untuk withdraw lama (skrip perbaikan) ikut dibalik
     for (const extra of await tx.journal.findMany({ where: { source: WITHDRAW_INCOME_SOURCE, sourceId: cur.id } })) {
       if (!(await tx.journal.findFirst({ where: { reversalOfId: extra.id } }))) await reverseJournal(tx, extra.id, date, { id: actor.id, name: actor.name }, `batal ${cur.number}`);
@@ -439,6 +484,7 @@ export async function changeBookedStore(id: string, storeId: string, actor: Acto
       if (!(await tx.journal.findFirst({ where: { reversalOfId: extra.id } }))) await repost(extra.id);
     }
     const t = await tx.financeTransaction.update({ where: { id }, data: { storeId, journalId: main.id } });
+    await tx.reserveEntry.updateMany({ where: { transactionId: id }, data: { journalId: main.id } });
     await tx.approvalLog.create({ data: { transactionId: id, action: "DIUBAH", fromStatus: cur.status, toStatus: cur.status, actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: `Toko diganti ke ${store.name} · jurnal ${main.number}` } });
     await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_GANTI_TOKO", "FinanceTransaction", id, { from: cur.storeId, to: storeId, journal: main.number }, tx);
     return t;
@@ -619,4 +665,94 @@ export async function bankBalances() {
   const sums = await prisma.journalLine.groupBy({ by: ["accountId"], where: { accountId: { in: banks.map((b) => b.coaAccountId) } }, _sum: { debit: true, credit: true } });
   const m = new Map(sums.map((s) => [s.accountId, Number(s._sum.debit ?? 0) - Number(s._sum.credit ?? 0)]));
   return banks.map((b) => ({ ...b, balance: m.get(b.coaAccountId) ?? 0 }));
+}
+
+/**
+ * Hubungkan transfer yang SUDAH dibukukan ke dana sisihan (data lama / salah rekening tujuan): jurnal lama dibalik
+ * lalu dibukukan ulang dengan rekening tujuan yang benar + beban kompensasi owner, sisihannya dicatat dengan bukti
+ * transfer ini. `parts` kosong = dicocokkan otomatis (harus cukup yakin).
+ */
+export async function linkBookedTransfer(id: string, opts: { parts?: ReservePart[] | null; toAccountId?: string | null }, actor: Actor & { id: string }, now: Date = new Date()) {
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "FinanceTransaction" WHERE id = ${id} FOR UPDATE`;
+    const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
+    if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi Dibukukan; transaksi lain otomatis dicocokkan saat dibukukan");
+    // Pengeluaran yang sebenarnya pindah ke rekening simpanan (mis. "nabung spinjam" tercatat sebagai keluar) diubah jadi transfer
+    const convert = cur.direction === "KELUAR";
+    if (cur.direction !== "TRANSFER" && !convert) throw new FinanceError("Hanya transfer antar rekening yang bisa menjadi sisihan");
+    if (convert && (!opts.toAccountId || cur.payableId || (await tx.financeTxSplit.count({ where: { transactionId: id } })))) throw new FinanceError("Pengeluaran ini tidak bisa diubah jadi transfer sisihan (perlu rekening tujuan, tanpa rincian/hutang)");
+    if (await tx.reserveEntry.count({ where: { transactionId: id } })) throw new FinanceError(`${cur.number} sudah tercatat di dana sisihan`);
+    const toAccountId = opts.toAccountId ?? cur.toAccountId;
+    if (!toAccountId || toAccountId === cur.accountId) throw new FinanceError("Rekening tujuan tidak valid");
+    const next = { ...cur, toAccountId, direction: "TRANSFER" as const, categoryId: null };
+    let parts = opts.parts ?? null;
+    if (!parts?.length) {
+      const m = await reserveOptions(tx, { amount: Number(cur.amount), fromBankId: cur.accountId, toBankId: toAccountId, date: todayStr(cur.date), text: [cur.note, cur.rawText, cur.counterparty].filter(Boolean).join(" "), excludeTxId: cur.id });
+      if (!m) throw new FinanceError("Tidak ada dana sisihan yang cocok dengan rekening & nominal transfer ini");
+      if (!m.sure) throw new FinanceError(`Dana sisihan belum pasti, pilih salah satu: ${m.options.map((o) => o.label).join(" / ")}`);
+      parts = m.options[0].parts;
+    }
+    await validateLink(tx, next, parts).catch((e) => {
+      throw new FinanceError(e instanceof Error ? e.message : String(e));
+    });
+    const who = { id: actor.id, name: actor.name };
+    let journalId = cur.journalId;
+    const accrual = await reserveAccrualLines(tx, parts);
+    if (accrual.length || convert || toAccountId !== cur.toAccountId) {
+      // Jurnal tidak boleh diubah: dibalik lalu dibukukan ulang (tanggal sama bila periodenya masih terbuka)
+      const date = await assertPeriodOpen(tx, cur.date).then(() => cur.date, () => now);
+      await reverseJournal(tx, cur.journalId, date, who, `sinkron dana sisihan ${cur.number}`);
+      const lines = await txJournalLines(tx, next, parts);
+      const j = await postJournal(tx, { date, storeId: cur.storeId!, description: `${cur.number} ${cur.note ?? ""}`.trim().slice(0, 200), source: "FINANCE", sourceId: cur.id, actor: who, lines });
+      journalId = j.id;
+    }
+    await tx.financeTransaction.update({ where: { id }, data: { toAccountId, journalId, direction: "TRANSFER", categoryId: null, reserveLink: { parts } as Prisma.InputJsonValue } });
+    const r = await applyReserveLink(tx, cur, parts, journalId, who, now);
+    const note = `Dana sisihan: ${r.created + r.absorbed} sisihan${convert ? " · diubah dari pengeluaran jadi transfer" : ""}${toAccountId !== cur.toAccountId ? " · rekening tujuan dibetulkan" : ""} · jurnal ${journalId === cur.journalId ? "tetap" : "baru"}`;
+    await tx.approvalLog.create({ data: { transactionId: id, action: "DIUBAH", fromStatus: cur.status, toStatus: cur.status, actorUserId: actor.id, actorName: actor.name, note } });
+    await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_SINKRON_SISIHAN", "FinanceTransaction", id, { parts, toAccountId, ...r }, tx);
+    return { ...r, journalId, toAccountId };
+  });
+}
+
+/** Pilih dana sisihan untuk transfer yang belum dibukukan (parts), tandai transfer biasa (skip), atau kembali otomatis (null) */
+export async function setReserveLink(id: string, link: ReserveLink | null, actor: Actor) {
+  const cur = await prisma.financeTransaction.findUniqueOrThrow({ where: { id } });
+  if (!EDITABLE.includes(cur.status)) throw new FinanceError("Transaksi sudah final");
+  if (cur.direction !== "TRANSFER") throw new FinanceError("Hanya transfer antar rekening");
+  if (link && "parts" in link) await validateLink(prisma, cur, link.parts).catch((e) => {
+    throw new FinanceError(e instanceof Error ? e.message : String(e));
+  });
+  await prisma.financeTransaction.update({ where: { id }, data: { reserveLink: link ? (link as Prisma.InputJsonValue) : Prisma.DbNull } });
+  await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_PILIH_SISIHAN", "FinanceTransaction", id, { link });
+}
+
+/**
+ * Lampirkan bukti ke transaksi (status apa pun, termasuk Dibukukan: tidak mengubah jurnal) dan ke dokumen yang
+ * tersambung: sisihan dari transfer ini.
+ */
+export async function attachTransactionProof(id: string, proof: { path: string; mime: string }, actor: Actor) {
+  return prisma.$transaction(async (tx) => {
+    const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
+    await tx.financeTransaction.update({ where: { id }, data: { proofPath: proof.path, proofMime: proof.mime } });
+    const r = await tx.reserveEntry.updateMany({ where: { transactionId: id, proofPath: cur.proofPath ?? null }, data: { proofPath: proof.path, proofMime: proof.mime } });
+    await tx.approvalLog.create({ data: { transactionId: id, action: "DIUBAH", fromStatus: cur.status, toStatus: cur.status, actorUserId: actor.id, actorName: actor.name, note: "Bukti dilampirkan" } });
+    await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_BUKTI", "FinanceTransaction", id, { sisihan: r.count }, tx);
+    return r.count;
+  });
+}
+
+/**
+ * Bukti transfer dana sisihan dari bot/web: dicatat sebagai transfer di menu Transaksi (dengan bukti) lalu langsung
+ * dibukukan bersama sisihannya. Bila terindikasi duplikat, transaksi berhenti di Perlu Ditinjau.
+ */
+export async function bookReserveTransfer(input: TxInput, parts: ReservePart[], source: TxSource, actor: Actor & { id: string }) {
+  if (!parts.length) throw new FinanceError("Pilih dana sisihan");
+  const fund = await prisma.reserveFund.findUniqueOrThrow({ where: { id: parts[0].fundId } });
+  const data: TxInput = { ...input, direction: "TRANSFER", accountId: input.accountId ?? fund.fromBankId, toAccountId: fund.toBankId, categoryId: null, suggestedCategoryId: null, splits: null, payableId: null, askStore: false, reserveLink: { parts } };
+  const r = await createTransaction(data, source, actor, { submit: true });
+  if (r.replayed) return { transaction: r.transaction, booked: r.transaction.status === "DIBUKUKAN", duplicate: null };
+  if (r.transaction.status !== "MENUNGGU_KONFIRMASI") return { transaction: r.transaction, booked: false, duplicate: r.duplicate };
+  const b = await approveAndBook(r.transaction.id, actor, "Transfer dana sisihan");
+  return { transaction: b.transaction, booked: true, duplicate: null };
 }

@@ -5,6 +5,7 @@ import { audit } from "./audit";
 import { addDays, dateOnly, dateStr, jakartaDateTime, todayStr } from "./time";
 import { FinanceError } from "./finance";
 import { liabilityAccountId, payableLines, splitPayment } from "./payables";
+import { reserveOptions, type ReserveOption } from "./reserveSync";
 
 type Actor = { id: string; name: string };
 
@@ -129,65 +130,19 @@ export async function reserveSummary(now: Date = new Date()) {
 export async function attachReserveProof(entryIds: string[], proof: NonNullable<Proof>, actor: Actor) {
   if (!entryIds.length) return 0;
   const r = await prisma.reserveEntry.updateMany({ where: { id: { in: entryIds } }, data: { proofPath: proof.path, proofMime: proof.mime } });
+  // Transfer di menu Transaksi yang menjadi sumber sisihan ini ikut dilampiri bila belum punya bukti
+  const txIds = (await prisma.reserveEntry.findMany({ where: { id: { in: entryIds }, transactionId: { not: null } }, select: { transactionId: true } })).map((e) => e.transactionId!);
+  if (txIds.length) await prisma.financeTransaction.updateMany({ where: { id: { in: txIds }, proofPath: null }, data: { proofPath: proof.path, proofMime: proof.mime } });
   await audit(actor, "BUKTI_SISIHAN", "ReserveEntry", entryIds.join(","), { count: r.count });
   return r.count;
 }
 
 // ---------- Mengenali bukti transfer sisihan dari nominal & rekening ----------
-export type ReserveOption = { fundIds: string[]; dates: string[]; amount: number; label: string; routeMatch: boolean };
+export type { ReserveOption } from "./reserveSync";
 
-/**
- * Tebak dana sisihan dari bukti transfer: rekening asal/tujuan sama dengan alur dana, dan nominal = kelipatan
- * sisihan harian (satu dana, atau beberapa dana dengan alur sama mis. kompensasi Cak Ed + Jojo).
- * Tanggal = hari-hari terakhir s/d tanggal transfer yang belum disisihkan atau belum ada buktinya.
- * `sure` = hanya satu kemungkinan dan rekening tujuannya cocok; selain itu pengguna diminta memilih.
- */
+/** Tebak dana sisihan dari bukti transfer (lihat reserveOptions) */
 export async function matchReserveTransfer(input: { amount: number; fromBankId: string | null; toBankId: string | null; date: string; text?: string }) {
-  const funds = await prisma.reserveFund.findMany({ where: { active: true, kind: { not: "LOAN_PAYMENT" } }, orderBy: { name: "asc" } });
-  const keyword = /\b(sisih|sisihan|disisihkan|nabung|tabung|tabungan|kompensasi|gaji owner|pengelola)\b/i.test(input.text ?? "");
-  const relevant = funds.filter((f) => (!input.fromBankId || f.fromBankId === input.fromBankId) && (!input.toBankId || f.toBankId === input.toBankId));
-  if (!relevant.length || !(input.amount > 0)) return null;
-  const since = addDays(input.date, -30);
-  const entries = await prisma.reserveEntry.findMany({ where: { fundId: { in: relevant.map((f) => f.id) }, type: "SISIH", date: { gte: dateOnly(since), lte: dateOnly(input.date) } } });
-  // Tanggal yang masih bisa dipasangi bukti: belum disisihkan, atau sudah disisihkan tapi belum ada buktinya
-  const openDates = (ids: string[]) => {
-    const out: string[] = [];
-    for (let d = input.date; d >= since; d = addDays(d, -1)) {
-      const ok = ids.every((id) => {
-        const f = funds.find((x) => x.id === id)!;
-        if (d < todayStr(f.createdAt) && !entries.some((e) => e.fundId === id && dateStr(e.date) === d)) return false;
-        const e = entries.find((x) => x.fundId === id && dateStr(x.date) === d);
-        return !e || !e.proofPath;
-      });
-      if (ok) out.push(d);
-    }
-    return out;
-  };
-  const groups = new Map<string, typeof relevant>();
-  for (const f of relevant) groups.set(`${f.fromBankId}>${f.toBankId}`, [...(groups.get(`${f.fromBankId}>${f.toBankId}`) ?? []), f]);
-  const options: ReserveOption[] = [];
-  const add = (fs: typeof relevant) => {
-    const perDay = fs.reduce((t, f) => t + Number(f.dailyAmount), 0);
-    if (!(perDay > 0) || input.amount % perDay !== 0) return;
-    const days = input.amount / perDay;
-    if (days > 31) return;
-    const dates = openDates(fs.map((f) => f.id)).slice(0, days).sort();
-    if (dates.length < days) return;
-    const label = `${fs.map((f) => f.name).join(" + ")} · ${days} hari`;
-    if (!options.some((o) => o.label === label)) options.push({ fundIds: fs.map((f) => f.id), dates, amount: input.amount, label, routeMatch: !!input.toBankId });
-  };
-  for (const g of groups.values()) {
-    if (g.length > 1) add(g);
-    for (const f of g) add([f]);
-  }
-  if (!options.length) return null;
-  // Rekening tujuan tidak terbaca & tidak ada kata sisihan: terlalu lemah untuk ditebak
-  if (!input.toBankId && !keyword) return null;
-  // Gabungan semua dana di satu alur lebih masuk akal daripada satu dana (Cak Ed + Jojo = 200rb)
-  options.sort((a, b) => b.fundIds.length - a.fundIds.length || a.dates.length - b.dates.length);
-  const best = options[0];
-  const sure = !!input.toBankId && (options.length === 1 || (best.fundIds.length > 1 && best.dates.length === 1 && !options.slice(1).some((o) => o.dates.length === 1)));
-  return { options: options.slice(0, 6), sure };
+  return reserveOptions(prisma, input);
 }
 
 /** Catat sisihan dari bukti transfer: tanggal yang belum disisihkan dicatat, yang sudah tercatat hanya dilampiri bukti */

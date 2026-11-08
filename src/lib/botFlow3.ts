@@ -4,7 +4,9 @@ import { giveAdvance, PayrollError } from "./payroll";
 import { createPurchase, termFor } from "./purchase";
 import { nextInstallment, splitPayment } from "./payables";
 import { applyReserveOption } from "./reserve";
-import { bookPayablePayment, FinanceError } from "./finance";
+import { bookPayablePayment, bookReserveTransfer, FinanceError } from "./finance";
+import type { ReservePart } from "./reserveSync";
+import { findSupplierByName } from "./suppliers";
 import { BoronganError, boronganScope, BORONGAN_ROLE_LABEL, createHandover, HANDOVER_LABEL, payLines, receiveHandover, recordResult, settlePoint, type Scope } from "./borongan";
 import { StockError } from "./stock";
 import { idr, parseIDR } from "./money";
@@ -302,7 +304,8 @@ const purchase: FlowDef = {
         if (fromText) {
           const name = v.trim().slice(0, 80);
           if (name.length < 2) return "Nama supplier minimal 2 huruf";
-          const found = await prisma.supplier.findFirst({ where: { name: { equals: name, mode: "insensitive" } } });
+          // Cocokkan dengan master (termasuk nama lain & tanpa kata "supplier"/"toko") agar tidak dobel
+          const found = await findSupplierByName(prisma, name);
           d.supId = found?.id ?? null;
           d.supName = found?.name ?? name;
           d.supNew = found ? 0 : 1;
@@ -1001,7 +1004,7 @@ const payDebt: FlowDef = {
 // =====================================================================
 // Dana sisihan dari bukti transfer (dikenali dari nominal & rekening)
 // =====================================================================
-type ReserveOpt = { fundIds: string[]; dates: string[]; amount: number; label: string };
+type ReserveOpt = { fundIds: string[]; dates: string[]; amount: number; label: string; parts?: ReservePart[] };
 const fmtDates = (ds: string[]) => ds.map((x) => fmtDate(dateOnly(x))).join(", ");
 
 /** Mulai konfirmasi sisihan dari bukti transfer. `sure` = langsung ke konfirmasi; selain itu pilih dananya */
@@ -1027,7 +1030,7 @@ const reserveFromProof: FlowDef = {
     const done = await prisma.reserveEntry.findMany({ where: { fundId: { in: o.fundIds }, type: "SISIH", date: { in: o.dates.map((x) => dateOnly(x)) } } });
     const already = done.length === o.fundIds.length * o.dates.length;
     return {
-      text: `${head}\n\nDikenali sebagai sisihan <b>${esc(funds.map((f) => f.name).join(" + "))}</b>\nTanggal: ${fmtDates(o.dates)}\n${already ? "Sisihan tanggal tsb sudah tercatat, bukti transfer akan dilampirkan (tidak ada jurnal baru)." : done.length ? "Sebagian sudah tercatat: yang sudah hanya dilampiri bukti, sisanya dicatat sekarang." : "Sisihan akan dicatat dan bukti transfer dilampirkan."}\n\nBenar?`,
+      text: `${head}\n\nDikenali sebagai sisihan <b>${esc(funds.map((f) => f.name).join(" + "))}</b>\nTanggal: ${fmtDates(o.dates)}\n${d.tx && o.parts?.length ? "Transfer dicatat di Transaksi dan langsung dibukukan; sisihannya tercatat dengan bukti transfer ini." + (done.length ? " Sisihan tanggal tsb yang sudah dicatat tanpa bukti memakai transfer ini (tidak dobel)." : "") : already ? "Sisihan tanggal tsb sudah tercatat, bukti transfer akan dilampirkan (tidak ada jurnal baru)." : done.length ? "Sebagian sudah tercatat: yang sudah hanya dilampiri bukti, sisanya dicatat sekarang." : "Sisihan akan dicatat dan bukti transfer dilampirkan."}\n\nBenar?`,
       buttons: [[{ text: "✅ Benar, simpan", callback_data: "f:ok" }], ...(opts.length > 1 ? [[{ text: "🔁 Pilih dana lain", callback_data: "f:pick" }]] : []), ...plainRow, [{ text: "❌ Batal", callback_data: "f:x" }]],
     };
   },
@@ -1050,9 +1053,38 @@ const reserveFromProof: FlowDef = {
     if (!can(ctx.i, "finance.approve")) return "Anda tidak berwenang";
     const opts: ReserveOpt[] = JSON.parse(String(d.opts ?? "[]"));
     try {
-      const r = await applyReserveOption(opts[Number(d.pick ?? 0)], d.proofPath ? { path: String(d.proofPath), mime: "image/jpeg" } : null, actorOf(ctx.i));
-      d.posted = r.posted;
-      d.attached = r.attached;
+      const o = opts[Number(d.pick ?? 0)];
+      const tx = d.tx ? (JSON.parse(String(d.tx)) as { amount: number; date: string; accountId: string | null; note: string | null; rawText: string; proofPath: string | null; aiExtraction: unknown; messageId: string }) : null;
+      if (tx && o.parts?.length) {
+        // Transfer sisihan = transaksi transfer (dengan bukti) yang dibukukan bersama sisihannya: tampil di Transaksi & Dana sisihan
+        const r = await bookReserveTransfer(
+          {
+            direction: "TRANSFER",
+            amount: tx.amount,
+            date: new Date(tx.date),
+            accountId: tx.accountId,
+            note: tx.note,
+            rawText: tx.rawText,
+            proofPath: tx.proofPath,
+            proofMime: tx.proofPath ? "image/jpeg" : null,
+            aiExtraction: tx.aiExtraction as object,
+            idempotencyKey: `tg:${ctx.chatId}:${tx.messageId}`,
+            telegramChatId: ctx.chatId,
+            telegramMessageId: tx.messageId,
+          },
+          o.parts,
+          "TELEGRAM",
+          actorOf(ctx.i),
+        );
+        d.txNumber = r.transaction.number;
+        d.booked = r.booked ? 1 : 0;
+        d.posted = r.booked ? o.parts.length : 0;
+        d.attached = 0;
+      } else {
+        const r = await applyReserveOption(o, d.proofPath ? { path: String(d.proofPath), mime: "image/jpeg" } : null, actorOf(ctx.i));
+        d.posted = r.posted;
+        d.attached = r.attached;
+      }
     } catch (e) {
       return e instanceof FinanceError ? e.message : errMsg(e);
     }
@@ -1061,7 +1093,8 @@ const reserveFromProof: FlowDef = {
   async finish(_ctx, s) {
     const d = s.data;
     const o: ReserveOpt = JSON.parse(String(d.opts))[Number(d.pick ?? 0)];
-    return { text: `✅ <b>Sisihan tersimpan</b>\n${esc(o.label)} · ${fmtDates(o.dates)}\n${Number(d.posted) ? `${d.posted} sisihan baru dicatat. ` : ""}${Number(d.attached) ? `Bukti dilampirkan ke ${d.attached} sisihan yang sudah ada.` : ""}`, buttons: [menuBtn] };
+    if (d.txNumber && !Number(d.booked)) return { text: `⚠️ <b>Transfer dicatat sebagai ${esc(String(d.txNumber))}</b> tapi belum dibukukan: terindikasi duplikat atau data kurang. Periksa di menu Transaksi; sisihannya ikut tercatat saat transaksi disetujui.`, buttons: [menuBtn] };
+    return { text: `✅ <b>Sisihan tersimpan</b>${d.txNumber ? ` (${esc(String(d.txNumber))})` : ""}\n${esc(o.label)} · ${fmtDates(o.dates)}\n${d.txNumber ? "Transfer tercatat di Transaksi dan bukti transfer terlampir di Dana sisihan." : `${Number(d.posted) ? `${d.posted} sisihan baru dicatat. ` : ""}${Number(d.attached) ? `Bukti dilampirkan ke ${d.attached} sisihan yang sudah ada.` : ""}`}`, buttons: [menuBtn] };
   },
 };
 

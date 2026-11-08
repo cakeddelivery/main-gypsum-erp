@@ -10,6 +10,8 @@ import { createLoan, createPayable, createReceivable, settle } from "../actions"
 import { Paged } from "@/components/Paged";
 import { COA } from "@/lib/accounting";
 import { nextInstallment } from "@/lib/payables";
+import { ProofPreview } from "@/components/ProofPreview";
+import Link from "next/link";
 
 export const metadata = { title: "Piutang, Hutang & Pinjaman" };
 
@@ -69,10 +71,12 @@ export default async function PiutangUtang({ searchParams }: { searchParams: Pro
       ) : (
         <Modal trigger="+ Hutang" title="Hutang supplier baru">
           <ModalForm action={createPayable} className="grid grid-cols-2 gap-3">
-            <Field label="Supplier"><select name="supplierId" className="input"><option value="">— lainnya —</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
-            <Field label="Nama pemasok (bila lainnya)"><input name="vendor" className="input" /></Field>
+            <Field label="Supplier" hint="Pilih dari master agar hutang & pembelian supplier yang sama tidak terpisah"><select name="supplierId" className="input"><option value="">— supplier baru —</option>{suppliers.filter((s) => s.active).map((s) => <option key={s.id} value={s.id}>{s.name}{s.aliases ? ` (${s.aliases})` : ""}</option>)}</select></Field>
+            <Field label="Nama supplier baru" hint="Bila namanya sama/mirip dengan supplier yang ada, otomatis dipakai yang sudah ada"><input name="vendor" className="input" list="supplier-names" /><datalist id="supplier-names">{suppliers.flatMap((s) => [s.name, ...s.aliases.split(",").map((x) => x.trim()).filter(Boolean)]).map((n) => <option key={n} value={n} />)}</datalist></Field>
             <Field label="Untuk (akun debit)" className="col-span-2" hint="Barang/jasa yang diterima dari supplier: biasanya Persediaan Bahan Baku"><select name="debitAccountId" className="input" defaultValue={defDebit}>{debitAcc.map((a) => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}</select></Field>
-            {common}<div className="col-span-2"><Submit>Simpan</Submit></div>
+            {common}
+            <Field label="Foto nota (opsional)" className="col-span-2" hint="JPG/PNG/PDF, maks 5 MB"><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
+            <div className="col-span-2"><Submit>Simpan</Submit></div>
           </ModalForm>
         </Modal>
       ))}</>} />
@@ -89,7 +93,7 @@ export default async function PiutangUtang({ searchParams }: { searchParams: Pro
                 const overdue = rem > 0 && r.dueDate && r.dueDate < new Date();
                 return (
                   <tr key={r.id}>
-                    <td className="font-mono text-xs">{r.number}</td><td>{r.party}</td>
+                    <td className="font-mono text-xs">{r.number}</td><td>{"supplierId" in r && r.supplierId && tab === "utang" ? <Link className="link" href={`/supplier/${r.supplierId}`}>{r.party}</Link> : r.party}{"proofPath" in r && r.proofPath && <div><ProofPreview src={`/api/files/payable-proof/${r.id}`} mime={r.proofMime} title={`Nota ${r.number}`} /></div>}</td>
                     {tab === "pinjaman" && "coaAccount" in r && <td className="text-xs">{r.coaAccount ? `${r.coaAccount.code} ${r.coaAccount.name}` : `${COA.UTANG_PINJAMAN} Hutang Pinjaman Modal`}{next && <div className="text-slate-500">Cicilan {next.no}/{r.installments}: {idr(next.total)} (pokok {idr(next.principal)}{next.interest ? ` + bunga ${idr(next.interest)}` : ""})</div>}</td>}
                     <td>{fmtDate(r.date)}</td><td>{fmtDate(r.dueDate)}</td><td className="num">{idr(r.amount)}</td><td className="num">{idr(r.paid)}</td>
                     <td>{rem === 0 ? <Badge tone="green">Lunas</Badge> : overdue ? <Badge tone="red">Jatuh tempo</Badge> : <Badge tone="amber">Belum lunas</Badge>}</td>
@@ -102,6 +106,7 @@ export default async function PiutangUtang({ searchParams }: { searchParams: Pro
                           <Field label={`Nominal pokok (sisa ${idr(rem)})`}><input name="amount" defaultValue={next ? next.principal : rem} inputMode="numeric" className="input" /></Field>
                           {tab !== "piutang" && <Field label="Bunga / biaya (opsional)" hint="Masuk Beban Bunga & Biaya Pinjaman, tidak mengurangi pokok. Total keluar rekening = pokok + bunga"><input name="interest" defaultValue={next?.interest ?? 0} inputMode="numeric" className="input" /></Field>}
                           {tab !== "piutang" && <Field label="Catatan"><input name="note" className="input" placeholder={`${tab === "pinjaman" ? "Cicilan pinjaman" : "Bayar hutang"} ${r.number}`} /></Field>}
+                          {tab !== "piutang" && <Field label="Bukti transfer (opsional)" hint="Ikut tersimpan di menu Transaksi & riwayat pembayaran supplier"><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>}
                           <Submit>Bukukan</Submit>
                         </ModalForm>
                       </Modal>

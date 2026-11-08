@@ -16,6 +16,7 @@ import { prefilledPayablePayment, prefilledPurchase, prefilledReserve } from "./
 import { detectPayablePayment } from "./botPurchase";
 import { openPayables } from "./payables";
 import { matchReserveTransfer } from "./reserve";
+import { supplierKey, supplierNames } from "./suppliers";
 
 type TgUser = { id: number; first_name?: string; username?: string };
 type TgUpdate = {
@@ -375,8 +376,13 @@ async function createDraft(chatId: string, ident: NonNullable<Awaited<ReturnType
 /** Supplier yang namanya disebut di caption atau nama penerima di bukti transfer */
 async function matchSupplier(text: string) {
   const t = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
-  const sups = await prisma.supplier.findMany({ where: { active: true }, select: { id: true, name: true } });
-  return sups.filter((x) => { const n = x.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); return n.length >= 3 && t.includes(` ${n} `); }).sort((a, b) => b.name.length - a.name.length)[0] ?? null;
+  const sups = await prisma.supplier.findMany({ where: { active: true }, select: { id: true, name: true, aliases: true } });
+  // Nama atau nama lain supplier (setelah digabung), tanpa kata umum "supplier"/"toko"
+  const hit = sups
+    .map((x) => ({ x, len: Math.max(0, ...supplierNames(x).map(supplierKey).filter((n) => n.length >= 4 && t.includes(` ${n} `)).map((n) => n.length)) }))
+    .filter((r) => r.len > 0)
+    .sort((a, b) => b.len - a.len)[0];
+  return hit ? { id: hit.x.id, name: hit.x.name } : null;
 }
 
 async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
