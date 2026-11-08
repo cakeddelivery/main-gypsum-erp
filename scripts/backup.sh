@@ -11,7 +11,9 @@ mkdir -p backups
 chmod 700 backups
 STAMP="$(date +%Y%m%d-%H%M%S)"
 FILE="backups/mg-erp-$STAMP.dump"
-pg_dump --format=custom --no-owner "${DATABASE_URL%%\?*}" > "$FILE"
+. scripts/lib/pg-env.sh
+# Password database lewat environment, bukan argumen (tidak terlihat di `ps`)
+( pg_env_from_url "$DATABASE_URL" && pg_dump --format=custom --no-owner ) > "$FILE"
 echo "Backup tersimpan: $FILE"
 # Foto bukti transaksi & foto checklist laporan (tidak ada di database)
 STORAGE="${STORAGE_DIR:-./storage/private}"
@@ -46,11 +48,13 @@ if [ -n "${BACKUP_TELEGRAM_CHAT_ID:-}${BACKUP_RCLONE_REMOTE:-}" ]; then
   if [ -n "${BACKUP_TELEGRAM_CHAT_ID:-}" ]; then
     : "${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN belum diatur}"
     for f in "$OUT"/*; do
-      if curl -sS -f -o /dev/null --max-time 300 \
-        -F chat_id="$BACKUP_TELEGRAM_CHAT_ID" \
-        -F caption="Backup ERP Main Gypsum $STAMP ($(basename "$f"))" \
-        -F document=@"$f" \
-        "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendDocument"; then
+      # URL berisi token bot dikirim lewat config dari stdin (`-K -`), bukan
+      # argumen, supaya token tidak terbaca lewat `ps`. printf = builtin bash.
+      if printf 'url = "https://api.telegram.org/bot%s/sendDocument"\n' "$TELEGRAM_BOT_TOKEN" \
+        | curl -K - -sS -f -o /dev/null --max-time 300 \
+          -F chat_id="$BACKUP_TELEGRAM_CHAT_ID" \
+          -F caption="Backup ERP Main Gypsum $STAMP ($(basename "$f"))" \
+          -F document=@"$f"; then
         echo "Terkirim ke Telegram: $(basename "$f")"
       else
         echo "GAGAL kirim ke Telegram: $(basename "$f")" >&2; OFFSITE_FAIL=1

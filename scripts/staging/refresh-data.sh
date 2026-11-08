@@ -17,9 +17,12 @@ fi
 
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 echo "== Salin database produksi"
-pg_dump --format=custom --no-owner --no-privileges "${PROD_URL%%\?*}" > "$TMP/prod.dump"
-psql -q -v ON_ERROR_STOP=1 "${STG_URL%%\?*}" -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
-pg_restore --no-owner --no-privileges --dbname="${STG_URL%%\?*}" "$TMP/prod.dump"
+. "$(dirname "$0")/../lib/pg-env.sh"
+# Password database lewat environment (subshell terpisah), bukan argumen (tidak terlihat di `ps`)
+( pg_env_from_url "$PROD_URL" && pg_dump --format=custom --no-owner --no-privileges ) > "$TMP/prod.dump"
+( pg_env_from_url "$STG_URL"
+  psql -q -v ON_ERROR_STOP=1 -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
+  pg_restore --no-owner --no-privileges --dbname="$PGDATABASE" "$TMP/prod.dump" )
 
 echo "== Salin foto bukti"
 PROD_STORAGE="$(storage_dir "$PROD_DIR")"
