@@ -1101,6 +1101,24 @@ model CoaAccount {
   banks      BankAccount[]
   categories TxCategory[]
   payables   Payable[]
+  budgets    ExpenseBudget[]
+}
+
+/// Anggaran beban per bulan per akun COA (tipe BEBAN/HPP). Realisasi dihitung dari jurnal.
+model ExpenseBudget {
+  id        String     @id @default(cuid())
+  year      Int
+  month     Int
+  accountId String
+  account   CoaAccount @relation(fields: [accountId], references: [id])
+  amount    BigInt
+  note      String?
+  createdBy String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@unique([year, month, accountId])
+  @@index([year, month])
 }
 
 model Journal {

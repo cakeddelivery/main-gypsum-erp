@@ -84,6 +84,28 @@ export async function sendTalanganReminder(now: Date = new Date()) {
   return { sent, failed: recipients.length - sent };
 }
 
+/** Peringatan anggaran beban ke Owner (tertaut Telegram): sekali per akun per ambang (80%/100%) per bulan */
+export async function sendBudgetNotice(now: Date = new Date()) {
+  const { pendingBudgetNotices, markBudgetNoticed, budgetNoticeText } = await import("./budget");
+  const { esc } = await import("./telegram");
+  const p = await pendingBudgetNotices(now);
+  if (!p.items.length) return { sent: 0, skipped: "tidak ada peringatan baru" };
+  const text = budgetNoticeText(p.year, p.month, p.items, esc, idr);
+  const recipients = await prisma.telegramIdentity.findMany({ where: { active: true, chatId: { not: null }, user: { active: true, role: "OWNER" } } });
+  if (!telegramConfigured() || !recipients.length) {
+    await prisma.notificationLog.create({ data: { channel: "TELEGRAM", type: "ANGGARAN", target: todayStr(now), status: "GAGAL", payload: text, error: !telegramConfigured() ? "TELEGRAM_BOT_TOKEN belum diatur" : "Owner belum tertaut Telegram" } });
+    return { sent: 0, failed: recipients.length };
+  }
+  let sent = 0;
+  for (const r of recipients) {
+    const res = await sendTelegram(r.chatId!, text, { type: "ANGGARAN" });
+    if (res.ok) sent++;
+  }
+  // Tandai terkirim bila minimal satu Owner menerima, agar tidak diulang tiap hari
+  if (sent) await markBudgetNoticed(p.year, p.month, p.items);
+  return { sent, failed: recipients.length - sent };
+}
+
 async function ranToday(key: string, date: string) {
   const s = await prisma.setting.findUnique({ where: { key } });
   return s?.value === date;
@@ -98,6 +120,7 @@ async function markRan(key: string, date: string) {
  * - 06.00 WIB: slip gaji bulanan untuk siklus karyawan yang selesai (gajian H+7)
  * - 07.00 WIB: rekap harian Telegram
  * - 08.00 WIB: pengingat dana talangan ke Owner & Finance (bila ada yang belum dikembalikan)
+ * - 08.00 WIB: peringatan anggaran beban ≥80% / ≥100% ke Owner (sekali per ambang per akun per bulan)
  * - Tanggal tutup buku (Pengaturan, default 10) pukul 09.00 WIB: tutup buku bulan sebelumnya.
  *   Tidak tanggal 1 agar bukti transaksi akhir bulan yang terlambat masuk masih bisa dibukukan.
  * Job yang gagal dicatat di log notifikasi (tidak diulang tiap menit).
@@ -119,6 +142,10 @@ export async function runDueJobs(now: Date = new Date()) {
   if (minutes >= 8 * 60 && !(await ranToday("job_talangan_last", date))) {
     await markRan("job_talangan_last", date);
     results.talangan = await logFailure("TALANGAN", date, () => sendTalanganReminder(now));
+  }
+  if (minutes >= 8 * 60 && !(await ranToday("job_budget_last", date))) {
+    await markRan("job_budget_last", date);
+    results.budget = await logFailure("ANGGARAN", date, () => sendBudgetNotice(now));
   }
   const closeDay = await autoCloseDay();
   if (p.day === closeDay && minutes >= 9 * 60 && !(await ranToday("job_month_close_last", date))) {
