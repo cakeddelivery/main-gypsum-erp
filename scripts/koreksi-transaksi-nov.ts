@@ -8,6 +8,8 @@
  *    Rp966.222 dan Rp893.533. Pemasukan penjualannya ikut tercatat otomatis (saldo penjual marketplace).
  * 2. TRX-202611-0011 pembelian magnet tercatat Rp2.000, di mutasi Rp289.335: dibatalkan (jurnal dibalik)
  *    lalu dicatat ulang dengan nominal benar, kategori/rincian sama.
+ * 3. TRX-202611-0061 withdraw TikTok MG Rp684.934 salah tanggal: dibatalkan (jurnal dibalik) lalu dicatat ulang
+ *    tanggal 5 Nov (jam, toko, rekening, bukti sama). Pemasukan penjualannya ikut pindah tanggal.
  */
 import { PrismaClient } from "@prisma/client";
 import { approveAndBook, cancelBookedTransaction, createTransaction } from "../src/lib/finance";
@@ -21,6 +23,7 @@ const WITHDRAWS = [
   { key: "WD-TIKTOK-MG-3749234774551921757", amount: 893_533, at: "2026-11-02T11:19:00+07:00", note: "WD tiktok MG (pengajuan 1 Nov, ref 3749234774551921757)" },
 ];
 const FIX = { number: "TRX-202611-0011", wrong: 2_000, right: 289_335 };
+const REDATE = { number: "TRX-202611-0061", amount: 684_934, day: "2026-11-05" };
 
 async function main() {
   console.log(`mode: ${apply ? "JALANKAN" : "pratinjau"}\n`);
@@ -88,6 +91,55 @@ async function main() {
       console.log(`    → ${t.number} dibukukan`);
     }
   }
+  console.log(`\n3. ${REDATE.number}: tanggal dipindah ke 5 Nov`);
+  const rkey = `KOREKSI-TGL-${REDATE.number}`;
+  const rdone = await prisma.financeTransaction.findUnique({ where: { idempotencyKey: rkey } });
+  const wd = await prisma.financeTransaction.findUnique({ where: { number: REDATE.number } });
+  if (rdone?.status === "DIBUKUKAN") {
+    console.log(`  = sudah dikoreksi (${rdone.number})`);
+  } else if (!wd) {
+    throw new Error(`${REDATE.number} tidak ditemukan`);
+  } else {
+    if (wd.direction !== "TRANSFER" || wd.accountId !== tiktok.id || wd.toAccountId !== seabank.id || Number(wd.amount) !== REDATE.amount) {
+      throw new Error(`${REDATE.number} bukan withdraw TikTok → Seabank 5984 ${idr(REDATE.amount)}. Hentikan, kabari Claude.`);
+    }
+    // Jam sama, tanggal 5 Nov (WIB)
+    const hm = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", hour12: false }).format(wd.date);
+    const newDate = new Date(`${REDATE.day}T${hm}:00+07:00`);
+    const oldDay = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(wd.date);
+    if (oldDay === REDATE.day && wd.status === "DIBUKUKAN") {
+      console.log(`  = sudah bertanggal ${REDATE.day}, tidak perlu dikoreksi`);
+    } else {
+      console.log(`  - batalkan ${REDATE.number} (tanggal ${oldDay}, ${wd.note ?? ""})`.trimEnd());
+      console.log(`  + catat ulang ${idr(REDATE.amount)} tanggal ${REDATE.day} pukul ${hm}, toko & rekening sama`);
+      if (apply) {
+        if (wd.status === "DIBUKUKAN") await cancelBookedTransaction(wd.id, actor, `Salah tanggal: masuk Seabank 5984 tanggal ${REDATE.day}`);
+        const t =
+          rdone ??
+          (await createTransaction(
+            {
+              direction: "TRANSFER",
+              amount: REDATE.amount,
+              date: newDate,
+              accountId: wd.accountId,
+              toAccountId: wd.toAccountId,
+              storeId: wd.storeId,
+              counterparty: wd.counterparty,
+              note: `${wd.note ?? ""} (koreksi tanggal ${REDATE.number})`.trim(),
+              proofPath: wd.proofPath,
+              proofMime: wd.proofMime,
+              idempotencyKey: rkey,
+            },
+            "MANUAL",
+            actor,
+            { submit: true },
+          )).transaction;
+        await approveAndBook(t.id, actor, "Koreksi audit saldo 5 Nov");
+        console.log(`    → ${t.number} dibukukan`);
+      }
+    }
+  }
+
   if (!apply) console.log("\nIni baru PRATINJAU. Untuk menyimpan, jalankan lagi dengan --jalankan");
 }
 
