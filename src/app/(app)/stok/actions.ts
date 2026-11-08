@@ -61,17 +61,16 @@ export const decideRequest = action(
     const id = str(fd, "id");
     const decision = str(fd, "decision");
     const r = await prisma.stockRequest.findUniqueOrThrow({ where: { id } });
-    if (decision === "tolak") {
-      if (r.status !== "DIAJUKAN") throw new Error("Permintaan sudah diproses");
-      await prisma.stockRequest.update({ where: { id }, data: { status: "DITOLAK", decidedBy: user.name } });
-    } else if (decision === "setujui") {
-      if (r.status !== "DIAJUKAN") throw new Error("Permintaan sudah diproses");
-      await prisma.stockRequest.update({ where: { id }, data: { status: "DISETUJUI", decidedBy: user.name } });
+    // Status diubah bersyarat (WHERE status = ...): dua klik bersamaan tidak bisa memproses permintaan dua kali
+    if (decision === "tolak" || decision === "setujui") {
+      const n = await prisma.stockRequest.updateMany({ where: { id, status: "DIAJUKAN" }, data: { status: decision === "tolak" ? "DITOLAK" : "DISETUJUI", decidedBy: user.name } });
+      if (!n.count) throw new Error("Permintaan sudah diproses");
     } else if (decision === "penuhi") {
       if (r.status !== "DISETUJUI") throw new Error("Setujui permintaan terlebih dahulu");
       await prisma.$transaction(async (tx) => {
+        const n = await tx.stockRequest.updateMany({ where: { id, status: "DISETUJUI" }, data: { status: "DIPENUHI", decidedBy: user.name } });
+        if (!n.count) throw new Error("Permintaan sudah dipenuhi");
         await recordMovement(tx, { type: "TRANSFER", itemId: r.itemId, qty: Number(r.qty), fromLocationId: str(fd, "fromLocationId"), toLocationId: str(fd, "toLocationId"), ref: `REQ:${r.id}`, note: "Pemenuhan permintaan stok" }, user);
-        await tx.stockRequest.update({ where: { id }, data: { status: "DIPENUHI", decidedBy: user.name } });
       });
     }
     await audit(user, `PERMINTAAN_${decision.toUpperCase()}`, "StockRequest", id);

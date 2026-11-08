@@ -5,7 +5,7 @@ import { hashPassword } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { autoCode } from "@/lib/codes";
 import { audit } from "@/lib/audit";
-import { BoronganError, assertPoint, boronganScope, cancelHandover, checkSplit, createHandover, deleteResult, receiveHandover, recordResult, removePerson, savePerson, settlePoint, cancelSettlement } from "@/lib/borongan";
+import { BoronganError, assertPoint, boronganScope, cancelHandover, checkSplit, createHandover, deleteResult, receiveHandover, recordResults, removePerson, savePerson, settlePoint, cancelSettlement } from "@/lib/borongan";
 import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 
 const PATHS = ["/borongan", "/stok"];
@@ -59,11 +59,9 @@ export const addResults = action(
     const date = dateOnly(str(fd, "date") || todayStr());
     const rows = [...fd.entries()].filter(([k, v]) => k.startsWith("qty_") && String(v).trim()).map(([k, v]) => ({ workerId: k.slice(4), qty: num(v) }));
     if (!rows.length) throw new BoronganError("Isi jumlah hasil minimal satu pekerja");
-    let total = 0;
-    for (const r of rows) {
-      await recordResult({ pointId, taskId, date, workerId: r.workerId, qty: r.qty, note: optStr(fd, "note") }, user, scope);
-      total += r.qty;
-    }
+    // Satu transaksi: semua setoran tersimpan, atau tidak sama sekali bila ada yang gagal
+    await recordResults(rows.map((r) => ({ pointId, taskId, date, workerId: r.workerId, qty: r.qty, note: optStr(fd, "note") })), user, scope);
+    const total = rows.reduce((s, r) => s + r.qty, 0);
     return `Setoran ${rows.length} pekerja tercatat (${total.toLocaleString("id-ID")} pcs)`;
   },
   PATHS,
