@@ -28,8 +28,8 @@ export function parseLink(v: unknown): ReserveLink | null {
 }
 
 const OWNER_WORDS = /\b(kompensasi|gaji owner|pengelola|owner|ops)\b/i;
-const LOAN_WORDS = /\b(nabung|tabung|tabungan|spinjam|cicil|cicilan|pinjam|pinjaman|hutang|utang|angsur)\b/i;
-const ANY_WORDS = /\b(sisih|sisihan|disisihkan|nabung|tabung|tabungan|kompensasi|gaji owner|pengelola|spinjam)\b/i;
+const LOAN_WORDS = /\b(nabung|menabung|tabungan|spinjam|cicil|cicilan|pinjam|pinjaman|hutang|utang|angsur)\b/i;
+const ANY_WORDS = /\b(sisih|sisihan|disisihkan|nabung|menabung|tabungan|kompensasi|gaji owner|pengelola|spinjam)\b/i;
 
 const idr = (n: number) => `Rp ${n.toLocaleString("id-ID")}`;
 

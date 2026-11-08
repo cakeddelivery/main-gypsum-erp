@@ -193,7 +193,7 @@ export function extractTransaction(text: string, accounts: ExtractAccount[], cat
     const m = t.match(/dari\s+([a-z0-9 ]+?)\s+ke\s+([a-z0-9 ]+?)(?:\s+(?:rp|sebesar|\d)|$)/);
     const a = m ? matchAccount(m[1], accounts) : null;
     const b = m ? matchAccount(m[2], accounts) : null;
-    if (a && b && a !== b && (direction === null || /\b(transfer|tf|pindah|sisih|sisihkan|nabung|tabung|setor)\b/.test(t))) direction = "TRANSFER";
+    if (a && b && a !== b && (direction === null || /\b(transfer|tf|pindah|sisih|sisihkan|nabung|menabung|tabungan|setor)\b/.test(t))) direction = "TRANSFER";
   }
 
   let accountId: string | null = null;

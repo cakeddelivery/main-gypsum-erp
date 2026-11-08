@@ -13,7 +13,7 @@
  *   (tabungan cicilan boleh nominal bebas).
  * - Transfer bank → Saldo Penjual Shopee/TikTok (tidak mungkin; mis. TRX-202611-0069 "Ops 5 Nov 26"):
  *   rekening tujuan dibetulkan ke ShopeePay.
- * - Pengeluaran berketerangan nabung/tabung/spinjam/sisih/kompensasi/ops dari rekening asal dana: diubah jadi transfer.
+ * - Pengeluaran berketerangan nabung/tabungan/spinjam/sisih/kompensasi/ops dari rekening asal dana: diubah jadi transfer.
  * Hasilnya: jurnal lama dibalik & dibukukan ulang (plus beban kompensasi untuk dana owner), sisihan tercatat
  * dengan bukti transfer transaksi tsb. Sisihan tanpa bukti di tanggal yang sama memakai transfer ini (tidak dobel).
  *
@@ -30,8 +30,10 @@ const list = (k: string) => (process.argv.find((x) => x.startsWith(`--${k}=`))?.
 const picks = new Map(list("pilih").map((x) => [x.split(":")[0].toUpperCase(), Number(x.split(":")[1] ?? 0)]));
 const skips = new Set(list("lewati").map((x) => x.toUpperCase()));
 const idr = (n: number | bigint) => `Rp ${Number(n).toLocaleString("id-ID")}`;
-const KEYWORDS = /\b(nabung|tabung|tabungan|spinjam|sisih|sisihan|kompensasi|pengelola|ops|gaji owner)\b/i;
-const LOAN_WORDS = /\b(nabung|tabung|tabungan|spinjam|cicil|pinjam|hutang|utang)\b/i;
+const KEYWORDS = /\b(nabung|menabung|tabungan|spinjam|sisih|sisihan|kompensasi|pengelola|ops|gaji owner)\b/i;
+// Belanja biasa (mis. "isi ulang tabung LPG") bukan sisihan walau ada kata mirip
+const NOT_RESERVE = /\b(isi ulang|lpg|gas|elpiji|refill|beli|pembelian|belanja|bayar)\b/i;
+const LOAN_WORDS = /\b(nabung|menabung|tabungan|spinjam|cicil|pinjam|hutang|utang)\b/i;
 
 async function main() {
   const db = new URL(process.env.DATABASE_URL ?? "postgresql://x/x").pathname.slice(1);
@@ -70,7 +72,7 @@ async function main() {
       }
     } else {
       // Pengeluaran yang sebenarnya pindah ke rekening simpanan dana
-      if (t.payableId || t._count.splits || !KEYWORDS.test(text)) continue;
+      if (t.payableId || t._count.splits || !KEYWORDS.test(text) || NOT_RESERVE.test(text)) continue;
       const mine = funds.filter((f) => f.fromBankId === t.accountId);
       const prefer = LOAN_WORDS.test(text) ? mine.filter((f) => f.kind === "LOAN_SAVING") : mine.filter((f) => f.kind === "OWNER");
       toId = (prefer[0] ?? mine[0])?.toBankId ?? null;

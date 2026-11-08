@@ -13,10 +13,46 @@
  * Jurnal tidak berubah (nama pemasok hanya keterangan). WAJIB backup dulu: npm run backup
  */
 import { prisma } from "../src/lib/db";
-import { findSupplierByName, mergeSuppliers, resolveSupplier, similarSuppliers } from "../src/lib/suppliers";
+import { findSupplierByName, mergeSuppliers, resolveSupplier, similarSuppliers, supplierKey } from "../src/lib/suppliers";
 
 const apply = process.argv.includes("--jalankan");
 const arg = (k: string) => process.argv.find((x) => x.startsWith(`--${k}=`))?.slice(k.length + 3).replace(/^"|"$/g, "") ?? null;
+
+type Found = { id: string | null; name: string; code: string | null; pending: boolean; docs: string[] };
+
+/**
+ * Cari supplier dari nama: master Supplier (termasuk nama lain), lalu nama pemasok di dokumen hutang (semua jenis)
+ * & pembelian. Dokumen tanpa supplier: saat --jalankan dibuatkan/ditautkan supplier-nya.
+ */
+async function locate(name: string, actor: { id: string; name: string }): Promise<Found | null> {
+  const s = await findSupplierByName(prisma, name);
+  if (s) return { id: s.id, name: s.name, code: s.code, pending: false, docs: [] };
+  const key = supplierKey(name);
+  if (key.length < 2) return null;
+  const [pays, purs] = await Promise.all([prisma.payable.findMany({ select: { id: true, number: true, vendor: true, supplierId: true } }), prisma.purchase.findMany({ select: { id: true, number: true, vendor: true, supplierId: true } })]);
+  const docs = [...pays.map((d) => ({ ...d, type: "hutang" as const })), ...purs.map((d) => ({ ...d, type: "pembelian" as const }))].filter((d) => supplierKey(d.vendor) === key);
+  if (!docs.length) return null;
+  const linked = docs.find((d) => d.supplierId);
+  if (linked) {
+    const ls = await prisma.supplier.findUniqueOrThrow({ where: { id: linked.supplierId! } });
+    return { id: ls.id, name: ls.name, code: ls.code, pending: false, docs: [] };
+  }
+  if (!apply) return { id: null, name: docs[0].vendor, code: null, pending: true, docs: docs.map((d) => d.number) };
+  const ns = await resolveSupplier(prisma, { name: docs[0].vendor }, actor, "skrip satukan-supplier");
+  for (const d of docs) {
+    if (d.type === "hutang") await prisma.payable.update({ where: { id: d.id }, data: { supplierId: ns!.id } });
+    else await prisma.purchase.update({ where: { id: d.id }, data: { supplierId: ns!.id } });
+  }
+  return { id: ns!.id, name: ns!.name, code: ns!.code, pending: false, docs: [] };
+}
+
+/** Semua nama supplier & pemasok di dokumen, supaya nama persisnya bisa disalin */
+async function listNames() {
+  const [sups, pays, purs] = await Promise.all([prisma.supplier.findMany({ orderBy: { name: "asc" } }), prisma.payable.findMany({ select: { vendor: true, kind: true } }), prisma.purchase.findMany({ select: { vendor: true } })]);
+  console.log(`   Supplier di master: ${sups.map((x) => x.name + (x.aliases ? ` (nama lain: ${x.aliases})` : "")).join(" · ") || "-"}`);
+  console.log(`   Pemasok di hutang: ${[...new Set(pays.map((p) => `${p.vendor}${p.kind === "PINJAMAN" ? " [pinjaman]" : ""}`))].join(" · ") || "-"}`);
+  console.log(`   Pemasok di pembelian: ${[...new Set(purs.map((p) => p.vendor))].join(" · ") || "-"}`);
+}
 
 async function main() {
   const db = new URL(process.env.DATABASE_URL ?? "postgresql://x/x").pathname.slice(1);
@@ -45,23 +81,28 @@ async function main() {
   if (from || to) {
     if (!from || !to) throw new Error("Isi --gabung=\"nama\" dan --ke=\"nama\"");
     console.log(`\n2. Gabung "${from}" → "${to}"`);
-    const src = await findSupplierByName(prisma, from);
-    const dst = await findSupplierByName(prisma, to);
+    const src = await locate(from, actor);
+    const dst = await locate(to, actor);
     if (!src || !dst) {
-      console.log(`   ${!src ? `"${from}"` : `"${to}"`} belum ada di master Supplier${apply ? "" : " (akan dibuat dari dokumen hutang/pembelian di langkah 1 saat --jalankan)"}.`);
-      if (apply) throw new Error("Supplier tidak ditemukan");
+      const miss = !src ? from : to;
+      console.log(`   "${miss}" tidak ditemukan di database ini: bukan nama supplier, nama lain, atau nama pemasok di hutang/pembelian.`);
+      await listNames();
+      if (apply) throw new Error(`"${miss}" tidak ditemukan. Salin nama persis dari daftar di atas.`);
+    } else if (src.pending || dst.pending) {
+      console.log(`   ${[src, dst].filter((x) => x.pending).map((x) => `"${x.name}" belum ada di master Supplier, dibuat dari dokumen ${x.docs.join(", ")} saat --jalankan`).join("; ")}.`);
+      console.log(`   Lalu digabung ke ${dst.name}; "${src.name}" disimpan sebagai nama lain.`);
     } else if (src.id === dst.id) {
       console.log(`   Sudah satu supplier: ${dst.name}`);
     } else {
       const [it, pu, pa] = await Promise.all([
-        prisma.item.count({ where: { supplierId: src.id } }),
-        prisma.purchase.count({ where: { supplierId: src.id } }),
-        prisma.payable.findMany({ where: { supplierId: src.id } }),
+        prisma.item.count({ where: { supplierId: src.id! } }),
+        prisma.purchase.count({ where: { supplierId: src.id! } }),
+        prisma.payable.findMany({ where: { supplierId: src.id! } }),
       ]);
       console.log(`   ${src.name} (${src.code ?? "-"}) → ${dst.name} (${dst.code ?? "-"}): ${pa.length} hutang [${pa.map((p) => `${p.number} sisa Rp ${Number(p.amount - p.paid).toLocaleString("id-ID")}`).join(", ")}], ${pu} pembelian, ${it} item`);
       console.log(`   Nama dipakai: ${dst.name}; "${src.name}" disimpan sebagai nama lain.`);
       if (apply) {
-        const r = await mergeSuppliers(src.id, dst.id, actor);
+        const r = await mergeSuppliers(src.id!, dst.id!, actor);
         console.log(`   ✓ Digabung: ${r.payables} hutang, ${r.purchases} pembelian, ${r.items} item`);
       }
     }
