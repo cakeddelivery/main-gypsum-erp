@@ -986,6 +986,8 @@ model FinanceTransaction {
   /// atau {skip:true} = transfer biasa (tidak dicocokkan ke dana sisihan)
   reserveLink         Json?
   reserveEntries      ReserveEntry[]
+  /// Pengembalian dana talangan: transfer dari rekening operasional ke dompet simpanan (Seabank 0006 / ShopeePay)
+  bailoutRepay        Boolean          @default(false)
 
   @@index([fingerprint])
   @@index([status])

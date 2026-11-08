@@ -12,7 +12,8 @@ import { dailyRecapText } from "./jobs";
 import { handleMenuCallback, handleMenuCommand, MENU_TEXT } from "./botMenu";
 import { clearSession, getSession, handleFlowCallback, handleFlowLocation, handleFlowText, startPrefilledFlow, type TgLocation } from "./botFlow";
 import { detectPurchase, extractSplits, rawMaterials } from "./botPurchase";
-import { prefilledPayablePayment, prefilledPurchase, prefilledReserve } from "./botFlow3";
+import { prefilledPayablePayment, prefilledPurchase, prefilledReserve, prefilledTalangan, talanganPhoto } from "./botFlow3";
+import { talanganSummary } from "./talangan";
 import { detectPayablePayment } from "./botPurchase";
 import { openPayables } from "./payables";
 import { matchReserveTransfer } from "./reserve";
@@ -207,6 +208,19 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     await handleFlowLocation(ident, chatId, msg.location, { forwarded: !!(msg.forward_origin || msg.forward_date), venue: !!msg.venue, ageSec: msg.date ? Math.floor(Date.now() / 1000) - msg.date : 0 });
     return;
   }
+  // Isian pengembalian dana talangan menunggu foto bukti transfer
+  if (msg.photo?.length) {
+    const s = await getSession(chatId);
+    if (s?.flow === "tlg" && s.step === "proof" && s.userId === ident.userId) {
+      const photo = await downloadTelegramFile(msg.photo[msg.photo.length - 1].file_id);
+      if (!photo) {
+        await sendTelegram(chatId, "Foto gagal diunduh, coba kirim ulang.");
+        return;
+      }
+      await chatAction(chatId, "typing").catch(() => {});
+      return startPrefilledFlow({ i: ident, chatId }, await talanganPhoto({ i: ident, chatId }, s, photo, String(msg.message_id)));
+    }
+  }
   if (text === MENU_TEXT || (text.startsWith("/") && text !== "/batal")) await clearSession(chatId);
   else if (text && !msg.photo && (await handleFlowText(ident, chatId, text))) return;
   if (await handleMenuCommand(ident, chatId, text)) return;
@@ -295,6 +309,14 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   };
   const ctx = { i: ident, chatId };
   const basis = [text, receipt?.counterparty].filter(Boolean).join(" ");
+  // Transfer ke rekening simpanan sebesar talangan yang belum dikembalikan (atau berketerangan "talangan") = pengembalian talangan
+  if (!splits.length && ex.direction === "TRANSFER" && ex.toAccountId && ident.perms.has("finance.approve")) {
+    const w = (await talanganSummary()).find((x) => x.bank.id === ex.toAccountId && x.outstanding > 0);
+    if (w && (ex.amount === w.outstanding || /\btalangan\b/i.test(basis))) {
+      const session = await prefilledTalangan(ctx, { walletId: w.bank.id, proofPath, read: ex.amount, messageId: String(msg.message_id), date: ex.date });
+      if (session) return startPrefilledFlow(ctx, session);
+    }
+  }
   // Bukti transfer dana sisihan (nominal = kelipatan sisihan harian, rekening sesuai alur dana)
   if (!splits.length && (ex.direction === "TRANSFER" || ex.direction === "KELUAR") && ident.perms.has("finance.approve")) {
     const m = await matchReserveTransfer({ amount: ex.amount, fromBankId: ex.accountId, toBankId: ex.direction === "TRANSFER" ? ex.toAccountId : null, date: ex.date!, text: basis });

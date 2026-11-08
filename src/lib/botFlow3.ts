@@ -7,6 +7,8 @@ import { applyReserveOption } from "./reserve";
 import { bookPayablePayment, bookReserveTransfer, FinanceError } from "./finance";
 import type { ReservePart } from "./reserveSync";
 import { findSupplierByName } from "./suppliers";
+import { readProofAmount, repayTalangan, talanganSummary } from "./talangan";
+import { saveProof } from "./storage";
 import { BoronganError, boronganScope, BORONGAN_ROLE_LABEL, createHandover, HANDOVER_LABEL, payLines, receiveHandover, recordResult, settlePoint, type Scope } from "./borongan";
 import { StockError } from "./stock";
 import { idr, parseIDR } from "./money";
@@ -44,6 +46,7 @@ export function t3MenuRows(i: BotIdent): InlineButton[][] {
   if (can(i, "finance.approve")) row.push({ text: "🛒 Pembelian", callback_data: "f:start:beli" });
   const rows: InlineButton[][] = row.length ? [row] : [];
   if (can(i, "borongan.view", "borongan.point", "borongan.manage")) rows.push([{ text: "🧑‍🏭 Borongan", callback_data: "f:start:bor" }]);
+  if (can(i, "finance.approve")) rows.push([{ text: "💸 Kembalikan dana talangan", callback_data: "f:start:tlg" }]);
   return rows;
 }
 
@@ -1098,4 +1101,101 @@ const reserveFromProof: FlowDef = {
   },
 };
 
-export const T3_FLOWS: Record<string, FlowDef> = { kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay };
+
+// =====================================================================
+// Pengembalian dana talangan (Seabank 0006 / ShopeePay dipakai operasional)
+// =====================================================================
+const tlgHead = "<b>💸 Pengembalian dana talangan</b>";
+
+/** Mulai isian pengembalian langsung ke langkah konfirmasi (bukti transfer sudah dikirim) */
+export async function prefilledTalangan(ctx: Ctx, p: { walletId: string; proofPath: string | null; read: number | null; messageId?: string; date?: string | null }): Promise<Session | null> {
+  if (!can(ctx.i, "finance.approve")) return null;
+  const w = (await talanganSummary()).find((x) => x.bank.id === p.walletId && x.outstanding > 0);
+  if (!w) return null;
+  return { chatId: ctx.chatId, userId: ctx.i.userId, flow: "tlg", step: "confirm", data: { walletId: w.bank.id, amount: w.outstanding, proofPath: p.proofPath, read: p.read, msgId: p.messageId ?? null, date: p.date ?? null } };
+}
+
+/** Foto bukti dikirim saat isian menunggu bukti: simpan, baca nominalnya, lanjut konfirmasi */
+export async function talanganPhoto(ctx: Ctx, s: Session, photo: Buffer, messageId: string) {
+  s.data.proofPath = await saveProof(photo, "image/jpeg");
+  s.data.read = await readProofAmount(photo, "image/jpeg");
+  s.data.msgId = messageId;
+  s.step = "confirm";
+  return s;
+}
+
+const talangan: FlowDef = {
+  async start(ctx) {
+    if (!can(ctx.i, "finance.approve")) return "Anda tidak berwenang";
+    const open = (await talanganSummary()).filter((w) => w.outstanding > 0);
+    if (!open.length) return "✅ Tidak ada dana talangan yang perlu dikembalikan.";
+    return { chatId: ctx.chatId, userId: ctx.i.userId, flow: "tlg", step: open.length > 1 ? "pick" : "proof", data: { walletId: open.length > 1 ? null : open[0].bank.id, amount: open.length > 1 ? null : open[0].outstanding } };
+  },
+  async prompt(s) {
+    const d = s.data;
+    const all = await talanganSummary();
+    if (s.step === "pick") {
+      const open = all.filter((w) => w.outstanding > 0);
+      return { text: `${tlgHead}
+Pilih rekening simpanan yang dikembalikan:`, buttons: [...open.map((w) => [{ text: `${w.bank.name} · ${idr(w.outstanding)}`.slice(0, 60), callback_data: `f:${w.bank.id}` }]), cancelRow] };
+    }
+    const w = all.find((x) => x.bank.id === d.walletId);
+    if (!w) return { text: `${tlgHead}
+Rekening tidak ditemukan.`, buttons: [cancelRow] };
+    const rows = w.open.slice(0, 10).map((i) => `• ${fmtDate(i.date)} · ${esc(i.label)} ${esc(i.ref)} · ${idr(i.amount)}`).join("\n");
+    const head = `${tlgHead}\n${esc(w.bank.name)}: <b>${idr(w.outstanding)}</b>\n${rows}${w.open.length > 10 ? `\n… ${w.open.length - 10} lainnya` : ""}`;
+    if (s.step === "proof") return { text: `${head}\n\nTransfer <b>${idr(w.outstanding)}</b> dari ${esc(w.fromBank?.name ?? "rekening operasional")} ke ${esc(w.bank.name)}, lalu <b>kirim foto bukti transfernya</b> di sini.`, buttons: [cancelRow] };
+    const read = d.read ? Number(d.read) : null;
+    const amount = Number(d.amount ?? w.outstanding);
+    const check = read == null ? "Nominal di foto tidak terbaca, pastikan sama." : read === amount ? `Nominal di bukti cocok: ${idr(read)} ✓` : `⚠️ Nominal di bukti terbaca ${idr(read)}, tidak sama dengan total talangan ${idr(amount)}.`;
+    return {
+      text: `${head}\n\nBukti transfer diterima. ${check}\n\nSimpan pengembalian <b>${idr(read && read !== amount && read < amount ? read : amount)}</b> dari ${esc(w.fromBank?.name ?? "rekening operasional")} ke ${esc(w.bank.name)}?`,
+      buttons: [[{ text: "✅ Simpan", callback_data: "f:ok" }], [{ text: "📷 Kirim ulang bukti", callback_data: "f:again" }], cancelRow],
+    };
+  },
+  async answer(ctx, s, v, fromText) {
+    const d = s.data;
+    if (s.step === "pick") {
+      if (fromText) return "Pilih dengan tombol";
+      const w = (await talanganSummary()).find((x) => x.bank.id === v && x.outstanding > 0);
+      if (!w) return "Pilihan tidak dikenal";
+      d.walletId = w.bank.id;
+      d.amount = w.outstanding;
+      s.step = "proof";
+      return null;
+    }
+    if (s.step === "proof") return fromText ? "Kirim FOTO bukti transfer (bukan teks)" : "Kirim foto bukti transfer";
+    if (v === "again") {
+      s.step = "proof";
+      return null;
+    }
+    if (v !== "ok") return "Tekan Simpan atau Batal";
+    if (!can(ctx.i, "finance.approve")) return "Anda tidak berwenang";
+    const read = d.read ? Number(d.read) : null;
+    const w = (await talanganSummary()).find((x) => x.bank.id === d.walletId);
+    if (!w || w.outstanding <= 0) return "Talangan sudah dikembalikan";
+    // Bukti lebih kecil dari total = pengembalian sebagian sebesar nominal di bukti; selain itu total talangan
+    const amount = read && read < w.outstanding ? read : w.outstanding;
+    try {
+      const r = await repayTalangan(
+        { walletId: w.bank.id, amount, date: d.date ? String(d.date) : todayStr(), proofPath: d.proofPath ? String(d.proofPath) : null, proofMime: d.proofPath ? "image/jpeg" : null, idempotencyKey: d.msgId ? `tg:${ctx.chatId}:${d.msgId}` : null, telegramChatId: ctx.chatId, telegramMessageId: d.msgId ? String(d.msgId) : null },
+        "TELEGRAM",
+        actorOf(ctx.i),
+      );
+      d.txNumber = r.transaction.number;
+      d.booked = r.booked ? 1 : 0;
+      d.paid = amount;
+      d.remaining = Math.max(0, w.outstanding - amount);
+    } catch (e) {
+      return e instanceof FinanceError ? e.message : errMsg(e);
+    }
+    return "done";
+  },
+  async finish(_ctx, s) {
+    const d = s.data;
+    if (!Number(d.booked)) return { text: `⚠️ Pengembalian tercatat sebagai ${esc(String(d.txNumber))} tapi perlu ditinjau di menu Transaksi (terindikasi duplikat).`, buttons: [menuBtn] };
+    return { text: `✅ <b>Pengembalian talangan dibukukan</b> (${esc(String(d.txNumber))})\n${idr(Number(d.paid))} · bukti terlampir\n${Number(d.remaining) > 0 ? `Sisa talangan: <b>${idr(Number(d.remaining))}</b>` : "Talangan rekening ini sudah lunas 🎉"}`, buttons: [menuBtn] };
+  },
+};
+
+export const T3_FLOWS: Record<string, FlowDef> = { kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, tlg: talangan, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay };

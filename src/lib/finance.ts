@@ -59,6 +59,8 @@ export type TxInput = {
   payInterest?: number | null;
   /** Transfer dana sisihan: rincian sisihan, atau skip = transfer biasa; kosong = dicocokkan otomatis saat dibukukan */
   reserveLink?: ReserveLink | null;
+  /** Pengembalian dana talangan ke dompet simpanan (bukan sisihan) */
+  bailoutRepay?: boolean;
 };
 
 export type SplitInput = { categoryId?: string | null; amount: number; note?: string | null; itemId?: string | null; qty?: number | null };
@@ -179,6 +181,7 @@ export async function createTransaction(input: TxInput, source: TxSource, actor:
         payableId: input.direction === "KELUAR" && !splits.length ? input.payableId ?? null : null,
         payInterest: BigInt(input.direction === "KELUAR" && input.payableId ? Math.max(0, Math.round(input.payInterest ?? 0)) : 0),
         reserveLink: input.direction === "TRANSFER" && input.reserveLink ? (input.reserveLink as Prisma.InputJsonValue) : undefined,
+        bailoutRepay: input.direction === "TRANSFER" && !!input.bailoutRepay,
       },
     });
     await tx.approvalLog.create({
@@ -370,7 +373,7 @@ async function syncLoanSaving(tx: Tx, cur: Pick<TxRow, "payableId" | "accountId"
  * otomatis dari rekening & nominal bila hasilnya cukup yakin. Transfer biasa / tidak cocok = tanpa sisihan.
  */
 async function resolveReserveLink(tx: Tx, cur: TxRow): Promise<ReservePart[]> {
-  if (cur.direction !== "TRANSFER" || !cur.accountId || !cur.toAccountId) return [];
+  if (cur.direction !== "TRANSFER" || !cur.accountId || !cur.toAccountId || cur.bailoutRepay) return [];
   const link = parseLink(cur.reserveLink);
   if (link && "skip" in link) return [];
   if (link) {
@@ -379,7 +382,10 @@ async function resolveReserveLink(tx: Tx, cur: TxRow): Promise<ReservePart[]> {
     });
     return link.parts;
   }
-  const m = await reserveOptions(tx, { amount: Number(cur.amount), fromBankId: cur.accountId, toBankId: cur.toAccountId, date: todayStr(cur.date), text: [cur.note, cur.rawText, cur.counterparty].filter(Boolean).join(" "), excludeTxId: cur.id });
+  const text = [cur.note, cur.rawText, cur.counterparty].filter(Boolean).join(" ");
+  // "kembalikan talangan" = pengembalian dana talangan, bukan sisihan
+  if (/\btalangan\b/i.test(text)) return [];
+  const m = await reserveOptions(tx, { amount: Number(cur.amount), fromBankId: cur.accountId, toBankId: cur.toAccountId, date: todayStr(cur.date), text, excludeTxId: cur.id });
   return m?.sure ? m.options[0].parts : [];
 }
 
