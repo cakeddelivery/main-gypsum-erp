@@ -101,13 +101,18 @@ export type MoveInput = {
   /** Penyesuaian: true = tambah, false = kurang */
   increase?: boolean;
   allowNegative?: boolean;
+  /** Jangan buat jurnal (nilainya sudah dibalik oleh jurnal lain, mis. pembatalan transaksi) */
+  noJournal?: boolean;
+  /** Opname barang jadi: selisih kurang = barang terjual → HPP (bukan beban selisih) */
+  hpp?: boolean;
 };
 
 /**
  * Catat mutasi stok. Nilai akuntansi:
  * - PENERIMAAN: hanya kuantitas & harga rata-rata (pembayaran pembelian dibukukan dari Finance, mencegah duplikasi)
  * - PENGELUARAN barang jadi: HPP (Dr HPP / Cr Persediaan Barang Jadi)
- * - PENYESUAIAN: Dr/Cr Persediaan vs Beban Selisih Persediaan
+ * - PENGELUARAN bahan baku / setengah jadi: Dr Beban Selisih Persediaan / Cr Persediaan (stok & buku besar tetap cocok)
+ * - PENYESUAIAN: Dr/Cr Persediaan vs Beban Selisih Persediaan; opname barang jadi yang berkurang → HPP
  */
 export async function recordMovement(tx: Tx, m: MoveInput, actor: Actor) {
   if (!(m.qty > 0)) throw new StockError("Jumlah harus lebih dari 0");
@@ -165,14 +170,15 @@ export async function recordMovement(tx: Tx, m: MoveInput, actor: Actor) {
   });
   const value = Math.round(m.qty * unitCost);
   let journalId: string | null = null;
-  if (value > 0 && (m.type === "PENYESUAIAN" || (m.type === "PENGELUARAN" && item.type === "BARANG_JADI"))) {
+  if (value > 0 && !m.noJournal && (m.type === "PENYESUAIAN" || m.type === "PENGELUARAN")) {
     const inv = INVENTORY_COA[item.type];
-    const other = m.type === "PENGELUARAN" ? COA.HPP : COA.BEBAN_SELISIH_PERSEDIAAN;
     const inc = m.type === "PENYESUAIAN" && m.increase;
+    const toHpp = item.type === "BARANG_JADI" && !inc && (m.type === "PENGELUARAN" || m.hpp);
+    const other = toHpp ? COA.HPP : COA.BEBAN_SELISIH_PERSEDIAAN;
     const j = await postJournal(tx, {
       date: mv.date,
       storeId: await defaultStore(tx),
-      description: `${MOVEMENT_LABEL[m.type]} ${item.sku} ${item.name} × ${m.qty}`,
+      description: `${m.hpp && !inc ? "Barang terjual (opname)" : MOVEMENT_LABEL[m.type]} ${item.sku} ${item.name} × ${m.qty}`,
       source: "STOK",
       sourceId: mv.id,
       actor,
@@ -182,10 +188,51 @@ export async function recordMovement(tx: Tx, m: MoveInput, actor: Actor) {
     await tx.stockMovement.update({ where: { id: mv.id }, data: { journalId } });
   }
   await audit(actor, "MUTASI_STOK", "StockMovement", mv.id, { type: m.type, item: item.sku, qty: m.qty }, tx);
-  return mv;
+  return { ...mv, journalId };
 }
 
 // ---------------- PRODUKSI -> STOK & AKUNTANSI ----------------
+
+/** Stok minus per item per lokasi (konsumsi produksi/borongan melebihi stok tercatat) */
+export async function negativeStock(db: DB = prisma) {
+  const rows = (await stockBalances(db)).filter((r) => r.qty < -0.0005);
+  if (!rows.length) return [];
+  const [items, locs] = await Promise.all([db.item.findMany({ where: { id: { in: rows.map((r) => r.itemId) } } }), db.location.findMany({ where: { id: { in: rows.map((r) => r.locationId) } } })]);
+  return rows.map((r) => ({ ...r, item: items.find((i) => i.id === r.itemId)!, location: locs.find((l) => l.id === r.locationId)! }));
+}
+
+export type OpnameRow = { itemId: string; physical: number };
+
+/**
+ * Opname barang jadi (akhir bulan) di gudang barang jadi: stok sistem disamakan dengan hitungan fisik.
+ * Berkurang = barang terjual/keluar → Dr HPP / Cr Persediaan Barang Jadi; bertambah = Dr Persediaan / Cr Beban Selisih.
+ */
+export async function finishedGoodsOpname(rows: OpnameRow[], date: Date, actor: Actor) {
+  return prisma.$transaction(async (tx) => {
+    const { finished } = await locationSettings(tx);
+    if (!finished) throw new StockError("Lokasi gudang barang jadi belum diatur di Pengaturan");
+    const ref = `OPN-${date.toISOString().slice(0, 10)}`;
+    let sold = 0;
+    let value = 0;
+    let changed = 0;
+    for (const r of rows) {
+      if (!(r.physical >= 0)) throw new StockError("Jumlah fisik tidak boleh minus");
+      const item = await tx.item.findUniqueOrThrow({ where: { id: r.itemId } });
+      if (item.type !== "BARANG_JADI") throw new StockError(`${item.name} bukan produk jadi`);
+      const sys = await qtyAt(tx, item.id, finished);
+      const diff = Math.round((r.physical - sys) * 1000) / 1000;
+      if (!diff) continue;
+      const mv = await recordMovement(tx, { type: "PENYESUAIAN", itemId: item.id, qty: Math.abs(diff), fromLocationId: finished, increase: diff > 0, hpp: true, ref, note: `Opname barang jadi: sistem ${sys}, fisik ${r.physical}`, date }, actor);
+      if (diff < 0) {
+        sold += -diff;
+        value += Math.round(-diff * Number(mv.unitCost));
+      }
+      changed++;
+    }
+    await audit(actor, "OPNAME_BARANG_JADI", "StockMovement", null, { ref, items: changed, sold, hpp: value }, tx);
+    return { changed, sold, hpp: value };
+  });
+}
 
 export async function locationSettings(db: DB) {
   const s = await db.setting.findMany({ where: { key: { in: ["loc_raw", "loc_wip", "loc_finished"] } } });
@@ -202,7 +249,7 @@ export async function bomMaterialCost(db: DB, productId: string) {
 /**
  * Integrasi produksi:
  * - Tahap CETAK: konsumsi bahan sesuai BOM × (hasil + reject) → Dr BDP / Cr Bahan Baku
- * - Reject tahap setelah CETAK: Dr Beban Reject / Cr BDP (nilai bahan per unit)
+ * - Reject semua tahap (termasuk CETAK): Dr Beban Selisih Persediaan / Cr BDP (nilai bahan per unit)
  * - Tahap BARANG_JADI: hasil produksi masuk gudang barang jadi → Dr Barang Jadi / Cr BDP
  */
 export async function postProductionStock(tx: Tx, entryId: string, actor: Actor) {
@@ -225,7 +272,9 @@ export async function postProductionStock(tx: Tx, entryId: string, actor: Actor)
     if (total > 0) {
       await postJournal(tx, { date, storeId, description: `${desc}: konsumsi bahan`, source: "PRODUKSI", sourceId: e.id, actor, lines: [{ accountCode: COA.PERSEDIAAN_BDP, debit: total }, { accountCode: COA.PERSEDIAAN_BAHAN, credit: total }] });
     }
-  } else if (e.qtyReject > 0 && unitMat > 0) {
+  }
+  // Reject (termasuk tahap Cetak yang bahannya baru saja masuk BDP) langsung dibebankan, agar tidak mengendap di BDP
+  if (e.qtyReject > 0 && unitMat > 0 && (e.stage !== "CETAK" || (e.product.bom.length && locs.raw))) {
     const v = unitMat * e.qtyReject;
     await postJournal(tx, { date, storeId, description: `${desc}: reject ${e.qtyReject}`, source: "PRODUKSI", sourceId: e.id, actor, lines: [{ accountCode: COA.BEBAN_SELISIH_PERSEDIAAN, debit: v }, { accountCode: COA.PERSEDIAAN_BDP, credit: v }] });
   }

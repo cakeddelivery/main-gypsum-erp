@@ -276,6 +276,9 @@ model CashAdvance {
   createdAt         DateTime @default(now())
 
   @@index([employeeId])
+  /// Dibatalkan: jurnal dibalik, dokumen tetap tersimpan
+  cancelledAt  DateTime?
+  cancelReason String?
 }
 
 /// Jenis tugas borongan (dibayar per piece), tarif bisa diubah.
@@ -437,6 +440,9 @@ model BoronganSettlement {
   createdBy     String
   createdAt     DateTime         @default(now())
   results       BoronganResult[]
+  /// Dibatalkan: jurnal dibalik, dokumen tetap tersimpan
+  cancelledAt  DateTime?
+  cancelReason String?
 }
 
 /// Hasil kerja borongan per pekerja; periodId terisi setelah diklaim
@@ -1229,6 +1235,9 @@ model Purchase {
   createdBy     String
   createdAt     DateTime       @default(now())
   lines         PurchaseLine[]
+  /// Dibatalkan: jurnal dibalik, dokumen tetap tersimpan
+  cancelledAt  DateTime?
+  cancelReason String?
 }
 
 model PurchaseLine {

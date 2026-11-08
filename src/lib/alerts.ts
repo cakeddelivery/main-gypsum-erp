@@ -1,5 +1,5 @@
 import { prisma } from "./db";
-import { lowStockItems } from "./stock";
+import { lowStockItems, negativeStock } from "./stock";
 import { addDays, dateOnly, todayStr } from "./time";
 import type { Permission } from "./rbac";
 
@@ -19,6 +19,9 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
   }
   if (can("stock.view")) {
     tasks.push(lowStockItems().then((l) => void (l.length && out.push({ key: "lowstock", label: "Item stok menipis", count: l.length, href: "/stok?filter=menipis", tone: "amber" }))));
+  }
+  if (can("stock.view")) {
+    tasks.push(negativeStock().then((l) => void (l.length && out.push({ key: "negstock", label: "Stok minus (pemakaian melebihi stok tercatat)", count: l.length, href: "/stok?filter=minus", tone: "red" }))));
   }
   if (can("stock.approve")) {
     tasks.push(prisma.stockRequest.count({ where: { status: "DIAJUKAN" } }).then((c) => void (c && out.push({ key: "stockreq", label: "Permintaan stok menunggu", count: c, href: "/stok/permintaan", tone: "blue" }))));

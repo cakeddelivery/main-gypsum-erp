@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
-import { checkSplit, createHandover, deleteResult, payLines, receiveHandover, recordResult, removePerson, resultShares, savePerson, settlePoint, type Scope } from "@/lib/borongan";
+import { cancelSettlement, checkSplit, createHandover, deleteResult, payLines, receiveHandover, recordResult, removePerson, resultShares, savePerson, settlePoint, type Scope } from "@/lib/borongan";
 import { saveItemRecord } from "@/lib/items";
 import { stockBalances } from "@/lib/stock";
 import { dateOnly } from "@/lib/time";
@@ -44,6 +44,10 @@ describe("Alur borongan tetangga", () => {
     const w2 = await savePerson({ name: "Tetangga Dua", role: "PEKERJA", pointId: bmr.id }, actor, coordScope);
     await expect(savePerson({ name: "Orang Mastrip", role: "PEKERJA", pointId: mst.id }, actor, coordScope)).rejects.toThrow(/titik/);
     await expect(savePerson({ name: "Koordinator Palsu", role: "KOORDINATOR", pointId: bmr.id }, actor, coordScope)).rejects.toThrow(/pekerja/);
+    // Pekerja baru dari koordinator menunggu diaktifkan pengelola; koordinator tidak bisa mengaktifkannya sendiri
+    expect([w1.active, w2.active]).toEqual([false, false]);
+    expect((await savePerson({ id: w1.id, name: w1.name, role: "PEKERJA", pointId: bmr.id, active: true }, actor, coordScope)).active).toBe(false);
+    for (const w of [w1, w2]) await savePerson({ id: w.id, name: w.name, role: "PEKERJA", pointId: bmr.id, active: true }, actor, all);
 
     // Bahan: cat (bahan baku, per gram) dan giftbox polos (setengah jadi) → giftbox dicat
     const cat = await saveItemRecord({ name: "Cat Uji Borongan", type: "BAHAN_BAKU", category: "Cat & Pewarna", unit: "botol", hppUnit: "gram", hppFactor: 1000, minStock: 0, price: 50_000, openingQty: 4 }, actor);
@@ -92,6 +96,17 @@ describe("Alur borongan tetangga", () => {
     expect(sj.lines.find((l) => l.account.code === COA.BEBAN_GAJI_PRODUKSI)?.debit.toString()).toBe("2250");
     await expect(settlePoint({ pointId: bmr.id, upTo: date, bankAccountId: seabank }, actor)).rejects.toThrow(/belum dibayar/);
     await expect(deleteResult(r1.id, actor, all)).rejects.toThrow(/dibayar/);
+
+    // Hasil melebihi bahan yang ada di titik ditolak (sisa giftbox polos 10)
+    await expect(recordResult({ pointId: bmr.id, workerId: w2.id, taskId: task.id, date, qty: 11 }, actor, coordScope)).rejects.toThrow(/cukup untuk 10 pcs/);
+
+    // Pembayaran upah dibatalkan: jurnal dibalik, setoran kembali belum dibayar, lalu bisa dibayar ulang
+    await cancelSettlement(st.id, "salah rekening", actor);
+    expect(await prisma.journal.count({ where: { reversalOfId: st.journalId! } })).toBe(1);
+    expect(await prisma.boronganResult.count({ where: { pointId: bmr.id, settlementId: null } })).toBe(2);
+    await expect(cancelSettlement(st.id, "lagi", actor)).rejects.toThrow(/sudah dibatalkan/);
+    const st2 = await settlePoint({ pointId: bmr.id, upTo: date, bankAccountId: seabank }, actor);
+    expect(Number(st2.total)).toBe(3000);
 
     // Pekerja dengan riwayat hanya dinonaktifkan
     expect(await removePerson(w1.id, actor, coordScope)).toBe("nonaktif");

@@ -9,7 +9,8 @@ import { Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { PurchaseFields } from "./PurchaseForm";
-import { savePurchase } from "./actions";
+import { cancelPurchaseAction, savePurchase } from "./actions";
+import { Field } from "@/components/ui";
 import { Paged } from "@/components/Paged";
 import { ProofPreview } from "@/components/ProofPreview";
 
@@ -38,7 +39,7 @@ export default async function PembelianPage() {
         <Card title="Riwayat pembelian">
           <div className="overflow-x-auto">
             <Paged><table className="tbl">
-              <thead><tr><th>No.</th><th>Tanggal</th><th>Supplier</th><th>Item</th><th className="num">Tagihan</th><th className="num">Dibayar</th><th>Status</th><th>Bukti</th></tr></thead>
+              <thead><tr><th>No.</th><th>Tanggal</th><th>Supplier</th><th>Item</th><th className="num">Tagihan</th><th className="num">Dibayar</th><th>Status</th><th>Bukti</th><th /></tr></thead>
               <tbody>
                 {purchases.map((p) => {
                   const pay = payables.find((x) => x.id === p.payableId);
@@ -48,8 +49,18 @@ export default async function PembelianPage() {
                       <td className="font-mono text-xs">{p.number}</td><td>{fmtDate(p.date)}</td><td>{p.vendor}</td>
                       <td className="text-xs">{p.lines.map((l) => `${l.item.name} × ${Number(l.qty).toLocaleString("id-ID")}`).join(", ")}</td>
                       <td className="num">{idr(p.total)}</td><td className="num">{idr(p.paidNow)}</td>
-                      <td>{pay ? (rem > 0 ? <Link href="/akuntansi/piutang-utang?tab=utang"><Badge tone={pay.dueDate && pay.dueDate < new Date() ? "red" : "amber"}>Hutang {idr(rem)} · {fmtDate(pay.dueDate)}</Badge></Link> : <Badge tone="green">Lunas</Badge>) : <Badge tone="green">Lunas</Badge>}</td>
+                      <td>{p.cancelledAt ? <><Badge tone="gray">Dibatalkan</Badge>{p.cancelReason && <div className="text-xs text-slate-400">{p.cancelReason}</div>}</> : pay ? (rem > 0 ? <Link href="/akuntansi/piutang-utang?tab=utang"><Badge tone={pay.dueDate && pay.dueDate < new Date() ? "red" : "amber"}>Hutang {idr(rem)} · {fmtDate(pay.dueDate)}</Badge></Link> : <Badge tone="green">Lunas</Badge>) : <Badge tone="green">Lunas</Badge>}</td>
                       <td>{p.proofPath ? <ProofPreview src={`/api/files/purchase-proof/${p.id}`} mime={p.proofMime} title={`Bukti ${p.number}`} /> : <span className="text-slate-400">-</span>}</td>
+                      <td>{!p.cancelledAt && user.can("finance.approve") && (!pay || pay.paid === BigInt(0)) && (
+                        <Modal trigger="Batalkan" triggerClass="btn-secondary btn-sm" title={`Batalkan ${p.number}`}>
+                          <ModalForm action={cancelPurchaseAction} className="space-y-3">
+                            <input type="hidden" name="id" value={p.id} />
+                            <Field label="Alasan (tercatat di audit log)"><input name="reason" className="input" required /></Field>
+                            <p className="text-xs text-slate-500">Jurnal pembelian dibalik, bahan keluar lagi dari gudang, dan sisa hutangnya dihapus. Catat ulang bila perlu.</p>
+                            <Submit className="btn-danger">Batalkan pembelian</Submit>
+                          </ModalForm>
+                        </Modal>
+                      )}</td>
                     </tr>
                   );
                 })}

@@ -1,6 +1,6 @@
 import type { Prisma, ProductionStage, WageType } from "@prisma/client";
 import { prisma } from "./db";
-import { postJournal, COA } from "./accounting";
+import { assertPeriodOpen, postJournal, reverseJournal, COA } from "./accounting";
 import { nextNumber } from "./numbering";
 import { audit } from "./audit";
 import { addDays, dateOnly, dateStr, jakartaDateTime, todayStr } from "./time";
@@ -166,7 +166,7 @@ type AdvanceAlloc = { id: string; number: string; amount: number };
 async function allocateAdvances(tx: Tx, employeeId: string, periodId: string, available: number) {
   const none = { deduction: 0, detail: [] as AdvanceAlloc[] };
   if (available <= 0) return none;
-  const advances = (await tx.cashAdvance.findMany({ where: { employeeId }, orderBy: { date: "asc" } })).filter((a) => a.repaid < a.amount);
+  const advances = (await tx.cashAdvance.findMany({ where: { employeeId, cancelledAt: null }, orderBy: { date: "asc" } })).filter((a) => a.repaid < a.amount);
   if (!advances.length) return none;
   const reserved = await reservedAdvances(tx, employeeId, periodId);
   let left = available;
@@ -210,6 +210,7 @@ export async function repayAdvance(advanceId: string, amount: number, bankAccoun
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "CashAdvance" WHERE id = ${advanceId} FOR UPDATE`;
     const a = await tx.cashAdvance.findUniqueOrThrow({ where: { id: advanceId }, include: { employee: true } });
+    if (a.cancelledAt) throw new PayrollError(`Kasbon ${a.number} sudah dibatalkan`);
     // Bagian kasbon yang sudah dijadwalkan dipotong di slip gaji yang belum dibayar tidak boleh dilunasi lagi (potong ganda)
     const reserved = (await reservedAdvances(tx, a.employeeId)).get(a.id) ?? 0;
     const remaining = Number(a.amount - a.repaid) - reserved;
@@ -475,6 +476,45 @@ async function assertAttendanceValidated(tx: Tx, p: Period & { payslips: { emplo
   throw new PayrollError(`${pending.length} absen hadir belum divalidasi (${names.slice(0, 5).join(", ")}${names.length > 5 ? ", …" : ""}). Validasi di menu Absensi, lalu Hitung ulang periode ini sebelum disetujui.`);
 }
 
+export const PAYROLL_ACCRUAL_SOURCE = "PAYROLL_AKRUAL";
+
+/** Beban gaji kotor & transport dari slip (kasbon yang dipotong tetap bagian beban gaji) */
+function payrollCost(slips: { total: bigint; advanceDeduction: bigint; transport: bigint }[]) {
+  const wages = slips.reduce((s, x) => s + Number(x.total + x.advanceDeduction - x.transport), 0);
+  const transport = slips.reduce((s, x) => s + Number(x.transport), 0);
+  return { wages, transport };
+}
+
+/**
+ * Saat disetujui, gaji diakui sebagai beban di bulan kerjanya (tanggal akhir periode): Dr Beban Gaji & Transport / Cr Hutang Gaji.
+ * Bila bulan itu sudah tutup buku, diakui hari ini. Saat dibayar, Hutang Gaji dilunasi dari rekening.
+ */
+async function accruePayroll(tx: Tx, p: Period & { payslips: { total: bigint; advanceDeduction: bigint; transport: bigint }[] }, actor: Actor) {
+  const { wages, transport } = payrollCost(p.payslips);
+  if (wages + transport <= 0) return null;
+  const end = jakartaDateTime(dateStr(p.endDate), "23:00");
+  const date = await assertPeriodOpen(tx, end).then(() => end, () => new Date());
+  return postJournal(tx, {
+    date,
+    description: `Gaji terutang ${p.code}`,
+    source: PAYROLL_ACCRUAL_SOURCE,
+    sourceId: p.id,
+    actor,
+    lines: [
+      ...(wages > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, debit: wages, memo: p.kind === "TUNJANGAN" ? "Tunjangan karyawan" : "Gaji bulanan, upah harian & borongan" }] : []),
+      ...(transport > 0 ? [{ accountCode: COA.BEBAN_TRANSPORT, debit: transport, memo: "Transport assembling" }] : []),
+      { accountCode: COA.UTANG_GAJI, credit: wages + transport, memo: `Hutang gaji ${p.code}` },
+    ],
+  });
+}
+
+/** Jurnal hutang gaji periode yang belum dibalik (persetujuan bisa dibatalkan lalu disetujui ulang) */
+async function activeAccrual(tx: Tx, periodId: string) {
+  const rows = await tx.journal.findMany({ where: { source: PAYROLL_ACCRUAL_SOURCE, sourceId: periodId }, include: { lines: { include: { account: true } } }, orderBy: { createdAt: "desc" } });
+  for (const j of rows) if (!(await tx.journal.findFirst({ where: { reversalOfId: j.id } }))) return j;
+  return null;
+}
+
 export async function approvePeriod(periodId: string, actor: Actor) {
   return prisma.$transaction(async (tx) => {
     const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId }, include: { payslips: true } });
@@ -482,7 +522,8 @@ export async function approvePeriod(periodId: string, actor: Actor) {
     if (!p.payslips.length) throw new PayrollError("Belum ada slip gaji; hitung dahulu");
     await assertAttendanceValidated(tx, p);
     await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DISETUJUI", approvedBy: actor.name } });
-    await audit(actor, "GAJI_DISETUJUI", "PayrollPeriod", periodId, null, tx);
+    const accrual = await accruePayroll(tx, p, actor);
+    await audit(actor, "GAJI_DISETUJUI", "PayrollPeriod", periodId, accrual ? { akrual: accrual.number } : null, tx);
   });
 }
 
@@ -509,10 +550,17 @@ export async function payPeriod(periodId: string, bankAccountId: string, storeId
     }
     // Beban = gaji kotor; kasbon yang dipotong melunasi piutang karyawan, sisanya keluar dari rekening
     const advances = p.payslips.reduce((s, x) => s + Number(x.advanceDeduction), 0);
-    const wages = p.payslips.reduce((s, x) => s + Number(x.total + x.advanceDeduction - x.transport), 0);
-    const transport = p.payslips.reduce((s, x) => s + Number(x.transport), 0);
+    const { wages, transport } = payrollCost(p.payslips);
     const net = wages + transport - advances;
-    const lines = [
+    // Sudah diakui sebagai Hutang Gaji saat disetujui: pembayaran melunasi hutangnya (selisih karena resign dikembalikan ke beban)
+    const accrual = await activeAccrual(tx, p.id);
+    const accrued = accrual ? accrual.lines.filter((l) => l.account.code === COA.UTANG_GAJI).reduce((s, l) => s + Number(l.credit), 0) : 0;
+    const lines = accrual ? [
+      { accountCode: COA.UTANG_GAJI, debit: accrued, memo: `Pelunasan hutang gaji ${p.code}` },
+      ...(accrued - wages - transport > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, credit: accrued - wages - transport, memo: "Slip dinolkan (resign sebelum gajian)" }] : []),
+      ...(advances > 0 ? [{ accountCode: COA.PIUTANG_KARYAWAN, credit: advances, memo: "Potongan kasbon" }] : []),
+      ...(net > 0 ? [{ accountId: bank.coaAccountId, credit: net }] : []),
+    ] : [
       ...(wages > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, debit: wages, memo: p.kind === "TUNJANGAN" ? "Tunjangan karyawan" : "Gaji bulanan, upah harian & borongan" }] : []),
       ...(transport > 0 ? [{ accountCode: COA.BEBAN_TRANSPORT, debit: transport, memo: "Transport assembling" }] : []),
       ...(advances > 0 ? [{ accountCode: COA.PIUTANG_KARYAWAN, credit: advances, memo: "Potongan kasbon" }] : []),
@@ -525,7 +573,7 @@ export async function payPeriod(periodId: string, bankAccountId: string, storeId
         if (a.repaid + BigInt(d.amount) > a.amount) throw new PayrollError(`Potongan kasbon ${a.number} melebihi sisa kasbon (sudah dilunasi di luar gaji). Hitung ulang periode ini sebelum dibayar.`);
         await tx.cashAdvance.update({ where: { id: d.id }, data: { repaid: { increment: BigInt(d.amount) } } });
       }
-    if (wages + transport === 0) {
+    if (wages + transport === 0 && !accrued) {
       await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DIBAYAR", paidAt, paidFromAccountId: bankAccountId } });
       await audit(actor, "GAJI_DIBAYAR", "PayrollPeriod", periodId, { total: 0 }, tx);
       return { number: "tanpa jurnal (Rp0)" } as { number: string };
@@ -534,5 +582,58 @@ export async function payPeriod(periodId: string, bankAccountId: string, storeId
     await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DIBAYAR", paidAt, paidFromAccountId: bankAccountId, journalId: j.id } });
     await audit(actor, "GAJI_DIBAYAR", "PayrollPeriod", periodId, { journal: j.number, total: net, advances }, tx);
     return j;
+  });
+}
+
+/**
+ * Batalkan pembayaran gaji: jurnal pembayaran dibalik, potongan kasbon dikembalikan ke sisa kasbon, status kembali Disetujui.
+ * Tanggal pembalik = tanggal bayar bila periodenya masih terbuka, selain itu hari ini.
+ */
+export async function cancelPayment(periodId: string, reason: string, actor: Actor, now: Date = new Date()) {
+  if (!reason?.trim()) throw new PayrollError("Alasan pembatalan wajib diisi");
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
+    const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId }, include: { payslips: true } });
+    if (p.status !== "DIBAYAR") throw new PayrollError("Hanya periode berstatus Dibayar yang pembayarannya bisa dibatalkan");
+    const paidAt = p.paidAt ?? now;
+    const date = await assertPeriodOpen(tx, paidAt).then(() => paidAt, () => now);
+    if (p.journalId) await reverseJournal(tx, p.journalId, date, actor, `batal bayar ${p.code} — ${reason.trim()}`.slice(0, 150));
+    for (const x of p.payslips)
+      for (const d of x.advanceDetail as AdvanceAlloc[]) await tx.cashAdvance.update({ where: { id: d.id }, data: { repaid: { decrement: BigInt(d.amount) } } });
+    await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DISETUJUI", paidAt: null, paidFromAccountId: null, journalId: null } });
+    await audit(actor, "GAJI_BATAL_BAYAR", "PayrollPeriod", periodId, { code: p.code, reason }, tx);
+  });
+}
+
+/** Batalkan persetujuan (sebelum dibayar): jurnal hutang gaji dibalik, periode kembali Draft agar bisa dihitung ulang */
+export async function unapprovePeriod(periodId: string, reason: string, actor: Actor, now: Date = new Date()) {
+  if (!reason?.trim()) throw new PayrollError("Alasan pembatalan wajib diisi");
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
+    const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId } });
+    if (p.status !== "DISETUJUI") throw new PayrollError("Hanya periode berstatus Disetujui yang bisa dikembalikan ke draft");
+    const acc = await activeAccrual(tx, p.id);
+    if (acc) {
+      const date = await assertPeriodOpen(tx, acc.date).then(() => acc.date, () => now);
+      await reverseJournal(tx, acc.id, date, actor, `batal setujui ${p.code} — ${reason.trim()}`.slice(0, 150));
+    }
+    await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DRAFT", approvedBy: null } });
+    await audit(actor, "GAJI_BATAL_SETUJUI", "PayrollPeriod", periodId, { code: p.code, reason }, tx);
+  });
+}
+
+/** Batalkan kasbon yang belum dicicil/dipotong: jurnal dibalik, kasbon tidak lagi dipotong dari gaji */
+export async function cancelAdvance(advanceId: string, reason: string, actor: Actor, now: Date = new Date()) {
+  if (!reason?.trim()) throw new PayrollError("Alasan pembatalan wajib diisi");
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "CashAdvance" WHERE id = ${advanceId} FOR UPDATE`;
+    const a = await tx.cashAdvance.findUniqueOrThrow({ where: { id: advanceId } });
+    if (a.cancelledAt) throw new PayrollError(`Kasbon ${a.number} sudah dibatalkan`);
+    if (a.repaid > BigInt(0)) throw new PayrollError(`Kasbon ${a.number} sudah dicicil/dipotong Rp ${Number(a.repaid).toLocaleString("id-ID")}; tidak bisa dibatalkan`);
+    if ((await reservedAdvances(tx, a.employeeId)).get(a.id)) throw new PayrollError(`Kasbon ${a.number} sudah dijadwalkan dipotong di slip gaji yang belum dibayar. Hitung ulang slip tersebut setelah membatalkan persetujuannya.`);
+    const date = await assertPeriodOpen(tx, jakartaDateTime(dateStr(a.date), "12:00")).then(() => jakartaDateTime(dateStr(a.date), "12:00"), () => now);
+    if (a.journalId) await reverseJournal(tx, a.journalId, date, actor, `batal ${a.number} — ${reason.trim()}`.slice(0, 150));
+    await tx.cashAdvance.update({ where: { id: advanceId }, data: { cancelledAt: now, cancelReason: reason.trim().slice(0, 300) } });
+    await audit(actor, "KASBON_DIBATALKAN", "CashAdvance", advanceId, { number: a.number, reason }, tx);
   });
 }

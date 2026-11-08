@@ -1,9 +1,9 @@
 import { Prisma, type BoronganRole, type HandoverKind, type ItemType } from "@prisma/client";
 import { prisma } from "./db";
 import { audit } from "./audit";
-import { COA, postJournal, reverseJournal } from "./accounting";
+import { COA, assertPeriodOpen, postJournal, reverseJournal } from "./accounting";
 import { nextNumber } from "./numbering";
-import { INVENTORY_COA, StockError, locationSettings, recordMovement } from "./stock";
+import { INVENTORY_COA, StockError, locationSettings, qtyAt, recordMovement } from "./stock";
 import { bomStockQty } from "./unitcost";
 
 type Tx = Prisma.TransactionClient;
@@ -178,10 +178,21 @@ export async function recordResult(input: ResultInput, actor: Actor, scope: Scop
     const outType: ItemType = task.outputItem?.type ?? "BARANG_DALAM_PROSES";
     const byType = new Map<ItemType, number>();
     let material = 0;
+    // Hasil tidak boleh melebihi bahan yang sudah diterima titik (cegah upah dari hasil yang tidak didukung bahan)
+    await tx.$queryRaw`SELECT id FROM "BoronganPoint" WHERE id = ${point.id} FOR UPDATE`;
+    for (const inp of task.inputs) {
+      const per = bomStockQty(inp.qty, inp.item);
+      if (per <= 0) continue;
+      const avail = await qtyAt(tx, inp.itemId, point.locationId);
+      if (per * input.qty > avail + 1e-6) {
+        const cukup = Math.max(0, Math.floor((avail + 1e-6) / per));
+        throw new BoronganError(`Bahan ${inp.item.name} di ${point.name} tinggal ${Number(avail.toFixed(3)).toLocaleString("id-ID")} ${inp.item.unit}, cukup untuk ${cukup} pcs (${worker.name} ${input.qty} pcs). Kirim bahan dulu lewat serah terima.`);
+      }
+    }
     for (const inp of task.inputs) {
       const q = bomStockQty(inp.qty, inp.item) * input.qty;
       if (q <= 0) continue;
-      await recordMovement(tx, { type: "KONSUMSI_PRODUKSI", itemId: inp.itemId, qty: q, fromLocationId: point.locationId, ref: `HSB:${r.id}`, note: `${task.name} ${worker.name}`, date: when, allowNegative: true }, actor);
+      await recordMovement(tx, { type: "KONSUMSI_PRODUKSI", itemId: inp.itemId, qty: q, fromLocationId: point.locationId, ref: `HSB:${r.id}`, note: `${task.name} ${worker.name}`, date: when }, actor);
       const v = Math.round(q * Number(inp.item.avgCost));
       material += v;
       byType.set(inp.item.type, (byType.get(inp.item.type) ?? 0) + v);
@@ -285,6 +296,22 @@ export async function settlePoint(input: { pointId: string; upTo: Date; bankAcco
   });
 }
 
+/** Batalkan pembayaran upah satu titik: jurnal dibalik, setorannya kembali menjadi belum dibayar */
+export async function cancelSettlement(id: string, reason: string, actor: Actor, now: Date = new Date()) {
+  if (!reason?.trim()) throw new BoronganError("Alasan pembatalan wajib diisi");
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "BoronganSettlement" WHERE id = ${id} FOR UPDATE`;
+    const st = await tx.boronganSettlement.findUniqueOrThrow({ where: { id } });
+    if (st.cancelledAt) throw new BoronganError(`${st.number} sudah dibatalkan`);
+    const date = await assertPeriodOpen(tx, st.date).then(() => st.date, () => now);
+    if (st.journalId) await reverseJournal(tx, st.journalId, date, actor, `batal ${st.number} — ${reason.trim()}`.slice(0, 150));
+    await tx.boronganResult.updateMany({ where: { settlementId: id }, data: { settlementId: null } });
+    const out = await tx.boronganSettlement.update({ where: { id }, data: { cancelledAt: now, cancelReason: reason.trim().slice(0, 300) } });
+    await audit(actor, "UPAH_BORONGAN_DIBATALKAN", "BoronganSettlement", id, { number: st.number, reason }, tx);
+    return out;
+  });
+}
+
 // ---------------- ORANG ----------------
 
 export type PersonInput = { id?: string | null; name: string; phone?: string | null; role: BoronganRole; pointId?: string | null; active?: boolean; note?: string | null };
@@ -300,9 +327,12 @@ export async function savePerson(input: PersonInput, actor: Actor, scope: Scope)
     assertPoint(scope, pointId!);
   }
   const data = { name, phone: input.phone || null, role: input.role, pointId, active: input.active ?? true, note: input.note || null };
+  // Pekerja baru dari koordinator menunggu persetujuan pengelola (diaktifkan pengelola), agar upah tidak dibayar ke nama fiktif
+  if (!scope.all && !input.id) data.active = false;
   if (input.id) {
     const cur = await prisma.boronganPerson.findUniqueOrThrow({ where: { id: input.id } });
     if (!scope.all && (cur.role !== "PEKERJA" || !canPoint(scope, cur.pointId ?? ""))) throw new BoronganError("Anda hanya bisa mengubah pekerja di titik Anda");
+    if (!scope.all && !cur.active) data.active = false;
     const p = await prisma.boronganPerson.update({ where: { id: input.id }, data });
     if (cur.userId && (!data.active || data.role !== "KOORDINATOR")) await prisma.user.update({ where: { id: cur.userId }, data: { active: false } });
     await audit(actor, "ORANG_BORONGAN_DIUBAH", "BoronganPerson", p.id, data);

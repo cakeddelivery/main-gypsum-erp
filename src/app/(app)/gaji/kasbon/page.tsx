@@ -6,7 +6,7 @@ import { Badge, Card, Empty, Field, PageHeader, Stat } from "@/components/ui";
 import { Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { createAdvance, repayAdvanceAction } from "../actions";
+import { createAdvance, repayAdvanceAction, cancelAdvanceAction } from "../actions";
 import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Kasbon Karyawan" };
@@ -18,7 +18,7 @@ export default async function KasbonPage() {
     prisma.employee.findMany({ where: { status: { not: "NONAKTIF" } }, orderBy: { name: "asc" } }),
     prisma.bankAccount.findMany({ where: { active: true } }),
   ]);
-  const open = advances.filter((a) => a.repaid < a.amount);
+  const open = advances.filter((a) => !a.cancelledAt && a.repaid < a.amount);
   const outstanding = open.reduce((s, a) => s + Number(a.amount - a.repaid), 0);
   const canGive = user.can("payroll.approve");
   const t = todayStr();
@@ -61,8 +61,17 @@ export default async function KasbonPage() {
                     <tr key={a.id}>
                       <td className="font-mono text-xs">{a.number}</td><td>{fmtDay(a.date)}</td><td>{a.employee.name}{a.note && <div className="text-xs text-slate-400">{a.note}</div>}</td>
                       <td className="num">{idr(a.amount)}</td><td className="num">{Number(a.installment) ? idr(a.installment) : "Penuh"}</td><td className="num">{idr(a.repaid)}</td><td className="num font-semibold">{idr(rem)}</td>
-                      <td>{rem === 0 ? <Badge tone="green">Lunas</Badge> : <Badge tone="amber">Berjalan</Badge>}</td>
-                      <td>{rem > 0 && canGive && (
+                      <td>{a.cancelledAt ? <Badge tone="gray">Dibatalkan</Badge> : rem === 0 ? <Badge tone="green">Lunas</Badge> : <Badge tone="amber">Berjalan</Badge>}{a.cancelReason && <div className="text-xs text-slate-400">{a.cancelReason}</div>}</td>
+                      <td className="space-x-1">{!a.cancelledAt && a.repaid === BigInt(0) && canGive && (
+                        <Modal trigger="Batalkan" triggerClass="btn-secondary btn-sm" title={`Batalkan ${a.number}`}>
+                          <ModalForm action={cancelAdvanceAction} className="space-y-3">
+                            <input type="hidden" name="id" value={a.id} />
+                            <Field label="Alasan (tercatat di audit log)"><input name="reason" className="input" required /></Field>
+                            <p className="text-xs text-slate-500">Jurnal kasbon dibalik (uang dianggap kembali ke rekening asal) dan kasbon tidak dipotong dari gaji.</p>
+                            <Submit className="btn-danger">Batalkan kasbon</Submit>
+                          </ModalForm>
+                        </Modal>
+                      )}{!a.cancelledAt && rem > 0 && canGive && (
                         <Modal trigger="Lunasi" triggerClass="btn-secondary btn-sm" title={`Pelunasan ${a.number}`}>
                           <ModalForm action={repayAdvanceAction} className="space-y-3">
                             <input type="hidden" name="id" value={a.id} />

@@ -55,7 +55,7 @@ const bankButtons = async () => chunk((await banks()).map((b) => ({ text: b.name
 // =====================================================================
 async function ownAdvances(i: BotIdent): Promise<string> {
   if (!i.user.employeeId) return "";
-  const rows = await prisma.cashAdvance.findMany({ where: { employeeId: i.user.employeeId }, orderBy: { date: "desc" }, take: 20 });
+  const rows = await prisma.cashAdvance.findMany({ where: { employeeId: i.user.employeeId, cancelledAt: null }, orderBy: { date: "desc" }, take: 20 });
   const open = rows.filter((a) => a.repaid < a.amount);
   if (!open.length) return "Anda tidak punya kasbon yang belum lunas. ✅";
   const left = open.reduce((t, a) => t + Number(a.amount - a.repaid), 0);

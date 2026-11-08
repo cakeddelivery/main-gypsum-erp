@@ -21,7 +21,7 @@ export default async function SlipPage({ params }: { params: Promise<{ id: strin
   // Karyawan hanya boleh melihat slip miliknya sendiri
   if (!user.can("payroll.view") && s.employeeId !== user.employeeId) notFound();
   const detail = s.pieceDetail as { stage: string; qty: number; rate: number; amount: number }[];
-  const advances = await prisma.cashAdvance.findMany({ where: { employeeId: s.employeeId } });
+  const advances = await prisma.cashAdvance.findMany({ where: { employeeId: s.employeeId, cancelledAt: null } });
   const advanceLeft = Math.max(0, advances.reduce((a, x) => a + Number(x.amount - x.repaid), 0) - (s.period.status === "DIBAYAR" ? 0 : Number(s.advanceDeduction)));
   const stageLabel = (x: string) => STAGE_LABEL[x as ProductionStage] ?? x;
   const Row = ({ l, v, neg }: { l: string; v: number | bigint; neg?: boolean }) => (
