@@ -61,7 +61,7 @@ export async function rawMaterials(): Promise<PurchaseItem[]> {
 }
 
 // ---------- Angsuran / pembayaran hutang supplier ----------
-export type PayableCandidate = { id: string; number: string; vendor: string; remaining: number; purchaseNumber: string | null; items: string[]; kind?: string; installment?: number | null };
+export type PayableCandidate = { id: string; number: string; vendor: string; aliases?: string[]; remaining: number; purchaseNumber: string | null; items: string[]; kind?: string; installment?: number | null };
 const PAY_WORDS = /\b(angsur|angsuran|ngangsur|cicil|cicilan|nyicil|pelunasan|lunasi|melunasi|hutang|utang|tempo|pinjaman|pinjam|spinjam|paylater|kredit)\b/;
 
 /**
@@ -83,9 +83,10 @@ export function detectPayablePayment(text: string, payables: PayableCandidate[],
     .map((p) => {
       let s = 0;
       if (t.includes(` ${norm(p.number)} `) || (p.purchaseNumber && t.includes(` ${norm(p.purchaseNumber)} `))) s += 100;
-      const vend = norm(p.vendor);
-      if (vend.length >= 3 && t.includes(` ${vend} `)) s += 60;
-      else if (vend.split(" ").filter((w) => w.length >= 4).some(has)) s += 30;
+      // Nama supplier atau nama lainnya (supplier yang digabung)
+      const names = [p.vendor, ...(p.aliases ?? [])].map(norm);
+      if (names.some((vend) => vend.length >= 3 && t.includes(` ${vend} `))) s += 60;
+      else if (names.some((vend) => vend.split(" ").filter((w) => w.length >= 4 && !["supplier", "suplier", "pemasok", "toko"].includes(w)).some(has))) s += 30;
       // Makin banyak kata nama barang yang cocok, makin yakin ("kardus uji" > "uji")
       s += 20 * Math.max(0, ...p.items.map((n) => norm(n).split(" ").filter(has).length));
       if (amount && p.installment && Math.abs(p.installment - amount) <= 2) s += 50;

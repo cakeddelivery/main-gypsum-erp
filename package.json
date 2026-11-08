@@ -18,6 +18,8 @@
     "pisahkan:rekening": "tsx scripts/pisahkan-coa-rekening.ts",
     "withdraw:pemasukan": "tsx scripts/withdraw-pemasukan.ts",
     "rapikan:hutang": "tsx scripts/rapikan-hutang.ts",
+    "satukan:supplier": "tsx scripts/satukan-supplier.ts",
+    "sinkron:sisihan": "tsx scripts/sinkron-sisihan.ts",
     "backup": "bash scripts/backup.sh",
     "restore": "bash scripts/restore.sh",
     "backup:buka": "bash scripts/decrypt-backup.sh"

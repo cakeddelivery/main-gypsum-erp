@@ -50,6 +50,15 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
       })(),
     );
   }
+  if (can("finance.approve")) {
+    // Rekening simpanan dana sisihan dipakai untuk operasional: harus dikembalikan dari rekening operasional
+    tasks.push(
+      import("./talangan")
+        .then((m) => m.talanganOutstanding())
+        .then((t) => void (t.total > 0 && out.push({ key: "talangan", label: `Dana talangan belum dikembalikan · Rp ${t.total.toLocaleString("id-ID")} (klik untuk kirim bukti)`, count: t.count, href: "/finance/talangan?kembali=1", tone: "red" })))
+        .catch(() => {}),
+    );
+  }
   if (can("accounting.view")) {
     tasks.push(
       prisma.payable.findMany({ where: { dueDate: { lte: new Date(Date.now() + 7 * 86400000) } }, select: { amount: true, paid: true } }).then((rows) => {

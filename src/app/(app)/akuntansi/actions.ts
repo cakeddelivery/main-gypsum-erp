@@ -10,6 +10,16 @@ import { jakartaDateTime, todayStr } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
 import { balanceAdjustmentLines, bankBalancesAt, bookPayablePayment } from "@/lib/finance";
 import { createLoanRecord } from "@/lib/payables";
+import { resolveSupplier } from "@/lib/suppliers";
+import { saveProof } from "@/lib/storage";
+
+/** Foto/PDF nota atau bukti transfer dari form (opsional) */
+async function proofOf(fd: FormData): Promise<{ path: string; mime: string } | null> {
+  const file = fd.get("proof");
+  if (!(file && typeof file === "object" && "arrayBuffer" in file && file.size > 0)) return null;
+  if (!["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(file.type)) throw new Error("Bukti harus JPG, PNG, WEBP, atau PDF");
+  return { path: await saveProof(Buffer.from(await file.arrayBuffer()), file.type), mime: file.type };
+}
 import type { AccountType } from "@prisma/client";
 
 const d = (fd: FormData, k = "date") => jakartaDateTime(str(fd, k) || todayStr(), "12:00");
@@ -98,20 +108,23 @@ export const createPayable = action(
   async (fd, user) => {
     const amount = int(fd, "amount");
     if (amount <= 0) throw new Error("Nominal harus > 0");
+    const proof = await proofOf(fd);
     await prisma.$transaction(async (tx) => {
       const number = await nextNumber(tx, "UTG");
-      const supplierId = optStr(fd, "supplierId");
-      const vendor = str(fd, "vendor") || (supplierId ? (await tx.supplier.findUnique({ where: { id: supplierId } }))?.name : "") || "";
-      if (!vendor) throw new Error("Pemasok wajib diisi");
+      // Supplier dipilih dari master, atau nama yang diketik dicocokkan dulu (termasuk nama lain) agar tidak dobel
+      const supplier = await resolveSupplier(tx, { supplierId: optStr(fd, "supplierId"), name: str(fd, "vendor") }, user, "hutang");
+      if (!supplier) throw new Error("Pemasok wajib diisi");
+      const supplierId = supplier.id;
+      const vendor = supplier.name;
       const debit = await tx.coaAccount.findUniqueOrThrow({ where: { id: str(fd, "debitAccountId") } });
       // Hutang supplier = barang/jasa yang diterima: persediaan, aset, atau beban; bukan piutang/kas/hutang
       if (debit.isCash || debit.code.startsWith("1-13") || !["ASET", "BEBAN", "HPP"].includes(debit.type)) throw new Error("Akun debit harus persediaan, aset, atau beban (barang/jasa yang diterima dari supplier)");
       const j = await postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: `Hutang ${number} ${vendor}`, source: "UTANG", sourceId: number, actor: user, lines: [{ accountId: str(fd, "debitAccountId"), debit: amount }, { accountCode: COA.UTANG_USAHA, credit: amount }] });
-      await tx.payable.create({ data: { number, vendor, supplierId, storeId: j.storeId, date: d(fd), dueDate: optStr(fd, "dueDate") ? d(fd, "dueDate") : null, amount: BigInt(amount), note: optStr(fd, "note"), journalId: j.id } });
+      await tx.payable.create({ data: { number, vendor, supplierId, storeId: j.storeId, date: d(fd), dueDate: optStr(fd, "dueDate") ? d(fd, "dueDate") : null, amount: BigInt(amount), note: optStr(fd, "note"), journalId: j.id, proofPath: proof?.path ?? null, proofMime: proof?.mime ?? null } });
     });
     return "Hutang dicatat";
   },
-  ["/akuntansi/piutang-utang"],
+  ["/akuntansi/piutang-utang", "/supplier"],
 );
 
 /** Pinjaman modal baru (uang masuk ke rekening, potongan pencairan → beban) atau pinjaman lama (saldo awal) */
@@ -152,7 +165,8 @@ export const settle = action(
       // Nominal = pokok; bunga/biaya ditambahkan → total keluar dari rekening. Tercatat juga di menu Transaksi
       const interest = int(fd, "interest");
       if (interest < 0) throw new Error("Bunga tidak boleh negatif");
-      const r = await bookPayablePayment({ payableId: id, amount: amount + interest, interest, bankAccountId: str(fd, "bankAccountId"), date: d(fd), note: optStr(fd, "note") }, "MANUAL", { id: user.id, name: user.name });
+      const proof = await proofOf(fd);
+      const r = await bookPayablePayment({ payableId: id, amount: amount + interest, interest, bankAccountId: str(fd, "bankAccountId"), date: d(fd), note: optStr(fd, "note"), proofPath: proof?.path ?? null, proofMime: proof?.mime ?? null }, "MANUAL", { id: user.id, name: user.name });
       return `Pembayaran dibukukan (${r.transaction.number})`;
     }
     const bank = await prisma.bankAccount.findUniqueOrThrow({ where: { id: str(fd, "bankAccountId") } });
@@ -166,7 +180,7 @@ export const settle = action(
     });
     return "Pembayaran dibukukan";
   },
-  ["/akuntansi/piutang-utang", "/finance"],
+  ["/akuntansi/piutang-utang", "/finance", "/supplier"],
 );
 
 export const createAsset = action(

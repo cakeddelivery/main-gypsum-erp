@@ -10,6 +10,7 @@ import { ModalForm } from "@/components/ModalForm";
 import { attachProof, reserveAll, reserveOne, saveFund, withdraw } from "./actions";
 import { ProofPreview } from "@/components/ProofPreview";
 import { Paged } from "@/components/Paged";
+import Link from "next/link";
 
 export const metadata = { title: "Dana Sisihan Harian" };
 
@@ -19,7 +20,7 @@ export default async function SisihanPage() {
     reserveSummary(),
     prisma.bankAccount.findMany({ where: { active: true } }),
     prisma.payable.findMany({ where: { kind: "PINJAMAN" }, orderBy: { date: "desc" } }),
-    prisma.reserveEntry.findMany({ include: { fund: true }, orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: 40 }),
+    prisma.reserveEntry.findMany({ include: { fund: true, transaction: { select: { id: true, number: true } } }, orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: 40 }),
   ]);
   const t = todayStr();
   const bankName = (id: string | null) => banks.find((b) => b.id === id)?.name ?? "-";
@@ -110,7 +111,7 @@ export default async function SisihanPage() {
               </tbody>
             </table></Paged>
           </div>
-          <p className="mt-3 text-xs text-slate-500">Kompensasi owner dicatat sebagai beban (mengurangi laba) dan uangnya dipindah ke ShopeePay sebagai titipan owner sampai diambil. Tabungan cicilan hanya memindahkan uang; hutang berkurang saat dibayarkan.</p>
+          <p className="mt-3 text-xs text-slate-500">Transfer di menu Transaksi (web atau Telegram) dari rekening asal ke rekening simpanan dana otomatis tercatat di sini beserta buktinya, tidak perlu Sisihkan manual. Kompensasi owner dicatat sebagai beban (mengurangi laba) dan uangnya dipindah ke ShopeePay sebagai titipan owner sampai diambil. Tabungan cicilan hanya memindahkan uang; hutang berkurang saat dibayarkan.</p>
         </Card>
       )}
       <Card title="Riwayat terakhir">
@@ -120,7 +121,7 @@ export default async function SisihanPage() {
             const peers = recent.filter((x) => x.type === e.type && !x.proofPath && dateStr(x.date) === dateStr(e.date) && x.fund.fromBankId === e.fund.fromBankId && x.fund.toBankId === e.fund.toBankId);
             return (
               <li key={e.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
-                <span>{fmtDay(e.date)} · {e.fund.name} · {e.type === "SISIH" ? "disisihkan" : e.fund.kind === "OWNER" ? "diambil" : "dibayar ke pinjaman"}{e.note && ` · ${e.note}`}</span>
+                <span>{fmtDay(e.date)} · {e.fund.name} · {e.type === "SISIH" ? "disisihkan" : e.fund.kind === "OWNER" ? "diambil" : "dibayar ke pinjaman"}{e.transaction ? <> · <Link className="link font-mono text-xs" href={`/finance/${e.transaction.id}`}>{e.transaction.number}</Link></> : e.note && ` · ${e.note}`}</span>
                 <span className="flex items-center gap-2">
                   {e.proofPath ? (
                     <ProofPreview src={`/api/files/reserve-proof/${e.id}`} mime={e.proofMime} title={`Bukti ${e.fund.name} ${fmtDay(e.date)}`} />

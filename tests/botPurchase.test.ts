@@ -119,7 +119,12 @@ describe("Bot: dana sisihan dari bukti transfer", () => {
     await tap(s!.step === "pick" ? "f:o0" : "f:ok");
     if ((await prisma.botSession.findUnique({ where: { chatId: String(TG) } }))?.step === "confirm") await tap("f:ok");
     for (const f of funds) expect(await prisma.reserveEntry.count({ where: { fundId: f.id, type: "SISIH", date: { in: opts[0].dates.map((d: string) => new Date(`${d}T00:00:00Z`)) } } })).toBe(opts[0].dates.length);
-    expect(await prisma.financeTransaction.count()).toBe(before);
+    // Transfer sisihan ikut tercatat di menu Transaksi (dibukukan) dan sisihannya tersambung ke transaksi tsb
+    expect(await prisma.financeTransaction.count()).toBe(before + 1);
+    const t = await prisma.financeTransaction.findFirstOrThrow({ orderBy: { createdAt: "desc" }, include: { reserveEntries: true } });
+    expect(t.status).toBe("DIBUKUKAN");
+    expect(t.direction).toBe("TRANSFER");
+    expect(t.reserveEntries.length).toBe(funds.length * opts[0].dates.length);
   });
 });
 

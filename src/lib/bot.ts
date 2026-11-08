@@ -12,10 +12,12 @@ import { dailyRecapText } from "./jobs";
 import { handleMenuCallback, handleMenuCommand, MENU_TEXT } from "./botMenu";
 import { clearSession, getSession, handleFlowCallback, handleFlowLocation, handleFlowText, startPrefilledFlow, type TgLocation } from "./botFlow";
 import { detectPurchase, extractSplits, rawMaterials } from "./botPurchase";
-import { prefilledPayablePayment, prefilledPurchase, prefilledReserve } from "./botFlow3";
+import { prefilledPayablePayment, prefilledPurchase, prefilledReserve, prefilledTalangan, talanganPhoto } from "./botFlow3";
+import { talanganSummary } from "./talangan";
 import { detectPayablePayment } from "./botPurchase";
 import { openPayables } from "./payables";
 import { matchReserveTransfer } from "./reserve";
+import { supplierKey, supplierNames } from "./suppliers";
 
 type TgUser = { id: number; first_name?: string; username?: string };
 type TgUpdate = {
@@ -206,6 +208,19 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     await handleFlowLocation(ident, chatId, msg.location, { forwarded: !!(msg.forward_origin || msg.forward_date), venue: !!msg.venue, ageSec: msg.date ? Math.floor(Date.now() / 1000) - msg.date : 0 });
     return;
   }
+  // Isian pengembalian dana talangan menunggu foto bukti transfer
+  if (msg.photo?.length) {
+    const s = await getSession(chatId);
+    if (s?.flow === "tlg" && s.step === "proof" && s.userId === ident.userId) {
+      const photo = await downloadTelegramFile(msg.photo[msg.photo.length - 1].file_id);
+      if (!photo) {
+        await sendTelegram(chatId, "Foto gagal diunduh, coba kirim ulang.");
+        return;
+      }
+      await chatAction(chatId, "typing").catch(() => {});
+      return startPrefilledFlow({ i: ident, chatId }, await talanganPhoto({ i: ident, chatId }, s, photo, String(msg.message_id)));
+    }
+  }
   if (text === MENU_TEXT || (text.startsWith("/") && text !== "/batal")) await clearSession(chatId);
   else if (text && !msg.photo && (await handleFlowText(ident, chatId, text))) return;
   if (await handleMenuCommand(ident, chatId, text)) return;
@@ -294,6 +309,14 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   };
   const ctx = { i: ident, chatId };
   const basis = [text, receipt?.counterparty].filter(Boolean).join(" ");
+  // Transfer ke rekening simpanan sebesar talangan yang belum dikembalikan (atau berketerangan "talangan") = pengembalian talangan
+  if (!splits.length && ex.direction === "TRANSFER" && ex.toAccountId && ident.perms.has("finance.approve")) {
+    const w = (await talanganSummary()).find((x) => x.bank.id === ex.toAccountId && x.outstanding > 0);
+    if (w && (ex.amount === w.outstanding || /\btalangan\b/i.test(basis))) {
+      const session = await prefilledTalangan(ctx, { walletId: w.bank.id, proofPath, read: ex.amount, messageId: String(msg.message_id), date: ex.date });
+      if (session) return startPrefilledFlow(ctx, session);
+    }
+  }
   // Bukti transfer dana sisihan (nominal = kelipatan sisihan harian, rekening sesuai alur dana)
   if (!splits.length && (ex.direction === "TRANSFER" || ex.direction === "KELUAR") && ident.perms.has("finance.approve")) {
     const m = await matchReserveTransfer({ amount: ex.amount, fromBankId: ex.accountId, toBankId: ex.direction === "TRANSFER" ? ex.toAccountId : null, date: ex.date!, text: basis });
@@ -375,8 +398,13 @@ async function createDraft(chatId: string, ident: NonNullable<Awaited<ReturnType
 /** Supplier yang namanya disebut di caption atau nama penerima di bukti transfer */
 async function matchSupplier(text: string) {
   const t = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
-  const sups = await prisma.supplier.findMany({ where: { active: true }, select: { id: true, name: true } });
-  return sups.filter((x) => { const n = x.name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); return n.length >= 3 && t.includes(` ${n} `); }).sort((a, b) => b.name.length - a.name.length)[0] ?? null;
+  const sups = await prisma.supplier.findMany({ where: { active: true }, select: { id: true, name: true, aliases: true } });
+  // Nama atau nama lain supplier (setelah digabung), tanpa kata umum "supplier"/"toko"
+  const hit = sups
+    .map((x) => ({ x, len: Math.max(0, ...supplierNames(x).map(supplierKey).filter((n) => n.length >= 4 && t.includes(` ${n} `)).map((n) => n.length)) }))
+    .filter((r) => r.len > 0)
+    .sort((a, b) => b.len - a.len)[0];
+  return hit ? { id: hit.x.id, name: hit.x.name } : null;
 }
 
 async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {

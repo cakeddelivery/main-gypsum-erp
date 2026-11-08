@@ -261,24 +261,24 @@ enum PayrollKind {
 
 /// Kasbon karyawan: dipotong dari gaji berikutnya (cicilan per slip, 0 = langsung lunas)
 model CashAdvance {
-  id                String   @id @default(cuid())
-  number            String   @unique
+  id                String    @id @default(cuid())
+  number            String    @unique
   employeeId        String
-  employee          Employee @relation(fields: [employeeId], references: [id])
-  date              DateTime @db.Date
+  employee          Employee  @relation(fields: [employeeId], references: [id])
+  date              DateTime  @db.Date
   amount            BigInt
-  installment       BigInt   @default(0)
-  repaid            BigInt   @default(0)
+  installment       BigInt    @default(0)
+  repaid            BigInt    @default(0)
   paidFromAccountId String
   note              String?
   journalId         String?
   createdBy         String
-  createdAt         DateTime @default(now())
+  createdAt         DateTime  @default(now())
+  /// Dibatalkan: jurnal dibalik, dokumen tetap tersimpan
+  cancelledAt       DateTime?
+  cancelReason      String?
 
   @@index([employeeId])
-  /// Dibatalkan: jurnal dibalik, dokumen tetap tersimpan
-  cancelledAt  DateTime?
-  cancelReason String?
 }
 
 /// Jenis tugas borongan (dibayar per piece), tarif bisa diubah.
@@ -441,8 +441,8 @@ model BoronganSettlement {
   createdAt     DateTime         @default(now())
   results       BoronganResult[]
   /// Dibatalkan: jurnal dibalik, dokumen tetap tersimpan
-  cancelledAt  DateTime?
-  cancelReason String?
+  cancelledAt   DateTime?
+  cancelReason  String?
 }
 
 /// Hasil kerja borongan per pekerja; periodId terisi setelah diklaim
@@ -537,25 +537,25 @@ enum ProductionStage {
 }
 
 model ProductionEntry {
-  id          String          @id @default(cuid())
-  date        DateTime        @db.Date
-  shiftId     String
-  shift       Shift           @relation(fields: [shiftId], references: [id])
-  divisionId  String
-  division    Division        @relation(fields: [divisionId], references: [id])
-  employeeId  String
-  employee    Employee        @relation(fields: [employeeId], references: [id])
-  stage       ProductionStage
-  productId   String
-  product     Product         @relation(fields: [productId], references: [id])
-  qtyGood     Int
-  qtyReject   Int             @default(0)
+  id           String          @id @default(cuid())
+  date         DateTime        @db.Date
+  shiftId      String
+  shift        Shift           @relation(fields: [shiftId], references: [id])
+  divisionId   String
+  division     Division        @relation(fields: [divisionId], references: [id])
+  employeeId   String
+  employee     Employee        @relation(fields: [employeeId], references: [id])
+  stage        ProductionStage
+  productId    String
+  product      Product         @relation(fields: [productId], references: [id])
+  qtyGood      Int
+  qtyReject    Int             @default(0)
   /// Penyebab reject (lihat REJECT_REASONS); wajib bila qtyReject > 0
   rejectReason String?
-  note        String?
-  createdBy   String
-  createdAt   DateTime        @default(now())
-  stockPosted Boolean         @default(false)
+  note         String?
+  createdBy    String
+  createdAt    DateTime        @default(now())
+  stockPosted  Boolean         @default(false)
 
   @@index([date, shiftId, divisionId])
 }
@@ -635,6 +635,8 @@ model Supplier {
   address   String?
   note      String?
   active    Boolean    @default(true)
+  /// Nama lain (dipisah koma), mis. nama lama setelah digabung: dikenali saat input hutang/pembelian & di bot
+  aliases   String     @default("")
   items     Item[]
   payables  Payable[]
   purchases Purchase[]
@@ -943,8 +945,8 @@ enum TxSource {
 }
 
 model FinanceTransaction {
-  id                  String        @id @default(cuid())
-  number              String        @unique
+  id                  String           @id @default(cuid())
+  number              String           @unique
   source              TxSource
   direction           TxDirection
   amount              BigInt
@@ -954,20 +956,20 @@ model FinanceTransaction {
   categoryId          String?
   suggestedCategoryId String?
   storeId             String?
-  store               Store?        @relation(fields: [storeId], references: [id])
+  store               Store?           @relation(fields: [storeId], references: [id])
   counterparty        String?
   note                String?
   rawText             String?
   proofPath           String?
   proofMime           String?
   aiExtraction        Json?
-  status              TxStatus      @default(DRAFT)
+  status              TxStatus         @default(DRAFT)
   fingerprint         String
   duplicateOfId       String?
-  idempotencyKey      String?       @unique
+  idempotencyKey      String?          @unique
   journalId           String?
   createdBy           String
-  createdAt           DateTime      @default(now())
+  createdAt           DateTime         @default(now())
   /// Dihapus dari daftar (hanya status Dibatalkan/Ditolak); baris & jurnalnya tetap ada untuk jejak audit
   deletedAt           DateTime?
   deletedBy           String?
@@ -978,8 +980,14 @@ model FinanceTransaction {
   splits              FinanceTxSplit[]
   /// Pembayaran hutang supplier / cicilan pinjaman: nominal = pokok + payInterest (bunga/biaya → beban bunga)
   payableId           String?
-  payable             Payable?      @relation(fields: [payableId], references: [id])
-  payInterest         BigInt        @default(0)
+  payable             Payable?         @relation(fields: [payableId], references: [id])
+  payInterest         BigInt           @default(0)
+  /// Transfer dana sisihan: rincian sisihan {parts:[{fundId,date,amount}]} yang dibukukan bersama transaksi ini,
+  /// atau {skip:true} = transfer biasa (tidak dicocokkan ke dana sisihan)
+  reserveLink         Json?
+  reserveEntries      ReserveEntry[]
+  /// Pengembalian dana talangan: transfer dari rekening operasional ke dompet simpanan (Seabank 0006 / ShopeePay)
+  bailoutRepay        Boolean          @default(false)
 
   @@index([fingerprint])
   @@index([status])
@@ -1163,28 +1171,31 @@ enum PayableKind {
 }
 
 model Payable {
-  id         String      @id @default(cuid())
-  number     String      @unique
+  id            String               @id @default(cuid())
+  number        String               @unique
   /// USAHA = utang supplier, PINJAMAN = pinjaman modal
-  kind       PayableKind @default(USAHA)
-  supplierId String?
-  supplier   Supplier?   @relation(fields: [supplierId], references: [id])
-  vendor     String
-  storeId    String
-  date       DateTime
-  dueDate    DateTime?
-  amount     BigInt
-  paid       BigInt      @default(0)
-  note       String?
-  journalId  String?
-  createdAt  DateTime    @default(now())
+  kind          PayableKind          @default(USAHA)
+  supplierId    String?
+  supplier      Supplier?            @relation(fields: [supplierId], references: [id])
+  vendor        String
+  storeId       String
+  date          DateTime
+  dueDate       DateTime?
+  amount        BigInt
+  paid          BigInt               @default(0)
+  note          String?
+  journalId     String?
+  createdAt     DateTime             @default(now())
   /// Akun COA hutang (kosong = Hutang Usaha / Hutang Pinjaman Modal sesuai jenis)
-  coaAccountId String?
-  coaAccount   CoaAccount? @relation(fields: [coaAccountId], references: [id])
+  coaAccountId  String?
+  coaAccount    CoaAccount?          @relation(fields: [coaAccountId], references: [id])
   /// Jadwal cicilan pinjaman (opsional): jumlah cicilan & total bunga/biaya cicilan → pokok + bunga per cicilan
   installments  Int?
   interestTotal BigInt?
   payments      FinanceTransaction[]
+  /// Foto nota / bukti hutang (penyimpanan privat)
+  proofPath     String?
+  proofMime     String?
 }
 
 model FixedAsset {
@@ -1236,8 +1247,8 @@ model Purchase {
   createdAt     DateTime       @default(now())
   lines         PurchaseLine[]
   /// Dibatalkan: jurnal dibalik, dokumen tetap tersimpan
-  cancelledAt  DateTime?
-  cancelReason String?
+  cancelledAt   DateTime?
+  cancelReason  String?
 }
 
 model PurchaseLine {
@@ -1274,21 +1285,25 @@ model ReserveFund {
 
 /// SISIH = penyisihan harian; TARIK = owner mengambil / dana dipakai membayar pinjaman
 model ReserveEntry {
-  id        String      @id @default(cuid())
-  fundId    String
-  fund      ReserveFund @relation(fields: [fundId], references: [id])
-  date      DateTime    @db.Date
-  type      String
-  amount    BigInt
-  journalId String?
-  note      String?
+  id            String              @id @default(cuid())
+  fundId        String
+  fund          ReserveFund         @relation(fields: [fundId], references: [id])
+  date          DateTime            @db.Date
+  type          String
+  amount        BigInt
+  journalId     String?
+  note          String?
   /// Foto bukti transfer sisihan (penyimpanan privat)
-  proofPath String?
-  proofMime String?
-  createdBy String
-  createdAt DateTime    @default(now())
+  proofPath     String?
+  proofMime     String?
+  /// Transaksi transfer (menu Transaksi) yang menjadi bukti & jurnal sisihan ini
+  transactionId String?
+  transaction   FinanceTransaction? @relation(fields: [transactionId], references: [id])
+  createdBy     String
+  createdAt     DateTime            @default(now())
 
   @@index([fundId, date])
+  @@index([transactionId])
 }
 
 /// Tunjangan tetap per karyawan (tidak semua karyawan dapat), dibayar serentak tiap bulan

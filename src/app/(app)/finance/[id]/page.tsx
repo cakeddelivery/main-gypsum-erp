@@ -1,8 +1,12 @@
+import { payableOptions } from "@/lib/payables";
 import { notFound } from "next/navigation";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
-import { dateStr, fmtDateTime, jakartaParts } from "@/lib/time";
+import { dateStr, fmtDate, fmtDateTime, jakartaParts, todayStr } from "@/lib/time";
+import { describeParts, parseLink, reserveOptions } from "@/lib/reserveSync";
+import { walletForMarketplace } from "@/lib/extract";
+import Link from "next/link";
 import { STATUS_LABEL, missingFields, splitIssues } from "@/lib/finance";
 import { Badge, Card, ErrorBox, Field, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
@@ -10,7 +14,7 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ProofPreview } from "@/components/ProofPreview";
 import { TxForm } from "../TxForm";
-import { approveTx, cancelTx, changeAccountTx, changeStoreTx, deleteTx, reclassifyTx, rejectTx, submitTx, updateTx } from "../actions";
+import { attachProofTx, linkReserveTx, setReserveTx, approveTx, cancelTx, changeAccountTx, changeStoreTx, deleteTx, reclassifyTx, rejectTx, submitTx, updateTx } from "../actions";
 
 export const metadata = { title: "Detail Transaksi" };
 
@@ -36,6 +40,17 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
   const p = jakartaParts(t.date);
   const suggested = categories.find((c) => c.id === t.suggestedCategoryId);
   const ai = t.aiExtraction as { confidence?: number; missing?: string[] } | null;
+  // Dana sisihan: transfer ke rekening simpanan dana (kompensasi owner / tabungan cicilan)
+  const isTransfer = t.direction === "TRANSFER" && !!t.accountId && !!t.toAccountId;
+  const linked = isTransfer ? await prisma.reserveEntry.findMany({ where: { transactionId: t.id }, include: { fund: true }, orderBy: [{ date: "asc" }] }) : [];
+  const link = parseLink(t.reserveLink);
+  const fromBank = banks.find((b) => b.id === t.accountId);
+  const toBank = banks.find((b) => b.id === t.toAccountId);
+  // Transfer bank → saldo penjual (tidak mungkin): tawarkan rekening dompet digital platform yang sama
+  const fixTo = isTransfer && fromBank && toBank && !fromBank.marketplace ? walletForMarketplace(toBank, banks) : null;
+  const canLink = isTransfer && !linked.length && (editable || (t.status === "DIBUKUKAN" && user.can("finance.approve")));
+  const rsv = canLink ? await reserveOptions(prisma, { amount: Number(t.amount), fromBankId: t.accountId, toBankId: fixTo?.id ?? t.toAccountId, date: todayStr(t.date), text: [t.note, t.rawText, t.counterparty].filter(Boolean).join(" "), excludeTxId: t.id }) : null;
+  const chosen = link && "parts" in link ? await describeParts(prisma, link.parts) : [];
   return (
     <div className="space-y-5">
       <PageHeader title={`Transaksi ${t.number}`} subtitle={`${idr(t.amount)} · ${fmtDateTime(t.date)} · dibuat ${t.createdBy}`} />
@@ -52,7 +67,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
         <div className="space-y-5 lg:col-span-2">
           <Card title="Data transaksi" actions={editable && user.can("finance.create") && (
             <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah transaksi" wide>
-              <TxForm mode="edit" action={updateTx} banks={banks} categories={categories} stores={stores} defaultStoreId={def?.value} init={{ id: t.id, direction: t.direction, amount: Number(t.amount), date: dateStr(new Date(Date.UTC(p.year, p.month - 1, p.day))), time: `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`, accountId: t.accountId, toAccountId: t.toAccountId, categoryId: t.categoryId, storeId: t.storeId, counterparty: t.counterparty, note: t.note, splits: t.splits.map((x) => ({ categoryId: x.categoryId, amount: Number(x.amount), note: x.note ?? "", itemId: x.itemId, itemName: splitItems.find((i) => i.id === x.itemId)?.name ?? null, qty: x.qty ? Number(x.qty) : null })) }} />
+              <TxForm mode="edit" action={updateTx} banks={banks} categories={categories} stores={stores} defaultStoreId={def?.value} payables={await payableOptions(t.payableId)} init={{ id: t.id, direction: t.direction, amount: Number(t.amount), date: dateStr(new Date(Date.UTC(p.year, p.month - 1, p.day))), time: `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`, accountId: t.accountId, toAccountId: t.toAccountId, categoryId: t.categoryId, payableId: t.payableId, storeId: t.storeId, counterparty: t.counterparty, note: t.note, splits: t.splits.map((x) => ({ categoryId: x.categoryId, amount: Number(x.amount), note: x.note ?? "", itemId: x.itemId, itemName: splitItems.find((i) => i.id === x.itemId)?.name ?? null, qty: x.qty ? Number(x.qty) : null })) }} />
             </Modal>
           )}>
               <dl className="grid grid-cols-2 gap-y-2 text-sm">
@@ -86,9 +101,58 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
           )}
         </div>
         <div className="space-y-5">
-          {t.proofPath && (
+          {(t.proofPath || user.can("finance.create")) && (
             <Card title="Bukti (privat)">
-              <ProofPreview thumb src={`/api/files/proof/${t.id}`} mime={t.proofMime} title={`Bukti ${t.number}`} />
+              {t.proofPath ? <ProofPreview thumb src={`/api/files/proof/${t.id}`} mime={t.proofMime} title={`Bukti ${t.number}`} /> : <p className="mb-2 text-sm text-amber-700">Belum ada bukti transfer.</p>}
+              {user.can("finance.create") && (!t.proofPath || user.can("finance.approve")) && t.status !== "DITOLAK" && t.status !== "DIBATALKAN" && (
+                <Modal trigger={t.proofPath ? "Ganti bukti" : "+ Lampirkan bukti"} triggerClass="btn-secondary btn-sm mt-2" title={`Bukti ${t.number}`}>
+                  <ModalForm action={attachProofTx} className="space-y-3">
+                    <input type="hidden" name="id" value={t.id} />
+                    <Field label="Foto / PDF bukti" hint="JPG/PNG/PDF, maks 5 MB. Ikut terlampir di dana sisihan yang tersambung. Jurnal tidak berubah."><input type="file" name="proof" required accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
+                    <Submit>Lampirkan</Submit>
+                  </ModalForm>
+                </Modal>
+              )}
+            </Card>
+          )}
+          {linked.length > 0 && (
+            <Card title="Dana sisihan" actions={<Link className="link text-sm" href="/finance/sisihan">Buka ›</Link>}>
+              <ul className="space-y-1 text-sm">{linked.map((e) => <li key={e.id} className="flex justify-between gap-2"><span>{e.fund.name} · {fmtDate(e.date)}</span><span className="tabular-nums">{idr(e.amount)}</span></li>)}</ul>
+              <p className="mt-2 text-xs text-slate-500">Tercatat dari transfer ini, bukti transfer ikut terlampir.</p>
+            </Card>
+          )}
+          {canLink && (rsv || chosen.length > 0 || link) && (
+            <Card title="Dana sisihan">
+              {editable ? (
+                <>
+                  <p className="mb-2 text-sm">
+                    {link && "skip" in link ? "Dicatat sebagai transfer biasa (bukan sisihan)." : chosen.length ? <>Saat dibukukan, dicatat sebagai sisihan <b>{chosen.map((c) => `${c.fund.name} (${c.dates.map((d) => d.slice(8)).join(",")})`).join(" + ")}</b>.</> : rsv?.sure ? <>Saat dibukukan, otomatis dicatat sebagai sisihan <b>{rsv.options[0].label}</b> ({rsv.options[0].dates.map((d) => d.slice(8)).join(",")}).</> : rsv ? "Nominal cocok dengan beberapa dana sisihan. Pilih salah satu agar ikut tercatat saat dibukukan." : "Tidak ada dana sisihan yang cocok."}
+                  </p>
+                  {fixTo && <p className="mb-2 text-xs text-amber-700">Rekening tujuan {toBank?.name} tidak bisa menerima transfer dari bank. Mungkin maksudnya {fixTo.name}: ubah rekening tujuan dulu.</p>}
+                  {user.can("finance.create") && (
+                    <ActionForm action={setReserveTx} className="space-y-2">
+                      <input type="hidden" name="id" value={t.id} />
+                      <select name="pick" className="input" defaultValue={link && "skip" in link ? "skip" : "auto"}>
+                        <option value="auto">Otomatis (dicocokkan saat dibukukan)</option>
+                        {!fixTo && rsv?.options.map((o, k) => <option key={k} value={String(k)}>{o.label} ({o.dates.map((d) => d.slice(8)).join(",")})</option>)}
+                        <option value="skip">Bukan sisihan (transfer biasa)</option>
+                      </select>
+                      <Submit className="btn-secondary btn-sm">Simpan pilihan</Submit>
+                    </ActionForm>
+                  )}
+                </>
+              ) : rsv ? (
+                <>
+                  <p className="mb-2 text-sm">Transfer ini cocok dengan dana sisihan tapi belum tercatat di sana{fixTo ? <> (rekening tujuan kemungkinan <b>{fixTo.name}</b>, bukan {toBank?.name})</> : ""}.</p>
+                  <ActionForm action={linkReserveTx} className="space-y-2" confirm="Sinkronkan transfer ini ke dana sisihan? Jurnalnya dibukukan ulang.">
+                    <input type="hidden" name="id" value={t.id} />
+                    {fixTo && <input type="hidden" name="toAccountId" value={fixTo.id} />}
+                    <select name="pick" className="input" defaultValue="0">{rsv.options.map((o, k) => <option key={k} value={String(k)}>{o.label} ({o.dates.map((d) => d.slice(8)).join(",")})</option>)}</select>
+                    <p className="text-xs text-slate-500">Jurnal lama dibalik lalu dibukukan ulang{fixTo ? ` ke ${fixTo.name}` : ""}{" "}beserta beban kompensasi (untuk dana owner). Sisihan tanpa bukti di tanggal tsb memakai transfer ini, jadi tidak dobel.</p>
+                    <Submit className="btn-secondary btn-sm" pendingText="Menyinkronkan…">Sinkronkan ke dana sisihan</Submit>
+                  </ActionForm>
+                </>
+              ) : null}
             </Card>
           )}
           {editable && (

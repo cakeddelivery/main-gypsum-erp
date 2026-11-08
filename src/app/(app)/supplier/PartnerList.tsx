@@ -4,8 +4,9 @@ import { ModalForm } from "@/components/ModalForm";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Paged } from "@/components/Paged";
 import type { ActionResult } from "@/lib/action";
+import Link from "next/link";
 
-type Row = { id: string; code: string | null; name: string; phone: string | null; address: string | null; note: string | null; active: boolean; extra?: React.ReactNode };
+type Row = { id: string; code: string | null; name: string; phone: string | null; address: string | null; note: string | null; active: boolean; aliases?: string; extra?: React.ReactNode; href?: string; actions?: React.ReactNode };
 type Act = (p: ActionResult | null, fd: FormData) => Promise<ActionResult>;
 
 /** Daftar supplier / pelanggan: cari, tambah, ubah, hapus (form berupa popup) */
@@ -16,6 +17,7 @@ export function PartnerList({ kind, subtitle, rows, q, canManage, save, remove, 
       <AutoCode value={r?.code} example={kind === "Supplier" ? "SUP-001" : "PLG-001"} />
       <Field label="Nama"><input name="name" defaultValue={r?.name} className="input" required /></Field>
       <Field label="No. HP / WhatsApp"><input name="phone" type="tel" defaultValue={r?.phone ?? ""} className="input" /></Field>
+      {kind === "Supplier" && <Field label="Nama lain (opsional)" hint="Pisahkan dengan koma. Dikenali saat input hutang/pembelian & di bot, mis. nama lama"><input name="aliases" defaultValue={r?.aliases ?? ""} className="input" /></Field>}
       <Field label="Alamat"><input name="address" defaultValue={r?.address ?? ""} className="input" /></Field>
       <Field label="Catatan"><input name="note" defaultValue={r?.note ?? ""} className="input" /></Field>
       {r && <Field label="Status"><select name="active" defaultValue={r.active ? "true" : "false"} className="input"><option value="true">Aktif</option><option value="false">Nonaktif</option></select></Field>}
@@ -37,7 +39,7 @@ export function PartnerList({ kind, subtitle, rows, q, canManage, save, remove, 
               {rows.map((r) => (
                 <tr key={r.id} className={r.active ? "" : "opacity-60"}>
                   <td className="font-mono text-xs">{r.code ?? "—"}</td>
-                  <td className="font-medium text-slate-900">{r.name}</td>
+                  <td className="font-medium text-slate-900">{r.href ? <Link className="link" href={r.href}>{r.name}</Link> : r.name}{r.aliases && <div className="text-xs font-normal text-slate-500">alias: {r.aliases}</div>}</td>
                   <td>{r.phone ? <a className="link" href={`https://wa.me/${wa(r.phone)}`} target="_blank" rel="noreferrer">{r.phone}</a> : "—"}</td>
                   <td className="max-w-xs truncate">{r.address ?? "—"}</td>
                   <td className="max-w-xs truncate text-xs">{r.note ?? ""}</td>
@@ -47,6 +49,7 @@ export function PartnerList({ kind, subtitle, rows, q, canManage, save, remove, 
                     <td>
                       <div className="flex gap-1">
                         <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${kind.toLowerCase()}`}>{form(r)}</Modal>
+                        {r.actions}
                         <ActionForm action={remove} confirm={`Hapus ${r.name}?`}><input type="hidden" name="id" value={r.id} /><Submit className="btn-secondary btn-sm" pendingText="…">Hapus</Submit></ActionForm>
                       </div>
                     </td>
