@@ -26,7 +26,7 @@ export default async function Neraca({ searchParams }: { searchParams: Promise<S
         <Stat label="Total ekuitas" value={idr(bs.totalEquity)} />
         <Stat label="Status" value={bs.balanced ? "✓ Seimbang" : "✗ Tidak seimbang"} tone={bs.balanced ? "green" : "red"} hint={`Per ${per}`} />
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         <AccountTable title="Aset" rows={bs.assets} total={bs.totalAssets} totalLabel="Total aset" />
         <div className="space-y-4">
           <AccountTable title="Kewajiban" rows={bs.liabilities} total={bs.totalLiabilities} totalLabel="Total kewajiban" />

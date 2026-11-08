@@ -4,7 +4,7 @@ import { runDueJobs } from "@/lib/jobs";
 
 export const dynamic = "force-dynamic";
 
-/** Dipanggil cron eksternal tiap 5–15 menit: menjalankan rekap 07.00 WIB & tutup buku tgl 1 09.00 WIB bila jatuh tempo */
+/** Dipanggil cron eksternal tiap 5–15 menit: menjalankan rekap 07.00 WIB & tutup buku bulan lalu (default tgl 10, 09.00 WIB) bila jatuh tempo */
 async function handle(req: Request) {
   const secret = process.env.CRON_SECRET ?? "";
   const given = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");

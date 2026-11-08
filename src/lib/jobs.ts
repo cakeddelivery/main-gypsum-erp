@@ -78,7 +78,9 @@ async function markRan(key: string, date: string) {
  * Jalankan job yang jatuh tempo (dipanggil tiap menit oleh scheduler / cron):
  * - 06.00 WIB: slip gaji bulanan untuk siklus karyawan yang selesai (gajian H+7)
  * - 07.00 WIB: rekap harian Telegram
- * - Tanggal 1 pukul 09.00 WIB: tutup buku bulan sebelumnya
+ * - Tanggal tutup buku (Pengaturan, default 10) pukul 09.00 WIB: tutup buku bulan sebelumnya.
+ *   Tidak tanggal 1 agar bukti transaksi akhir bulan yang terlambat masuk masih bisa dibukukan.
+ * Job yang gagal dicatat di log notifikasi (tidak diulang tiap menit).
  */
 export async function runDueJobs(now: Date = new Date()) {
   const p = jakartaParts(now);
@@ -87,22 +89,45 @@ export async function runDueJobs(now: Date = new Date()) {
   const minutes = p.hour * 60 + p.minute;
   if (minutes >= 6 * 60 && !(await ranToday("job_monthly_payroll_last", date))) {
     await markRan("job_monthly_payroll_last", date);
-    results.monthlyPayroll = await generateMonthlyPayroll(SYSTEM_ACTOR, now);
-    results.allowancePayroll = await generateAllowancePayroll(SYSTEM_ACTOR, now);
+    results.monthlyPayroll = await logFailure("GAJI_OTOMATIS", date, () => generateMonthlyPayroll(SYSTEM_ACTOR, now));
+    results.allowancePayroll = await logFailure("TUNJANGAN_OTOMATIS", date, () => generateAllowancePayroll(SYSTEM_ACTOR, now));
   }
   if (minutes >= 7 * 60 && !(await ranToday("job_daily_recap_last", date))) {
     await markRan("job_daily_recap_last", date);
-    results.dailyRecap = await sendDailyRecap(now);
+    results.dailyRecap = await logFailure("REKAP_HARIAN", date, () => sendDailyRecap(now));
   }
-  if (p.day === 1 && minutes >= 9 * 60 && !(await ranToday("job_month_close_last", date))) {
+  const closeDay = await autoCloseDay();
+  if (p.day === closeDay && minutes >= 9 * 60 && !(await ranToday("job_month_close_last", date))) {
     const auto = await prisma.setting.findUnique({ where: { key: "auto_close_enabled" } });
     await markRan("job_month_close_last", date);
     if ((auto?.value ?? "true") === "true") {
       const y = p.month === 1 ? p.year - 1 : p.year;
       const m = p.month === 1 ? 12 : p.month - 1;
-      results.monthClose = await closePeriod(y, m, SYSTEM_ACTOR);
-      await prisma.notificationLog.create({ data: { channel: "SISTEM", type: "TUTUP_BUKU", target: `${y}-${m}`, status: "SELESAI", payload: JSON.stringify(results.monthClose) } });
+      results.monthClose = await logFailure("TUTUP_BUKU", `${y}-${m}`, async () => {
+        const r = await closePeriod(y, m, SYSTEM_ACTOR);
+        await prisma.notificationLog.create({ data: { channel: "SISTEM", type: "TUTUP_BUKU", target: `${y}-${m}`, status: "SELESAI", payload: JSON.stringify(r) } });
+        return r;
+      });
     }
   }
   return results;
+}
+
+/** Tanggal tutup buku otomatis bulan sebelumnya (Pengaturan, 1–28, default 10) */
+export async function autoCloseDay() {
+  const s = await prisma.setting.findUnique({ where: { key: "auto_close_day" } });
+  const n = Math.floor(Number(s?.value));
+  return Number.isFinite(n) && n >= 1 && n <= 28 ? n : 10;
+}
+
+/** Jalankan job; bila gagal, catat di log notifikasi agar terlihat (job tidak diulang tiap menit) */
+async function logFailure<T>(type: string, target: string, fn: () => Promise<T>): Promise<T | { error: string }> {
+  try {
+    return await fn();
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    console.error(`job ${type} gagal:`, e);
+    await prisma.notificationLog.create({ data: { channel: "SISTEM", type, target, status: "GAGAL", error: error.slice(0, 500) } }).catch(() => {});
+    return { error };
+  }
 }
