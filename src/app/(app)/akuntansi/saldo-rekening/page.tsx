@@ -44,6 +44,7 @@ export default async function SaldoRekening({ searchParams }: { searchParams: Pr
               </tbody>
             </table>
           </div>
+          <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">Isi saldo asli pada <b>akhir hari {date}</b>, yaitu sesudah semua transaksi s/d tanggal itu. Transaksi bertanggal s/d {date} yang sudah tercatat akan ikut &quot;tertutup&quot; oleh penyesuaian ini, dan yang baru dicatat sesudahnya akan menggeser saldo lagi. Untuk saldo awal 1 November, pilih tanggal 31 Oktober.</p>
           <p className="text-xs text-slate-500">Isi saldo asli hanya untuk rekening yang ingin disesuaikan. Bisa diulang kapan saja; yang dibukukan hanya selisihnya.</p>
           <Submit>Simpan saldo</Submit>
         </ModalForm>
