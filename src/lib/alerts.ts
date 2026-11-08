@@ -67,6 +67,18 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
       }),
     );
   }
+  if (can("accounting.view")) {
+    // Anggaran beban bulan berjalan: realisasi ≥100% (merah) dan ≥80% (kuning)
+    tasks.push(
+      import("./budget")
+        .then((m) => m.budgetWarnings())
+        .then((w) => {
+          if (w.over.length) out.push({ key: "budget-over", label: `Beban melewati anggaran: ${w.over.slice(0, 3).map((r) => r.name).join(", ")}${w.over.length > 3 ? ", …" : ""}`, count: w.over.length, href: "/akuntansi/anggaran", tone: "red" });
+          if (w.warn.length) out.push({ key: "budget-warn", label: `Beban mendekati anggaran (≥80%): ${w.warn.slice(0, 3).map((r) => r.name).join(", ")}${w.warn.length > 3 ? ", …" : ""}`, count: w.warn.length, href: "/akuntansi/anggaran", tone: "amber" });
+        })
+        .catch(() => {}),
+    );
+  }
   if (can("payroll.approve")) {
     tasks.push(prisma.payrollPeriod.count({ where: { status: { not: "DIBAYAR" }, payDate: { lte: dateOnly(today) }, payslips: { some: {} } } }).then((c) => void (c && out.push({ key: "payday", label: "Gaji sudah jatuh tanggal gajian", count: c, href: "/gaji", tone: "red" }))));
   }
