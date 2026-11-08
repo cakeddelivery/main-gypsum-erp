@@ -25,7 +25,7 @@ const schema = z.object({
   telegram_chat_id: z.string().optional(),
   proof_base64: z.string().max(7_500_000).optional(),
   proof_mime: z.enum(["image/jpeg", "image/png", "image/webp", "application/pdf"]).optional(),
-  ai_extraction: z.record(z.unknown()).optional(),
+  ai_extraction: z.record(z.string(), z.unknown()).optional(),
   notify: z.boolean().optional(),
 });
 
