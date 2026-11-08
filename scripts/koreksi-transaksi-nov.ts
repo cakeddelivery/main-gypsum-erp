@@ -107,10 +107,22 @@ async function main() {
     const hm = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", hour12: false }).format(wd.date);
     const newDate = new Date(`${REDATE.day}T${hm}:00+07:00`);
     const oldDay = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(wd.date);
+    // Sudah dibatalkan & dicatat ulang manual? Cari withdraw lain dengan nominal sama yang masih dibukukan.
+    const twin = await prisma.financeTransaction.findFirst({
+      where: { id: { not: wd.id }, status: "DIBUKUKAN", direction: "TRANSFER", accountId: tiktok.id, amount: BigInt(REDATE.amount) },
+      orderBy: { date: "asc" },
+    });
+    const twinDay = twin ? new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jakarta" }).format(twin.date) : null;
     if (oldDay === REDATE.day && wd.status === "DIBUKUKAN") {
       console.log(`  = sudah bertanggal ${REDATE.day}, tidak perlu dikoreksi`);
+    } else if (wd.status !== "DIBUKUKAN" && twin) {
+      console.log(`  = ${REDATE.number} sudah dibatalkan (${wd.status}) dan sudah dicatat ulang manual: ${twin.number} tanggal ${twinDay}. Tidak ada yang diubah.`);
+      if (twinDay !== REDATE.day) console.log(`    Perhatian: ${twin.number} bertanggal ${twinDay}, bukan ${REDATE.day}. Kabari Claude.`);
+    } else if (wd.status === "DIBUKUKAN" && twin) {
+      throw new Error(`Ada ${twin.number} (${twinDay}) dengan nominal sama yang juga dibukukan. Hentikan, kabari Claude.`);
     } else {
-      console.log(`  - batalkan ${REDATE.number} (tanggal ${oldDay}, ${wd.note ?? ""})`.trimEnd());
+      if (wd.status === "DIBUKUKAN") console.log(`  - batalkan ${REDATE.number} (tanggal ${oldDay}, ${wd.note ?? ""})`.trimEnd());
+      else console.log(`  = ${REDATE.number} sudah ${wd.status}, belum ada pengganti`);
       console.log(`  + catat ulang ${idr(REDATE.amount)} tanggal ${REDATE.day} pukul ${hm}, toko & rekening sama`);
       if (apply) {
         if (wd.status === "DIBUKUKAN") await cancelBookedTransaction(wd.id, actor, `Salah tanggal: masuk Seabank 5984 tanggal ${REDATE.day}`);
