@@ -65,6 +65,25 @@ export async function sendDailyRecap(now: Date = new Date()) {
   return { sent, failed: recipients.length - sent };
 }
 
+/** Pengingat harian dana talangan ke Owner & Finance (yang tertaut Telegram), dengan tombol kirim bukti pengembalian */
+export async function sendTalanganReminder(now: Date = new Date()) {
+  const { talanganSummary, talanganReminderText } = await import("./talangan");
+  const { esc } = await import("./telegram");
+  const text = talanganReminderText(await talanganSummary(), esc);
+  if (!text) return { sent: 0, skipped: "tidak ada talangan" };
+  const recipients = await prisma.telegramIdentity.findMany({ where: { active: true, chatId: { not: null }, user: { active: true, role: { in: ["OWNER", "FINANCE"] } } } });
+  if (!telegramConfigured() || !recipients.length) {
+    await prisma.notificationLog.create({ data: { channel: "TELEGRAM", type: "TALANGAN", target: todayStr(now), status: "GAGAL", payload: text, error: !telegramConfigured() ? "TELEGRAM_BOT_TOKEN belum diatur" : "Owner/Finance belum tertaut Telegram" } });
+    return { sent: 0, failed: recipients.length };
+  }
+  let sent = 0;
+  for (const r of recipients) {
+    const res = await sendTelegram(r.chatId!, `${text}\n\nTekan tombol di bawah lalu kirim foto bukti transfernya.`, { type: "TALANGAN", buttons: [[{ text: "💸 Kirim bukti pengembalian", callback_data: "f:start:tlg" }]] });
+    if (res.ok) sent++;
+  }
+  return { sent, failed: recipients.length - sent };
+}
+
 async function ranToday(key: string, date: string) {
   const s = await prisma.setting.findUnique({ where: { key } });
   return s?.value === date;
@@ -78,7 +97,10 @@ async function markRan(key: string, date: string) {
  * Jalankan job yang jatuh tempo (dipanggil tiap menit oleh scheduler / cron):
  * - 06.00 WIB: slip gaji bulanan untuk siklus karyawan yang selesai (gajian H+7)
  * - 07.00 WIB: rekap harian Telegram
- * - Tanggal 1 pukul 09.00 WIB: tutup buku bulan sebelumnya
+ * - 08.00 WIB: pengingat dana talangan ke Owner & Finance (bila ada yang belum dikembalikan)
+ * - Tanggal tutup buku (Pengaturan, default 10) pukul 09.00 WIB: tutup buku bulan sebelumnya.
+ *   Tidak tanggal 1 agar bukti transaksi akhir bulan yang terlambat masuk masih bisa dibukukan.
+ * Job yang gagal dicatat di log notifikasi (tidak diulang tiap menit).
  */
 export async function runDueJobs(now: Date = new Date()) {
   const p = jakartaParts(now);
@@ -87,22 +109,49 @@ export async function runDueJobs(now: Date = new Date()) {
   const minutes = p.hour * 60 + p.minute;
   if (minutes >= 6 * 60 && !(await ranToday("job_monthly_payroll_last", date))) {
     await markRan("job_monthly_payroll_last", date);
-    results.monthlyPayroll = await generateMonthlyPayroll(SYSTEM_ACTOR, now);
-    results.allowancePayroll = await generateAllowancePayroll(SYSTEM_ACTOR, now);
+    results.monthlyPayroll = await logFailure("GAJI_OTOMATIS", date, () => generateMonthlyPayroll(SYSTEM_ACTOR, now));
+    results.allowancePayroll = await logFailure("TUNJANGAN_OTOMATIS", date, () => generateAllowancePayroll(SYSTEM_ACTOR, now));
   }
   if (minutes >= 7 * 60 && !(await ranToday("job_daily_recap_last", date))) {
     await markRan("job_daily_recap_last", date);
-    results.dailyRecap = await sendDailyRecap(now);
+    results.dailyRecap = await logFailure("REKAP_HARIAN", date, () => sendDailyRecap(now));
   }
-  if (p.day === 1 && minutes >= 9 * 60 && !(await ranToday("job_month_close_last", date))) {
+  if (minutes >= 8 * 60 && !(await ranToday("job_talangan_last", date))) {
+    await markRan("job_talangan_last", date);
+    results.talangan = await logFailure("TALANGAN", date, () => sendTalanganReminder(now));
+  }
+  const closeDay = await autoCloseDay();
+  if (p.day === closeDay && minutes >= 9 * 60 && !(await ranToday("job_month_close_last", date))) {
     const auto = await prisma.setting.findUnique({ where: { key: "auto_close_enabled" } });
     await markRan("job_month_close_last", date);
     if ((auto?.value ?? "true") === "true") {
       const y = p.month === 1 ? p.year - 1 : p.year;
       const m = p.month === 1 ? 12 : p.month - 1;
-      results.monthClose = await closePeriod(y, m, SYSTEM_ACTOR);
-      await prisma.notificationLog.create({ data: { channel: "SISTEM", type: "TUTUP_BUKU", target: `${y}-${m}`, status: "SELESAI", payload: JSON.stringify(results.monthClose) } });
+      results.monthClose = await logFailure("TUTUP_BUKU", `${y}-${m}`, async () => {
+        const r = await closePeriod(y, m, SYSTEM_ACTOR);
+        await prisma.notificationLog.create({ data: { channel: "SISTEM", type: "TUTUP_BUKU", target: `${y}-${m}`, status: "SELESAI", payload: JSON.stringify(r) } });
+        return r;
+      });
     }
   }
   return results;
+}
+
+/** Tanggal tutup buku otomatis bulan sebelumnya (Pengaturan, 1–28, default 10) */
+export async function autoCloseDay() {
+  const s = await prisma.setting.findUnique({ where: { key: "auto_close_day" } });
+  const n = Math.floor(Number(s?.value));
+  return Number.isFinite(n) && n >= 1 && n <= 28 ? n : 10;
+}
+
+/** Jalankan job; bila gagal, catat di log notifikasi agar terlihat (job tidak diulang tiap menit) */
+async function logFailure<T>(type: string, target: string, fn: () => Promise<T>): Promise<T | { error: string }> {
+  try {
+    return await fn();
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    console.error(`job ${type} gagal:`, e);
+    await prisma.notificationLog.create({ data: { channel: "SISTEM", type, target, status: "GAGAL", error: error.slice(0, 500) } }).catch(() => {});
+    return { error };
+  }
 }

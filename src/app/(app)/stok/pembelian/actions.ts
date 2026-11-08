@@ -2,7 +2,7 @@
 import { action, str, optStr, int } from "@/lib/action";
 import { assertPerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { createPurchase, termFor, lineAmounts } from "@/lib/purchase";
+import { cancelPurchase, createPurchase, termFor, lineAmounts } from "@/lib/purchase";
 import { matchAccount } from "@/lib/extract";
 import { readReceipt, receiptReaderConfigured } from "@/lib/receipt";
 import { isModelUnavailable } from "@/lib/ai";
@@ -73,3 +73,13 @@ export async function readPaymentProof(fd: FormData): Promise<ProofRead> {
   if (!r || !r.amount) return { ok: false, error: "Nominal tidak terbaca dari foto. Isi manual ya." };
   return { ok: true, amount: r.amount, date: r.date, bankAccountId: r.account ? matchAccount(r.account, banks) : null, counterparty: r.counterparty };
 }
+
+/** Batalkan pembelian salah input: jurnal dibalik, stok keluar lagi, hutangnya dihapus */
+export const cancelPurchaseAction = action(
+  "finance.approve",
+  async (fd, user) => {
+    const p = await cancelPurchase(str(fd, "id"), str(fd, "reason"), user);
+    return `Pembelian ${p.number} dibatalkan`;
+  },
+  ["/stok", "/akuntansi/piutang-utang", "/supplier"],
+);

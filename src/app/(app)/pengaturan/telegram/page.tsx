@@ -74,10 +74,10 @@ export default async function TelegramPage() {
         </Modal>
       }>
         <p className="mb-3 text-xs text-slate-500">Tidak ada scope untuk membukukan atau mengakses database: Hermes hanya bisa membuat/mengubah draft dan membaca data referensi.</p>
-        <Paged><table className="tbl">
+        <div className="overflow-x-auto"><Paged><table className="tbl">
           <thead><tr><th>Nama</th><th>Prefix</th><th>Scope</th><th>Dipakai terakhir</th><th>Status</th><th /></tr></thead>
           <tbody>{clients.map((c) => <tr key={c.id}><td>{c.name}</td><td className="font-mono text-xs">mgk_{c.keyPrefix}_…</td><td className="text-xs">{c.scopes}</td><td className="text-xs">{fmtDateTime(c.lastUsedAt)}</td><td>{c.active ? <Badge tone="green">Aktif</Badge> : <Badge tone="red">Dicabut</Badge>}</td><td>{c.active && <ActionForm action={revokeApiClient} confirm="Cabut API key ini?"><input type="hidden" name="id" value={c.id} /><Submit className="btn-danger btn-sm">Cabut</Submit></ActionForm>}</td></tr>)}</tbody>
-        </table></Paged>
+        </table></Paged></div>
       </Card>
       <Card title="Log pengiriman & kesalahan">
         <div className="overflow-x-auto">

@@ -1,7 +1,28 @@
 import { parseIDR } from "./money";
 import { addDays, todayStr } from "./time";
 
-export type ExtractAccount = { id: string; code: string; name: string; aliases: string };
+export type ExtractAccount = { id: string; code: string; name: string; aliases: string; marketplace?: boolean };
+
+/**
+ * Saldo penjual marketplace tidak bisa menerima transfer dari bank. Transfer bank → "Saldo Penjual Shopee" hampir
+ * pasti ke dompet digital platform yang sama (ShopeePay); kembalikan rekening pengganti, atau null bila tidak perlu.
+ */
+export function walletForMarketplace<T extends { id: string; code: string; name: string; marketplace?: boolean; active?: boolean }>(target: T, banks: T[]): T | null {
+  if (!target.marketplace) return null;
+  const key = `${target.code} ${target.name}`;
+  const platform = /tik\s?tok/i.test(key) ? "tiktok" : /shopee/i.test(key) ? "shopee" : null;
+  if (!platform) return null;
+  return banks.find((b) => !b.marketplace && b.active !== false && `${b.code} ${b.name}`.toLowerCase().replace(/\s/g, "").includes(platform)) ?? null;
+}
+
+/** Rekening tujuan transfer dibetulkan bila bank → saldo penjual (lihat walletForMarketplace) */
+export function fixTransferTarget(fromId: string | null, toId: string | null, accounts: ExtractAccount[]): string | null {
+  if (!toId) return toId;
+  const from = accounts.find((a) => a.id === fromId);
+  const to = accounts.find((a) => a.id === toId);
+  if (!to || (from && from.marketplace)) return toId;
+  return walletForMarketplace(to, accounts)?.id ?? toId;
+}
 export type ExtractCategory = { id: string; name: string; direction: "MASUK" | "KELUAR" | "TRANSFER"; keywords: string };
 
 export type Extraction = {
@@ -12,6 +33,8 @@ export type Extraction = {
   direction: "MASUK" | "KELUAR" | "TRANSFER" | null;
   accountId: string | null;
   toAccountId: string | null;
+  /** Hutang supplier / pinjaman yang dibayar (dari nama supplier / kata "angsur", "cicilan") */
+  payableId?: string | null;
   categoryId: string | null;
   note: string;
   confidence: number;
@@ -170,7 +193,7 @@ export function extractTransaction(text: string, accounts: ExtractAccount[], cat
     const m = t.match(/dari\s+([a-z0-9 ]+?)\s+ke\s+([a-z0-9 ]+?)(?:\s+(?:rp|sebesar|\d)|$)/);
     const a = m ? matchAccount(m[1], accounts) : null;
     const b = m ? matchAccount(m[2], accounts) : null;
-    if (a && b && a !== b && (direction === null || /\b(transfer|tf|pindah|sisih|sisihkan|nabung|tabung|setor)\b/.test(t))) direction = "TRANSFER";
+    if (a && b && a !== b && (direction === null || /\b(transfer|tf|pindah|sisih|sisihkan|nabung|menabung|tabungan|setor)\b/.test(t))) direction = "TRANSFER";
   }
 
   let accountId: string | null = null;
@@ -182,6 +205,7 @@ export function extractTransaction(text: string, accounts: ExtractAccount[], cat
     toAccountId = to ? matchAccount(to[1], accounts) : null;
     // "WD MG shopee 500rb": withdraw tanpa kata "dari" = dari saldo penjual platform yang disebut
     if (!accountId && /\b(wd|withdraw|penarikan|tarik saldo|tarik dana)\b/.test(t)) accountId = marketplaceAccount(t, accounts);
+    toAccountId = fixTransferTarget(accountId, toAccountId, accounts);
   } else {
     accountId = matchAccount(t, accounts);
   }
@@ -222,7 +246,7 @@ export function mergeReceipt(ex: Extraction, text: string, rx: ReceiptHint | nul
   // Transfer internal: rekening asal/tujuan dari foto lebih tepat daripada kata acak di caption
   const transferFromPhoto = direction === "TRANSFER" && ex.direction !== "TRANSFER";
   const accountId = transferFromPhoto ? fromRx ?? ex.accountId : ex.accountId ?? fromRx;
-  const toAccountId = direction === "TRANSFER" ? ex.toAccountId ?? toRx : null;
+  const toAccountId = direction === "TRANSFER" ? fixTransferTarget(accountId, ex.toAccountId ?? toRx, accounts) : null;
   const basis = [text, rx.counterparty].filter(Boolean).join(" ");
   const categoryId = direction === "TRANSFER" ? null : ex.direction === direction && ex.categoryId ? ex.categoryId : suggestCategory(basis, direction, categories);
   const missing: string[] = [];

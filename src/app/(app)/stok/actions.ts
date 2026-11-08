@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { autoCode } from "@/lib/codes";
 import { action, str, optStr, int, dec, bool } from "@/lib/action";
-import { recordMovement } from "@/lib/stock";
+import { finishedGoodsOpname, recordMovement } from "@/lib/stock";
 import { audit } from "@/lib/audit";
 import { saveItemRecord } from "@/lib/items";
 import { ForbiddenError } from "@/lib/auth";
@@ -137,4 +137,20 @@ export const saveGypsum = action(
     return "Karakter gypsum tersimpan";
   },
   ["/stok/master"],
+);
+
+/** Opname barang jadi akhir bulan: kolom fisik_<idItem>; kosong = tidak dihitung */
+export const opnameFinished = action(
+  "stock.approve",
+  async (fd, user) => {
+    const date = str(fd, "date") || todayStr();
+    const rows = [...fd.entries()]
+      .filter(([k, v]) => k.startsWith("fisik_") && String(v).trim() !== "")
+      .map(([k, v]) => ({ itemId: k.slice(6), physical: Number(String(v).replace(/\./g, "").replace(",", ".")) }));
+    if (!rows.length) throw new Error("Isi jumlah fisik minimal satu produk");
+    if (rows.some((r) => !Number.isFinite(r.physical))) throw new Error("Jumlah fisik harus angka");
+    const r = await finishedGoodsOpname(rows, jakartaDateTime(date, "23:00"), user);
+    return r.changed ? `Opname tersimpan: ${r.changed} produk disesuaikan, ${r.sold.toLocaleString("id-ID")} pcs terjual → HPP Rp ${r.hpp.toLocaleString("id-ID")}` : "Stok fisik sama dengan sistem, tidak ada penyesuaian";
+  },
+  ["/stok", "/akuntansi"],
 );

@@ -119,7 +119,12 @@ describe("Bot: dana sisihan dari bukti transfer", () => {
     await tap(s!.step === "pick" ? "f:o0" : "f:ok");
     if ((await prisma.botSession.findUnique({ where: { chatId: String(TG) } }))?.step === "confirm") await tap("f:ok");
     for (const f of funds) expect(await prisma.reserveEntry.count({ where: { fundId: f.id, type: "SISIH", date: { in: opts[0].dates.map((d: string) => new Date(`${d}T00:00:00Z`)) } } })).toBe(opts[0].dates.length);
-    expect(await prisma.financeTransaction.count()).toBe(before);
+    // Transfer sisihan ikut tercatat di menu Transaksi (dibukukan) dan sisihannya tersambung ke transaksi tsb
+    expect(await prisma.financeTransaction.count()).toBe(before + 1);
+    const t = await prisma.financeTransaction.findFirstOrThrow({ orderBy: { createdAt: "desc" }, include: { reserveEntries: true } });
+    expect(t.status).toBe("DIBUKUKAN");
+    expect(t.direction).toBe("TRANSFER");
+    expect(t.reserveEntries.length).toBe(funds.length * opts[0].dates.length);
   });
 });
 
@@ -152,14 +157,14 @@ describe("Rincian: satu transfer untuk beberapa keperluan", () => {
     sent.length = 0;
     // Minimal 5 digit: nominal polos < 4 digit tidak dibaca sebagai rupiah
     const tag = 10000 + (Date.now() % 90000);
-    await say(`plastik uji kemasan 100 pcs 50rb\ngalon cleo ${tag}\nongkir gypsum 10rb\ndari seabank`);
+    await say(`plastik uji kemasan 100 pcs 50rb\nbarang zeta ${tag}\nongkir gypsum 10rb\ndari seabank`);
     const t = await prisma.financeTransaction.findFirstOrThrow({ orderBy: { createdAt: "desc" }, include: { splits: { orderBy: { sortOrder: "asc" } } } });
     expect(t.splits).toHaveLength(3);
     expect(Number(t.amount)).toBe(50000 + tag + 10000);
     expect(t.splits[0].itemId).toBe(it.id);
     const msg = sent.at(-1)!;
     expect(msg.text).toContain("Rincian (3)");
-    // Galon belum berkategori -> tombol pilihan kategori rincian 2
+    // Barang zeta belum berkategori -> tombol pilihan kategori rincian 2
     const sc = msg.buttons!.flat().find((b) => b.callback_data.startsWith(`sc:${t.id}:1:`));
     expect(sc).toBeTruthy();
     await tap(sc!.callback_data);

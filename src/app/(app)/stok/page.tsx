@@ -21,9 +21,10 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
   const shownLocs = sp.loc ? locations.filter((l) => l.id === sp.loc) : locations;
   const qty = (itemId: string, locId?: string) => balances.filter((b) => b.itemId === itemId && (!locId || b.locationId === locId)).reduce((s, b) => s + b.qty, 0);
   // Tab: semua / per jenis / perlu reorder (stok ≤ batas minimum, dihitung dari total semua lokasi)
-  const tab = sp.filter === "menipis" ? "reorder" : sp.type ?? "semua";
+  const tab = sp.filter === "menipis" ? "reorder" : sp.filter === "minus" ? "minus" : sp.type ?? "semua";
   const all = items.map((i) => ({ ...i, total: sp.loc ? qty(i.id, sp.loc) : qty(i.id), min: Number(i.minStock), reorder: needsReorder(qty(i.id), Number(i.minStock)) }));
-  const rows = tab === "reorder" ? all.filter((r) => r.reorder) : tab === "semua" ? all : all.filter((r) => r.type === tab);
+  const negative = all.filter((r) => balances.some((b) => b.itemId === r.id && b.qty < -0.0005));
+  const rows = tab === "reorder" ? all.filter((r) => r.reorder) : tab === "minus" ? negative : tab === "semua" ? all : all.filter((r) => r.type === tab);
   const value = (t: ItemType) => items.filter((i) => i.type === t).reduce((s, i) => s + qty(i.id) * Number(i.avgCost), 0);
   const low = all.filter((r) => r.reorder).length;
   const keep = (extra: Record<string, string | undefined>) => {
@@ -43,6 +44,7 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
           <>
             {(user.can("finance.approve") || user.can("accounting.view")) && <Link href="/stok/pembelian" className="btn-primary">Pembelian</Link>}
             {user.can("stock.move") && <Link href="/stok/mutasi" className="btn-secondary">Mutasi stok</Link>}
+            {user.can("stock.approve") && <Link href="/stok/opname" className="btn-secondary">Opname barang jadi</Link>}
             {(user.can("stock.request") || user.can("stock.approve")) && <Link href="/stok/permintaan" className="btn-secondary">Permintaan</Link>}
             {user.can("stock.view") && <Link href="/stok/kartu" className="btn-secondary">Kartu persediaan</Link>}
             {user.can("master.manage") && <Link href="/stok/master" className="btn-secondary">Master data</Link>}
@@ -66,6 +68,7 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
           { key: "BARANG_DALAM_PROSES", label: "Setengah jadi", href: keep({ type: "BARANG_DALAM_PROSES" }), count: count("BARANG_DALAM_PROSES") },
           { key: "BARANG_JADI", label: "Produk jadi", href: keep({ type: "BARANG_JADI" }), count: count("BARANG_JADI") },
           { key: "reorder", label: "Perlu reorder", href: keep({ filter: "menipis" }), count: low },
+          ...(negative.length ? [{ key: "minus", label: "Stok minus", href: keep({ filter: "minus" }), count: negative.length }] : []),
         ]}
       />
       <FilterBar>
@@ -74,6 +77,7 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
         <Field label="Cari"><input name="q" defaultValue={sp.q} className="input" placeholder="Nama item" /></Field>
         <Field label="Lokasi"><select name="loc" defaultValue={sp.loc ?? ""} className="input"><option value="">Semua lokasi</option>{locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
       </FilterBar>
+      {tab === "minus" && rows.length > 0 && <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-800">Stok minus berarti pemakaian (produksi/borongan) tercatat lebih banyak dari stok yang masuk. Cek pembelian yang belum dicatat atau takaran resep, lalu sesuaikan lewat Mutasi › Penyesuaian.</div>}
       {rows.length === 0 ? <Empty title={tab === "reorder" ? "Tidak ada item yang perlu reorder" : "Tidak ada item"} /> : (
         <div className="table-wrap">
           <Paged><table className="tbl">

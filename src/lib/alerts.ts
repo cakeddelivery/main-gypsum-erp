@@ -1,5 +1,5 @@
 import { prisma } from "./db";
-import { lowStockItems } from "./stock";
+import { lowStockItems, negativeStock } from "./stock";
 import { addDays, dateOnly, todayStr } from "./time";
 import type { Permission } from "./rbac";
 
@@ -19,6 +19,9 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
   }
   if (can("stock.view")) {
     tasks.push(lowStockItems().then((l) => void (l.length && out.push({ key: "lowstock", label: "Item stok menipis", count: l.length, href: "/stok?filter=menipis", tone: "amber" }))));
+  }
+  if (can("stock.view")) {
+    tasks.push(negativeStock().then((l) => void (l.length && out.push({ key: "negstock", label: "Stok minus (pemakaian melebihi stok tercatat)", count: l.length, href: "/stok?filter=minus", tone: "red" }))));
   }
   if (can("stock.approve")) {
     tasks.push(prisma.stockRequest.count({ where: { status: "DIAJUKAN" } }).then((c) => void (c && out.push({ key: "stockreq", label: "Permintaan stok menunggu", count: c, href: "/stok/permintaan", tone: "blue" }))));
@@ -45,6 +48,15 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
         const [funds, done] = await Promise.all([prisma.reserveFund.count({ where: { active: true } }), prisma.reserveEntry.count({ where: { date: dateOnly(today), type: "SISIH", fund: { active: true } } })]);
         if (funds > done) out.push({ key: "reserve", label: "Dana sisihan hari ini belum dicatat", count: funds - done, href: "/finance/sisihan", tone: "amber" });
       })(),
+    );
+  }
+  if (can("finance.approve")) {
+    // Rekening simpanan dana sisihan dipakai untuk operasional: harus dikembalikan dari rekening operasional
+    tasks.push(
+      import("./talangan")
+        .then((m) => m.talanganOutstanding())
+        .then((t) => void (t.total > 0 && out.push({ key: "talangan", label: `Dana talangan belum dikembalikan · Rp ${t.total.toLocaleString("id-ID")} (klik untuk kirim bukti)`, count: t.count, href: "/finance/talangan?kembali=1", tone: "red" })))
+        .catch(() => {}),
     );
   }
   if (can("accounting.view")) {

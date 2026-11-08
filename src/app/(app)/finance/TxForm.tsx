@@ -8,7 +8,7 @@ import type { Extraction } from "@/lib/extract";
 
 type Opt = { id: string; name: string };
 type Cat = Opt & { direction: string };
-type Init = { id?: string; direction?: string; amount?: number; date?: string; time?: string; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; storeId?: string | null; counterparty?: string | null; note?: string | null; rawText?: string | null; splits?: Split[] };
+type Init = { id?: string; direction?: string; amount?: number; date?: string; time?: string; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; payableId?: string | null; storeId?: string | null; counterparty?: string | null; note?: string | null; rawText?: string | null; splits?: Split[] };
 type Split = { categoryId: string | null; amount: number | ""; note: string; itemId?: string | null; itemName?: string | null; qty?: number | null };
 
 export function TxForm(p: {
@@ -21,6 +21,8 @@ export function TxForm(p: {
   defaultStoreId?: string | null;
   init: Init;
   mode: "create" | "edit";
+  /** Hutang supplier / pinjaman yang belum lunas: pengeluaran bisa langsung dicatat sebagai pembayarannya */
+  payables?: { id: string; label: string; vendor: string }[];
 }) {
   const close = useCloseModal();
   const [v, setV] = useState<Init>(p.init);
@@ -71,6 +73,7 @@ export function TxForm(p: {
                   accountId: ex.accountId ?? o.accountId,
                   toAccountId: ex.toAccountId ?? o.toAccountId,
                   categoryId: ex.categoryId ?? o.categoryId,
+                  payableId: ex.payableId ?? o.payableId,
                   note: o.note || ex.note,
                   storeId: storeIn(v.rawText) ?? o.storeId,
                 }));
@@ -107,12 +110,26 @@ export function TxForm(p: {
           <label><span className="label">Ke rekening</span>
             <select name="toAccountId" value={v.toAccountId ?? ""} onChange={set("toAccountId")} className="input"><option value="">— pilih —</option>{p.banks.filter((b) => b.id !== v.accountId).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
           </label>
+        ) : v.direction === "KELUAR" && v.payableId && !splits.length ? (
+          <div><span className="label">Kategori</span><p className="py-2 text-sm text-slate-500">Bayar hutang (lihat di bawah)</p></div>
         ) : splits.length ? (
           <div><span className="label">Kategori</span><p className="py-2 text-sm text-slate-500">Dari rincian di bawah</p></div>
         ) : (
           <label><span className="label">Kategori</span>
             <select name="categoryId" value={v.categoryId ?? ""} onChange={set("categoryId")} className="input"><option value="">— pilih —</option>{cats.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
           </label>
+        )}
+        {v.direction === "KELUAR" && !splits.length && (p.payables?.length ?? 0) > 0 && (
+          <>
+            <label className="col-span-2"><span className="label">Bayar hutang supplier / cicilan pinjaman (opsional)</span>
+              <select name="payableId" value={v.payableId ?? ""} onChange={(e) => { const id = e.target.value; setV((o) => ({ ...o, payableId: id || null, counterparty: o.counterparty || p.payables!.find((x) => x.id === id)?.vendor || null })); }} className="input">
+                <option value="">— bukan bayar hutang —</option>
+                {p.payables!.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+              </select>
+              <span className="mt-0.5 block text-xs text-slate-500">Dipilih = sisa hutang supplier/pinjaman ikut berkurang saat dibukukan.</span>
+            </label>
+            {v.payableId && <label><span className="label">Bunga / biaya (opsional)</span><input name="payInterest" inputMode="numeric" className="input" placeholder="0" /><span className="mt-0.5 block text-xs text-slate-500">Khusus pinjaman; sisanya mengurangi pokok</span></label>}
+          </>
         )}
         <label><span className="label">Pihak terkait (opsional)</span><input name="counterparty" value={v.counterparty ?? ""} onChange={set("counterparty")} className="input" placeholder="Nama toko / supplier / pembeli" /><span className="mt-0.5 block text-xs text-slate-500">Siapa penerima/pengirim uang. Untuk pencarian & cek duplikat.</span></label>
         <label className="col-span-2 md:col-span-1"><span className="label">Bukti (JPG/PNG/PDF, maks 5 MB)</span><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></label>

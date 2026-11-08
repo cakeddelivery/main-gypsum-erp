@@ -36,7 +36,7 @@ export default async function MutasiPage({ searchParams }: { searchParams: Promi
             <Field label="Penyesuaian"><select name="direction" className="input"><option value="plus">Tambah (+)</option><option value="minus">Kurang (−)</option></select></Field>
             <Field label="No. referensi"><input name="ref" className="input" placeholder="No. nota / SJ" /></Field>
             <Field label="Catatan" className="col-span-2"><input name="note" className="input" /></Field>
-            <p className="col-span-2 text-xs text-slate-500">Pembayaran pembelian bahan dicatat di menu Transaksi (kategori Pembelian Bahan Baku) agar tidak terjadi pembukuan ganda. Pengeluaran barang jadi otomatis membukukan HPP.</p>
+            <p className="col-span-2 text-xs text-slate-500">Pembayaran pembelian bahan dicatat di menu Transaksi (kategori Pembelian Bahan Baku) agar tidak terjadi pembukuan ganda. Pengeluaran barang jadi otomatis membukukan HPP; pengeluaran bahan baku dibukukan ke Beban Selisih Persediaan. Barang jadi yang terjual dihitung lewat Stok › Opname barang jadi tiap akhir bulan.</p>
             <div className="col-span-2 flex justify-end"><Submit>Simpan mutasi</Submit></div>
           </ModalForm>
         </Modal>

@@ -80,7 +80,7 @@ export async function businessSnapshot(now: Date = new Date()) {
     prisma.payrollPeriod.findMany({ where: { status: { not: "DIBAYAR" } }, include: { payslips: { select: { total: true } } } }),
     prisma.employee.findMany({ where: { wageType: "BULANAN", status: { not: "NONAKTIF" }, resignDate: null } }),
     prisma.pieceWork.aggregate({ where: { periodId: null }, _sum: { amount: true } }),
-    prisma.cashAdvance.findMany(),
+    prisma.cashAdvance.findMany({ where: { cancelledAt: null } }),
     reserveSummary(now),
     inventoryValuation(),
   ]);

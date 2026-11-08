@@ -144,12 +144,23 @@ export async function createLoanRecord(input: LoanInput, actor: Actor, db?: Tx) 
 
 /** Hutang yang belum lunas, terbaru dulu, beserta nama barang pembeliannya (untuk dicocokkan dengan pesan bot) */
 export async function openPayables() {
-  const rows = await prisma.payable.findMany({ where: {}, include: { supplier: { select: { name: true } } }, orderBy: { date: "desc" }, take: 200 });
+  const rows = await prisma.payable.findMany({ where: {}, include: { supplier: { select: { name: true, aliases: true } } }, orderBy: { date: "desc" }, take: 200 });
   const open = rows.filter((p) => p.paid < p.amount);
   const purchases = await prisma.purchase.findMany({ where: { payableId: { in: open.map((p) => p.id) } }, select: { payableId: true, number: true, lines: { select: { item: { select: { name: true } } } } } });
   return open.map((p) => {
     const pu = purchases.find((x) => x.payableId === p.id);
-    return { id: p.id, number: p.number, kind: p.kind, vendor: p.supplier?.name ?? p.vendor, remaining: Number(p.amount - p.paid), purchaseNumber: pu?.number ?? null, items: pu?.lines.map((l) => l.item.name) ?? [], note: p.note, installment: nextInstallment(p)?.total ?? null };
+    return { id: p.id, number: p.number, kind: p.kind, vendor: p.supplier?.name ?? p.vendor, aliases: p.supplier?.aliases.split(",").map((x) => x.trim()).filter(Boolean) ?? [], remaining: Number(p.amount - p.paid), purchaseNumber: pu?.number ?? null, items: pu?.lines.map((l) => l.item.name) ?? [], note: p.note, installment: nextInstallment(p)?.total ?? null };
   });
 }
 export type OpenPayable = Awaited<ReturnType<typeof openPayables>>[number];
+
+/** Pilihan hutang/pinjaman belum lunas untuk form transaksi pengeluaran */
+export async function payableOptions(includeId?: string | null) {
+  const rows = await prisma.payable.findMany({ orderBy: { date: "desc" }, include: { supplier: { select: { name: true } } }, take: 300 });
+  return rows
+    .filter((p) => p.paid < p.amount || p.id === includeId)
+    .map((p) => {
+      const vendor = p.supplier?.name ?? p.vendor;
+      return { id: p.id, vendor, label: `${p.kind === "PINJAMAN" ? "Pinjaman" : "Hutang"} ${p.number} · ${vendor} · sisa Rp ${Number(p.amount - p.paid).toLocaleString("id-ID")}` };
+    });
+}

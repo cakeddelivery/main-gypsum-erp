@@ -10,7 +10,7 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Paged } from "@/components/Paged";
 import { DownloadCsv } from "@/components/DownloadCsv";
-import { adjustSlip, approve, cancelClaim, compute, pay } from "../actions";
+import { adjustSlip, approve, cancelClaim, cancelPay, compute, pay, unapprove } from "../actions";
 
 export const metadata = { title: "Periode Penggajian" };
 
@@ -36,12 +36,32 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
             {p.kind === "BORONGAN" && p.status === "DRAFT" && user.can("payroll.manage") && <ActionForm action={cancelClaim} confirm="Batalkan klaim ini? Hasil borongan kembali menjadi belum diklaim."><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary">Batalkan klaim</Submit></ActionForm>}
             {p.status === "DRAFT" && user.can("payroll.approve") && p.payslips.length > 0 && <ActionForm action={approve} confirm="Setujui penggajian ini? Slip tidak bisa dihitung ulang setelah disetujui."><input type="hidden" name="id" value={p.id} /><Submit className="btn-success">Setujui</Submit></ActionForm>}
             {p.status === "DISETUJUI" && user.can("payroll.approve") && (
+              <Modal trigger="Batalkan persetujuan" triggerClass="btn-secondary" title="Kembalikan ke draft">
+                <ModalForm action={unapprove} className="space-y-3">
+                  <input type="hidden" name="id" value={p.id} />
+                  <Field label="Alasan (tercatat di audit log)"><input name="reason" className="input" required /></Field>
+                  <p className="text-xs text-slate-500">Jurnal hutang gaji dibalik; periode kembali draft agar bisa dihitung ulang.</p>
+                  <Submit className="btn-danger">Kembalikan ke draft</Submit>
+                </ModalForm>
+              </Modal>
+            )}
+            {p.status === "DIBAYAR" && user.can("payroll.approve") && (
+              <Modal trigger="Batalkan pembayaran" triggerClass="btn-secondary" title="Batalkan pembayaran gaji">
+                <ModalForm action={cancelPay} className="space-y-3">
+                  <input type="hidden" name="id" value={p.id} />
+                  <Field label="Alasan (tercatat di audit log)"><input name="reason" className="input" required /></Field>
+                  <p className="text-xs text-slate-500">Jurnal pembayaran dibalik (uang dianggap kembali ke rekening), potongan kasbon dikembalikan, status kembali Disetujui.</p>
+                  <Submit className="btn-danger">Batalkan pembayaran</Submit>
+                </ModalForm>
+              </Modal>
+            )}
+            {p.status === "DISETUJUI" && user.can("payroll.approve") && (
               <Modal trigger="Bayar gaji" title="Pembayaran gaji">
                 <ModalForm action={pay} className="space-y-3">
                   <input type="hidden" name="id" value={p.id} />
                   <Field label="Dibayar dari rekening"><select name="bankAccountId" className="input">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
                   <Field label="Tanggal bayar"><input type="date" name="date" defaultValue={todayStr()} className="input" /></Field>
-                  <p className="text-sm">Total dibayar: <b>{idr(sum("total"))}</b>. Jurnal beban gaji & transport dibuat otomatis.</p>
+                  <p className="text-sm">Total dibayar: <b>{idr(sum("total"))}</b>. Hutang gaji yang diakui saat disetujui dilunasi dari rekening ini.</p>
                   <Submit className="btn-success">Bayar & bukukan</Submit>
                 </ModalForm>
               </Modal>

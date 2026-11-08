@@ -10,6 +10,6 @@ async function tick() {
   }
 }
 
-console.log("Scheduler Main Gypsum aktif (rekap 07.00 WIB, tutup buku tgl 1 09.00 WIB)");
+console.log("Scheduler Main Gypsum aktif (rekap 07.00 WIB, tutup buku bulan lalu sesuai Pengaturan, default tgl 10 09.00 WIB)");
 tick();
 setInterval(tick, 60_000);

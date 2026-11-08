@@ -5,7 +5,7 @@ import { hashPassword } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { autoCode } from "@/lib/codes";
 import { audit } from "@/lib/audit";
-import { BoronganError, assertPoint, boronganScope, cancelHandover, checkSplit, createHandover, deleteResult, receiveHandover, recordResult, removePerson, savePerson, settlePoint } from "@/lib/borongan";
+import { BoronganError, assertPoint, boronganScope, cancelHandover, checkSplit, createHandover, deleteResult, receiveHandover, recordResult, removePerson, savePerson, settlePoint, cancelSettlement } from "@/lib/borongan";
 import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 
 const PATHS = ["/borongan", "/stok"];
@@ -83,7 +83,7 @@ export const savePersonAction = action(
   async (fd, user) => {
     const scope = await boronganScope(prisma, user);
     const p = await savePerson({ id: optStr(fd, "id"), name: str(fd, "name"), phone: optStr(fd, "phone"), role: (str(fd, "role") || "PEKERJA") as BoronganRole, pointId: optStr(fd, "pointId") ?? scope.pointIds[0], active: fd.get("active") !== "off", note: optStr(fd, "note") }, user, scope);
-    return `${p.name} tersimpan`;
+    return p.active || scope.all ? `${p.name} tersimpan` : `${p.name} tersimpan, menunggu diaktifkan pengelola borongan`;
   },
   PATHS,
 );
@@ -149,6 +149,15 @@ export const payPoint = action(
   async (fd, user) => {
     const st = await settlePoint({ pointId: str(fd, "pointId"), upTo: dateOnly(str(fd, "upTo") || todayStr()), bankAccountId: str(fd, "bankAccountId") }, user);
     return `Upah ${st.number} dibayar Rp${Number(st.total).toLocaleString("id-ID")}`;
+  },
+  [...PATHS, "/akuntansi"],
+);
+
+export const cancelPayPoint = action(
+  "borongan.pay",
+  async (fd, user) => {
+    const st = await cancelSettlement(str(fd, "id"), str(fd, "reason"), user);
+    return `Pembayaran ${st.number} dibatalkan, setorannya kembali belum dibayar`;
   },
   [...PATHS, "/akuntansi"],
 );

@@ -1,7 +1,7 @@
 import type { PaymentTerm } from "@prisma/client";
 import { prisma } from "./db";
-import { autoCode } from "./codes";
-import { postJournal, COA, type LineInput } from "./accounting";
+import { resolveSupplier } from "./suppliers";
+import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } from "./accounting";
 import { nextNumber } from "./numbering";
 import { audit } from "./audit";
 import { locationSettings, recordMovement, StockError } from "./stock";
@@ -71,13 +71,9 @@ export async function createPurchase(input: PurchaseInput, actor: Actor) {
   if (paid > 0 && !input.bankAccountId) throw new StockError("Pilih rekening pembayaran");
   if (debt > 0 && !input.dueDate) throw new StockError("Isi tanggal jatuh tempo untuk sisa pembayaran");
   return prisma.$transaction(async (tx) => {
-    let supplier = input.supplierId ? await tx.supplier.findUniqueOrThrow({ where: { id: input.supplierId } }) : null;
-    const newName = input.newSupplierName?.trim();
-    if (!supplier && newName) {
-      supplier = (await tx.supplier.findFirst({ where: { name: { equals: newName, mode: "insensitive" } } })) ?? (await tx.supplier.create({ data: { name: newName, code: await autoCode.supplier(tx) } }));
-      await audit(actor, "SUPPLIER_DISIMPAN", "Supplier", supplier.id, { name: newName, from: "pembelian" }, tx);
-    }
-    const vendor = input.vendor || supplier?.name;
+    // Nama supplier yang diketik dicocokkan dengan master (termasuk nama lain) agar tidak dobel dengan menu Hutang
+    const supplier = await resolveSupplier(tx, { supplierId: input.supplierId, name: input.newSupplierName || input.vendor }, actor, "pembelian");
+    const vendor = supplier?.name || input.vendor;
     if (!vendor) throw new StockError("Supplier wajib diisi");
     const { raw } = await locationSettings(tx);
     if (!raw) throw new StockError("Lokasi gudang bahan baku belum diatur di Pengaturan");
@@ -105,5 +101,37 @@ export async function createPurchase(input: PurchaseInput, actor: Actor) {
     });
     await audit(actor, "PEMBELIAN_DIBUAT", "Purchase", p.id, { number, total, paid, debt, term: input.term }, tx);
     return p;
+  });
+}
+
+/**
+ * Batalkan pembelian: jurnal dibalik, bahan baku dikeluarkan lagi dari gudang, hutang sisanya dihapus.
+ * Ditolak bila hutangnya sudah pernah dicicil (batalkan pembayaran hutangnya di menu Transaksi dulu).
+ * Tanggal pembalik = tanggal pembelian bila periodenya masih terbuka, selain itu hari ini.
+ */
+export async function cancelPurchase(id: string, reason: string, actor: Actor, now: Date = new Date()) {
+  if (!reason?.trim()) throw new StockError("Alasan pembatalan wajib diisi");
+  return prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Purchase" WHERE id = ${id} FOR UPDATE`;
+    const p = await tx.purchase.findUniqueOrThrow({ where: { id }, include: { lines: true } });
+    if (p.cancelledAt) throw new StockError(`${p.number} sudah dibatalkan`);
+    const payable = p.payableId ? await tx.payable.findUnique({ where: { id: p.payableId } }) : null;
+    if (payable && payable.paid > BigInt(0)) throw new StockError(`Hutang ${payable.number} sudah dicicil Rp ${Number(payable.paid).toLocaleString("id-ID")}. Batalkan pembayaran hutangnya dulu di menu Transaksi.`);
+    const date = await assertPeriodOpen(tx, p.date).then(() => p.date, () => now);
+    if (p.journalId) await reverseJournal(tx, p.journalId, date, actor, `batal ${p.number} — ${reason.trim()}`.slice(0, 150));
+    const { raw } = await locationSettings(tx);
+    for (const l of p.lines) {
+      const from = (await tx.stockMovement.findFirst({ where: { ref: p.number, itemId: l.itemId, type: "PENERIMAAN" } }))?.toLocationId ?? raw;
+      if (!from) throw new StockError("Lokasi gudang bahan baku belum diatur di Pengaturan");
+      await recordMovement(tx, { type: "PENGELUARAN", itemId: l.itemId, qty: Number(l.qty), fromLocationId: from, ref: `BATAL ${p.number}`, note: `Pembatalan ${p.number}`, date, allowNegative: true, noJournal: true }, actor);
+    }
+    if (payable) {
+      await tx.financeTransaction.updateMany({ where: { payableId: payable.id, status: { not: "DIBUKUKAN" } }, data: { payableId: null } });
+      await tx.purchase.update({ where: { id }, data: { payableId: null } });
+      await tx.payable.delete({ where: { id: payable.id } });
+    }
+    const out = await tx.purchase.update({ where: { id }, data: { cancelledAt: now, cancelReason: reason.trim().slice(0, 300) } });
+    await audit(actor, "PEMBELIAN_DIBATALKAN", "Purchase", id, { number: p.number, reason }, tx);
+    return out;
   });
 }
