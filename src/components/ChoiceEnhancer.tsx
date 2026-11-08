@@ -42,6 +42,22 @@ function renderButtons(sel: HTMLSelectElement, host: HTMLDivElement) {
   );
 }
 
+/**
+ * Panel lebih lebar dari kotaknya: geser ke kiri/kanan agar tetap di dalam layar
+ * dan di dalam popup (modal/dialog) yang memotong isi yang meluber.
+ */
+function place(panel: HTMLDivElement, host: HTMLDivElement) {
+  panel.style.left = "0px";
+  const box = host.closest("dialog, .modal")?.getBoundingClientRect();
+  const minX = Math.max(8, (box?.left ?? 0) + 8);
+  const maxX = Math.min(window.innerWidth - 8, (box?.right ?? window.innerWidth) - 8);
+  const r = panel.getBoundingClientRect();
+  let shift = 0;
+  if (r.right > maxX) shift = maxX - r.right;
+  if (r.left + shift < minX) shift = minX - r.left;
+  if (shift) panel.style.left = `${Math.round(shift)}px`;
+}
+
 function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
   host.className = "choice-search";
   const trigger = document.createElement("button");
@@ -103,6 +119,7 @@ function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
     const below = window.innerHeight - r.bottom;
     host.classList.toggle("choice-up", below < 300 && r.top > below);
     panel.hidden = false;
+    place(panel, host);
     trigger.setAttribute("aria-expanded", "true");
     document.addEventListener("pointerdown", onOutside, true);
     search.focus();

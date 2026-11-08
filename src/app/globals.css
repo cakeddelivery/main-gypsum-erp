@@ -50,10 +50,12 @@ dialog { @apply bg-white text-slate-800; }
   .choice-placeholder .choice-text { @apply text-slate-400; }
   .choice-caret { @apply shrink-0 text-xs text-slate-500; }
   /* Panel melayang di atas isi halaman agar kolom di sebelahnya tidak ikut bergeser/kosong */
-  .choice-panel { @apply absolute inset-x-0 top-full z-40 mt-1 rounded-lg border border-slate-200 bg-white p-2 shadow-lg; animation: modal-in 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.05); }
+  /* Lebar panel tidak ikut sempitnya kotak: minimal 16rem / selebar kotak, melebar sesuai teks, maks 24rem.
+     Posisi kiri digeser lewat JS (ChoiceEnhancer) agar tidak keluar dari layar/popup. */
+  .choice-panel { @apply absolute left-0 top-full z-40 mt-1 rounded-lg border border-slate-200 bg-white p-2 shadow-lg; width: max-content; min-width: max(100%, 16rem); max-width: min(24rem, calc(100vw - 1.5rem)); animation: modal-in 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.05); }
   .choice-up .choice-panel { @apply bottom-full top-auto mb-1 mt-0; }
   .choice-list { @apply mt-2 max-h-60 overflow-y-auto; }
-  .choice-list li { @apply cursor-pointer rounded-md px-2.5 py-2 text-sm text-slate-700 hover:bg-slate-100; }
+  .choice-list li { @apply cursor-pointer rounded-md px-2.5 py-2 text-sm leading-snug text-slate-700 hover:bg-slate-100; overflow-wrap: anywhere; }
   .choice-list li[aria-selected="true"] { @apply bg-brand-50 font-semibold text-brand-700; }
   .choice-list li[aria-disabled="true"] { @apply cursor-not-allowed opacity-50; }
   .choice-list li.choice-empty { @apply cursor-default text-slate-400 hover:bg-transparent; }
