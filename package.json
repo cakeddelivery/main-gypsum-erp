@@ -16,6 +16,7 @@
     "kosongkan": "tsx scripts/kosongkan-data.ts",
     "audit:saldo": "tsx scripts/audit-saldo.ts",
     "koreksi:saldo-nov": "tsx scripts/koreksi-saldo-nov.ts",
+    "koreksi:saldo-0006": "tsx scripts/koreksi-saldo-0006.ts",
     "catat:bunga": "tsx scripts/catat-bunga.ts",
     "koreksi:transaksi-nov": "tsx scripts/koreksi-transaksi-nov.ts",
     "rapikan:kode": "tsx scripts/rapikan-kode.ts",
