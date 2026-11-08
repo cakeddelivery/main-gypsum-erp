@@ -12,7 +12,7 @@ import { ModalForm } from "@/components/ModalForm";
 import { Paged } from "@/components/Paged";
 import { ItemLines } from "@/components/ItemLines";
 import { ResultRows } from "./BoronganForms";
-import { addResults, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, saveTask, sendHandover, voidHandover } from "./actions";
+import { addResults, cancelPayPoint, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, saveTask, sendHandover, voidHandover } from "./actions";
 
 export const metadata = { title: "Borongan" };
 
@@ -267,9 +267,19 @@ async function WagesTab({ points, banks, canPay }: { points: { id: string; name:
           <ul className="divide-y divide-slate-100 text-sm">
             {history.map((h) => (
               <li key={h.id} className="flex items-center justify-between gap-2 py-2">
-                <span>{fmtDay(h.date)} · {h.point.name} · s.d. {fmtDay(h.upTo)}</span>
-                <span className="flex items-center gap-2"><b className="tabular-nums">{idr(h.total)}</b>
-                  <Modal trigger="Rincian" triggerClass="btn-secondary btn-sm" title={`Rincian ${h.number}`}><PayTable lines={payLines(h.results)} /></Modal>
+                <span>{fmtDay(h.date)} · {h.point.name} · s.d. {fmtDay(h.upTo)}{h.cancelledAt && <> · <Badge tone="gray">Dibatalkan</Badge></>}</span>
+                <span className="flex items-center gap-2"><b className={`tabular-nums ${h.cancelledAt ? "text-slate-400 line-through" : ""}`}>{idr(h.total)}</b>
+                  {!h.cancelledAt && <Modal trigger="Rincian" triggerClass="btn-secondary btn-sm" title={`Rincian ${h.number}`}><PayTable lines={payLines(h.results)} /></Modal>}
+                  {!h.cancelledAt && canPay && (
+                    <Modal trigger="Batalkan" triggerClass="btn-secondary btn-sm" title={`Batalkan ${h.number}`}>
+                      <ModalForm action={cancelPayPoint} className="space-y-3">
+                        <input type="hidden" name="id" value={h.id} />
+                        <Field label="Alasan (tercatat di audit log)"><input name="reason" className="input" required /></Field>
+                        <p className="text-xs text-slate-500">Jurnal pembayaran dibalik dan setorannya kembali menjadi belum dibayar.</p>
+                        <Submit className="btn-danger">Batalkan pembayaran</Submit>
+                      </ModalForm>
+                    </Modal>
+                  )}
                 </span>
               </li>
             ))}

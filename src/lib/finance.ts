@@ -407,7 +407,7 @@ export async function cancelBookedTransaction(id: string, actor: Actor & { id: s
     }
     // Bahan baku dari rincian ikut dikeluarkan lagi dari gudang
     const stockIn = await tx.stockMovement.findMany({ where: { ref: cur.number, type: "PENERIMAAN" } });
-    for (const m of stockIn) await recordMovement(tx, { type: "PENGELUARAN", itemId: m.itemId, qty: Number(m.qty), fromLocationId: m.toLocationId, ref: `BATAL ${cur.number}`, note: `Pembatalan ${cur.number}`, date, allowNegative: true }, { id: actor.id, name: actor.name });
+    for (const m of stockIn) await recordMovement(tx, { type: "PENGELUARAN", itemId: m.itemId, qty: Number(m.qty), fromLocationId: m.toLocationId, ref: `BATAL ${cur.number}`, note: `Pembatalan ${cur.number}`, date, allowNegative: true, noJournal: true }, { id: actor.id, name: actor.name });
     const t = await tx.financeTransaction.update({ where: { id }, data: { status: "DIBATALKAN" } });
     await tx.approvalLog.create({ data: { transactionId: id, action: "DIBATALKAN", fromStatus: "DIBUKUKAN", toStatus: "DIBATALKAN", actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: `${reason.trim()} · jurnal pembalik ${rev.number}` } });
     await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_DIBATALKAN", "FinanceTransaction", id, { reason, reversal: rev.number }, tx);

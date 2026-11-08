@@ -85,20 +85,21 @@ export const DEFAULT_MATRIX: Record<Role, Permission[]> = {
   ADMIN_PRODUKSI: [
     "dashboard.view", "production.view", "production.create", "production.edit", "report.view", "report.create",
     "attendance.view", "attendance.self", "stock.view", "stock.move", "stock.request", "product.view",
-    "employee.view", "payroll.view", "payroll.self", "partner.view", "borongan.view", "borongan.manage",
+    "employee.view", "payroll.self", "partner.view", "borongan.view", "borongan.manage",
   ],
   ADMIN_MARKETPLACE: ["dashboard.view", "stock.view", "product.view", "finance.view", "finance.create", "attendance.self", "payroll.self", "partner.view", "partner.manage"],
   KAPTEN_DIVISI: [...OPERATOR_BASE, "report.create", "stock.view", "employee.view"],
   SUPERVISOR: [
     "dashboard.view", "production.view", "production.create", "production.edit", "production.target", "report.view", "report.create",
     "attendance.view", "attendance.manage", "attendance.self", "attendance.location", "stock.view", "stock.move", "stock.request", "product.view",
-    "employee.view", "payroll.view", "payroll.self", "partner.view", "borongan.view", "borongan.manage",
+    "employee.view", "payroll.self", "partner.view", "borongan.view", "borongan.manage",
   ],
   PIC_CONTENT: ["dashboard.view", "product.view", "attendance.self", "payroll.self"],
   OPERATOR: [...OPERATOR_BASE, "report.create"],
   KOORDINATOR: ["borongan.view", "borongan.point"],
 };
 
+// Lihat gaji seluruh karyawan: Owner, Finance, Admin. Supervisor & Admin Produksi cukup slip sendiri (audit 8 Nov 2026)
 /** Validasi/atur absensi, target produksi, dan titik lokasi absen hanya untuk role ini (tidak bisa dibuka lewat override) */
 export const RESTRICTED: Partial<Record<Permission, Role[]>> = {
   "attendance.manage": ["OWNER", "SUPERVISOR", "FINANCE"],

@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { autoCode } from "@/lib/codes";
 import { action, str, int, optStr } from "@/lib/action";
 import { audit } from "@/lib/audit";
-import { approvePeriod, giveAdvance, repayAdvance, cancelPieceClaim, computePeriod, createPieceClaim, generateAllowancePayroll, generateMonthlyPayroll, payPeriod } from "@/lib/payroll";
+import { approvePeriod, cancelAdvance, cancelPayment, unapprovePeriod, giveAdvance, repayAdvance, cancelPieceClaim, computePeriod, createPieceClaim, generateAllowancePayroll, generateMonthlyPayroll, payPeriod } from "@/lib/payroll";
 import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 import type { ProductionStage } from "@prisma/client";
 
@@ -23,6 +23,8 @@ export const createPeriod = action(
 
 export const compute = action("payroll.manage", async (fd, user) => { await computePeriod(str(fd, "id"), user); return "Slip gaji dihitung"; }, ["/gaji"]);
 export const approve = action("payroll.approve", async (fd, user) => { await approvePeriod(str(fd, "id"), user); return "Penggajian disetujui"; }, ["/gaji", "/"]);
+export const unapprove = action("payroll.approve", async (fd, user) => { await unapprovePeriod(str(fd, "id"), str(fd, "reason"), user); return "Persetujuan dibatalkan, periode kembali draft"; }, ["/gaji", "/"]);
+export const cancelPay = action("payroll.approve", async (fd, user) => { await cancelPayment(str(fd, "id"), str(fd, "reason"), user); return "Pembayaran dibatalkan, jurnal dibalik"; }, ["/gaji", "/", "/akuntansi"]);
 export const pay = action(
   "payroll.approve",
   async (fd, user) => {
@@ -195,3 +197,5 @@ export const generateAllowance = action(
   },
   ["/gaji", "/gaji/tunjangan"],
 );
+
+export const cancelAdvanceAction = action("payroll.approve", async (fd, user) => { await cancelAdvance(str(fd, "id"), str(fd, "reason"), user); return "Kasbon dibatalkan, jurnal dibalik"; }, ["/gaji/kasbon", "/gaji", "/akuntansi"]);
