@@ -46,6 +46,8 @@ const COA: [string, string, AccountType, boolean?][] = [
   ["6-1900", "Beban Ongkos Kirim", "BEBAN"],
   ["6-1950", "Beban Bunga & Biaya Pinjaman", "BEBAN"],
   ["6-1650", "Beban Pelatihan & Pengembangan SDM", "BEBAN"],
+  ["6-1250", "Beban Konsumsi", "BEBAN"],
+  ["6-1450", "Beban Pemeliharaan & Perbaikan", "BEBAN"],
   ["6-9000", "Beban Lain-lain", "BEBAN"],
 ];
 
@@ -87,6 +89,8 @@ async function main() {
     ["Iuran Lingkungan & Kebersihan", "KELUAR", "6-1350", "iuran,sampah,kebersihan,keamanan,ronda,retribusi"],
     ["Bunga & Biaya Pinjaman", "KELUAR", "6-1950", "bunga pinjaman,biaya pinjaman,denda keterlambatan"],
     ["Pelatihan & Pengembangan", "KELUAR", "6-1650", "kelas,kursus,pelatihan,training,workshop,seminar,bootcamp,webinar"],
+    ["Konsumsi", "KELUAR", "6-1250", "konsumsi,makan,minum,snack,jajan,kopi,nasi,galon,air minum,aqua,katering,catering,gorengan,roti"],
+    ["Perawatan Tempat & Alat Produksi", "KELUAR", "6-1450", "perawatan,pemeliharaan,perbaikan,reparasi,renovasi,servis,service,sparepart,suku cadang,pelumas,oli mesin,obeng,palu,gergaji,gerinda,sapu,alat pel,kain pel,pembersih,alat kebersihan,sabun,ember,lampu,tukang,bengkel,benerin,betulin,perlengkapan"],
     ["Pembelian Peralatan", "KELUAR", "1-2100", "mesin,peralatan,oven,kompresor,cetakan,mold"],
     ["Prive Pemilik", "KELUAR", "3-3000", "prive,ambil pribadi"],
     ["Beban Lain-lain", "KELUAR", "6-9000", "lain-lain,lainnya"],
