@@ -91,11 +91,26 @@ model User {
   division       Division?          @relation("DivisionCaptain", fields: [divisionId], references: [id])
   failedLogins   Int                @default(0)
   lockedUntil    DateTime?
+  /// Naik setiap password diganti/direset; JWT dengan versi lama ditolak (sesi lama dicabut)
+  sessionVersion Int                @default(0)
   lastLoginAt    DateTime?
   createdAt      DateTime           @default(now())
   telegram       TelegramIdentity[]
   alertReads     AlertRead[]
   boronganPerson BoronganPerson?
+}
+
+/// Catatan percobaan login (untuk batas per IP & kunci bertahap). Dibersihkan otomatis setelah 2 hari.
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  ip        String
+  username  String
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  @@index([ip, createdAt])
+  @@index([username, ip, createdAt])
+  @@index([createdAt])
 }
 
 model RolePermission {
