@@ -152,14 +152,14 @@ describe("Rincian: satu transfer untuk beberapa keperluan", () => {
     sent.length = 0;
     // Minimal 5 digit: nominal polos < 4 digit tidak dibaca sebagai rupiah
     const tag = 10000 + (Date.now() % 90000);
-    await say(`plastik uji kemasan 100 pcs 50rb\ngalon cleo ${tag}\nongkir gypsum 10rb\ndari seabank`);
+    await say(`plastik uji kemasan 100 pcs 50rb\nbarang zeta ${tag}\nongkir gypsum 10rb\ndari seabank`);
     const t = await prisma.financeTransaction.findFirstOrThrow({ orderBy: { createdAt: "desc" }, include: { splits: { orderBy: { sortOrder: "asc" } } } });
     expect(t.splits).toHaveLength(3);
     expect(Number(t.amount)).toBe(50000 + tag + 10000);
     expect(t.splits[0].itemId).toBe(it.id);
     const msg = sent.at(-1)!;
     expect(msg.text).toContain("Rincian (3)");
-    // Galon belum berkategori -> tombol pilihan kategori rincian 2
+    // Barang zeta belum berkategori -> tombol pilihan kategori rincian 2
     const sc = msg.buttons!.flat().find((b) => b.callback_data.startsWith(`sc:${t.id}:1:`));
     expect(sc).toBeTruthy();
     await tap(sc!.callback_data);
