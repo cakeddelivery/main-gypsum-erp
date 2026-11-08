@@ -133,7 +133,8 @@ export default async function PengaturanPage({ searchParams }: { searchParams: P
             <Field label="Tanggal bayar tunjangan (tiap bulan)"><input name="allowance_payday" defaultValue={s("allowance_payday") || "15"} inputMode="numeric" className="input" /></Field>
             <Field label="Tanggal go-live aplikasi" hint="Absen sebelum tanggal ini tidak dihitung: gaji siklus pertama dibayar penuh"><input type="date" name="go_live_date" defaultValue={s("go_live_date")} className="input" /></Field>
             <Field label="Gaji hanya dari absensi tervalidasi"><select name="payroll_require_validated" defaultValue={s("payroll_require_validated") || "true"} className="input"><option value="true">Ya</option><option value="false">Tidak</option></select></Field>
-            <Field label="Tutup buku otomatis (tgl 1, 09.00 WIB)"><select name="auto_close_enabled" defaultValue={s("auto_close_enabled") || "true"} className="input"><option value="true">Aktif</option><option value="false">Nonaktif</option></select></Field>
+            <Field label="Tutup buku otomatis (09.00 WIB)"><select name="auto_close_enabled" defaultValue={s("auto_close_enabled") || "true"} className="input"><option value="true">Aktif</option><option value="false">Nonaktif</option></select></Field>
+            <Field label="Tanggal tutup buku bulan lalu" hint="1–28. Beri jeda agar bukti akhir bulan yang terlambat masih bisa dibukukan"><input type="number" min={1} max={28} name="auto_close_day" defaultValue={s("auto_close_day") || "10"} className="input" /></Field>
             <Field label="Kop surat: alamat perusahaan"><input name="company_address" defaultValue={s("company_address")} placeholder={LETTERHEAD_DEFAULT.address} className="input" /></Field>
             <Field label="Kop surat: slogan"><input name="company_tagline" defaultValue={s("company_tagline")} placeholder={LETTERHEAD_DEFAULT.tagline} className="input" /></Field>
             <Field label="Kop surat: no. WhatsApp"><input name="company_phone" defaultValue={s("company_phone")} placeholder={LETTERHEAD_DEFAULT.phone} inputMode="tel" className="input" /></Field>
@@ -154,7 +155,7 @@ export default async function PengaturanPage({ searchParams }: { searchParams: P
               ["Jatah libur per minggu", `${s("weekly_off_quota") || "1"} hari`],
               ["Hari kerja per bulan", s("monthly_workdays") || "26"],
               ["Gaji hanya dari absensi tervalidasi", (s("payroll_require_validated") || "true") === "true" ? "Ya" : "Tidak"],
-              ["Tutup buku otomatis", (s("auto_close_enabled") || "true") === "true" ? "Aktif" : "Nonaktif"],
+              ["Tutup buku otomatis", (s("auto_close_enabled") || "true") === "true" ? `Aktif, tiap tanggal ${s("auto_close_day") || "10"} untuk bulan lalu` : "Nonaktif"],
               ["Kop surat: alamat", s("company_address") || LETTERHEAD_DEFAULT.address],
               ["Kop surat: slogan", s("company_tagline") || LETTERHEAD_DEFAULT.tagline],
               ["Kop surat: WhatsApp", s("company_phone") || LETTERHEAD_DEFAULT.phone],

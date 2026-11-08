@@ -73,7 +73,7 @@ Staging di VPS (tes.maingypsum.shop) untuk cek fitur baru sebelum produksi: liha
 3. Penjadwal (pilih salah satu):
    - Proses terpisah: `npm run scheduler` (cek tiap menit), **atau**
    - Cron eksternal tiap 5–15 menit: `curl -H "Authorization: Bearer $CRON_SECRET" https://domain/api/cron/run`.
-   Job: rekap harian Telegram **07.00 WIB**, tutup buku bulan lalu **tanggal 1 pukul 09.00 WIB**.
+   Job: rekap harian Telegram **07.00 WIB**, tutup buku bulan lalu **tanggal 10 pukul 09.00 WIB** (bisa diubah di Pengaturan).
 4. Pasang webhook Telegram:
    ```bash
    curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \

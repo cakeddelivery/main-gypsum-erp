@@ -311,6 +311,8 @@ async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
   for (const e of employees) {
     const att = await tx.attendance.findMany({ where: { employeeId: e.id, date: { gte: period.startDate, lte: period.endDate }, status: { in: ["HADIR", "TERLAMBAT"] }, ...(requireValidated ? { validated: true } : {}) } });
     const present = new Set(att.map((a) => dateStr(a.date)));
+    // Absen yang belum divalidasi tidak dihitung masuk: tampilkan di slip agar tidak terpotong bolos tanpa disadari
+    const pendingDays = requireValidated && countFrom ? await tx.attendance.count({ where: { employeeId: e.id, date: { gte: dateOnly(countFrom), lte: period.endDate }, status: { in: ["HADIR", "TERLAMBAT"] }, validated: false } }) : 0;
     const { offDays, absentDays } = countFrom ? countAbsence(countFrom, end, present, quota) : { offDays: 0, absentDays: 0 };
     const trips = await tx.transportTrip.aggregate({ where: { employeeId: e.id, date: { gte: period.startDate, lte: period.endDate } }, _sum: { amount: true } });
     const calc = calcMonthly({
@@ -332,7 +334,7 @@ async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
         baseSalary: BigInt(calc.baseSalary),
         offDays,
         absentDays,
-        note: [calc.note, preLive].filter(Boolean).join(" · ") || null,
+        note: [calc.note, preLive, pendingDays ? `${pendingDays} hari absen belum divalidasi (dihitung tidak masuk)` : null].filter(Boolean).join(" · ") || null,
         dailyWage: BigInt(0),
         pieceWage: BigInt(0),
         pieceDetail: [],
@@ -456,11 +458,29 @@ export async function cancelPieceClaim(periodId: string, actor: Actor) {
   });
 }
 
+/**
+ * Gaji harian & bulanan dihitung dari absen tervalidasi (bila diatur). Absen hadir yang belum divalidasi di rentang periode
+ * akan terhitung tidak masuk/bolos, jadi persetujuan ditahan sampai absennya divalidasi lalu slip dihitung ulang.
+ */
+async function assertAttendanceValidated(tx: Tx, p: Period & { payslips: { employeeId: string }[] }) {
+  if (p.kind !== "BULANAN" && p.kind !== "PERIODE") return;
+  const required = ((await tx.setting.findUnique({ where: { key: "payroll_require_validated" } }))?.value ?? "true") === "true";
+  if (!required) return;
+  const pending = await tx.attendance.findMany({
+    where: { employeeId: { in: p.payslips.map((x) => x.employeeId) }, date: { gte: p.startDate, lte: p.endDate }, status: { in: ["HADIR", "TERLAMBAT"] }, validated: false },
+    include: { employee: { select: { name: true } } },
+  });
+  if (!pending.length) return;
+  const names = [...new Set(pending.map((a) => a.employee.name))];
+  throw new PayrollError(`${pending.length} absen hadir belum divalidasi (${names.slice(0, 5).join(", ")}${names.length > 5 ? ", …" : ""}). Validasi di menu Absensi, lalu Hitung ulang periode ini sebelum disetujui.`);
+}
+
 export async function approvePeriod(periodId: string, actor: Actor) {
   return prisma.$transaction(async (tx) => {
     const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId }, include: { payslips: true } });
     if (p.status !== "DRAFT") throw new PayrollError("Periode bukan draft");
     if (!p.payslips.length) throw new PayrollError("Belum ada slip gaji; hitung dahulu");
+    await assertAttendanceValidated(tx, p);
     await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DISETUJUI", approvedBy: actor.name } });
     await audit(actor, "GAJI_DISETUJUI", "PayrollPeriod", periodId, null, tx);
   });

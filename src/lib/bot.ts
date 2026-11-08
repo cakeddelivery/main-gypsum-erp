@@ -191,6 +191,11 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   else if (text && !msg.photo && (await handleFlowText(ident, chatId, text))) return;
   if (await handleMenuCommand(ident, chatId, text)) return;
   if (text === "/rekap") {
+    // Rekap berisi saldo rekening & arus kas: sama dengan tombol menu, hanya untuk yang boleh melihat ringkasan keuangan
+    if (!ident.perms.has("dashboard.finance")) {
+      await sendTelegram(chatId, "Anda tidak berwenang melihat rekap keuangan.");
+      return;
+    }
     await sendTelegram(chatId, await dailyRecapText(new Date()), { type: "REKAP_MANUAL" });
     return;
   }
@@ -198,8 +203,9 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     await sendTelegram(chatId, "Kirim pesan atau foto bukti transaksi, contoh:\n<i>bayar listrik 350rb dari seabank hari ini</i>\n<i>terima pencairan shopee 1,2jt ke saldo penjual</i>\n<i>transfer internal dari saldo penjual ke seabank 500rb</i>\n\nAtau kirim <b>foto bukti transfer/nota</b> dengan caption keterangan saja, misal <i>beli cat supplier A</i>. Nominal, tanggal & rekening dibaca dari foto.\n\nSaya akan membuat DRAFT dan meminta konfirmasi.\n\n/menu untuk menu tombol (ringkasan & unduh laporan JPG), /rekap untuk rekap harian.");
     return;
   }
-  if (!ident.canSubmit) {
-    await sendTelegram(chatId, "Anda tidak memiliki izin mengirim transaksi.");
+  // Pesan/foto bebas menjadi draft transaksi: wajib izin kirim di Telegram DAN izin input transaksi di perannya
+  if (!ident.canSubmit || !ident.perms.has("finance.create")) {
+    await sendTelegram(chatId, "Anda tidak memiliki izin mengirim transaksi. Gunakan /menu untuk fitur yang tersedia.");
     return;
   }
   if (!text && !msg.photo) return;
