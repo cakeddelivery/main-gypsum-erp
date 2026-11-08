@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { action, str, optStr, int, bool } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { hashPassword, ForbiddenError } from "@/lib/auth";
+import { clearLoginBlocks, passwordChangeData } from "@/lib/loginGuard";
 import { ALL_PERMISSIONS, ROLES, DEFAULT_MATRIX } from "@/lib/rbac";
 import { generateApiKey, API_SCOPES } from "@/lib/apiAuth";
 import { sendDailyRecap } from "@/lib/jobs";
@@ -132,10 +133,13 @@ export const saveUser = action("users.manage", async (fd, user) => {
     role,
     divisionId: optStr(fd, "divisionId"),
     active: id ? bool(fd, "active") : true,
-    ...(password ? { passwordHash: await hashPassword(password), failedLogins: 0, lockedUntil: null } : {}),
   };
   if (!id && !password) throw new Error("Password wajib untuk pengguna baru");
-  const u = id ? await prisma.user.update({ where: { id }, data }) : await prisma.user.create({ data: { ...data, passwordHash: data.passwordHash! } });
+  const hash = password ? await hashPassword(password) : null;
+  const u = id
+    ? await prisma.user.update({ where: { id }, data: { ...data, ...(hash ? passwordChangeData(hash) : {}) } })
+    : await prisma.user.create({ data: { ...data, passwordHash: hash! } });
+  if (hash) await clearLoginBlocks(u.username);
   await audit(user, id ? "PENGGUNA_DIUBAH" : "PENGGUNA_DIBUAT", "User", u.id, { username: data.username, role, active: data.active, passwordChanged: !!password });
   return "Pengguna tersimpan";
 }, ["/pengaturan/pengguna"]);

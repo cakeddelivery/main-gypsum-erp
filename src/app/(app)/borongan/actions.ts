@@ -2,6 +2,7 @@
 import type { BoronganRole, HandoverKind } from "@prisma/client";
 import { action, int, optStr, str } from "@/lib/action";
 import { hashPassword } from "@/lib/auth";
+import { clearLoginBlocks, passwordChangeData } from "@/lib/loginGuard";
 import { prisma } from "@/lib/db";
 import { autoCode } from "@/lib/codes";
 import { audit } from "@/lib/audit";
@@ -107,7 +108,8 @@ export const saveCoordinatorLogin = action(
     const password = str(fd, "password");
     if (!/^[a-z0-9._-]{3,30}$/.test(username)) throw new BoronganError("Username 3–30 huruf kecil/angka tanpa spasi");
     if (person.userId) {
-      await prisma.user.update({ where: { id: person.userId }, data: { username, name: person.name, active: person.active, ...(password ? { passwordHash: await hashPassword(password), failedLogins: 0, lockedUntil: null } : {}) } });
+      await prisma.user.update({ where: { id: person.userId }, data: { username, name: person.name, active: person.active, ...(password ? passwordChangeData(await hashPassword(password)) : {}) } });
+      if (password) await clearLoginBlocks(username);
     } else {
       if (!password) throw new BoronganError("Isi password untuk akun baru");
       const u = await prisma.user.create({ data: { username, name: person.name, role: "KOORDINATOR", passwordHash: await hashPassword(password) } });

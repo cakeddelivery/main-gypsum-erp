@@ -7,11 +7,10 @@ import { cache } from "react";
 import { prisma } from "./db";
 import { effectivePermissions, type Permission } from "./rbac";
 import { audit } from "./audit";
+import { checkLogin, ipFromHeaders } from "./loginGuard";
 
 export const SESSION_COOKIE = "mg_session";
 const SESSION_HOURS = 12;
-const MAX_FAILED = 5;
-const LOCK_MINUTES = 15;
 
 function secret() {
   const s = process.env.AUTH_SECRET;
@@ -19,18 +18,20 @@ function secret() {
   return new TextEncoder().encode(s);
 }
 
-export async function createSessionToken(userId: string) {
-  return new SignJWT({ sub: userId })
+export async function createSessionToken(userId: string, sessionVersion = 0) {
+  return new SignJWT({ sub: userId, sv: sessionVersion })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime(`${SESSION_HOURS}h`)
     .sign(secret());
 }
 
-export async function verifySessionToken(token: string): Promise<string | null> {
+/** Isi token sesi: id user + versi sesi (token lama tanpa `sv` dianggap versi 0). */
+export async function verifySessionToken(token: string): Promise<{ userId: string; sv: number } | null> {
   try {
     const { payload } = await jwtVerify(token, secret());
-    return typeof payload.sub === "string" ? payload.sub : null;
+    if (typeof payload.sub !== "string") return null;
+    return { userId: payload.sub, sv: typeof payload.sv === "number" ? payload.sv : 0 };
   } catch {
     return null;
   }
@@ -38,28 +39,8 @@ export async function verifySessionToken(token: string): Promise<string | null> 
 
 export type LoginResult = { ok: true } | { ok: false; error: string };
 
-export async function login(username: string, password: string): Promise<LoginResult> {
-  const user = await prisma.user.findUnique({ where: { username: username.trim().toLowerCase() } });
-  const generic = { ok: false as const, error: "Username atau password salah" };
-  if (!user || !user.active) {
-    await bcrypt.compare(password, "$2a$10$abcdefghijklmnopqrstuuJ0b1V7wq4w1mJ8q3h0Q3Z5c1rK6uE2"); // samakan waktu respons
-    return generic;
-  }
-  if (user.lockedUntil && user.lockedUntil > new Date()) {
-    return { ok: false, error: "Akun dikunci sementara karena terlalu banyak percobaan. Coba lagi nanti." };
-  }
-  const ok = await bcrypt.compare(password, user.passwordHash);
-  if (!ok) {
-    const failed = user.failedLogins + 1;
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { failedLogins: failed >= MAX_FAILED ? 0 : failed, lockedUntil: failed >= MAX_FAILED ? new Date(Date.now() + LOCK_MINUTES * 60000) : null },
-    });
-    await audit({ actorId: user.id, actorName: user.name }, "LOGIN_GAGAL", "User", user.id);
-    return generic;
-  }
-  await prisma.user.update({ where: { id: user.id }, data: { failedLogins: 0, lockedUntil: null, lastLoginAt: new Date() } });
-  const token = await createSessionToken(user.id);
+async function setSessionCookie(userId: string, sessionVersion: number) {
+  const token = await createSessionToken(userId, sessionVersion);
   (await cookies()).set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
@@ -67,8 +48,20 @@ export async function login(username: string, password: string): Promise<LoginRe
     path: "/",
     maxAge: SESSION_HOURS * 3600,
   });
-  await audit({ actorId: user.id, actorName: user.name }, "LOGIN", "User", user.id);
+}
+
+export async function login(username: string, password: string): Promise<LoginResult> {
+  const r = await checkLogin(username, password, ipFromHeaders(await headers()));
+  if (!r.ok) return r;
+  await setSessionCookie(r.user.id, r.user.sessionVersion);
+  await audit({ actorId: r.user.id, actorName: r.user.name }, "LOGIN", "User", r.user.id);
   return { ok: true };
+}
+
+/** Terbitkan ulang cookie sesi dengan versi terbaru (dipakai setelah ganti password sendiri). */
+export async function refreshSession(userId: string) {
+  const u = await prisma.user.findUniqueOrThrow({ where: { id: userId }, select: { sessionVersion: true } });
+  await setSessionCookie(userId, u.sessionVersion);
 }
 
 export async function logout() {
@@ -77,12 +70,13 @@ export async function logout() {
 
 export type SessionUser = Awaited<ReturnType<typeof loadUser>>;
 
-async function loadUser(userId: string) {
+/** Muat user dari sesi; null bila nonaktif atau versi sesi sudah dicabut (password diganti). */
+export async function loadUser(userId: string, sv = 0) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: { employee: { include: { division: true } }, division: true },
   });
-  if (!user || !user.active) return null;
+  if (!user || !user.active || user.sessionVersion !== sv) return null;
   const overrides = await prisma.rolePermission.findMany({ where: { role: user.role } });
   const perms = effectivePermissions(user.role, overrides);
   return {
@@ -101,9 +95,9 @@ async function loadUser(userId: string) {
 export const getUser = cache(async () => {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   if (!token) return null;
-  const id = await verifySessionToken(token);
-  if (!id) return null;
-  return loadUser(id);
+  const s = await verifySessionToken(token);
+  if (!s) return null;
+  return loadUser(s.userId, s.sv);
 });
 
 export async function requireUser() {
@@ -134,7 +128,7 @@ export async function assertPerm(...perms: Permission[]) {
 
 export async function clientIp() {
   const h = await headers();
-  return h.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+  return ipFromHeaders(h);
 }
 
 export async function hashPassword(pw: string) {

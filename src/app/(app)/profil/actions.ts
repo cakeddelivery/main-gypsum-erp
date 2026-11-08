@@ -3,7 +3,8 @@ import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { getUser, hashPassword } from "@/lib/auth";
+import { getUser, hashPassword, refreshSession } from "@/lib/auth";
+import { passwordChangeData } from "@/lib/loginGuard";
 import { audit } from "@/lib/audit";
 import { friendly, type ActionResult } from "@/lib/action";
 
@@ -29,7 +30,9 @@ export async function changeOwnPassword(_prev: ActionResult | null, fd: FormData
     if (next !== String(fd.get("confirm") ?? "")) throw new Error("Konfirmasi password baru tidak sama");
     const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     if (!(await bcrypt.compare(current, row.passwordHash))) throw new Error("Password lama salah");
-    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(next) } });
+    // Versi sesi naik → semua sesi lain (HP/komputer lain) otomatis keluar; sesi ini diterbitkan ulang.
+    await prisma.user.update({ where: { id: user.id }, data: passwordChangeData(await hashPassword(next)) });
+    await refreshSession(user.id);
     await audit(user, "PASSWORD_DIGANTI", "User", user.id);
     return { ok: true, message: "Password berhasil diganti", ts: Date.now() };
   } catch (e) {
