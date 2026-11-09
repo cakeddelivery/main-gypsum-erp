@@ -17,6 +17,7 @@
     "audit:saldo": "tsx scripts/audit-saldo.ts",
     "koreksi:saldo-nov": "tsx scripts/koreksi-saldo-nov.ts",
     "koreksi:saldo-0006": "tsx scripts/koreksi-saldo-0006.ts",
+    "koreksi:saldo-0006-balik": "tsx scripts/koreksi-saldo-0006-balik.ts",
     "catat:bunga": "tsx scripts/catat-bunga.ts",
     "koreksi:transaksi-nov": "tsx scripts/koreksi-transaksi-nov.ts",
     "koreksi:wd-0061": "tsx scripts/koreksi-wd-0061.ts",
