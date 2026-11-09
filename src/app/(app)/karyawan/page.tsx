@@ -1,4 +1,5 @@
 import { requirePerm } from "@/lib/auth";
+import { PasswordInput } from "@/components/PasswordInput";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDay } from "@/lib/time";
@@ -75,7 +76,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
                           <input type="hidden" name="employeeId" value={e.id} />
                           <Field label="Username"><input name="username" defaultValue={e.user?.username ?? e.name.split(" ")[0].toLowerCase()} className="input" autoCapitalize="none" required /></Field>
                           <Field label="Role"><select name="role" defaultValue={e.user?.role ?? "OPERATOR"} className="input">{roles.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}</select></Field>
-                          <Field label={e.user ? "Password baru (kosongkan bila tidak diubah)" : "Password"} hint="Minimal 8 karakter"><input name="password" type="password" autoComplete="new-password" className="input" /></Field>
+                          <Field label={e.user ? "Password baru (kosongkan bila tidak diubah)" : "Password"} hint="Minimal 8 karakter"><PasswordInput name="password" autoComplete="new-password" className="input" /></Field>
                           {e.user && <Field label="Status akun"><select name="active" defaultValue={e.user.active ? "on" : "off"} className="input"><option value="on">Aktif</option><option value="off">Nonaktif</option></select></Field>}
                           <Submit>Simpan akun</Submit>
                         </ModalForm>

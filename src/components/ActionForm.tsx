@@ -45,7 +45,7 @@ export function ActionForm({ action, children, className, resetOnSuccess, onSucc
     >
       {children}
       {visible && state && (
-        <div role="status" className={`mt-3 break-all rounded-lg px-3 py-2 text-sm ${state.ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+        <div role="status" className={`mt-3 [overflow-wrap:anywhere] rounded-lg px-3 py-2 text-sm ${state.ok ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
           {state.ok ? `✓ ${state.message}` : state.error}
         </div>
       )}

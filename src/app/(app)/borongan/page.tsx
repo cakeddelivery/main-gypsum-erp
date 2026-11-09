@@ -1,4 +1,5 @@
 import { requirePerm } from "@/lib/auth";
+import { PasswordInput } from "@/components/PasswordInput";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDay, todayStr } from "@/lib/time";
@@ -351,7 +352,7 @@ function PeopleTab({ people, points, manage, canLogin }: { people: PersonRow[]; 
                               <ModalForm action={saveCoordinatorLogin} className="space-y-3">
                                 <input type="hidden" name="personId" value={p.id} />
                                 <Field label="Username"><input name="username" defaultValue={p.user?.username ?? ""} className="input" autoComplete="off" required /></Field>
-                                <Field label={p.user ? "Password baru (kosongkan bila tetap)" : "Password"}><input name="password" type="password" className="input" autoComplete="new-password" minLength={8} /></Field>
+                                <Field label={p.user ? "Password baru (kosongkan bila tetap)" : "Password"}><PasswordInput name="password" className="input" autoComplete="new-password" minLength={8} /></Field>
                                 <p className="text-xs text-slate-500">Koordinator hanya melihat titiknya: menerima bahan, mencatat setoran hasil, mengirim hasil, dan mengelola pekerja.</p>
                                 <Submit>Simpan</Submit>
                               </ModalForm>
