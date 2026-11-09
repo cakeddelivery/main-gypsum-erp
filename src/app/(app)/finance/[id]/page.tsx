@@ -14,7 +14,7 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ProofPreview } from "@/components/ProofPreview";
 import { TxForm } from "../TxForm";
-import { attachProofTx, linkReserveTx, setReserveTx, approveTx, cancelTx, changeAccountTx, changeStoreTx, deleteTx, reclassifyTx, rejectTx, submitTx, updateTx } from "../actions";
+import { attachProofTx, linkReserveTx, setReserveTx, approveTx, cancelTx, changeAccountTx, changeStoreTx, deleteTx, reclassifyTx, rejectTx, restoreTx, submitTx, updateTx } from "../actions";
 
 export const metadata = { title: "Detail Transaksi" };
 
@@ -235,7 +235,13 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
           {(t.status === "DIBATALKAN" || t.status === "DITOLAK") && user.can("finance.approve") && (
             <Card title="Hapus transaksi">
               {t.deletedAt ? (
-                <p className="text-sm text-slate-500">Sudah dihapus dari daftar oleh {t.deletedBy} · {fmtDateTime(t.deletedAt)}</p>
+                <>
+                  <p className="mb-3 text-sm text-slate-500">Disembunyikan dari daftar oleh {t.deletedBy} · {fmtDateTime(t.deletedAt)}</p>
+                  <ActionForm action={restoreTx} confirm={`Tampilkan lagi ${t.number} di daftar Transaksi?`}>
+                    <input type="hidden" name="id" value={t.id} />
+                    <Submit className="btn-secondary w-full" pendingText="Memproses…">Tampilkan lagi di daftar</Submit>
+                  </ActionForm>
+                </>
               ) : (
                 <>
                   <p className="mb-3 text-xs text-slate-500">Transaksi ini tidak memengaruhi saldo{t.status === "DIBATALKAN" ? " (sudah dinetralkan jurnal pembalik)" : ""}. Menghapus menyembunyikannya dari daftar Transaksi; riwayatnya tetap tersimpan untuk audit.</p>
