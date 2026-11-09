@@ -58,6 +58,8 @@ describe("Finance Inbox → pembukuan", () => {
 
   it("transfer internal bukan pendapatan atau beban", async () => {
     const before = await profitLoss({});
+    // Saldo dihitung sebagai selisih: tes lain boleh sudah memakai ShopeePay
+    const spBefore = (await bankBalances()).find((b) => b.code === "SHOPEEPAY")!.balance;
     const { transaction: t } = await createTransaction({ direction: "TRANSFER", amount: 400_000, date: d("2026-09-06"), accountId: bank.SEABANK, toAccountId: bank.SHOPEEPAY, categoryId: cat["Penjualan Produk"], storeId }, "MANUAL", actor, { submit: true });
     expect(t.categoryId).toBeNull();
     await approveAndBook(t.id, actor);
@@ -65,7 +67,7 @@ describe("Finance Inbox → pembukuan", () => {
     expect(after.netProfit).toBe(before.netProfit);
     expect(after.totalRevenue).toBe(before.totalRevenue);
     const bal = await bankBalances();
-    expect(bal.find((b) => b.code === "SHOPEEPAY")!.balance).toBe(400_000);
+    expect(bal.find((b) => b.code === "SHOPEEPAY")!.balance).toBe(spBefore + 400_000);
     const cf = await cashFlow({ start: d("2026-09-06"), end: d("2026-09-07") });
     expect(cf.operating + cf.investing + cf.financing).toBe(0);
   });
@@ -254,8 +256,10 @@ describe("Aturan bisnis: gaji bulanan, kasbon, borongan, pembelian, sisihan", ()
     expect(r).toEqual({ count: 2, total: 200_000 });
     expect((await postAllReserves("2026-10-08", actor)).count).toBe(0);
     const fund = await prisma.reserveFund.findFirstOrThrow({ where: { kind: "OWNER" } });
+    // Selisih saja: tes lain boleh sudah menyisihkan dana ini di tanggal lain
+    const fb = await fundBalance(prisma, fund.id);
     await withdrawReserve(fund.id, 100_000, "2026-10-09", actor);
-    expect(await fundBalance(prisma, fund.id)).toBe(0);
+    expect(await fundBalance(prisma, fund.id)).toBe(fb - 100_000);
     const pl = await profitLoss({ start: monthRange(2026, 10).start, end: monthRange(2026, 10).end });
     expect(pl.expenses.find((e) => e.code === COA.BEBAN_GAJI_OWNER)?.amount).toBe(200_000);
     const s = await businessSnapshot(d("2026-10-15"));

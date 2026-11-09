@@ -100,9 +100,9 @@ export async function talanganSummary(): Promise<TalanganWallet[]> {
     }
     // Pengembalian: transfer dari rekening operasional (tombol/bot talangan) dan uang masuk berkategori
     // Pengembalian Pinjaman Pengelola (pengelola mengembalikan sendiri ke dompet ini)
-    const repays = await prisma.financeTransaction.aggregate({ where: { bailoutRepay: true, status: "DIBUKUKAN", toAccountId: w.bank.id, date: { gte: start } }, _sum: { amount: true } });
+    const repays = await prisma.financeTransaction.aggregate({ where: { bailoutRepay: true, status: "DIBUKUKAN", origin: null, toAccountId: w.bank.id, date: { gte: start } }, _sum: { amount: true } });
     const managerRepays = loanCats.length
-      ? await prisma.financeTransaction.aggregate({ where: { direction: "MASUK", status: "DIBUKUKAN", accountId: w.bank.id, categoryId: { in: loanCats }, date: { gte: start } }, _sum: { amount: true } })
+      ? await prisma.financeTransaction.aggregate({ where: { direction: "MASUK", status: "DIBUKUKAN", origin: null, accountId: w.bank.id, categoryId: { in: loanCats }, date: { gte: start } }, _sum: { amount: true } })
       : { _sum: { amount: null } };
     const opsRepaid = Number(repays._sum.amount ?? 0);
     const managerRepaid = Number(managerRepays._sum.amount ?? 0);

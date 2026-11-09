@@ -173,6 +173,8 @@ describe("Satu tabungan cicilan untuk beberapa pinjaman", () => {
     expect(Number((await prisma.payable.findUniqueOrThrow({ where: { id: a.id } })).paid)).toBe(100_000);
     expect(Number((await prisma.payable.findUniqueOrThrow({ where: { id: b.id } })).paid)).toBe(150_000);
     expect(await fundBalance(prisma, fund.id)).toBe(50_000);
+    // Dana uji dinonaktifkan agar tidak ikut "sisihkan semua" di tes lain
+    await prisma.reserveFund.update({ where: { id: fund.id }, data: { active: false } });
     await expect(withdrawReserve(fund.id, 10_000, todayStr(), owner)).rejects.toThrow("Pilih pinjaman");
     // Bayar cicilan langsung dari rekening simpanan (mis. lewat bot): saldo tabungan ikut berkurang, batal = kembali
     const r = await bookPayablePayment({ payableId: a.id, amount: 30_000, bankAccountId: sp.id, date: jakartaDateTime(todayStr(), "14:00") }, "TELEGRAM", owner);

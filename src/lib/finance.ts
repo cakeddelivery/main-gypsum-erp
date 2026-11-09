@@ -85,7 +85,7 @@ const splitRows = (splits: SplitInput[]) =>
 
 export { fingerprint } from "./txMirror";
 import { fingerprint } from "./txMirror";
-import { originLabel } from "./txMirror";
+import { nextTxNumber, originLabel } from "./txMirror";
 import { findSimilar } from "./similar";
 
 /** Baris tertaut dari menu lain hanya-baca di menu Transaksi: ubah/batalkan di menu sumbernya */
@@ -150,7 +150,7 @@ export async function createTransaction(input: TxInput, source: TxSource, actor:
     const missing = [...missingFields(input), ...splitIssues(input.amount, input.direction, splits)];
     let status: TxStatus = "DRAFT";
     if (source !== "MANUAL" || opts.submit) status = dup || missing.length ? "PERLU_DITINJAU" : "MENUNGGU_KONFIRMASI";
-    const number = await nextNumber(tx, "TRX", input.date);
+    const number = await nextTxNumber(tx, input.date);
     const t = await tx.financeTransaction.create({
       data: {
         number,
@@ -589,7 +589,7 @@ export async function bookPayablePayment(input: PayablePaymentInput, source: TxS
     const p = await tx.payable.findUniqueOrThrow({ where: { id: input.payableId } });
     const sp = splitPayment(p, input.amount, input.interest);
     if (sp.interest < 0 || sp.principal <= 0) throw new FinanceError("Bunga harus 0 – kurang dari nominal");
-    const number = await nextNumber(tx, "TRX", input.date);
+    const number = await nextTxNumber(tx, input.date);
     const kindLabel = p.kind === "PINJAMAN" ? "Cicilan pinjaman" : "Bayar hutang";
     const t = await tx.financeTransaction.create({
       data: {

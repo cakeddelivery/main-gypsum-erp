@@ -34,6 +34,19 @@ export function fingerprint(direction: string, amount: number, date: Date, accou
   return crypto.createHash("sha256").update(`${direction}|${amount}|${dateStr(date)}|${accountId ?? "-"}`).digest("hex").slice(0, 32);
 }
 
+/**
+ * Nomor transaksi berikutnya (TRX-YYYYMM-NNNN). Penghitungnya atomik dan baris Counter terkunci sampai transaksi
+ * database selesai, jadi dua permintaan bersamaan (scheduler + pengguna) tidak mendapat nomor sama. Nomor yang
+ * sudah dipakai di luar penghitung (mis. diatur skrip koreksi) dilewati, bukan menggagalkan simpan.
+ */
+export async function nextTxNumber(tx: Tx, at: Date) {
+  for (let i = 0; i < 100; i++) {
+    const n = await nextNumber(tx, "TRX", at);
+    if (!(await tx.financeTransaction.findUnique({ where: { number: n }, select: { id: true } }))) return n;
+  }
+  throw new Error("Nomor transaksi tidak tersedia");
+}
+
 export type MirrorRow = { direction: TxDirection; amount: number; accountId: string; toAccountId: string | null; key: string };
 
 /** Gerakan rekening dari baris jurnal: satu keluar + satu masuk sama besar = transfer; selain itu per rekening */
@@ -70,7 +83,7 @@ export async function mirrorJournal(tx: Tx, journalId: string, opts: { status?: 
   for (const r of rows) {
     if (await tx.financeTransaction.findUnique({ where: { idempotencyKey: r.key } })) continue;
     const status = opts.status ?? "DIBUKUKAN";
-    const number = await nextNumber(tx, "TRX", j.date);
+    const number = await nextTxNumber(tx, j.date);
     const t = await tx.financeTransaction.create({
       data: {
         number,

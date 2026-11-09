@@ -132,6 +132,19 @@ describe("Uang rekening dari menu lain tampil tepat sekali di Transaksi (tanpa j
   });
 });
 
+describe("Nomor transaksi", () => {
+  it("nomor TRX yang sudah dipakai di luar penghitung (skrip koreksi) dilewati, tidak gagal simpan", async () => {
+    const d = jakartaDateTime("2032-06-03", "10:00");
+    const a = await createTransaction({ direction: "KELUAR", amount: rnd(11_000), date: d, accountId: bankA, note: "nomor a" }, "MANUAL", owner);
+    const next = a.transaction.number.replace(/\d{4}$/, (x) => String(Number(x) + 1).padStart(4, "0"));
+    const b = await createTransaction({ direction: "KELUAR", amount: rnd(12_000), date: d, accountId: bankA, note: "nomor b" }, "MANUAL", owner);
+    await prisma.financeTransaction.update({ where: { id: b.transaction.id }, data: { number: next.replace(/\d{4}$/, (x) => String(Number(x) + 1).padStart(4, "0")) } });
+    // Penghitung berikutnya = nomor yang sudah dipakai b → dilewati
+    const c = await createTransaction({ direction: "KELUAR", amount: rnd(13_000), date: d, accountId: bankA, note: "nomor c" }, "MANUAL", owner);
+    expect(new Set([a.transaction.number, (await prisma.financeTransaction.findUniqueOrThrow({ where: { id: b.transaction.id } })).number, c.transaction.number]).size).toBe(3);
+  });
+});
+
 describe("Sisihan otomatis diserap transfer aslinya", () => {
   it("baris 'Sisihan otomatis' otomatis Dibatalkan saat transfer berbukti untuk tanggal itu dibukukan; saldo tidak dobel", async () => {
     const e = await postReserve(fundId, "2032-05-24", owner);
@@ -236,8 +249,8 @@ describe("Saran kategori (tanpa AI) & kategori baru", () => {
 
   it("kategori baru hanya dibuat setelah Owner/Finance setuju; kode akun otomatis", async () => {
     const name = `Uji Kategori ${Math.random().toString(36).slice(2, 6)}`;
-    const s = await suggestCategories(prisma, { direction: "KELUAR", text: name });
-    const prop = await proposeCategory({ ...s.proposal!, name }, {}, owner);
+    const parent = await prisma.coaAccount.findUniqueOrThrow({ where: { code: "6-9000" } });
+    const prop = await proposeCategory({ name, direction: "KELUAR", coaType: "BEBAN", parentCoaId: parent.id, parentLabel: null, keywords: name.toLowerCase() }, {}, owner);
     expect(await prisma.txCategory.count({ where: { name } })).toBe(0);
     const admin = await prisma.user.findUniqueOrThrow({ where: { username: "admin" } });
     await expect(approveCategoryProposal(prop.id, { id: admin.id, name: admin.name, role: admin.role })).rejects.toThrow(/Owner\/Finance/);
