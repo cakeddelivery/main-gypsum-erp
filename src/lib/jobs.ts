@@ -84,6 +84,30 @@ export async function sendTalanganReminder(now: Date = new Date()) {
   return { sent, failed: recipients.length - sent };
 }
 
+/**
+ * Pengingat piutang penjualan jatuh tempo hari ini / lewat jatuh tempo ke Owner & Finance (tertaut Telegram).
+ * Sekali per nota per hari: nota yang sudah diingatkan hari ini tidak dikirim lagi.
+ */
+export async function sendReceivableReminder(now: Date = new Date()) {
+  const { dueSales, receivableReminderText, RECEIVABLE_NOTICE } = await import("./botSales");
+  const rows = await dueSales(now);
+  if (!rows.length) return { sent: 0, skipped: "tidak ada piutang jatuh tempo" };
+  const text = receivableReminderText(rows);
+  const recipients = await prisma.telegramIdentity.findMany({ where: { active: true, chatId: { not: null }, user: { active: true, role: { in: ["OWNER", "FINANCE"] } } } });
+  if (!telegramConfigured() || !recipients.length) {
+    await prisma.notificationLog.create({ data: { channel: "TELEGRAM", type: RECEIVABLE_NOTICE, target: todayStr(now), status: "GAGAL", payload: text.slice(0, 2000), error: !telegramConfigured() ? "TELEGRAM_BOT_TOKEN belum diatur" : "Owner/Finance belum tertaut Telegram" } });
+    return { sent: 0, failed: recipients.length };
+  }
+  let sent = 0;
+  for (const r of recipients) {
+    const res = await sendTelegram(r.chatId!, text, { type: "PIUTANG_PENGINGAT", buttons: [[{ text: "💰 Terima cicilan piutang", callback_data: "f:start:jcil" }]] });
+    if (res.ok) sent++;
+  }
+  // Tandai per nota agar tidak diingatkan dua kali di hari yang sama
+  if (sent) await prisma.notificationLog.createMany({ data: rows.map((x) => ({ channel: "TELEGRAM", type: RECEIVABLE_NOTICE, target: x.id, status: "TERKIRIM", payload: x.number })) });
+  return { sent, failed: recipients.length - sent, notes: rows.length };
+}
+
 /** Peringatan anggaran beban ke Owner (tertaut Telegram): sekali per akun per ambang (80%/100%) per bulan */
 export async function sendBudgetNotice(now: Date = new Date()) {
   const { pendingBudgetNotices, markBudgetNoticed, budgetNoticeText } = await import("./budget");
@@ -120,6 +144,7 @@ async function markRan(key: string, date: string) {
  * - 06.00 WIB: slip gaji bulanan untuk siklus karyawan yang selesai (gajian H+7)
  * - 07.00 WIB: rekap harian Telegram
  * - 08.00 WIB: pengingat dana talangan ke Owner & Finance (bila ada yang belum dikembalikan)
+ * - 08.00 WIB: pengingat piutang penjualan jatuh tempo ke Owner & Finance (sekali per nota per hari)
  * - 08.00 WIB: peringatan anggaran beban ≥80% / ≥100% ke Owner (sekali per ambang per akun per bulan)
  * - Tanggal tutup buku (Pengaturan, default 10) pukul 09.00 WIB: tutup buku bulan sebelumnya.
  *   Tidak tanggal 1 agar bukti transaksi akhir bulan yang terlambat masuk masih bisa dibukukan.
@@ -142,6 +167,10 @@ export async function runDueJobs(now: Date = new Date()) {
   if (minutes >= 8 * 60 && !(await ranToday("job_talangan_last", date))) {
     await markRan("job_talangan_last", date);
     results.talangan = await logFailure("TALANGAN", date, () => sendTalanganReminder(now));
+  }
+  if (minutes >= 8 * 60 && !(await ranToday("job_piutang_last", date))) {
+    await markRan("job_piutang_last", date);
+    results.receivable = await logFailure("PIUTANG_JATUH_TEMPO", date, () => sendReceivableReminder(now));
   }
   if (minutes >= 8 * 60 && !(await ranToday("job_budget_last", date))) {
     await markRan("job_budget_last", date);

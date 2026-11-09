@@ -16,6 +16,7 @@ import { addDays, dateOnly, fmtDate, jakartaDateTime, todayStr } from "./time";
 import { esc, type InlineButton } from "./telegram";
 import { cancelRow, can, chunk, fmtQty, itemChoices, itemPrompt, MENU_TEXT, PAGE, pager, parseCount, parseQty, type Ctx, type Prompt, type Session } from "./botKit";
 import type { BotIdent } from "./botMenu";
+import { SALES_FLOWS, salesMenuRows } from "./botSales";
 
 /**
  * Isian bot Telegram Tahap 3: kasbon, pembelian bahan baku, dan borongan tetangga
@@ -45,6 +46,7 @@ export function t3MenuRows(i: BotIdent): InlineButton[][] {
   if (can(i, "payroll.approve") || (can(i, "payroll.self") && i.user.employeeId)) row.push({ text: "💵 Kasbon", callback_data: "f:start:kas" });
   if (can(i, "finance.approve")) row.push({ text: "🛒 Pembelian", callback_data: "f:start:beli" });
   const rows: InlineButton[][] = row.length ? [row] : [];
+  rows.push(...salesMenuRows(i));
   if (can(i, "borongan.view", "borongan.point", "borongan.manage")) rows.push([{ text: "🧑‍🏭 Borongan", callback_data: "f:start:bor" }]);
   if (can(i, "finance.approve")) rows.push([{ text: "💸 Kembalikan dana talangan", callback_data: "f:start:tlg" }]);
   return rows;
@@ -1198,4 +1200,4 @@ Rekening tidak ditemukan.`, buttons: [cancelRow] };
   },
 };
 
-export const T3_FLOWS: Record<string, FlowDef> = { kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, tlg: talangan, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay };
+export const T3_FLOWS: Record<string, FlowDef> = { kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, tlg: talangan, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay, ...SALES_FLOWS };
