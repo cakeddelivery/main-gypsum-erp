@@ -32,6 +32,7 @@ const COA: [string, string, AccountType, boolean?][] = [
   ["4-1000", "Penjualan", "PENDAPATAN"],
   ["4-1100", "Penjualan Custom & Giftbox", "PENDAPATAN"],
   ["4-1200", "Retur & Refund Penjualan", "PENDAPATAN"],
+  ["4-1300", "Pendapatan Ongkir", "PENDAPATAN"],
   ["4-9000", "Pendapatan Lain-lain", "PENDAPATAN"],
   ["5-1000", "Harga Pokok Penjualan", "HPP"],
   ["6-1100", "Beban Gaji & Upah Produksi", "BEBAN"],

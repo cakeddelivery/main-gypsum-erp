@@ -11,6 +11,7 @@ export const NAV: NavItem[] = [
   { href: "/absensi", label: "Absensi", icon: "clock", perms: ["attendance.view", "attendance.self"] },
   { href: "/stok", label: "Stok & Persediaan", icon: "box", perms: ["stock.view", "stock.request"] },
   { href: "/produk", label: "Produk & HPP", icon: "tag", perms: ["product.view"] },
+  { href: "/penjualan", label: "Penjualan", icon: "cart", perms: ["sales.view"] },
   { href: "/supplier", label: "Supplier", icon: "truck", perms: ["partner.view"] },
   { href: "/pelanggan", label: "Pelanggan", icon: "user", perms: ["partner.view"] },
   { href: "/borongan", label: "Borongan", icon: "users", perms: ["borongan.view"] },
@@ -24,7 +25,7 @@ export const NAV: NavItem[] = [
 /** Label pendek untuk navigasi bawah (mobile) */
 const SHORT_LABEL: Record<string, string> = {
   "/": "Beranda", "/analitik": "Analitik", "/laporan": "Laporan", "/absensi": "Absen", "/stok": "Stok", "/produk": "Produk",
-  "/finance": "Transaksi", "/akuntansi": "Akuntansi", "/gaji": "Gaji", "/karyawan": "Karyawan", "/pengaturan": "Setelan", "/borongan": "Borongan",
+  "/finance": "Transaksi", "/akuntansi": "Akuntansi", "/gaji": "Gaji", "/karyawan": "Karyawan", "/pengaturan": "Setelan", "/borongan": "Borongan", "/penjualan": "Jual",
 };
 
 /** 5 menu prioritas per role untuk navigasi bawah di layar HP (urut kiri → kanan) */

@@ -12,6 +12,7 @@ import { balanceAdjustmentLines, bankBalancesAt, bookPayablePayment } from "@/li
 import { createLoanRecord } from "@/lib/payables";
 import { resolveSupplier } from "@/lib/suppliers";
 import { saveProof } from "@/lib/storage";
+import { paySale } from "@/lib/sales";
 
 /** Foto/PDF nota atau bukti transfer dari form (opsional) */
 async function proofOf(fd: FormData): Promise<{ path: string; mime: string } | null> {
@@ -169,6 +170,13 @@ export const settle = action(
       const r = await bookPayablePayment({ payableId: id, amount: amount + interest, interest, bankAccountId: str(fd, "bankAccountId"), date: d(fd), note: optStr(fd, "note"), proofPath: proof?.path ?? null, proofMime: proof?.mime ?? null }, "MANUAL", { id: user.id, name: user.name });
       return `Pembayaran dibukukan (${r.transaction.number})`;
     }
+    // Piutang dari menu Penjualan: dicatat sebagai cicilan penjualan agar nota & sisa tagihannya ikut berubah
+    const linked = await prisma.receivable.findUniqueOrThrow({ where: { id }, select: { saleId: true } });
+    if (linked.saleId) {
+      const proof = await proofOf(fd);
+      const r = await paySale(linked.saleId, { amount, bankAccountId: str(fd, "bankAccountId"), date: d(fd), note: optStr(fd, "note"), proofPath: proof?.path ?? null, proofMime: proof?.mime ?? null }, user);
+      return `Pembayaran ${r.sale.number} dibukukan${r.lunas ? " (lunas)" : ""}`;
+    }
     const bank = await prisma.bankAccount.findUniqueOrThrow({ where: { id: str(fd, "bankAccountId") } });
     await prisma.$transaction(async (tx) => {
       const doc = await tx.receivable.findUniqueOrThrow({ where: { id } });
@@ -180,7 +188,7 @@ export const settle = action(
     });
     return "Pembayaran dibukukan";
   },
-  ["/akuntansi/piutang-utang", "/finance", "/supplier"],
+  ["/akuntansi/piutang-utang", "/finance", "/supplier", "/penjualan"],
 );
 
 export const createAsset = action(
