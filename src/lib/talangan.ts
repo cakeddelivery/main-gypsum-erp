@@ -100,9 +100,9 @@ export async function talanganSummary(): Promise<TalanganWallet[]> {
     }
     // Pengembalian: transfer dari rekening operasional (tombol/bot talangan) dan uang masuk berkategori
     // Pengembalian Pinjaman Pengelola (pengelola mengembalikan sendiri ke dompet ini)
-    const repays = await prisma.financeTransaction.aggregate({ where: { bailoutRepay: true, status: "DIBUKUKAN", toAccountId: w.bank.id, date: { gte: start } }, _sum: { amount: true } });
+    const repays = await prisma.financeTransaction.aggregate({ where: { bailoutRepay: true, status: "DIBUKUKAN", origin: null, toAccountId: w.bank.id, date: { gte: start } }, _sum: { amount: true } });
     const managerRepays = loanCats.length
-      ? await prisma.financeTransaction.aggregate({ where: { direction: "MASUK", status: "DIBUKUKAN", accountId: w.bank.id, categoryId: { in: loanCats }, date: { gte: start } }, _sum: { amount: true } })
+      ? await prisma.financeTransaction.aggregate({ where: { direction: "MASUK", status: "DIBUKUKAN", origin: null, accountId: w.bank.id, categoryId: { in: loanCats }, date: { gte: start } }, _sum: { amount: true } })
       : { _sum: { amount: null } };
     const opsRepaid = Number(repays._sum.amount ?? 0);
     const managerRepaid = Number(managerRepays._sum.amount ?? 0);
@@ -137,7 +137,7 @@ export async function talanganSummary(): Promise<TalanganWallet[]> {
 export async function unmarkedRepays(walletId: string) {
   const start = jakartaDateTime(await talanganStart(), "00:00");
   return prisma.financeTransaction.findMany({
-    where: { direction: "TRANSFER", status: "DIBUKUKAN", deletedAt: null, bailoutRepay: false, toAccountId: walletId, date: { gte: start }, reserveEntries: { none: {} } },
+    where: { direction: "TRANSFER", status: "DIBUKUKAN", deletedAt: null, origin: null, bailoutRepay: false, toAccountId: walletId, date: { gte: start }, reserveEntries: { none: {} } },
     orderBy: { date: "asc" },
     take: 20,
   });
@@ -146,6 +146,7 @@ export async function unmarkedRepays(walletId: string) {
 /** Tandai transfer yang sudah dibukukan ke dompet simpanan sebagai pengembalian talangan (jurnal tidak berubah) */
 export async function markTalanganRepay(id: string, actor: Actor & { id: string }) {
   const t = await prisma.financeTransaction.findUniqueOrThrow({ where: { id }, include: { reserveEntries: { select: { id: true } } } });
+  if (t.origin) throw new FinanceError("Transfer ini berasal dari menu lain (mis. dana sisihan), bukan pengembalian talangan");
   if (t.status !== "DIBUKUKAN" || t.direction !== "TRANSFER") throw new FinanceError("Hanya transfer yang sudah dibukukan yang bisa ditandai");
   if (t.bailoutRepay) throw new FinanceError("Transfer ini sudah tercatat sebagai pengembalian talangan");
   if (t.reserveEntries.length) throw new FinanceError("Transfer ini tercatat sebagai dana sisihan, bukan pengembalian talangan");
@@ -188,7 +189,7 @@ export function talanganReminderText(wallets: TalanganWallet[], esc: (s: string)
  * dibukukan, bukan sisihan. Nominal tidak boleh melebihi talangan yang belum dikembalikan.
  */
 export async function repayTalangan(
-  input: { walletId: string; amount: number; date: string; time?: string; fromBankId?: string | null; proofPath?: string | null; proofMime?: string | null; idempotencyKey?: string | null; telegramChatId?: string | null; telegramMessageId?: string | null },
+  input: { walletId: string; amount: number; date: string; time?: string; fromBankId?: string | null; proofPath?: string | null; proofMime?: string | null; idempotencyKey?: string | null; telegramChatId?: string | null; telegramMessageId?: string | null; dupAckIds?: string[] },
   source: "MANUAL" | "TELEGRAM",
   actor: Actor & { id: string },
 ) {
@@ -216,6 +217,7 @@ export async function repayTalangan(
       idempotencyKey: input.idempotencyKey ?? null,
       telegramChatId: input.telegramChatId ?? null,
       telegramMessageId: input.telegramMessageId ?? null,
+      dupAckIds: input.dupAckIds ?? [],
     },
     source,
     actor,

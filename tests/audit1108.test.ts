@@ -78,5 +78,7 @@ describe("Audit 8 Nov: gaji & jadwal", () => {
     const r10 = await runDueJobs(jakartaDateTime("2027-02-10", "09:30"));
     expect(r10.monthClose).toBeDefined();
     expect((await prisma.accountingPeriod.findUniqueOrThrow({ where: { year_month: { year: 2027, month: 1 } } })).status).toBe("CLOSED");
+    // Dibuka lagi: tes lain (gaji/tunjangan Jan 2027) masih membukukan di periode ini
+    await prisma.accountingPeriod.update({ where: { year_month: { year: 2027, month: 1 } }, data: { status: "OPEN" } });
   });
 });

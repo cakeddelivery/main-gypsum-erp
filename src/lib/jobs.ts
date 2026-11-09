@@ -13,7 +13,7 @@ const SYSTEM_ACTOR = { id: "system", name: "Sistem (terjadwal)" };
 export async function dailyRecapText(now: Date, forDate?: string) {
   const date = forDate ?? addDays(todayStr(now), -1);
   const { start, end } = dayRange(date);
-  const booked = await prisma.financeTransaction.groupBy({ by: ["direction"], where: { status: "DIBUKUKAN", date: { gte: start, lt: end } }, _sum: { amount: true }, _count: true });
+  const booked = await prisma.financeTransaction.groupBy({ by: ["direction"], where: { status: "DIBUKUKAN", origin: null, date: { gte: start, lt: end } }, _sum: { amount: true }, _count: true });
   // Total uang masuk/keluar dari semua jurnal kas (termasuk pembelian, gaji, kasbon) — bukan hanya menu Transaksi
   const moves = await cashMovements(start, end);
   const cashIn = moves.filter((m) => m.amount > 0).reduce((s, m) => s + m.amount, 0);

@@ -1,4 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+
+// Dana "Nabung Bayar Hutang" uji dinonaktifkan setelah tes agar tidak ikut "sisihkan semua" di tes lain
+afterAll(async () => {
+  await prisma.reserveFund.updateMany({ where: { name: "Nabung Bayar Hutang" }, data: { active: false } });
+});
 import { prisma } from "@/lib/db";
 import { approveAndBook, bankBalances, createTransaction } from "@/lib/finance";
 import { postAllReserves } from "@/lib/reserve";

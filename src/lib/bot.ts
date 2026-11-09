@@ -10,7 +10,7 @@ import { idr } from "./money";
 import { addDays, fmtDate, fmtDateTime, jakartaDateTime, todayStr, txTime } from "./time";
 import { dailyRecapText } from "./jobs";
 import { handleMenuCallback, handleMenuCommand, MENU_TEXT } from "./botMenu";
-import { clearSession, getSession, handleFlowCallback, handleFlowLocation, handleFlowText, startPrefilledFlow, type TgLocation } from "./botFlow";
+import { clearSession, getSession, handleFlowCallback, handleFlowLocation, handleFlowText, retryRows, startPrefilledFlow, type TgLocation } from "./botFlow";
 import { detectPurchase, extractSplits, rawMaterials } from "./botPurchase";
 import { prefilledPayablePayment, prefilledPurchase, prefilledReserve, prefilledTalangan, talanganPhoto } from "./botFlow3";
 import { talanganSummary } from "./talangan";
@@ -19,6 +19,11 @@ import { detectPayablePayment } from "./botPurchase";
 import { openPayables } from "./payables";
 import { matchReserveTransfer } from "./reserve";
 import { supplierKey, supplierNames } from "./suppliers";
+import { cbId, chunk, createDraft, dateUnconfirmed, draftMessage, resolveCategory, type DraftInput, type Pick } from "./botDraft";
+export { draftMessage } from "./botDraft";
+import { appUrl, guardDup } from "./botDup";
+import { approveCategoryProposal, canApproveCategory, proposeCategory, rejectCategoryProposal, suggestCategories, type CatSuggestion } from "./categorySuggest";
+import type { Session } from "./botKit";
 
 type TgUser = { id: number; first_name?: string; username?: string };
 type TgUpdate = {
@@ -47,157 +52,9 @@ async function identityOf(tgId: number) {
   return { ...ident, perms };
 }
 
-type Pick = "acc" | "to" | "cat" | "st" | "dt" | `s${number}`;
-
-/**
- * Ringkasan draft + tombol interaktif: data yang kurang langsung diberi pilihan (rekening, tujuan, kategori, toko),
- * transaksi yang dicurigai duplikat menampilkan transaksi sebelumnya, dan data yang sudah terisi tetap bisa diganti.
- * `pick` = tampilkan pilihan untuk mengganti field tsb (tombol 🏦 / 🏷️ / 🏪).
- */
-export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: string; buttons: InlineButton[][] }> {
-  const t = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: txId }, include: { splits: { orderBy: { sortOrder: "asc" } } } });
-  const splitItems = await prisma.item.findMany({ where: { id: { in: t.splits.map((x) => x.itemId).filter((x): x is string => !!x) } }, select: { id: true, name: true, unit: true } });
-  const [banks, cats, stores, dup] = await Promise.all([
-    prisma.bankAccount.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
-    prisma.txCategory.findMany({ where: { active: true, direction: t.direction }, orderBy: { name: "asc" } }),
-    prisma.store.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
-    t.duplicateOfId ? prisma.financeTransaction.findUnique({ where: { id: t.duplicateOfId } }) : null,
-  ]);
-  const bank = banks.find((b) => b.id === t.accountId);
-  const to = banks.find((b) => b.id === t.toAccountId);
-  const cat = cats.find((c) => c.id === t.categoryId);
-  const store = stores.find((x) => x.id === t.storeId);
-  // Toko hanya relevan untuk withdraw saldo penjual marketplace (WD); tombol Toko hanya bila toko tidak terbaca dari pesan/bukti
-  const isWd = t.direction === "TRANSFER" && !!bank?.marketplace;
-  const counterparty = (t.aiExtraction as { receipt?: { counterparty?: string } } | null)?.receipt?.counterparty;
-  const storeClear = !!store && matchStore([t.rawText, counterparty].filter(Boolean).join(" "), stores) === store.id;
-  const dateNeeded = dateUnconfirmed(t);
-  const dirOf = (d: string) => (d === "MASUK" ? "Pemasukan" : d === "KELUAR" ? "Pengeluaran" : "Transfer internal");
-  const lines = [
-    `<b>${esc(t.number)}</b> · ${STATUS_LABEL[t.status]}`,
-    `Jenis: ${dirOf(t.direction)}`,
-    `Nominal: <b>${idr(t.amount)}</b>`,
-    `Tanggal: ${fmtDateTime(t.date)}`,
-    `Rekening: ${bank ? esc(bank.name) : "— (belum dipilih)"}${t.direction === "TRANSFER" ? ` → ${to ? esc(to.name) : "— (belum dipilih)"}` : ""}`,
-    t.direction !== "TRANSFER" && !t.splits.length ? `Kategori: ${cat ? esc(cat.name) : "— (belum dipilih)"}` : "",
-    ...(t.splits.length
-      ? [
-          `Rincian (${t.splits.length}):`,
-          ...t.splits.map((x, k) => {
-            const it = splitItems.find((i) => i.id === x.itemId);
-            const c = cats.find((cc) => cc.id === x.categoryId);
-            return `${k + 1}. ${esc(x.note ?? "")} · <b>${idr(x.amount)}</b> → ${it ? `📦 stok ${esc(it.name)} ${Number(x.qty)} ${esc(it.unit)}` : c ? esc(c.name) : "<i>kategori belum dipilih</i>"}`;
-          }),
-        ]
-      : []),
-    (isWd && stores.length > 1) || !store ? `Toko: ${store ? esc(store.name) : "— (belum dipilih)"}` : "",
-    t.note ? `Catatan: ${esc(t.note.slice(0, 200))}` : "",
-    t.direction === "TRANSFER" && bank?.marketplace ? `💰 Withdraw saldo penjual: otomatis dicatat juga sebagai pemasukan penjualan ${idr(t.amount)}` : "",
-    dateNeeded ? "📅 <b>Bukti withdraw tidak mencantumkan tanggal.</b> Pastikan tanggal dana masuk ke rekening sebelum dibukukan." : "",
-  ].filter(Boolean);
-  if (dup) {
-    lines.push(
-      "",
-      "⚠️ <b>Mirip transaksi sebelumnya</b> (nominal & tanggal sama):",
-      `<b>${esc(dup.number)}</b> · ${STATUS_LABEL[dup.status]}`,
-      `${dirOf(dup.direction)} ${idr(dup.amount)} · ${fmtDateTime(dup.date)}`,
-      `Rekening: ${esc(banks.find((b) => b.id === dup.accountId)?.name ?? "—")}${dup.direction === "TRANSFER" ? ` → ${esc(banks.find((b) => b.id === dup.toAccountId)?.name ?? "—")}` : ""}${cats.find((c) => c.id === dup.categoryId) ? ` · ${esc(cats.find((c) => c.id === dup.categoryId)!.name)}` : ""}`,
-      ...(dup.note ? [`Catatan: ${esc(dup.note.slice(0, 120))}`] : []),
-      `Dibuat: ${fmtDateTime(dup.createdAt)}${dup.telegramChatId ? " via Telegram" : ""}${dup.proofPath ? " · ada foto bukti" : ""}`,
-    );
-  }
-  const buttons: InlineButton[][] = [];
-  if (t.status === "DITOLAK") lines.push("<i>Draft ditolak (dibuang, tanpa jurnal). Lihat di web: Transaksi → tab Ditolak.</i>");
-  if (t.status === "DIBUKUKAN" || t.status === "DITOLAK" || t.status === "DIBATALKAN") return { text: lines.join("\n"), buttons };
-  const issues = splitIssues(t.amount, t.direction, t.splits);
-  const missing = [...missingFields(t), ...issues];
-  const splitSum = t.splits.reduce((a, x) => a + Number(x.amount), 0);
-  if (t.splits.length && splitSum !== Number(t.amount)) lines.push(`\n⚠️ Total rincian ${idr(splitSum)} tidak sama dengan nominal ${idr(t.amount)}.`);
-  const noCat = t.splits.findIndex((x) => !x.categoryId && !x.itemId);
-  // Pilihan untuk data yang kurang (atau yang ingin diganti)
-  const need: Pick | null = pick ?? (noCat >= 0 && t.accountId ? (`s${noCat}` as Pick) : null) ?? (!t.accountId ? "acc" : t.direction === "TRANSFER" && (!t.toAccountId || t.toAccountId === t.accountId) ? "to" : t.direction !== "TRANSFER" && !t.categoryId ? "cat" : !t.storeId ? "st" : dateNeeded ? "dt" : null);
-  if (need === "acc") {
-    lines.push(`\n${pick ? "Ganti" : "Pilih"} rekening${t.direction === "TRANSFER" ? " asal" : ""}:`);
-    buttons.push(...chunk(banks.map((b) => ({ text: `${b.id === t.accountId ? "✓ " : ""}${b.name}`, callback_data: `acc:${t.id}:${b.id}` })), 2));
-  } else if (need === "to") {
-    lines.push(`\n${pick ? "Ganti" : "Pilih"} rekening tujuan:`);
-    buttons.push(...chunk(banks.filter((b) => b.id !== t.accountId).map((b) => ({ text: `${b.id === t.toAccountId ? "✓ " : ""}${b.name}`, callback_data: `to:${t.id}:${b.id}` })), 2));
-  } else if (need === "cat") {
-    lines.push(`\n${pick ? "Ganti" : "Pilih"} kategori:`);
-    buttons.push(...chunk(cats.slice(0, 40).map((c) => ({ text: `${c.id === t.categoryId ? "✓ " : ""}${c.name}`, callback_data: `cat:${t.id}:${cbId(c.id)}` })), 2));
-  } else if (need?.startsWith("s") && need !== "st") {
-    const k = Number(need.slice(1));
-    const sp = t.splits[k];
-    if (sp) {
-      lines.push(`\n${pick ? "Ganti" : "Pilih"} kategori untuk rincian ${k + 1} (<i>${esc(sp.note ?? "")}</i> ${idr(sp.amount)}):`);
-      buttons.push(...chunk(cats.slice(0, 40).map((c) => ({ text: `${c.id === sp.categoryId ? "✓ " : ""}${c.name}`, callback_data: `sc:${t.id}:${k}:${cbId(c.id)}` })), 2));
-    }
-  } else if (need === "dt") {
-    // Tanggal dana masuk: 6 hari terakhir (jam tetap); tanggal lain lewat web
-    const today = todayStr();
-    lines.push(`\n${pick ? "Ganti" : "Pilih"} tanggal${isWd ? " dana masuk" : ""}:`);
-    const days = [0, 1, 2, 3, 4, 5].map((k) => addDays(today, -k));
-    buttons.push(...chunk(days.map((d, k) => ({ text: `${k === 0 ? "Hari ini" : k === 1 ? "Kemarin" : fmtDate(d)}${k < 2 ? ` (${fmtDate(d)})` : ""}`, callback_data: `dt:${t.id}:${d.replace(/-/g, "")}` })), 2));
-  } else if (need === "st") {
-    lines.push(`\n${pick ? "Ganti" : "Pilih"} toko${t.direction === "TRANSFER" && bank?.marketplace ? " untuk withdraw ini (MG / DL)" : ""}:`);
-    buttons.push(...chunk(stores.map((x) => ({ text: `${x.id === t.storeId ? "✓ " : ""}${x.name}`, callback_data: `st:${t.id}:${x.id}` })), 2));
-  }
-  if (pick) {
-    buttons.push([{ text: "◀ Kembali", callback_data: `back:${t.id}` }]);
-    return { text: lines.join("\n"), buttons };
-  }
-  if (t.duplicateOfId) {
-    lines.push("\nApakah ini transaksi yang sama (terkirim dua kali)?");
-    buttons.push([{ text: "✅ Bukan duplikat, lanjutkan", callback_data: `rev:${t.id}` }], [{ text: "🗑 Ya duplikat, batalkan ini", callback_data: `no:${t.id}` }]);
-  }
-  // Data yang sudah terisi tetap bisa diganti
-  const edit: InlineButton[] = [];
-  if (t.accountId && need !== "acc") edit.push({ text: "🏦 Rekening", callback_data: `chg:${t.id}:acc` });
-  if (t.direction === "TRANSFER" && t.toAccountId && need !== "to") edit.push({ text: "🏦 Tujuan", callback_data: `chg:${t.id}:to` });
-  if (t.direction !== "TRANSFER" && t.categoryId && need !== "cat" && !t.splits.length) edit.push({ text: "🏷️ Kategori", callback_data: `chg:${t.id}:cat` });
-  t.splits.forEach((x, k) => {
-    if (!x.itemId && x.categoryId && need !== `s${k}`) edit.push({ text: `🏷️ Rincian ${k + 1}`, callback_data: `chg:${t.id}:s${k}` });
-  });
-  if (isWd && stores.length > 1 && t.storeId && !storeClear && need !== "st") edit.push({ text: "🏪 Toko", callback_data: `chg:${t.id}:st` });
-  if (need !== "dt") edit.push({ text: "📅 Tanggal", callback_data: `chg:${t.id}:dt` });
-  if (edit.length) buttons.push(...chunk(edit, 3));
-  if (t.splits.length && splitSum !== Number(t.amount)) buttons.push([{ text: `Pakai total rincian (${idr(splitSum)})`, callback_data: `sa:${t.id}` }]);
-  if (t.splits.length) buttons.push([{ text: "🔗 Gabung jadi 1 kategori", callback_data: `sx:${t.id}` }]);
-  if (missing.length === 0 && !t.duplicateOfId && !dateNeeded) buttons.push([{ text: "✅ Konfirmasi & bukukan", callback_data: `ok:${t.id}` }, { text: "❌ Tolak", callback_data: `no:${t.id}` }]);
-  else if (!t.duplicateOfId) buttons.push([{ text: "❌ Tolak", callback_data: `no:${t.id}` }]);
-  return { text: lines.join("\n"), buttons };
-}
-
-/** Draft WD yang tanggalnya tidak terbaca (bukti tanpa tanggal) dan belum dipastikan lewat tombol tanggal */
-function dateUnconfirmed(t: { aiExtraction: unknown }) {
-  const ax = t.aiExtraction as { needDate?: boolean; dateOk?: boolean } | null;
-  return !!ax?.needDate && !ax.dateOk;
-}
-
-/**
- * Telegram membatasi callback_data maks. 64 byte. Id kategori hasil migrasi berupa UUID (36 karakter) sehingga
- * `cat:<id transaksi>:<id kategori>` melebihi batas dan Telegram menolak seluruh pesan (tombol tampak tidak merespons).
- * Cukup kirim 12 karakter terakhir id; dicocokkan kembali dengan resolveCategory.
- */
-function cbId(id: string) {
-  return id.slice(-12);
-}
-
-async function resolveCategory(v: string | undefined) {
-  if (!v) return null;
-  const found = await prisma.txCategory.findMany({ where: { id: { endsWith: v } }, select: { id: true }, take: 2 });
-  return found.length === 1 ? found[0].id : null;
-}
-
 function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   return Promise.race([p, new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error(msg)), ms)))]).finally(() => clearTimeout(timer));
-}
-
-function chunk<T>(arr: T[], n: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
-  return out;
 }
 
 /** Proses update dari Telegram Bot API (webhook). Tidak pernah membukukan tanpa tombol konfirmasi manusia berwenang. */
@@ -328,6 +185,8 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   const seller = ex.direction === "TRANSFER" ? banks.find((b) => b.id === ex.accountId && b.marketplace) : null;
   const stores = seller ? await prisma.store.findMany({ where: { active: true } }) : [];
   const storeId = seller ? matchStore([text, receipt?.counterparty].filter(Boolean).join(" "), stores) : null;
+  // Kategori belum dikenali: saran 1–3 kategori (kata kunci → riwayat → AI bila ada) atau usulan kategori baru
+  const catSuggest = ex.direction !== "TRANSFER" && !ex.categoryId && !splits.length ? await suggestCategories(prisma, { direction: ex.direction, text: [text, receipt?.counterparty].filter(Boolean).join(" ") }, { ai: true }).catch(() => null) : null;
   const draft: DraftInput = {
     direction: ex.direction,
     amount: ex.amount,
@@ -340,7 +199,7 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     proofPath,
     // WD saldo penjual tanpa tanggal di keterangan maupun bukti (bukti WD TikTok tidak mencantumkan tanggal):
     // tanggal wajib dipastikan sebelum dibukukan
-    aiExtraction: { ...ex, ...(receipt ? { receipt } : {}), ...(seller && !extractDate(text) && !receipt?.date ? { needDate: true } : {}) },
+    aiExtraction: { ...ex, ...(receipt ? { receipt } : {}), ...(catSuggest && (catSuggest.picks.length || catSuggest.proposal) ? { catSuggest } : {}), ...(seller && !extractDate(text) && !receipt?.date ? { needDate: true } : {}) },
     messageId: String(msg.message_id),
     storeId,
     askStore: !!seller && !storeId,
@@ -384,60 +243,24 @@ export async function handleTelegramUpdate(u: TgUpdate) {
       if (session) return startPrefilledFlow({ i: ident, chatId }, session);
     }
   }
-  await createDraft(chatId, ident, draft);
+  await startDraft(ctx, draft);
+}
+
+/**
+ * Catat draft transaksi biasa. Bila ada transaksi mirip (nominal & tanggal sama, termasuk dari menu lain), bot
+ * bertanya dulu lewat isian "trx" (kartu konfirmasi) dan tidak langsung menyimpan.
+ */
+async function startDraft(ctx: { i: NonNullable<Awaited<ReturnType<typeof identityOf>>>; chatId: string }, draft: DraftInput) {
+  const s: Session = { chatId: ctx.chatId, userId: ctx.i.userId, flow: "trx", step: "confirm", data: { tx: JSON.stringify(draft) } };
+  const q = { direction: draft.direction, amount: draft.amount, date: new Date(draft.date), accountId: draft.accountId, toAccountId: draft.toAccountId, categoryId: draft.categoryId, text: [draft.note, draft.rawText].filter(Boolean).join(" ") };
+  if (await guardDup(s, "ok", q)) return startPrefilledFlow(ctx, s);
+  await createDraft(ctx.chatId, ctx.i, draft);
 }
 
 /** Panggilan pengelola untuk mengenali pinjaman pengelola: bawaan + setting pengelola_nama (dipisah koma) */
 async function managerNames() {
   const s = await prisma.setting.findUnique({ where: { key: "pengelola_nama" } });
   return [...DEFAULT_MANAGER_NAMES, ...(s?.value ?? "").split(",")].map((x) => x.trim()).filter(Boolean);
-}
-
-/** Data draft transaksi dari pesan bot (disimpan di sesi pembelian agar bisa dicatat sebagai transaksi biasa) */
-type DraftInput = {
-  direction: "MASUK" | "KELUAR" | "TRANSFER";
-  amount: number;
-  date: string;
-  accountId: string | null;
-  toAccountId: string | null;
-  categoryId: string | null;
-  note: string | null;
-  rawText: string;
-  proofPath: string | null;
-  aiExtraction: unknown;
-  messageId: string;
-  storeId?: string | null;
-  askStore?: boolean;
-  splits?: SplitInput[];
-};
-
-async function createDraft(chatId: string, ident: NonNullable<Awaited<ReturnType<typeof identityOf>>>, d: DraftInput) {
-  const { transaction } = await createTransaction(
-    {
-      direction: d.direction,
-      amount: d.amount,
-      date: new Date(d.date),
-      accountId: d.accountId,
-      toAccountId: d.toAccountId,
-      categoryId: d.categoryId,
-      suggestedCategoryId: d.categoryId,
-      note: d.note,
-      rawText: d.rawText,
-      proofPath: d.proofPath,
-      proofMime: d.proofPath ? "image/jpeg" : null,
-      aiExtraction: d.aiExtraction as object,
-      idempotencyKey: `tg:${chatId}:${d.messageId}`,
-      telegramChatId: chatId,
-      telegramMessageId: d.messageId,
-      splits: d.splits,
-      storeId: d.storeId ?? null,
-      askStore: d.askStore,
-    },
-    "TELEGRAM",
-    { id: ident.userId, name: ident.user.name, telegramId: ident.telegramUserId },
-  );
-  const m = await draftMessage(transaction.id);
-  await sendTelegram(chatId, `📝 Draft dibuat (belum dibukukan)\n\n${m.text}`, { buttons: m.buttons, type: "DRAFT" });
 }
 
 /** Supplier yang namanya disebut di caption atau nama penerima di bukti transfer */
@@ -466,13 +289,15 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
       await clearSession(chatId);
       await answerCallback(cb.id, "");
       await editTelegram(chatId, cb.message.message_id, "Dicatat sebagai transaksi biasa.", []).catch(() => {});
-      return createDraft(chatId, ident, JSON.parse(String(s.data.tx)) as DraftInput);
+      return startDraft({ i: ident, chatId }, JSON.parse(String(s.data.tx)) as DraftInput);
     }
     try {
       return await handleFlowCallback(ident, cb.id, chatId, cb.message.message_id, cb.data!);
     } catch (e) {
       await prisma.notificationLog.create({ data: { channel: "TELEGRAM", type: "ISIAN", target: chatId, status: "GAGAL", payload: cb.data ?? "", error: (e as Error).message.slice(0, 500) } });
-      return answerCallback(cb.id, "Terjadi kesalahan, coba lagi");
+      // Jangan hanya notifikasi kecil: kirim pesan dengan tombol ulang/batal, isian tetap tersimpan
+      await sendTelegram(chatId, `⚠️ Terjadi kesalahan saat memproses tombol (${esc((e as Error).message.slice(0, 120))}).\nIsian Anda masih tersimpan.`, { buttons: retryRows }).catch(() => {});
+      return answerCallback(cb.id, "Terjadi kesalahan");
     }
   }
   if (action === "m") {
@@ -489,6 +314,23 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
   const canReview = ident.perms.has("finance.review") || ident.perms.has("finance.approve");
   if (["acc", "to", "cat", "st", "dt", "no", "chg", "sc", "sa", "sx"].includes(action) && !ident.canSubmit && !canReview) return answerCallback(cb.id, "Anda tidak berwenang mengubah transaksi");
   // Tombol ganti (🏦 / 🏷️ / 🏪) / ◀ Kembali: hanya mengganti tampilan pilihan, belum mengubah data
+  if (action === "kn" || action === "ka" || action === "kr") {
+    if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan sudah tidak tersedia");
+    try {
+      return await categoryCallback(ident, cb.id, chatId, cb.message.message_id, action, txId);
+    } catch (e) {
+      return answerCallback(cb.id, e instanceof FinanceError ? e.message : "Terjadi kesalahan");
+    }
+  }
+  if (action === "dv") {
+    // Lihat transaksi lama yang mirip, lalu kembali ke kartu draft
+    if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan sudah tidak tersedia");
+    const t = await prisma.financeTransaction.findUnique({ where: { id: txId } });
+    if (!t?.duplicateOfId) return answerCallback(cb.id, "Tidak ada transaksi mirip");
+    const old = await draftMessage(t.duplicateOfId);
+    await editTelegram(chatId, cb.message.message_id, `🔎 <b>Transaksi lama</b>\n\n${old.text}\n${appUrl()}/finance/${t.duplicateOfId}`, [[{ text: "◀ Kembali ke draft", callback_data: `back:${txId}` }]]);
+    return answerCallback(cb.id, "");
+  }
   if (action === "chg" || action === "back") {
     if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan sudah tidak tersedia");
     const m = await draftMessage(txId, action === "chg" && (["acc", "to", "cat", "st", "dt"].includes(value) || /^s\d+$/.test(value)) ? (value as Pick) : undefined);
@@ -533,11 +375,13 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
       else await updateTransaction(txId, { splits: [] }, actor);
     }
     else if (action === "rev") {
-      if (!ident.perms.has("finance.review")) return answerCallback(cb.id, "Anda tidak berwenang meninjau");
+      // "Berbeda, tetap simpan": peninjau keuangan, atau pembuat draft sendiri (tidak lagi buntu hanya bisa Tolak)
+      if (!canReview && !(await prisma.approvalLog.findFirst({ where: { transactionId: txId, action: "DIBUAT", actorUserId: ident.userId } }))) return answerCallback(cb.id, "Hanya pembuat draft atau peninjau keuangan");
       await prisma.$transaction(async (tx) => {
         const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id: txId } });
         if (cur.status !== "PERLU_DITINJAU") throw new FinanceError("Transaksi tidak dalam status Perlu Ditinjau");
-        await tx.financeTransaction.update({ where: { id: txId }, data: { duplicateOfId: null } });
+        // Diingat agar tidak ditandai mirip lagi saat rekening/kategori/tanggal diganti
+        await tx.financeTransaction.update({ where: { id: txId }, data: { duplicateOfId: null, dupAckIds: cur.duplicateOfId ? [...new Set([...cur.dupAckIds, cur.duplicateOfId])] : cur.dupAckIds } });
         await tx.approvalLog.create({ data: { transactionId: txId, action: "BUKAN_DUPLIKAT", fromStatus: cur.status, toStatus: cur.status, actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId, note: "Ditandai bukan duplikat via Telegram" } });
       });
     } else if (action === "no") {
@@ -562,4 +406,59 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
   } catch (e) {
     return answerCallback(cb.id, e instanceof FinanceError ? e.message : "Terjadi kesalahan");
   }
+}
+
+type Ident = NonNullable<Awaited<ReturnType<typeof identityOf>>>;
+
+/**
+ * Kategori baru dari bot. kn:<transaksi> = usulkan (pengguna yang boleh mengirim transaksi), ka/kr:<usulan> =
+ * setujui/tolak (HANYA Owner/Finance). Persetujuan membuat akun COA (kode otomatis) + kategori, lalu draftnya
+ * langsung memakai kategori itu.
+ */
+async function categoryCallback(ident: Ident, cbId: string, chatId: string, messageId: number, action: string, id: string) {
+  const actor = { id: ident.userId, name: ident.user.name, role: ident.user.role };
+  if (action === "kn") {
+    if (!ident.canSubmit && !ident.perms.has("finance.review") && !ident.perms.has("finance.approve")) return answerCallback(cbId, "Anda tidak berwenang");
+    const t = await prisma.financeTransaction.findUniqueOrThrow({ where: { id } });
+    const p = (t.aiExtraction as { catSuggest?: CatSuggestion } | null)?.catSuggest?.proposal;
+    if (!p) return answerCallback(cbId, "Tidak ada usulan kategori untuk transaksi ini");
+    const prop = await proposeCategory(p, { transactionId: t.id, chatId }, actor);
+    const text = proposalText(prop);
+    if (canApproveCategory(ident.user.role)) {
+      await sendTelegram(chatId, text, { buttons: proposalButtons(prop.id), type: "KATEGORI" });
+      return answerCallback(cbId, "");
+    }
+    // Pengguna biasa: usulan diteruskan ke Owner/Finance
+    const approvers = await prisma.telegramIdentity.findMany({ where: { active: true, chatId: { not: null }, user: { active: true, role: { in: ["OWNER", "FINANCE"] } } } });
+    for (const a of approvers) await sendTelegram(a.chatId!, `${text}\nDiusulkan oleh ${esc(ident.user.name)}.`, { buttons: proposalButtons(prop.id), type: "KATEGORI" }).catch(() => {});
+    await sendTelegram(chatId, `📨 Usulan kategori <b>${esc(prop.name)}</b> dikirim ke Owner/Finance. Draft tetap tersimpan; kategori bisa dipilih dari daftar sambil menunggu.`);
+    return answerCallback(cbId, "Usulan dikirim");
+  }
+  if (!canApproveCategory(ident.user.role)) return answerCallback(cbId, "Hanya Owner/Finance yang dapat menyetujui kategori baru");
+  if (action === "kr") {
+    const r = await rejectCategoryProposal(id, actor);
+    await editTelegram(chatId, messageId, `❌ Usulan kategori <b>${esc(r.name)}</b> ditolak oleh ${esc(actor.name)}.`, []);
+    return answerCallback(cbId, "Ditolak");
+  }
+  const r = await approveCategoryProposal(id, actor);
+  await editTelegram(chatId, messageId, `✅ Kategori <b>${esc(r.proposal.name)}</b> dibuat${r.coaCode ? ` (akun ${r.coaCode})` : " (sudah ada, dipakai)"} oleh ${esc(actor.name)}.`, []);
+  // Draft yang memicu usulan langsung memakai kategori baru, lalu kartu draftnya dikirim ulang ke pengusul
+  const t = r.proposal.transactionId ? await prisma.financeTransaction.findUnique({ where: { id: r.proposal.transactionId } }) : null;
+  if (t && ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"].includes(t.status) && !t.categoryId && t.direction === r.proposal.direction) {
+    await updateTransaction(t.id, { categoryId: r.categoryId }, { id: ident.userId, name: ident.user.name, telegramId: ident.telegramUserId });
+    const u = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: t.id } });
+    const sp = await prisma.financeTxSplit.findMany({ where: { transactionId: t.id } });
+    if (u.status === "PERLU_DITINJAU" && !u.duplicateOfId && missingFields(u).length === 0 && splitIssues(u.amount, u.direction, sp).length === 0) await submitForConfirmation(t.id, { id: ident.userId, name: ident.user.name }, "Kategori baru disetujui");
+    const m = await draftMessage(t.id);
+    await sendTelegram(r.proposal.chatId ?? chatId, `🏷️ Kategori <b>${esc(r.proposal.name)}</b> disetujui dan dipakai.\n\n${m.text}`, { buttons: m.buttons, type: "DRAFT" });
+  }
+  return answerCallback(cbId, "Disetujui ✅");
+}
+
+function proposalText(p: { name: string; direction: string; coaType: string; parentCoaId: string | null }) {
+  return `🏷️ <b>Usulan kategori baru</b>\nNama: <b>${esc(p.name)}</b>\nJenis: ${p.direction === "MASUK" ? "Pemasukan" : "Pengeluaran"} · akun ${p.coaType === "PENDAPATAN" ? "Pendapatan" : p.coaType === "HPP" ? "HPP" : "Beban"} (kode dibuat otomatis)\n\nSetujui? Hanya Owner/Finance.`;
+}
+
+function proposalButtons(id: string): InlineButton[][] {
+  return [[{ text: "✅ Setujui & buat", callback_data: `ka:${id}` }, { text: "❌ Tolak", callback_data: `kr:${id}` }]];
 }

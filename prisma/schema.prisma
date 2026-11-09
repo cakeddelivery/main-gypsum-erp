@@ -1038,8 +1038,16 @@ model FinanceTransaction {
   reserveEntries      ReserveEntry[]
   /// Pengembalian dana talangan: transfer dari rekening operasional ke dompet simpanan (Seabank 0006 / ShopeePay)
   bailoutRepay        Boolean          @default(false)
+  /// Baris tertaut dari menu lain (PEMBELIAN, PAYROLL, KASBON, SISIHAN, ...): uang rekening yang dibukukan di menu
+  /// sumbernya. Jurnalnya = jurnal sumber (journalId), tidak ada jurnal kedua. Kosong = transaksi milik menu Transaksi.
+  origin              String?
+  /// Nomor/id dokumen sumber (mis. nomor pembelian) untuk tautan ke menu asal
+  originRef           String?
+  /// Transaksi lain yang sudah dinyatakan "berbeda, bukan duplikat" (tidak ditanyakan lagi)
+  dupAckIds           String[]         @default([])
 
   @@index([fingerprint])
+  @@index([origin])
   @@index([status])
   @@index([deletedAt])
 }
@@ -1106,6 +1114,30 @@ model IdempotencyRecord {
 }
 
 /// Isian bertahap di bot Telegram (input produksi, mutasi stok, absen). Satu sesi aktif per chat, kedaluwarsa 30 menit.
+/// Usulan kategori transaksi baru dari bot: dibuat hanya setelah Owner/Finance menyetujui
+model CategoryProposal {
+  id            String      @id @default(cuid())
+  name          String
+  direction     TxDirection
+  /// Tipe akun COA baru (BEBAN/HPP/PENDAPATAN) dan akun induknya
+  coaType       AccountType
+  parentCoaId   String?
+  keywords      String      @default("")
+  /// Transaksi (draft) yang memicu usulan; diberi kategori ini saat disetujui
+  transactionId String?
+  chatId        String?
+  proposedById  String
+  proposedBy    String
+  /// MENUNGGU / DISETUJUI / DITOLAK
+  status        String      @default("MENUNGGU")
+  decidedBy     String?
+  decidedAt     DateTime?
+  categoryId    String?
+  createdAt     DateTime    @default(now())
+
+  @@index([status])
+}
+
 model BotSession {
   chatId    String   @id
   userId    String

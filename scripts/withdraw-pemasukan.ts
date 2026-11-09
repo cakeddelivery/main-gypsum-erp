@@ -33,7 +33,7 @@ async function main() {
   const owner = await prisma.user.findFirst({ where: { role: "OWNER", active: true } });
   const actor = { id: owner?.id ?? "skrip", name: "skrip withdraw-pemasukan" };
   const txs = await prisma.financeTransaction.findMany({
-    where: { status: "DIBUKUKAN", direction: "TRANSFER", accountId: { in: sellers.map((b) => b.id) }, journalId: { not: null }, deletedAt: null },
+    where: { status: "DIBUKUKAN", direction: "TRANSFER", origin: null, accountId: { in: sellers.map((b) => b.id) }, journalId: { not: null }, deletedAt: null },
     include: { store: true },
     orderBy: { date: "asc" },
   });
@@ -56,7 +56,7 @@ async function main() {
   }
   console.log(count ? `\n${count} withdraw lama, total pemasukan ${idr(total)}` : "\nSemua withdraw sudah tercatat sebagai pemasukan. Tidak ada yang diubah.");
   // Pemasukan yang langsung dicatat ke saldo penjual: bisa dobel dengan pemasukan dari withdraw
-  const direct = await prisma.financeTransaction.findMany({ where: { status: "DIBUKUKAN", direction: "MASUK", accountId: { in: sellers.map((b) => b.id) }, deletedAt: null }, orderBy: { date: "asc" } });
+  const direct = await prisma.financeTransaction.findMany({ where: { status: "DIBUKUKAN", direction: "MASUK", origin: null, accountId: { in: sellers.map((b) => b.id) }, deletedAt: null }, orderBy: { date: "asc" } });
   if (direct.length) {
     console.log(`\nPERIKSA: ${direct.length} pemasukan dicatat langsung ke saldo penjual (bisa terhitung dobel dengan withdraw):`);
     for (const t of direct.slice(0, 20)) console.log(`  ${t.number} ${day(t.date)} ${idr(Number(t.amount))} ${t.note?.slice(0, 50) ?? ""}`);

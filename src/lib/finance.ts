@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { Prisma, type TxDirection, type TxSource, type TxStatus } from "@prisma/client";
 import { prisma } from "./db";
 import { nextNumber } from "./numbering";
@@ -61,6 +60,8 @@ export type TxInput = {
   reserveLink?: ReserveLink | null;
   /** Pengembalian dana talangan ke dompet simpanan (bukan sisihan) */
   bailoutRepay?: boolean;
+  /** Transaksi mirip yang sudah dinyatakan pengguna "berbeda, tetap simpan" */
+  dupAckIds?: string[] | null;
 };
 
 export type SplitInput = { categoryId?: string | null; amount: number; note?: string | null; itemId?: string | null; qty?: number | null };
@@ -82,25 +83,23 @@ export function splitIssues(amount: number | bigint, direction: TxDirection, spl
 const splitRows = (splits: SplitInput[]) =>
   splits.map((x, i) => ({ categoryId: x.categoryId ?? null, amount: BigInt(Math.round(x.amount)), note: x.note?.slice(0, 200) ?? null, itemId: x.itemId ?? null, qty: x.itemId && x.qty ? new Prisma.Decimal(x.qty) : null, sortOrder: i }));
 
-export function fingerprint(direction: string, amount: number, date: Date, accountId?: string | null) {
-  return crypto.createHash("sha256").update(`${direction}|${amount}|${dateStr(date)}|${accountId ?? "-"}`).digest("hex").slice(0, 32);
+export { fingerprint } from "./txMirror";
+import { fingerprint } from "./txMirror";
+import { nextTxNumber, originLabel } from "./txMirror";
+import { findSimilar } from "./similar";
+
+/** Baris tertaut dari menu lain hanya-baca di menu Transaksi: ubah/batalkan di menu sumbernya */
+export function assertOwnTransaction(cur: { origin: string | null; number: string; direction?: string }) {
+  if (cur.origin) throw new FinanceError(`${cur.number} berasal dari ${originLabel(cur.origin, cur.direction)} (menu ${originLabel(cur.origin)}). Ubah atau batalkan di menu tersebut agar stok, hutang & dokumennya ikut menyesuaikan.`);
 }
 
-/** Cari transaksi lain (bukan ditolak) dengan nominal & rekening sama dalam ±1 hari */
-export async function findDuplicate(tx: Tx | typeof prisma, input: { direction: TxDirection; amount: number; date: Date; accountId?: string | null }, excludeId?: string) {
-  const from = new Date(input.date.getTime() - 86400000);
-  const to = new Date(input.date.getTime() + 86400000);
-  return tx.financeTransaction.findFirst({
-    where: {
-      id: excludeId ? { not: excludeId } : undefined,
-      status: { notIn: ["DITOLAK", "DIBATALKAN"] },
-      direction: input.direction,
-      amount: BigInt(input.amount),
-      accountId: input.accountId ?? undefined,
-      date: { gte: from, lte: to },
-    },
-    orderBy: { createdAt: "asc" },
-  });
+/**
+ * Transaksi lain yang mirip (lihat findSimilar): dipakai menandai duplikat (duplicateOfId → Perlu Ditinjau).
+ * Transaksi yang sudah dinyatakan berbeda (dupAckIds) tidak ditandai lagi.
+ */
+export async function findDuplicate(tx: Tx | typeof prisma, input: { direction: TxDirection; amount: number; date: Date; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; note?: string | null; counterparty?: string | null; rawText?: string | null }, excludeId?: string, ack: string[] = []) {
+  const hits = await findSimilar(tx, { ...input, text: [input.note, input.counterparty, input.rawText].filter(Boolean).join(" "), excludeIds: [...(excludeId ? [excludeId] : []), ...ack] }, 1);
+  return hits[0] ?? null;
 }
 
 export function missingFields(t: { direction: TxDirection; amount: number | bigint; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; storeId?: string | null; payableId?: string | null }) {
@@ -147,11 +146,11 @@ export async function createTransaction(input: TxInput, source: TxSource, actor:
       if (p.paid >= p.amount) throw new FinanceError(`Hutang ${p.number} sudah lunas`);
       input.categoryId = null;
     } else input.payableId = null;
-    const dup = await findDuplicate(tx, input);
+    const dup = await findDuplicate(tx, input, undefined, input.dupAckIds ?? []);
     const missing = [...missingFields(input), ...splitIssues(input.amount, input.direction, splits)];
     let status: TxStatus = "DRAFT";
     if (source !== "MANUAL" || opts.submit) status = dup || missing.length ? "PERLU_DITINJAU" : "MENUNGGU_KONFIRMASI";
-    const number = await nextNumber(tx, "TRX", input.date);
+    const number = await nextTxNumber(tx, input.date);
     const t = await tx.financeTransaction.create({
       data: {
         number,
@@ -182,6 +181,7 @@ export async function createTransaction(input: TxInput, source: TxSource, actor:
         payInterest: BigInt(input.direction === "KELUAR" && input.payableId ? Math.max(0, Math.round(input.payInterest ?? 0)) : 0),
         reserveLink: input.direction === "TRANSFER" && input.reserveLink ? (input.reserveLink as Prisma.InputJsonValue) : undefined,
         bailoutRepay: input.direction === "TRANSFER" && !!input.bailoutRepay,
+        dupAckIds: input.dupAckIds ?? [],
       },
     });
     await tx.approvalLog.create({
@@ -220,7 +220,7 @@ export async function updateTransaction(id: string, input: Partial<TxInput>, act
         if (input.categoryId === undefined || !merged.categoryId) merged.categoryId = [...splits].filter((x) => x.categoryId).sort((a, b) => b.amount - a.amount)[0]?.categoryId ?? merged.categoryId;
       }
     } else if (merged.direction === "TRANSFER") await tx.financeTxSplit.deleteMany({ where: { transactionId: id } });
-    const dup = await findDuplicate(tx, merged, id);
+    const dup = await findDuplicate(tx, { ...merged, note: input.note !== undefined ? input.note : cur.note, counterparty: cur.counterparty, rawText: cur.rawText }, id, cur.dupAckIds);
     // Perubahan data menurunkan status ke PERLU_DITINJAU agar dikonfirmasi ulang
     const status: TxStatus = cur.status === "DRAFT" ? "DRAFT" : "PERLU_DITINJAU";
     const t = await tx.financeTransaction.update({
@@ -444,6 +444,7 @@ export async function cancelBookedTransaction(id: string, actor: Actor & { id: s
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "FinanceTransaction" WHERE id = ${id} FOR UPDATE`;
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
+    assertOwnTransaction(cur);
     if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi berstatus Dibukukan yang dapat dibatalkan");
     const date = await assertPeriodOpen(tx, cur.date).then(() => cur.date, () => now);
     const rev = await reverseJournal(tx, cur.journalId, date, { id: actor.id, name: actor.name }, `batal ${cur.number} — ${reason.trim()}`.slice(0, 150));
@@ -474,6 +475,7 @@ export async function changeBookedStore(id: string, storeId: string, actor: Acto
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "FinanceTransaction" WHERE id = ${id} FOR UPDATE`;
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
+    assertOwnTransaction(cur);
     if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi Dibukukan yang tokonya diganti lewat menu ini; draft cukup diubah biasa");
     if (cur.direction !== "TRANSFER") throw new FinanceError("Toko hanya membedakan withdraw (transfer internal)");
     if (cur.storeId === storeId) throw new FinanceError("Toko sudah sama");
@@ -508,6 +510,7 @@ export async function reclassifyBooked(id: string, target: Reclass, actor: Actor
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "FinanceTransaction" WHERE id = ${id} FOR UPDATE`;
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
+    assertOwnTransaction(cur);
     if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi Dibukukan yang diubah lewat menu ini; draft cukup diubah biasa");
     if (cur.direction === "TRANSFER") throw new FinanceError("Transfer antar rekening tidak berkategori");
     if (!("accountId" in target) && (await tx.financeTxSplit.count({ where: { transactionId: id } }))) throw new FinanceError("Transaksi ini punya rincian; batalkan lalu catat ulang bila rinciannya perlu diubah");
@@ -586,7 +589,7 @@ export async function bookPayablePayment(input: PayablePaymentInput, source: TxS
     const p = await tx.payable.findUniqueOrThrow({ where: { id: input.payableId } });
     const sp = splitPayment(p, input.amount, input.interest);
     if (sp.interest < 0 || sp.principal <= 0) throw new FinanceError("Bunga harus 0 – kurang dari nominal");
-    const number = await nextNumber(tx, "TRX", input.date);
+    const number = await nextTxNumber(tx, input.date);
     const kindLabel = p.kind === "PINJAMAN" ? "Cicilan pinjaman" : "Bayar hutang";
     const t = await tx.financeTransaction.create({
       data: {
@@ -697,6 +700,7 @@ export async function linkBookedTransfer(id: string, opts: { parts?: ReservePart
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "FinanceTransaction" WHERE id = ${id} FOR UPDATE`;
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
+    assertOwnTransaction(cur);
     if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi Dibukukan; transaksi lain otomatis dicocokkan saat dibukukan");
     // Pengeluaran yang sebenarnya pindah ke rekening simpanan (mis. "nabung spinjam" tercatat sebagai keluar) diubah jadi transfer
     const convert = cur.direction === "KELUAR";

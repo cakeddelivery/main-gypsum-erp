@@ -17,6 +17,8 @@ import { esc, type InlineButton } from "./telegram";
 import { cancelRow, can, chunk, fmtQty, itemChoices, itemPrompt, MENU_TEXT, PAGE, pager, parseCount, parseQty, type Ctx, type Prompt, type Session } from "./botKit";
 import type { BotIdent } from "./botMenu";
 import { SALES_FLOWS, salesMenuRows } from "./botSales";
+import { createDraft, draftMessage, type DraftInput } from "./botDraft";
+import { ackIds, guardDup } from "./botDup";
 
 /**
  * Isian bot Telegram Tahap 3: kasbon, pembelian bahan baku, dan borongan tetangga
@@ -156,6 +158,7 @@ const giveKasbon: FlowDef = {
       case "confirm":
         if (v !== "ok") return "Tekan Simpan atau Batal";
         if (!can(ctx.i, "payroll.approve")) return "Anda tidak berwenang";
+        if (await guardDup(s, v, { direction: "KELUAR", amount: Number(d.amount), date: new Date(), accountId: String(d.bankId), text: `kasbon ${d.empName ?? ""} ${d.note ?? ""}` })) return null;
         try {
           const a = await giveAdvance({ employeeId: String(d.empId), amount: Number(d.amount), installment: Number(d.inst), bankAccountId: String(d.bankId), date: todayStr(), note: d.note ? String(d.note) : null }, actorOf(ctx.i));
           d.number = a.number;
@@ -396,6 +399,7 @@ const purchase: FlowDef = {
         }
         if (v !== "ok") return "Tekan Simpan atau Batal";
         if (!can(ctx.i, "finance.approve")) return "Anda tidak berwenang";
+        if (Number(d.paid) > 0 && (await guardDup(s, v, { direction: "KELUAR", amount: Number(d.paid), date: jakartaDateTime(d.date ? String(d.date) : todayStr(), d.time ? String(d.time) : "12:00"), accountId: d.bankId ? String(d.bankId) : null, text: `${d.supName ?? ""} ${lines.map((l) => l.name).join(" ")} ${d.note ?? ""}` }))) return null;
         try {
           const store = await prisma.setting.findUnique({ where: { key: "default_store_id" } });
           if (!store) return "Toko default belum diatur di Pengaturan";
@@ -813,6 +817,7 @@ const pay: FlowDef = {
       case "confirm":
         if (v !== "ok") return "Tekan Bayar atau Batal";
         if (!can(ctx.i, "borongan.pay")) return "Anda tidak berwenang";
+        if (await guardDup(s, v, { direction: "KELUAR", amount: Number(d.total), date: new Date(), accountId: String(d.bankId), text: `upah borongan ${d.pointName ?? ""}` })) return null;
         try {
           const st = await settlePoint({ pointId: String(d.pointId), upTo: dateOnly(todayStr()), bankAccountId: String(d.bankId) }, actorOf(ctx.i));
           d.number = st.number;
@@ -965,6 +970,7 @@ const payDebt: FlowDef = {
         }
         if (v !== "ok") return "Tekan Simpan atau Batal";
         if (!can(ctx.i, "accounting.post", "finance.approve")) return "Anda tidak berwenang";
+        if (await guardDup(s, v, { direction: "KELUAR", amount: Number(d.amount), date: jakartaDateTime(d.date ? String(d.date) : todayStr(), d.time ? String(d.time) : "12:00"), accountId: String(d.bankId), text: `${d.payName ?? ""} ${d.note ?? ""}` })) return null;
         try {
           const tx = d.tx ? (JSON.parse(String(d.tx)) as { messageId?: string; rawText?: string; proofPath?: string | null; aiExtraction?: object; note?: string | null }) : null;
           const sp = paySplit(d);
@@ -1057,6 +1063,13 @@ const reserveFromProof: FlowDef = {
     if (v !== "ok") return "Tekan Simpan atau Batal";
     if (!can(ctx.i, "finance.approve")) return "Anda tidak berwenang";
     const opts: ReserveOpt[] = JSON.parse(String(d.opts ?? "[]"));
+    {
+      // Transfer sisihan yang sama dikirim/dicatat dua kali: cek transfer mirip & tanggal sisihan yang sudah berbukti
+      const o = opts[Number(d.pick ?? 0)];
+      const tx = d.tx ? (JSON.parse(String(d.tx)) as { amount: number; date: string; accountId: string | null; note: string | null; rawText: string }) : null;
+      const fund = o ? await prisma.reserveFund.findUnique({ where: { id: o.fundIds[0] } }) : null;
+      if (o && (await guardDup(s, v, { direction: "TRANSFER", amount: tx?.amount ?? o.amount, date: tx ? new Date(tx.date) : new Date(), accountId: tx?.accountId ?? fund?.fromBankId ?? null, toAccountId: fund?.toBankId ?? null, text: [tx?.note, tx?.rawText].filter(Boolean).join(" "), reserveParts: o.parts ?? o.fundIds.flatMap((fundId) => o.dates.map((date) => ({ fundId, date }))) }))) return null;
+    }
     try {
       const o = opts[Number(d.pick ?? 0)];
       const tx = d.tx ? (JSON.parse(String(d.tx)) as { amount: number; date: string; accountId: string | null; note: string | null; rawText: string; proofPath: string | null; aiExtraction: unknown; messageId: string }) : null;
@@ -1076,12 +1089,14 @@ const reserveFromProof: FlowDef = {
             idempotencyKey: `tg:${ctx.chatId}:${tx.messageId}`,
             telegramChatId: ctx.chatId,
             telegramMessageId: tx.messageId,
+            dupAckIds: ackIds(s),
           },
           o.parts,
           "TELEGRAM",
           actorOf(ctx.i),
         );
         d.txNumber = r.transaction.number;
+        d.txId = r.transaction.id;
         d.booked = r.booked ? 1 : 0;
         d.posted = r.booked ? o.parts.length : 0;
         d.attached = 0;
@@ -1098,7 +1113,7 @@ const reserveFromProof: FlowDef = {
   async finish(_ctx, s) {
     const d = s.data;
     const o: ReserveOpt = JSON.parse(String(d.opts))[Number(d.pick ?? 0)];
-    if (d.txNumber && !Number(d.booked)) return { text: `⚠️ <b>Transfer dicatat sebagai ${esc(String(d.txNumber))}</b> tapi belum dibukukan: terindikasi duplikat atau data kurang. Periksa di menu Transaksi; sisihannya ikut tercatat saat transaksi disetujui.`, buttons: [menuBtn] };
+    if (d.txNumber && !Number(d.booked)) return pendingCard(String(d.txId), `⚠️ <b>Transfer dicatat sebagai ${esc(String(d.txNumber))}</b> tapi belum dibukukan (data kurang atau mirip transaksi lain). Lanjutkan di kartu ini; sisihannya ikut tercatat saat dibukukan.`);
     return { text: `✅ <b>Sisihan tersimpan</b>${d.txNumber ? ` (${esc(String(d.txNumber))})` : ""}\n${esc(o.label)} · ${fmtDates(o.dates)}\n${d.txNumber ? "Transfer tercatat di Transaksi dan bukti transfer terlampir di Dana sisihan." : `${Number(d.posted) ? `${d.posted} sisihan baru dicatat. ` : ""}${Number(d.attached) ? `Bukti dilampirkan ke ${d.attached} sisihan yang sudah ada.` : ""}`}`, buttons: [menuBtn] };
   },
 };
@@ -1178,13 +1193,15 @@ Rekening tidak ditemukan.`, buttons: [cancelRow] };
     if (!w || w.outstanding <= 0) return "Talangan sudah dikembalikan";
     // Bukti lebih kecil dari total = pengembalian sebagian sebesar nominal di bukti; selain itu total talangan
     const amount = read && read < w.outstanding ? read : w.outstanding;
+    if (await guardDup(s, v, { direction: "TRANSFER", amount, date: d.date ? jakartaDateTime(String(d.date), "12:00") : new Date(), accountId: w.fromBank?.id ?? null, toAccountId: w.bank.id, text: "pengembalian talangan" })) return null;
     try {
       const r = await repayTalangan(
-        { walletId: w.bank.id, amount, date: d.date ? String(d.date) : todayStr(), proofPath: d.proofPath ? String(d.proofPath) : null, proofMime: d.proofPath ? "image/jpeg" : null, idempotencyKey: d.msgId ? `tg:${ctx.chatId}:${d.msgId}` : null, telegramChatId: ctx.chatId, telegramMessageId: d.msgId ? String(d.msgId) : null },
+        { walletId: w.bank.id, amount, date: d.date ? String(d.date) : todayStr(), proofPath: d.proofPath ? String(d.proofPath) : null, proofMime: d.proofPath ? "image/jpeg" : null, idempotencyKey: d.msgId ? `tg:${ctx.chatId}:${d.msgId}` : null, telegramChatId: ctx.chatId, telegramMessageId: d.msgId ? String(d.msgId) : null, dupAckIds: ackIds(s) },
         "TELEGRAM",
         actorOf(ctx.i),
       );
       d.txNumber = r.transaction.number;
+      d.txId = r.transaction.id;
       d.booked = r.booked ? 1 : 0;
       d.paid = amount;
       d.remaining = Math.max(0, w.outstanding - amount);
@@ -1195,9 +1212,37 @@ Rekening tidak ditemukan.`, buttons: [cancelRow] };
   },
   async finish(_ctx, s) {
     const d = s.data;
-    if (!Number(d.booked)) return { text: `⚠️ Pengembalian tercatat sebagai ${esc(String(d.txNumber))} tapi perlu ditinjau di menu Transaksi (terindikasi duplikat).`, buttons: [menuBtn] };
+    if (!Number(d.booked)) return pendingCard(String(d.txId), `⚠️ Pengembalian tercatat sebagai ${esc(String(d.txNumber))} tapi belum dibukukan (data kurang atau mirip transaksi lain). Lanjutkan di kartu ini.`);
     return { text: `✅ <b>Pengembalian talangan dibukukan</b> (${esc(String(d.txNumber))})\n${idr(Number(d.paid))} · bukti terlampir\n${Number(d.remaining) > 0 ? `Sisa talangan: <b>${idr(Number(d.remaining))}</b>` : "Talangan rekening ini sudah lunas 🎉"}`, buttons: [menuBtn] };
   },
 };
 
-export const T3_FLOWS: Record<string, FlowDef> = { kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, tlg: talangan, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay, ...SALES_FLOWS };
+/** Transaksi yang belum bisa dibukukan: tampilkan kartu draft bertombol (lanjut di bot, tidak buntu) */
+async function pendingCard(txId: string, head: string): Promise<Prompt> {
+  const m = await draftMessage(txId);
+  return { text: `${head}\n\n${m.text}`, buttons: [...m.buttons, menuBtn] };
+}
+
+// =====================================================================
+// Draft transaksi biasa yang mirip transaksi lain: ditanyakan dulu sebelum disimpan
+// =====================================================================
+const draftDup: FlowDef = {
+  async start() {
+    return "Kirim pesan atau foto bukti transaksi.";
+  },
+  async prompt(s) {
+    const tx = JSON.parse(String(s.data.tx ?? "{}")) as DraftInput;
+    return { text: `📝 Simpan sebagai draft transaksi ${idr(tx.amount ?? 0)}?`, buttons: [[{ text: "✅ Simpan draft", callback_data: "f:ok" }], cancelRow] };
+  },
+  async answer(ctx, s, v, fromText) {
+    if (fromText || v !== "ok") return "Tekan Simpan draft atau Batal";
+    const tx = JSON.parse(String(s.data.tx)) as DraftInput;
+    await createDraft(ctx.chatId, ctx.i, { ...tx, dupAckIds: ackIds(s) });
+    return "done";
+  },
+  async finish() {
+    return { text: "✅ Disimpan sebagai draft (lihat kartu draft di bawah)." };
+  },
+};
+
+export const T3_FLOWS: Record<string, FlowDef> = { trx: draftDup, kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, tlg: talangan, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay, ...SALES_FLOWS };

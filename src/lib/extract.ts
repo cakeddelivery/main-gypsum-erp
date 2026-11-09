@@ -200,6 +200,14 @@ function marketplaceAccount(t: string, accounts: ExtractAccount[]): string | nul
 // Nama usaha/toko sering ikut ditulis di keterangan dan tidak boleh memicu kata kunci kategori (mis. "gypsum")
 const BUSINESS_NAMES = /\b(main\s*gypsum|dunia\s*lukis)\b/g;
 
+const kwRe = new Map<string, RegExp>();
+/** Kata kunci muncul di awal sebuah kata (bukan di tengah kata lain) */
+export function keywordHit(text: string, k: string) {
+  let re = kwRe.get(k);
+  if (!re) kwRe.set(k, (re = new RegExp(`(^|[^a-z0-9])${k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`)));
+  return re.test(text);
+}
+
 export function suggestCategory(text: string, direction: string | null, categories: ExtractCategory[]): string | null {
   const t = text.toLowerCase().replace(BUSINESS_NAMES, " ");
   let best: { id: string; score: number } | null = null;
@@ -207,7 +215,8 @@ export function suggestCategory(text: string, direction: string | null, categori
     if (direction && c.direction !== direction) continue;
     const kws = [c.name, ...c.keywords.split(",")].map((k) => k.trim().toLowerCase()).filter((k) => k.length >= 3);
     let score = 0;
-    for (const k of kws) if (t.includes(k)) score += k.length;
+    // Kata kunci harus di awal kata ("gaji" tidak cocok dengan "pengajian"), boleh diikuti akhiran ("listriknya")
+    for (const k of kws) if (keywordHit(t, k)) score += k.length;
     if (score > 0 && (!best || score > best.score)) best = { id: c.id, score };
   }
   return best?.id ?? null;

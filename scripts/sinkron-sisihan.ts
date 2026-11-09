@@ -47,7 +47,7 @@ async function main() {
   for (const f of funds) console.log(`   ${f.name} · ${idr(f.dailyAmount)}/hari · ${bankName(f.fromBankId)} → ${bankName(f.toBankId)}`);
 
   const rows = await prisma.financeTransaction.findMany({
-    where: { status: "DIBUKUKAN", deletedAt: null, direction: { in: ["TRANSFER", "KELUAR"] }, reserveEntries: { none: {} } },
+    where: { status: "DIBUKUKAN", deletedAt: null, origin: null, direction: { in: ["TRANSFER", "KELUAR"] }, reserveEntries: { none: {} } },
     orderBy: { date: "asc" },
     include: { _count: { select: { splits: true } } },
   });

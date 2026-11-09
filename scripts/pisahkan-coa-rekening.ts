@@ -108,7 +108,7 @@ async function moveLines(tx: Tx, bankId: string, bankName: string, fromCoa: stri
     if (rev) await take(rev.id, side === "debit" ? "credit" : side === "credit" ? "debit" : "any", memo);
   };
 
-  for (const t of await tx.financeTransaction.findMany({ where: { journalId: { not: null }, OR: [{ accountId: bankId }, { toAccountId: bankId }] } })) {
+  for (const t of await tx.financeTransaction.findMany({ where: { journalId: { not: null }, origin: null, OR: [{ accountId: bankId }, { toAccountId: bankId }] } })) {
     if (t.direction === "TRANSFER") await take(t.journalId, t.toAccountId === bankId ? "debit" : "credit");
     else await take(t.journalId, t.direction === "MASUK" ? "debit" : "credit");
   }

@@ -14,6 +14,7 @@ import type { BotIdent } from "./botMenu";
 import { cancelRow, can, chunk, fmtQty, itemChoices, itemPrompt, MENU_TEXT, PAGE, pager, parseCount, parseQty, userDivision, type Ctx, type Data, type Prompt, type Session } from "./botKit";
 export { parseCount, parseQty } from "./botKit";
 import { T3_FLOWS, t3MenuRows } from "./botFlow3";
+import { dupAnswer, dupButtons, dupPrompt } from "./botDup";
 
 /**
  * Isian bertahap di bot Telegram (Tahap 2): input hasil produksi + reject, absen dengan lokasi,
@@ -22,18 +23,40 @@ import { T3_FLOWS, t3MenuRows } from "./botFlow3";
  */
 
 export const FLOW_TTL_MIN = 30;
+/** Sesi yang terhenti lebih lama dari FLOW_TTL_MIN tidak dihapus langsung: bisa dilanjutkan sampai 24 jam */
+export const FLOW_KEEP_HOURS = 24;
 
 
 // ---------- Sesi ----------
 export async function getSession(chatId: string): Promise<Session | null> {
   const s = await prisma.botSession.findUnique({ where: { chatId } });
   if (!s) return null;
-  if (Date.now() - s.updatedAt.getTime() > FLOW_TTL_MIN * 60_000) {
-    await prisma.botSession.delete({ where: { chatId } }).catch(() => {});
+  const age = Date.now() - s.updatedAt.getTime();
+  if (age > FLOW_TTL_MIN * 60_000) {
+    if (age > FLOW_KEEP_HOURS * 3_600_000) await prisma.botSession.delete({ where: { chatId } }).catch(() => {});
     return null;
   }
   return { ...s, data: (s.data ?? {}) as Data };
 }
+
+/** Isian yang terhenti (lewat FLOW_TTL_MIN, belum 24 jam): ditawarkan untuk dilanjutkan, bukan dibuang diam-diam */
+export async function getStaleSession(chatId: string): Promise<Session | null> {
+  const s = await prisma.botSession.findUnique({ where: { chatId } });
+  if (!s) return null;
+  const age = Date.now() - s.updatedAt.getTime();
+  if (age <= FLOW_TTL_MIN * 60_000 || age > FLOW_KEEP_HOURS * 3_600_000) return null;
+  return { ...s, data: (s.data ?? {}) as Data };
+}
+
+const FLOW_NAME: Record<string, string> = { prod: "input produksi", absen: "absen", mut: "mutasi stok", req: "permintaan stok", cek: "cek stok", kas: "kasbon", ksb: "kasbon", beli: "pembelian", utang: "bayar hutang/cicilan", sish: "dana sisihan", tlg: "pengembalian talangan", bbay: "bayar upah borongan", jnew: "penjualan", jcil: "cicilan piutang", trx: "transaksi" };
+
+function resumePrompt(s: Session): Prompt {
+  return { text: `⏰ Isian <b>${esc(FLOW_NAME[s.flow] ?? s.flow)}</b> sempat terhenti lebih dari ${FLOW_TTL_MIN} menit. Data yang sudah diisi masih tersimpan.
+Lanjutkan dari langkah terakhir?`, buttons: [[{ text: "▶ Lanjutkan isian", callback_data: "f:resume" }], cancelRow] };
+}
+
+/** Tombol saat ada kesalahan: ulangi langkah terakhir atau batalkan (sesi tidak hilang) */
+export const retryRows: InlineButton[][] = [[{ text: "🔁 Coba lagi", callback_data: "f:retry" }, { text: "❌ Batal", callback_data: "f:x" }]];
 
 async function save(s: Session) {
   const data = s.data as Prisma.InputJsonValue;
@@ -496,6 +519,7 @@ async function stokAnswer(ctx: Ctx, s: Session, v: string, fromText: boolean): P
 // Router
 // =====================================================================
 async function promptFor(s: Session, i: BotIdent): Promise<Prompt> {
+  if (s.step === "dup") return dupPrompt(s);
   if (T3_FLOWS[s.flow]) return T3_FLOWS[s.flow].prompt(s, i);
   if (s.flow === "prod") return prodPrompt(s);
   if (s.flow === "absen") return absenPrompt(s);
@@ -530,12 +554,24 @@ async function start(ctx: Ctx, flow: string) {
   return present(ctx, await promptFor(r, i));
 }
 
-async function answer(ctx: Ctx, s: Session, v: string, fromText: boolean) {
+async function answer(ctx: Ctx, s: Session, v: string, fromText: boolean): Promise<unknown> {
+  if (s.step === "dup") {
+    // Kartu transaksi mirip: lanjut (jawaban semula diulang), berhenti tanpa menyimpan, atau lihat transaksi lama
+    const c = fromText ? null : dupAnswer(s, v);
+    if (c === "stop") {
+      await clearSession(ctx.chatId);
+      return present(ctx, { text: "🛑 Tidak disimpan, transaksi lama tetap dipakai. Tidak ada yang dicatat dua kali.", buttons: [[{ text: MENU_TEXT, callback_data: "m:home" }]] });
+    }
+    if (c === "detail" || c === "show") return present(ctx, await dupPrompt(s, c === "detail"));
+    if (c !== "replay") return sendTelegram(ctx.chatId, "Pilih dengan tombol di atas: berbeda (tetap simpan) atau sama (jangan simpan).", { buttons: dupButtons() });
+    await save(s);
+    return answer(ctx, s, String(s.data.dupV ?? "ok"), false);
+  }
   const step0 = s.step;
   const res = T3_FLOWS[s.flow] ? await T3_FLOWS[s.flow].answer(ctx, s, v, fromText) : s.flow === "prod" ? await prodAnswer(ctx, s, v, fromText) : s.flow === "absen" ? (fromText ? "Kirim lokasi dengan tombol 📍 di bawah kolom chat" : null) : await stokAnswer(ctx, s, v, fromText);
   if (res === "done") return finish(ctx, s);
   if (typeof res === "string") {
-    await sendTelegram(ctx.chatId, `⚠️ ${esc(res)}\n<i>Ketik /batal untuk membatalkan isian.</i>`);
+    await sendTelegram(ctx.chatId, `⚠️ ${esc(res)}\nIsian belum hilang: perbaiki lalu lanjutkan, atau batalkan.`, { buttons: retryRows });
     // Gagal saat menyimpan (mis. stok asal tidak cukup): kembali ke isian jumlah agar bisa diperbaiki
     if (s.step !== step0) {
       // Isian dikembalikan ke langkah sebelumnya oleh alur (mis. stok kurang)
@@ -577,9 +613,24 @@ export async function handleFlowCallback(i: BotIdent, cbId: string, chatId: stri
     if (s?.flow === "absen") return restoreKeyboard(chatId, "Absen dibatalkan.");
     return present(ctx, { text: "Isian dibatalkan.", buttons: [[{ text: MENU_TEXT, callback_data: "m:home" }]] });
   }
-  const s = await getSession(chatId);
-  if (!s || s.userId !== i.userId) return answerCallback(cbId, "Isian sudah kedaluwarsa, mulai lagi dari 📋 Menu");
+  let s = await getSession(chatId);
+  if (!s) {
+    // Isian terhenti lama: tawarkan lanjut (data tidak dibuang diam-diam)
+    const stale = await getStaleSession(chatId);
+    if (stale && stale.userId === i.userId) {
+      await answerCallback(cbId, "");
+      if (a !== "resume") return present({ ...ctx, messageId: undefined }, resumePrompt(stale));
+      s = stale;
+      await save(s);
+      return present({ ...ctx, messageId: undefined }, await promptFor(s, ctx.i));
+    }
+  }
+  if (!s || s.userId !== i.userId) {
+    await answerCallback(cbId, "");
+    return present({ ...ctx, messageId: undefined }, { text: "Isian ini sudah tidak tersedia (lebih dari 24 jam atau sudah selesai). Mulai lagi dari menu, atau kirim ulang pesan/fotonya.", buttons: [[{ text: MENU_TEXT, callback_data: "m:home" }]] });
+  }
   await answerCallback(cbId, "");
+  if (a === "retry" || a === "resume") return present({ ...ctx, messageId: undefined }, await promptFor(s, ctx.i));
   if (a === "pg") {
     s.data.page = Math.max(0, Number(b) || 0);
     await save(s);
