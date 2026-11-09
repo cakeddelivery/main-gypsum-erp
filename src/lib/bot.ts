@@ -104,6 +104,7 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
     );
   }
   const buttons: InlineButton[][] = [];
+  if (t.status === "DITOLAK") lines.push("<i>Draft ditolak (dibuang, tanpa jurnal). Lihat di web: Transaksi → tab Ditolak.</i>");
   if (t.status === "DIBUKUKAN" || t.status === "DITOLAK" || t.status === "DIBATALKAN") return { text: lines.join("\n"), buttons };
   const issues = splitIssues(t.amount, t.direction, t.splits);
   const missing = [...missingFields(t), ...issues];
@@ -152,8 +153,8 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
   if (edit.length) buttons.push(...chunk(edit, 3));
   if (t.splits.length && splitSum !== Number(t.amount)) buttons.push([{ text: `Pakai total rincian (${idr(splitSum)})`, callback_data: `sa:${t.id}` }]);
   if (t.splits.length) buttons.push([{ text: "🔗 Gabung jadi 1 kategori", callback_data: `sx:${t.id}` }]);
-  if (missing.length === 0 && !t.duplicateOfId) buttons.push([{ text: "✅ Konfirmasi & bukukan", callback_data: `ok:${t.id}` }, { text: "❌ Batalkan", callback_data: `no:${t.id}` }]);
-  else if (!t.duplicateOfId) buttons.push([{ text: "❌ Batalkan", callback_data: `no:${t.id}` }]);
+  if (missing.length === 0 && !t.duplicateOfId) buttons.push([{ text: "✅ Konfirmasi & bukukan", callback_data: `ok:${t.id}` }, { text: "❌ Tolak", callback_data: `no:${t.id}` }]);
+  else if (!t.duplicateOfId) buttons.push([{ text: "❌ Tolak", callback_data: `no:${t.id}` }]);
   return { text: lines.join("\n"), buttons };
 }
 
@@ -456,7 +457,7 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
   }
   if (action === "no" && !canReview) {
     const own = await prisma.approvalLog.findFirst({ where: { transactionId: txId, action: "DIBUAT", actorUserId: ident.userId } });
-    if (!own) return answerCallback(cb.id, "Hanya pembuat draft atau peninjau keuangan yang dapat membatalkan");
+    if (!own) return answerCallback(cb.id, "Hanya pembuat draft atau peninjau keuangan yang dapat menolak");
   }
   try {
     if (action === "acc") await updateTransaction(txId, { accountId: value }, actor);
@@ -488,7 +489,7 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
         await tx.approvalLog.create({ data: { transactionId: txId, action: "BUKAN_DUPLIKAT", fromStatus: cur.status, toStatus: cur.status, actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId, note: "Ditandai bukan duplikat via Telegram" } });
       });
     } else if (action === "no") {
-      await rejectTransaction(txId, actor, "Dibatalkan via Telegram");
+      await rejectTransaction(txId, actor, "Ditolak via Telegram");
     } else if (action === "ok") {
       // Konfirmasi wajib dari identitas Telegram terpetakan yang memiliki izin
       if (!ident.canConfirm || !ident.perms.has("finance.approve")) return answerCallback(cb.id, "Anda tidak berwenang mengonfirmasi pembukuan");
@@ -504,7 +505,7 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
     }
     const m = await draftMessage(txId);
     if (chatId && cb.message) await editTelegram(chatId, cb.message.message_id, m.text, m.buttons);
-    return answerCallback(cb.id, action === "ok" ? "Dibukukan ✅" : action === "no" ? "Dibatalkan" : "Tersimpan");
+    return answerCallback(cb.id, action === "ok" ? "Dibukukan ✅" : action === "no" ? "Ditolak (dibuang)" : "Tersimpan");
   } catch (e) {
     return answerCallback(cb.id, e instanceof FinanceError ? e.message : "Terjadi kesalahan");
   }
