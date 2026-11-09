@@ -1,5 +1,6 @@
 "use server";
 import { z } from "zod";
+import { normEmail } from "@/lib/email";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int, bool } from "@/lib/action";
 import { audit } from "@/lib/audit";
@@ -133,14 +134,16 @@ export const saveUser = action("users.manage", async (fd, user) => {
     role,
     divisionId: optStr(fd, "divisionId"),
     active: id ? bool(fd, "active") : true,
+    email: normEmail(str(fd, "email")),
   };
+  if (data.email && (await prisma.user.findFirst({ where: { email: data.email, ...(id ? { id: { not: id } } : {}) } }))) throw new Error("Email sudah dipakai akun lain");
   if (!id && !password) throw new Error("Password wajib untuk pengguna baru");
   const hash = password ? await hashPassword(password) : null;
   const u = id
     ? await prisma.user.update({ where: { id }, data: { ...data, ...(hash ? passwordChangeData(hash) : {}) } })
     : await prisma.user.create({ data: { ...data, passwordHash: hash! } });
   if (hash) await clearLoginBlocks(u.username);
-  await audit(user, id ? "PENGGUNA_DIUBAH" : "PENGGUNA_DIBUAT", "User", u.id, { username: data.username, role, active: data.active, passwordChanged: !!password });
+  await audit(user, id ? "PENGGUNA_DIUBAH" : "PENGGUNA_DIBUAT", "User", u.id, { username: data.username, email: data.email, role, active: data.active, passwordChanged: !!password });
   return "Pengguna tersimpan";
 }, ["/pengaturan/pengguna"]);
 

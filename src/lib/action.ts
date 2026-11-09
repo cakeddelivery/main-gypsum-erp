@@ -8,6 +8,7 @@ import { FinanceError } from "./finance";
 import { StockError } from "./stock";
 import { PayrollError } from "./payroll";
 import { ZodError } from "zod";
+import { EmailError } from "./email";
 import { Prisma } from "@prisma/client";
 
 export type ActionResult = { ok: boolean; message?: string; error?: string; ts?: number };
@@ -33,7 +34,7 @@ export function action(perms: Permission | Permission[], fn: (fd: FormData, user
 }
 
 export function friendly(e: unknown): string {
-  if (e instanceof ForbiddenError || e instanceof AccountingError || e instanceof FinanceError || e instanceof StockError || e instanceof PayrollError) return e.message;
+  if (e instanceof ForbiddenError || e instanceof AccountingError || e instanceof FinanceError || e instanceof StockError || e instanceof PayrollError || e instanceof EmailError) return e.message;
   if (e instanceof ZodError) return e.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ");
   if (e instanceof Prisma.PrismaClientKnownRequestError) {
     if (e.code === "P2002") return "Data sudah ada (duplikat). Periksa kode/nama yang unik.";

@@ -39,15 +39,13 @@ export async function verifySessionToken(token: string): Promise<{ userId: strin
 
 export type LoginResult = { ok: true } | { ok: false; error: string };
 
-async function setSessionCookie(userId: string, sessionVersion: number) {
+export function sessionCookieOptions() {
+  return { httpOnly: true, sameSite: "lax" as const, secure: process.env.NODE_ENV === "production", path: "/", maxAge: SESSION_HOURS * 3600 };
+}
+
+export async function setSessionCookie(userId: string, sessionVersion: number) {
   const token = await createSessionToken(userId, sessionVersion);
-  (await cookies()).set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: SESSION_HOURS * 3600,
-  });
+  (await cookies()).set(SESSION_COOKIE, token, sessionCookieOptions());
 }
 
 export async function login(username: string, password: string): Promise<LoginResult> {

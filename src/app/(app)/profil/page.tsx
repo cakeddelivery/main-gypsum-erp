@@ -8,7 +8,8 @@ import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { initials } from "@/lib/initials";
-import { changeOwnPassword } from "./actions";
+import { PasswordInput } from "@/components/PasswordInput";
+import { changeOwnPassword, saveOwnEmail } from "./actions";
 
 export const metadata = { title: "Profil" };
 
@@ -19,6 +20,7 @@ export default async function ProfilPage() {
   const rows: [string, React.ReactNode][] = [
     ["Nama", u.name],
     ["Username", <span key="u" className="font-mono">{u.username}</span>],
+    ["Email", u.email ?? "Belum diisi"],
     ["Role", <Badge key="r" tone="blue">{ROLE_LABEL[u.role]}</Badge>],
     ["Divisi", division],
     ["Data karyawan", u.employee ? `${u.employee.code} · ${u.employee.name}` : undefined],
@@ -32,14 +34,24 @@ export default async function ProfilPage() {
         title="Profil"
         subtitle="Data akun yang sedang login"
         actions={
+          <div className="flex flex-wrap gap-2">
+          <Modal trigger={u.email ? "Ubah email" : "Isi email"} triggerClass="btn-secondary" title="Email akun">
+            <ModalForm action={saveOwnEmail} className="space-y-3">
+              <p className="text-xs text-slate-500">Email dipakai untuk menerima link lupa password dan untuk tombol &quot;Masuk dengan Google&quot; (email Google harus sama). Kosongkan untuk menghapus.</p>
+              <Field label="Email"><input type="email" name="email" defaultValue={u.email ?? ""} className="input" autoCapitalize="none" autoComplete="email" placeholder="nama@gmail.com" /></Field>
+              <Field label="Password saat ini"><PasswordInput name="current" autoComplete="current-password" required /></Field>
+              <Submit>Simpan email</Submit>
+            </ModalForm>
+          </Modal>
           <Modal trigger="Ganti password" title="Ganti password">
             <ModalForm action={changeOwnPassword} className="space-y-3">
-              <Field label="Password lama"><input type="password" name="current" autoComplete="current-password" className="input" required /></Field>
-              <Field label="Password baru" hint="Minimal 8 karakter"><input type="password" name="password" autoComplete="new-password" minLength={8} className="input" required /></Field>
-              <Field label="Ulangi password baru"><input type="password" name="confirm" autoComplete="new-password" minLength={8} className="input" required /></Field>
+              <Field label="Password lama"><PasswordInput name="current" autoComplete="current-password" required /></Field>
+              <Field label="Password baru" hint="Minimal 8 karakter"><PasswordInput name="password" autoComplete="new-password" minLength={8} className="input" required /></Field>
+              <Field label="Ulangi password baru"><PasswordInput name="confirm" autoComplete="new-password" minLength={8} className="input" required /></Field>
               <Submit>Simpan password</Submit>
             </ModalForm>
           </Modal>
+          </div>
         }
       />
       <div className="grid gap-4 lg:grid-cols-3">
