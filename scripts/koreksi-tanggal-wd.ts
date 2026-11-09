@@ -1,7 +1,7 @@
 /*
  * Koreksi tanggal withdraw TikTok (MG & DL) yang dicatat lewat bot dengan tanggal/jam input, bukan tanggal dana
- * masuk (bukti WD TikTok tidak mencantumkan tanggal). Tanggal benar = "Ditransfer ke bank" di riwayat Keuangan
- * TikTok Seller (audit 9 Nov 2026). Aman diulang.
+ * masuk (bukti WD TikTok tidak mencantumkan tanggal). Tanggal benar = jam uang masuk di riwayat SeaBank 5984
+ * (audit 9 Nov 2026; dana TikTok baru masuk bank 1–3 hari setelah "Ditransfer ke bank"). Aman diulang.
  *
  *   npm run koreksi:tanggal-wd                 -> PRATINJAU saja (tidak menyimpan)
  *   npm run koreksi:tanggal-wd -- --jalankan   -> menyimpan
@@ -17,13 +17,14 @@ import { assertPeriodOpen } from "../src/lib/accounting";
 import { approveAndBook, cancelBookedTransaction, createTransaction } from "../src/lib/finance";
 
 export type Redate = { number: string; amount: number; at: string; label: string };
+// Jam dana masuk = riwayat SeaBank 5984 (dicek user 9 Nov 12:28). TRX-202611-0099 (WD TikTok DL 359.134) belum
+// masuk saat itu: tidak diubah dulu.
 export const WD_TIKTOK: Redate[] = [
-  { number: "TRX-202611-0071", amount: 375_227, at: "2026-11-05T22:08", label: "WD TikTok DL" },
-  { number: "TRX-202611-0079", amount: 463_256, at: "2026-11-06T19:49", label: "WD TikTok MG" },
-  { number: "TRX-202611-0088", amount: 887_136, at: "2026-11-07T18:51", label: "WD TikTok MG" },
-  { number: "TRX-202611-0089", amount: 1_281_965, at: "2026-11-07T19:43", label: "WD TikTok DL" },
-  { number: "TRX-202611-0098", amount: 649_818, at: "2026-11-08T20:54", label: "WD TikTok MG" },
-  { number: "TRX-202611-0099", amount: 359_134, at: "2026-11-08T20:54", label: "WD TikTok DL" },
+  { number: "TRX-202611-0071", amount: 375_227, at: "2026-11-06T08:15", label: "WD TikTok DL" },
+  { number: "TRX-202611-0079", amount: 463_256, at: "2026-11-09T08:18", label: "WD TikTok MG" },
+  { number: "TRX-202611-0088", amount: 887_136, at: "2026-11-09T09:20", label: "WD TikTok MG" },
+  { number: "TRX-202611-0089", amount: 1_281_965, at: "2026-11-09T10:25", label: "WD TikTok DL" },
+  { number: "TRX-202611-0098", amount: 649_818, at: "2026-11-09T12:10", label: "WD TikTok MG" },
 ];
 
 const idr = (n: number) => "Rp" + n.toLocaleString("id-ID");
