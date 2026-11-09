@@ -29,6 +29,7 @@
     "rapikan:hutang": "tsx scripts/rapikan-hutang.ts",
     "satukan:supplier": "tsx scripts/satukan-supplier.ts",
     "sinkron:sisihan": "tsx scripts/sinkron-sisihan.ts",
+    "tautkan:transaksi": "tsx scripts/tautkan-transaksi.ts",
     "backup": "bash scripts/backup.sh",
     "restore": "bash scripts/restore.sh",
     "backup:buka": "bash scripts/decrypt-backup.sh"

@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDateTime, jakartaDateTime, todayStr } from "@/lib/time";
 import { STATUS_LABEL } from "@/lib/finance";
+import { originLabel } from "@/lib/txMirror";
 import { Badge, Empty, FilterBar, Field, PageHeader, Tabs } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import type { Prisma, TxStatus } from "@prisma/client";
@@ -18,6 +19,7 @@ export const metadata = { title: "Transaksi" };
 const STATUSES: TxStatus[] = ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI", "DIBUKUKAN", "DITOLAK", "DIBATALKAN"];
 const TONE: Record<TxStatus, "gray" | "amber" | "blue" | "green" | "red"> = { DRAFT: "gray", PERLU_DITINJAU: "amber", MENUNGGU_KONFIRMASI: "blue", DIBUKUKAN: "green", DITOLAK: "red", DIBATALKAN: "red" };
 const SOURCE = { MANUAL: "Manual", TELEGRAM: "Telegram", AI: "AI/Hermes" };
+const srcLabel = (t: { source: keyof typeof SOURCE; origin: string | null }) => (t.origin ? `Menu ${originLabel(t.origin)}` : SOURCE[t.source]);
 
 export default async function FinancePage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const user = await requirePerm("finance.view");
@@ -28,7 +30,8 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
   const hidden = sp.sembunyi === "1";
   const where: Prisma.FinanceTransactionWhereInput = {
     deletedAt: hidden ? { not: null } : null,
-    ...(sp.source ? { source: sp.source as never } : {}),
+    // Sumber: Manual/Telegram/AI = transaksi menu ini; "LAIN" = baris tertaut dari menu lain (pembelian, gaji, ...)
+    ...(sp.source === "LAIN" ? { origin: { not: null } } : sp.source ? { source: sp.source as never, origin: null } : {}),
     ...(sp.direction === "WD" ? { direction: "TRANSFER" as const, accountId: { in: sellerIds } } : sp.direction ? { direction: sp.direction as never } : {}),
 
     ...(sp.store ? { storeId: sp.store } : {}),
@@ -52,7 +55,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
   // Withdraw saldo penjual marketplace = pemasukan penjualan toko (MG / DL)
   const isWd = (t: { direction: string; accountId: string | null }) => t.direction === "TRANSFER" && !!banks.find((b) => b.id === t.accountId)?.marketplace;
   type PayRef = { payable: { number: string; kind: string; vendor: string } | null; categoryId: string | null };
-  const catLabel = (t: PayRef) => (t.payable ? `${t.payable.kind === "PINJAMAN" ? "Cicilan pinjaman" : "Bayar hutang"} · ${t.payable.vendor}` : name(cats, t.categoryId));
+  const catLabel = (t: PayRef & { origin?: string | null }) => (t.origin ? (originLabel(t.origin) ?? "—") : t.payable ? `${t.payable.kind === "PINJAMAN" ? "Cicilan pinjaman" : "Bayar hutang"} · ${t.payable.vendor}` : name(cats, t.categoryId));
   const wdLabel = (t: { storeId: string | null }) => `Pemasukan penjualan · ${stores.find((x) => x.id === t.storeId)?.code ?? "toko?"}`;
   const qs = (s?: string) => { const u = new URLSearchParams(Object.entries({ ...sp, baru: undefined, sembunyi: undefined, status: s }).filter(([, v]) => v) as [string, string][]); return `/finance?${u}`; };
   return (
@@ -91,7 +94,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
         {status && <input type="hidden" name="status" value={status} />}
         {hidden && <input type="hidden" name="sembunyi" value="1" />}
         <Field label="Cari"><input name="q" defaultValue={sp.q} className="input" placeholder="No. / catatan / pihak" /></Field>
-        <Field label="Sumber"><select name="source" defaultValue={sp.source ?? ""} className="input"><option value="">Semua</option>{Object.entries(SOURCE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+        <Field label="Sumber"><select name="source" defaultValue={sp.source ?? ""} className="input"><option value="">Semua</option>{Object.entries(SOURCE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}<option value="LAIN">Menu lain (pembelian, gaji, …)</option></select></Field>
         <Field label="Jenis"><select name="direction" defaultValue={sp.direction ?? ""} className="input"><option value="">Semua</option><option value="MASUK">Masuk</option><option value="KELUAR">Keluar</option><option value="TRANSFER">Transfer</option><option value="WD">Withdraw (pemasukan)</option></select></Field>
         <Field label="Rekening"><select name="account" defaultValue={sp.account ?? ""} className="input"><option value="">Semua</option>{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
         <Field label="Toko (withdraw)"><select name="store" defaultValue={sp.store ?? ""} className="input"><option value="">Semua</option>{stores.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
@@ -105,7 +108,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
               <li key={t.id}>
                 <Link href={`/finance/${t.id}`} className="card block p-3">
                   <div className="flex items-start justify-between gap-2">
-                    <div><div className="text-xs text-slate-400">{t.number} · {SOURCE[t.source]}</div><div className="text-sm font-medium">{t.note || catLabel(t)}</div>{isWd(t) && <div className="text-xs text-emerald-700">Withdraw · {wdLabel(t)}</div>}</div>
+                    <div><div className="text-xs text-slate-400">{t.number} · {srcLabel(t)}</div><div className="text-sm font-medium">{t.note || catLabel(t)}</div>{isWd(t) && <div className="text-xs text-emerald-700">Withdraw · {wdLabel(t)}</div>}</div>
                     <div className={`text-right font-semibold tabular-nums ${t.direction === "MASUK" || isWd(t) ? "text-emerald-600" : t.direction === "KELUAR" ? "text-rose-600" : "text-slate-700"}`}>{t.direction === "KELUAR" ? "−" : t.direction === "MASUK" || isWd(t) ? "+" : "⇄"}{idr(t.amount)}</div>
                   </div>
                   <div className="mt-1 flex items-center justify-between text-xs text-slate-500"><span>{fmtDateTime(t.date)} · {name(banks, t.accountId)}</span><span className="flex gap-1">{t.deletedAt && <Badge tone="gray">Disembunyikan</Badge>}<Badge tone={TONE[t.status]}>{STATUS_LABEL[t.status]}</Badge></span></div>
@@ -125,7 +128,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
                     <td><Badge tone={TONE[t.status]}>{STATUS_LABEL[t.status]}</Badge>{t.deletedAt && <> <Badge tone="gray">Disembunyikan</Badge></>}</td>
                     <td>{name(banks, t.accountId)}{t.direction === "TRANSFER" && ` → ${name(banks, t.toAccountId)}`}</td>
                     <td>{isWd(t) ? <span className={t.storeId ? "text-emerald-700" : "text-amber-700"}>{wdLabel(t)}</span> : t.direction === "TRANSFER" ? "—" : catLabel(t)}</td>
-                    <td>{SOURCE[t.source]}</td>
+                    <td>{srcLabel(t)}</td>
                     <td className="max-w-[180px] truncate">{t.note}</td>
                   </tr>
                 ))}

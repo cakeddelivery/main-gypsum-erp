@@ -53,7 +53,7 @@ export async function financeMonth(storeId?: string | null) {
   const pl = await profitLoss({ start, end, storeId });
   // Uang masuk/keluar dari jurnal kas (bukan hanya menu Transaksi) agar pembelian, gaji, kasbon, dll. ikut terhitung
   const moves = await cashMovements(start, end, storeId);
-  const sales = await prisma.financeTransaction.aggregate({ where: { status: "DIBUKUKAN", direction: "MASUK", date: { gte: start, lt: end }, ...(storeId ? { storeId } : {}) }, _sum: { amount: true } });
+  const sales = await prisma.financeTransaction.aggregate({ where: { status: "DIBUKUKAN", direction: "MASUK", origin: null, date: { gte: start, lt: end }, ...(storeId ? { storeId } : {}) }, _sum: { amount: true } });
   const income = moves.filter((m) => m.amount > 0).reduce((s, m) => s + m.amount, 0);
   const expense = moves.filter((m) => m.amount < 0).reduce((s, m) => s - m.amount, 0);
   return { pl, income, expense, sales: Number(sales._sum.amount ?? 0), month: p.month, year: p.year };
@@ -87,7 +87,7 @@ export async function salesByStore() {
   const { start, end } = monthRange(p.year, p.month);
   const banks = await prisma.bankAccount.findMany();
   const mp = banks.filter((b) => MARKETPLACE.test(`${b.name} ${b.aliases}`)).map((b) => b.id);
-  const rows = await prisma.financeTransaction.groupBy({ by: ["storeId"], where: { status: "DIBUKUKAN", direction: "TRANSFER", accountId: { in: mp }, date: { gte: start, lt: end } }, _sum: { amount: true }, _count: true });
+  const rows = await prisma.financeTransaction.groupBy({ by: ["storeId"], where: { status: "DIBUKUKAN", direction: "TRANSFER", origin: null, accountId: { in: mp }, date: { gte: start, lt: end } }, _sum: { amount: true }, _count: true });
   const stores = await prisma.store.findMany({ where: { active: true }, orderBy: { code: "asc" } });
   return stores.map((s) => {
     const r = rows.find((x) => x.storeId === s.id);

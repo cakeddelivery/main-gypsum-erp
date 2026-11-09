@@ -49,7 +49,7 @@ async function main() {
   const actor = { id: owner.id, name: "skrip rapikan-hutang" };
   const bebanLain = await prisma.txCategory.findMany({ where: { coaAccount: { code: COA.BEBAN_LAIN } } });
   const vague = new Set(bebanLain.map((c) => c.id));
-  const booked = await prisma.financeTransaction.findMany({ where: { status: "DIBUKUKAN", direction: "KELUAR", deletedAt: null, payableId: null, splits: { none: {} } }, orderBy: { date: "asc" } });
+  const booked = await prisma.financeTransaction.findMany({ where: { status: "DIBUKUKAN", direction: "KELUAR", deletedAt: null, origin: null, payableId: null, splits: { none: {} } }, orderBy: { date: "asc" } });
   const text = (t: (typeof booked)[number]) => [t.note, t.counterparty, t.rawText].filter(Boolean).join(" ");
   const used = new Set<string>();
 

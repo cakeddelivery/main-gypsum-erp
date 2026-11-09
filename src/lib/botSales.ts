@@ -9,6 +9,7 @@ import { chatAction, esc, sendTelegram, sendTelegramDocument, type InlineButton 
 import { cancelRow, can, chunk, fmtQty, MENU_TEXT, PAGE, pager, parseQty, type Ctx, type Prompt, type Session } from "./botKit";
 import type { BotIdent } from "./botMenu";
 import type { FlowDef } from "./botFlow3";
+import { guardDup } from "./botDup";
 
 /**
  * Penjualan offline lewat bot Telegram: catat nota (toko, pelanggan, barang, diskon, ongkir, pembayaran),
@@ -355,6 +356,7 @@ const newSale: FlowDef = {
           s.step = "disc";
           return "Lengkapi diskon, ongkir, dan pembayaran dulu";
         }
+        if (Number(d.paid ?? 0) > 0 && (await guardDup(s, v, { direction: "MASUK", amount: Number(d.paid), date: new Date(), accountId: d.bankId ? String(d.bankId) : null, text: `penjualan ${d.custName ?? ""}` }))) return null;
         try {
           saleTotals(lines, Number(d.discount ?? 0), Number(d.shipping ?? 0), Number(d.paid ?? 0));
           const paid = Number(d.paid ?? 0);
@@ -492,6 +494,7 @@ const salePayment: FlowDef = {
         }
         if (v !== "ok") return "Tekan Simpan atau Batal";
         if (!can(ctx.i, "sales.manage")) return "Anda tidak berwenang";
+        if (await guardDup(s, v, { direction: "MASUK", amount: Number(d.amount), date: new Date(), accountId: String(d.bankId), text: `cicilan piutang ${d.custName ?? ""} ${d.number ?? ""}` })) return null;
         try {
           const r = await paySale(
             String(d.saleId),

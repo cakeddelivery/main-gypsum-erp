@@ -3,6 +3,7 @@ import { prisma } from "./db";
 import { nextNumber } from "./numbering";
 import { jakartaParts, monthRange } from "./time";
 import { audit } from "./audit";
+import { cancelMirrors, mirrorJournal, MIRROR_SOURCES } from "./txMirror";
 
 type Tx = Prisma.TransactionClient;
 
@@ -110,6 +111,8 @@ export async function postJournal(tx: Tx, input: JournalInput) {
     },
   });
   await audit(input.actor, "JURNAL_DIBUKUKAN", "Journal", journal.id, { number, source: input.source, sourceId: input.sourceId }, tx);
+  // Uang rekening dari menu lain (pembelian, gaji, kasbon, ...) ikut tampil di menu Transaksi (tanpa jurnal kedua)
+  if (MIRROR_SOURCES[input.source] && !input.reversalOfId) await mirrorJournal(tx, journal.id);
   return journal;
 }
 
@@ -118,7 +121,7 @@ export async function reverseJournal(tx: Tx, journalId: string, date: Date, acto
   const j = await tx.journal.findUniqueOrThrow({ where: { id: journalId }, include: { lines: true } });
   const already = await tx.journal.findFirst({ where: { reversalOfId: j.id } });
   if (already) throw new AccountingError("Jurnal ini sudah pernah dibalik");
-  return postJournal(tx, {
+  const rev = await postJournal(tx, {
     date,
     storeId: j.storeId,
     description: `Pembalik ${j.number}: ${reason}`,
@@ -128,6 +131,8 @@ export async function reverseJournal(tx: Tx, journalId: string, date: Date, acto
     actor,
     lines: j.lines.map((l) => ({ accountId: l.accountId, debit: Number(l.credit), credit: Number(l.debit), memo: l.memo ?? undefined })),
   });
+  await cancelMirrors(tx, j.id, rev.number, actor.name);
+  return rev;
 }
 
 // ---------------- LAPORAN ----------------

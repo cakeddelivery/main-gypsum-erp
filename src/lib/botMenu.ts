@@ -18,6 +18,7 @@ export const MENU_TEXT = "📋 Menu";
 
 export type BotIdent = {
   userId: string;
+  telegramUserId?: string;
   canSubmit: boolean;
   perms: Set<Permission>;
   user: { name: string; role: Role; divisionId: string | null; employeeId: string | null };

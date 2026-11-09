@@ -8,6 +8,7 @@ import { describeParts, parseLink, reserveOptions } from "@/lib/reserveSync";
 import { walletForMarketplace } from "@/lib/extract";
 import Link from "next/link";
 import { STATUS_LABEL, missingFields, splitIssues } from "@/lib/finance";
+import { originHref, originLabel } from "@/lib/txMirror";
 import { Badge, Card, ErrorBox, Field, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
@@ -33,7 +34,8 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
     prisma.setting.findUnique({ where: { key: "default_store_id" } }),
   ]);
   const payable = t.payableId ? await prisma.payable.findUnique({ where: { id: t.payableId } }) : null;
-  const reclassable = t.status === "DIBUKUKAN" && t.direction !== "TRANSFER" && !t.splits.length && user.can("finance.approve");
+  const own = !t.origin;
+  const reclassable = own && t.status === "DIBUKUKAN" && t.direction !== "TRANSFER" && !t.splits.length && user.can("finance.approve");
   const openPay = reclassable && t.direction === "KELUAR" ? (await prisma.payable.findMany({ orderBy: { date: "desc" }, include: { supplier: { select: { name: true } } } })).filter((x) => x.paid < x.amount || x.id === t.payableId) : [];
   const editable = ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"].includes(t.status);
   const missing = [...missingFields(t), ...splitIssues(t.amount, t.direction, t.splits)];
@@ -48,7 +50,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
   const toBank = banks.find((b) => b.id === t.toAccountId);
   // Transfer bank → saldo penjual (tidak mungkin): tawarkan rekening dompet digital platform yang sama
   const fixTo = isTransfer && fromBank && toBank && !fromBank.marketplace ? walletForMarketplace(toBank, banks) : null;
-  const canLink = isTransfer && !linked.length && (editable || (t.status === "DIBUKUKAN" && user.can("finance.approve")));
+  const canLink = own && isTransfer && !linked.length && (editable || (t.status === "DIBUKUKAN" && user.can("finance.approve")));
   const rsv = canLink ? await reserveOptions(prisma, { amount: Number(t.amount), fromBankId: t.accountId, toBankId: fixTo?.id ?? t.toAccountId, date: todayStr(t.date), text: [t.note, t.rawText, t.counterparty].filter(Boolean).join(" "), excludeTxId: t.id }) : null;
   const chosen = link && "parts" in link ? await describeParts(prisma, link.parts) : [];
   return (
@@ -61,6 +63,12 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
         {suggested && <span className="text-xs text-slate-500">Rekomendasi kategori: <b>{suggested.name}</b></span>}
         {ai?.confidence !== undefined && <span className="text-xs text-slate-500">Keyakinan ekstraksi {Math.round(ai.confidence * 100)}%</span>}
       </div>
+      {t.origin && (
+        <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-800">
+          Baris ini tertaut dari menu <b>{originLabel(t.origin)}</b>{t.originRef ? ` (${t.originRef})` : ""}: uang rekening yang dibukukan di menu tersebut. Jurnalnya satu (jurnal menu sumber), jadi saldo tidak terhitung dua kali. Ubah atau batalkan di menu sumbernya; baris ini ikut menyesuaikan.{" "}
+          <Link className="link" href={originHref(t.origin, t.originRef) ?? "/finance"}>Buka menu {originLabel(t.origin)} ›</Link>
+        </div>
+      )}
       {dup && <ErrorBox message={`Terindikasi duplikat dengan ${dup.number} (${idr(dup.amount)}, ${fmtDateTime(dup.date)}, status ${STATUS_LABEL[dup.status]}). Tinjau sebelum mengajukan.`} />}
       {editable && missing.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">Data belum lengkap: {missing.join(", ")}</div>}
       <div className="grid gap-5 lg:grid-cols-3">
@@ -173,7 +181,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
               </div>
             </Card>
           )}
-          {t.status === "DIBUKUKAN" && t.direction === "TRANSFER" && user.can("finance.approve") && stores.length > 1 && (
+          {own && t.status === "DIBUKUKAN" && t.direction === "TRANSFER" && user.can("finance.approve") && stores.length > 1 && (
             <Card title="Toko withdraw">
               <p className="mb-3 text-sm">Toko: <b>{t.store?.name ?? "—"}</b></p>
               <Modal trigger="Ganti toko" triggerClass="btn-secondary w-full" title="Ganti toko withdraw">
@@ -186,7 +194,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
               </Modal>
             </Card>
           )}
-          {t.status === "DIBUKUKAN" && t.direction !== "TRANSFER" && user.can("finance.approve") && (
+          {own && t.status === "DIBUKUKAN" && t.direction !== "TRANSFER" && user.can("finance.approve") && (
             <Card title="Ubah rekening">
               <p className="mb-3 text-xs text-slate-500">Salah pilih rekening? Jurnal lama dibalik lalu dibukukan ulang dari rekening yang benar. Saldo kedua rekening ikut menyesuaikan.</p>
               <Modal trigger="Ubah rekening" triggerClass="btn-secondary w-full" title="Ubah rekening transaksi dibukukan">
@@ -219,7 +227,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
               </Modal>
             </Card>
           )}
-          {t.status === "DIBUKUKAN" && user.can("finance.approve") && (
+          {own && t.status === "DIBUKUKAN" && user.can("finance.approve") && (
             <Card title="Batalkan transaksi">
               <p className="mb-3 text-xs text-slate-500">Salah catat atau transaksi uji coba? Pembatalan membuat jurnal pembalik sehingga saldo rekening & laba rugi kembali seperti semula. Riwayatnya tetap tersimpan.</p>
               <Modal trigger="Batalkan transaksi" triggerClass="btn-danger w-full" title="Batalkan transaksi dibukukan">
