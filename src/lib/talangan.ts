@@ -14,7 +14,9 @@ const SOURCES = ["FINANCE", "PEMBELIAN", "PAYROLL", "KASBON", "BORONGAN"];
 const SOURCE_LABEL: Record<string, string> = { FINANCE: "Transaksi", PEMBELIAN: "Pembelian", PAYROLL: "Gaji", KASBON: "Kasbon", BORONGAN: "Borongan" };
 export const DEFAULT_START = "2026-11-01";
 
-export type TalanganItem = { journalId: string; date: Date; source: string; label: string; ref: string; description: string; amount: number; href: string | null };
+export type TalanganItem = { journalId: string; date: Date; source: string; label: string; ref: string; description: string; amount: number; href: string | null; manager?: boolean };
+/** Akun Piutang Pengelola: uang usaha yang dipinjam pengelola, dikembalikan oleh pengelola sendiri */
+export const PIUTANG_PENGELOLA = "1-1320";
 export type TalanganWallet = {
   bank: { id: string; code: string; name: string; coaAccountId: string };
   fromBank: { id: string; name: string } | null;
@@ -24,6 +26,8 @@ export type TalanganWallet = {
   total: number;
   repaid: number;
   outstanding: number;
+  /** Bagian yang belum dikembalikan berupa pinjaman pengelola */
+  managerOutstanding: number;
 };
 
 export async function talanganStart() {
@@ -48,6 +52,8 @@ export async function talanganSummary(): Promise<TalanganWallet[]> {
   const start = jakartaDateTime(await talanganStart(), "00:00");
   const wallets = await talanganWallets();
   const ownerComp = await prisma.coaAccount.findMany({ where: { OR: [{ code: COA.UTANG_GAJI_OWNER }, { type: "EKUITAS" }] }, select: { id: true } });
+  const loanCoa = await prisma.coaAccount.findUnique({ where: { code: PIUTANG_PENGELOLA }, select: { id: true } });
+  const loanCats = loanCoa ? (await prisma.txCategory.findMany({ where: { coaAccountId: loanCoa.id }, select: { id: true } })).map((c) => c.id) : [];
   const out: TalanganWallet[] = [];
   for (const w of wallets) {
     const lines = await prisma.journalLine.findMany({
@@ -67,6 +73,8 @@ export async function talanganSummary(): Promise<TalanganWallet[]> {
       let ref = j.number;
       let href: string | null = null;
       let description = j.description;
+      let manager = false;
+      let label = SOURCE_LABEL[j.source] ?? j.source;
       if (j.source === "FINANCE") {
         const t = txs.find((x) => x.id === j.sourceId);
         if (t) {
@@ -76,6 +84,10 @@ export async function talanganSummary(): Promise<TalanganWallet[]> {
           if (t.bailoutRepay) continue;
           ref = t.number;
           href = `/finance/${t.id}`;
+          if (t.categoryId && loanCats.includes(t.categoryId) && !t.splits.length) {
+            manager = true;
+            label = "Pinjaman pengelola";
+          }
           description = t.note ?? t.counterparty ?? j.description;
         }
       } else if (j.source === "PEMBELIAN") {
@@ -83,22 +95,36 @@ export async function talanganSummary(): Promise<TalanganWallet[]> {
         href = "/stok/pembelian";
       } else if (j.source === "PAYROLL" || j.source === "KASBON") href = "/gaji";
       else if (j.source === "BORONGAN") href = "/borongan";
-      items.push({ journalId: j.id, date: j.date, source: j.source, label: SOURCE_LABEL[j.source] ?? j.source, ref, description, amount: Number(l.credit) - Number(l.debit), href });
+      items.push({ journalId: j.id, date: j.date, source: j.source, label, ref, description, amount: Number(l.credit) - Number(l.debit), href, manager });
     }
+    // Pengembalian: transfer dari rekening operasional (tombol/bot talangan) dan uang masuk berkategori
+    // Pengembalian Pinjaman Pengelola (pengelola mengembalikan sendiri ke dompet ini)
     const repays = await prisma.financeTransaction.aggregate({ where: { bailoutRepay: true, status: "DIBUKUKAN", toAccountId: w.bank.id, date: { gte: start } }, _sum: { amount: true } });
-    const repaid = Number(repays._sum.amount ?? 0);
+    const managerRepays = loanCats.length
+      ? await prisma.financeTransaction.aggregate({ where: { direction: "MASUK", status: "DIBUKUKAN", accountId: w.bank.id, categoryId: { in: loanCats }, date: { gte: start } }, _sum: { amount: true } })
+      : { _sum: { amount: null } };
+    const opsRepaid = Number(repays._sum.amount ?? 0);
+    const managerRepaid = Number(managerRepays._sum.amount ?? 0);
+    const repaid = opsRepaid + managerRepaid;
     const total = items.reduce((t, i) => t + i.amount, 0);
-    let left = repaid;
-    const open: TalanganItem[] = [];
-    for (const i of items) {
-      if (left >= i.amount) {
-        left -= i.amount;
-        continue;
+    // FIFO per jenis: pengembalian pengelola menutup pinjaman pengelola dulu, pengembalian operasional menutup
+    // talangan operasional dulu; sisanya menutup jenis lain
+    const left = new Map(items.map((i) => [i.journalId, i.amount]));
+    const pay = (amount: number, order: TalanganItem[]) => {
+      for (const i of order) {
+        if (amount <= 0) break;
+        const cut = Math.min(amount, left.get(i.journalId)!);
+        left.set(i.journalId, left.get(i.journalId)! - cut);
+        amount -= cut;
       }
-      open.push(left > 0 ? { ...i, amount: i.amount - left } : i);
-      left = 0;
-    }
-    out.push({ bank: w.bank, fromBank: w.fromBank, items, open, total, repaid, outstanding: Math.max(0, total - repaid) });
+    };
+    const mgr = items.filter((i) => i.manager);
+    const ops = items.filter((i) => !i.manager);
+    pay(managerRepaid, [...mgr, ...ops]);
+    pay(opsRepaid, [...ops, ...mgr]);
+    const open = items.filter((i) => left.get(i.journalId)! > 0).map((i) => (left.get(i.journalId) === i.amount ? i : { ...i, amount: left.get(i.journalId)! }));
+    const managerOutstanding = open.filter((i) => i.manager).reduce((t, i) => t + i.amount, 0);
+    out.push({ bank: w.bank, fromBank: w.fromBank, items, open, total, repaid, outstanding: Math.max(0, total - repaid), managerOutstanding });
   }
   return out;
 }
@@ -119,7 +145,12 @@ export function talanganReminderText(wallets: TalanganWallet[], esc: (s: string)
   const parts = open.map((w) => {
     const rows = w.open.slice(0, 15).map((i) => `• ${fmt(i.date)} · ${esc(i.label)} ${esc(i.ref)} · ${esc(i.description.slice(0, 40))} · ${idr(i.amount)}`);
     const more = w.open.length > 15 ? `\n… dan ${w.open.length - 15} lainnya` : "";
-    return `<b>${esc(w.bank.name)}</b>: ${idr(w.outstanding)}\n${rows.join("\n")}${more}\nKembalikan dari ${esc(w.fromBank?.name ?? "rekening operasional")} → ${esc(w.bank.name)} sebesar <b>${idr(w.outstanding)}</b>`;
+    const ops = w.outstanding - w.managerOutstanding;
+    const how = [
+      ops > 0 ? `Kembalikan dari ${esc(w.fromBank?.name ?? "rekening operasional")} → ${esc(w.bank.name)} sebesar <b>${idr(ops)}</b>` : "",
+      w.managerOutstanding > 0 ? `Pinjaman pengelola <b>${idr(w.managerOutstanding)}</b>: dikembalikan pengelola ke ${esc(w.bank.name)}, catat sebagai <i>Pengembalian Pinjaman Pengelola</i>` : "",
+    ].filter(Boolean);
+    return `<b>${esc(w.bank.name)}</b>: ${idr(w.outstanding)}\n${rows.join("\n")}${more}\n${how.join("\n")}`;
   });
   const total = open.reduce((t, w) => t + w.outstanding, 0);
   return `⚠️ <b>Dana talangan belum dikembalikan: ${idr(total)}</b>\nRekening simpanan dana sisihan dipakai untuk operasional:\n\n${parts.join("\n\n")}`;

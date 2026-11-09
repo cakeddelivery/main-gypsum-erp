@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 import { effectivePermissions } from "./rbac";
-import { extractTransaction, hasExplicitAmount, matchStore, mergeReceipt } from "./extract";
+import { DEFAULT_MANAGER_NAMES, detectManagerLoan, extractTransaction, hasExplicitAmount, matchStore, mergeReceipt } from "./extract";
 import { readReceipt, type ReceiptRead } from "./receipt";
 import { ocrReceipt } from "./ocrReceipt";
 import { type SplitInput, splitIssues, approveAndBook, createTransaction, FinanceError, rejectTransaction, STATUS_LABEL, submitForConfirmation, updateTransaction, missingFields } from "./finance";
@@ -294,6 +294,17 @@ export async function handleTelegramUpdate(u: TgUpdate) {
       ex.amount = receipt?.amount ?? splits.reduce((t, x) => t + x.amount, 0);
     }
   }
+  // Pinjaman pengelola ("Edy pinjam dana OPS untuk pribadi"): Piutang Pengelola, bukan bayar hutang/pinjaman.
+  // Pengembalian oleh pengelola = uang masuk berkategori Pengembalian Pinjaman Pengelola
+  const loan = splits.length ? null : detectManagerLoan(text, await managerNames());
+  if (loan) {
+    const cat = cats.find((c) => c.name === (loan === "PINJAM" ? "Pinjaman Pengelola" : "Pengembalian Pinjaman Pengelola"));
+    if (cat) {
+      ex.direction = cat.direction;
+      ex.categoryId = cat.id;
+      ex.toAccountId = null;
+    }
+  }
   if (!ex.amount || !ex.direction) {
     await sendTelegram(chatId, `Saya belum bisa membaca ${!ex.amount ? "nominal" : "jenis transaksi (masuk/keluar/transfer)"} dari ${photo ? "foto & keterangan" : "pesan"} ini. Tulis ulang dengan lebih lengkap, misal: <i>bayar gypsum 2jt dari seabank</i>.`);
     return;
@@ -321,7 +332,7 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   const ctx = { i: ident, chatId };
   const basis = [text, receipt?.counterparty].filter(Boolean).join(" ");
   // Transfer ke rekening simpanan sebesar talangan yang belum dikembalikan (atau berketerangan "talangan") = pengembalian talangan
-  if (!splits.length && ex.direction === "TRANSFER" && ex.toAccountId && ident.perms.has("finance.approve")) {
+  if (!loan && !splits.length && ex.direction === "TRANSFER" && ex.toAccountId && ident.perms.has("finance.approve")) {
     const w = (await talanganSummary()).find((x) => x.bank.id === ex.toAccountId && x.outstanding > 0);
     if (w && (ex.amount === w.outstanding || /\btalangan\b/i.test(basis))) {
       const session = await prefilledTalangan(ctx, { walletId: w.bank.id, proofPath, read: ex.amount, messageId: String(msg.message_id), date: ex.date });
@@ -329,7 +340,7 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     }
   }
   // Bukti transfer dana sisihan (nominal = kelipatan sisihan harian, rekening sesuai alur dana)
-  if (!splits.length && (ex.direction === "TRANSFER" || ex.direction === "KELUAR") && ident.perms.has("finance.approve")) {
+  if (!loan && !splits.length && (ex.direction === "TRANSFER" || ex.direction === "KELUAR") && ident.perms.has("finance.approve")) {
     const m = await matchReserveTransfer({ amount: ex.amount, fromBankId: ex.accountId, toBankId: ex.direction === "TRANSFER" ? ex.toAccountId : null, date: ex.date!, text: basis });
     if (m) {
       const session = await prefilledReserve(ctx, { options: m.options, sure: m.sure, proofPath, tx: draft });
@@ -337,7 +348,7 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     }
   }
   // Angsuran hutang supplier / cicilan pinjaman ("angsur kardus", "bayar hutang <nama>", nominal = cicilan): langsung ke isian bayar hutang
-  if (!splits.length && ex.direction === "KELUAR" && (ident.perms.has("accounting.post") || ident.perms.has("finance.approve"))) {
+  if (!loan && !splits.length && ex.direction === "KELUAR" && (ident.perms.has("accounting.post") || ident.perms.has("finance.approve"))) {
     const hit = detectPayablePayment(basis, await openPayables(), ex.direction, ex.amount);
     if (hit) {
       const session = await prefilledPayablePayment(ctx, { candidates: hit.matches.map((p) => p.id), amount: ex.amount, bankId: ex.accountId, date: ex.date, time: txTime(ex.date!, ex.time), note: text || null, proofPath, tx: draft });
@@ -345,7 +356,7 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     }
   }
   // Pembelian bahan baku sesuai master data: langsung ke isian Pembelian (stok + hutang/kas), bukan draft biasa
-  if (!splits.length && ex.direction === "KELUAR" && ident.perms.has("finance.approve")) {
+  if (!loan && !splits.length && ex.direction === "KELUAR" && ident.perms.has("finance.approve")) {
     const hit = detectPurchase([text, receipt?.counterparty].filter(Boolean).join(" "), materials, ex.direction);
     if (hit) {
       const supplier = await matchSupplier([text, receipt?.counterparty].filter(Boolean).join(" "));
@@ -357,6 +368,12 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     }
   }
   await createDraft(chatId, ident, draft);
+}
+
+/** Panggilan pengelola untuk mengenali pinjaman pengelola: bawaan + setting pengelola_nama (dipisah koma) */
+async function managerNames() {
+  const s = await prisma.setting.findUnique({ where: { key: "pengelola_nama" } });
+  return [...DEFAULT_MANAGER_NAMES, ...(s?.value ?? "").split(",")].map((x) => x.trim()).filter(Boolean);
 }
 
 /** Data draft transaksi dari pesan bot (disimpan di sesi pembelian agar bisa dicatat sebagai transaksi biasa) */

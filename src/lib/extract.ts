@@ -132,16 +132,48 @@ export function hasExplicitAmount(text: string): boolean {
   });
 }
 
+/** Kata kunci muncul sebagai kata utuh: "saldo shopee" tidak boleh cocok dengan "saldo shopeepay" */
+function hasKey(s: string, k: string) {
+  for (let i = s.indexOf(k); i >= 0; i = s.indexOf(k, i + 1)) {
+    const before = i === 0 ? "" : s[i - 1];
+    const after = s[i + k.length] ?? "";
+    if (!/[a-z]/.test(before) && !/[a-z]/.test(after)) return true;
+  }
+  return false;
+}
+
 export function matchAccount(segment: string, accounts: ExtractAccount[]): string | null {
   const s = segment.toLowerCase();
   let best: { id: string; len: number } | null = null;
   for (const a of accounts) {
     const keys = [a.name, a.code, ...a.aliases.split(",")].map((k) => k.trim().toLowerCase()).filter(Boolean);
     for (const k of keys) {
-      if (s.includes(k) && (!best || k.length > best.len)) best = { id: a.id, len: k.length };
+      if (hasKey(s, k) && (!best || k.length > best.len)) best = { id: a.id, len: k.length };
     }
   }
   return best?.id ?? null;
+}
+
+// ---------- Pinjaman pengelola ----------
+/** Nama/panggilan pengelola yang dikenali di pesan (bisa ditambah lewat setting pengelola_nama, dipisah koma) */
+export const DEFAULT_MANAGER_NAMES = ["pengelola", "owner", "cak ed", "mas edy", "edy", "jojo", "mas jojo"];
+const LOAN_VERB = /\b(pinjam|dipinjam|minjam|meminjam|pinjem|dipinjem|minjem|ngutang)\b/;
+const RETURN_VERB = /\b(kembali|kembalikan|dikembalikan|mengembalikan|balikin|dibalikin|pengembalian|nyaur|melunasi|lunasi)\b/;
+
+/**
+ * Pesan pinjaman uang usaha oleh pengelola ("Edy pinjam dana OPS untuk pribadi", "jojo kembalikan pinjaman"):
+ * PINJAM = uang keluar (Piutang Pengelola), KEMBALI = uang masuk pengembalian. null bila bukan.
+ * Hanya kata kerja pinjam (bukan kata benda "pinjaman" cicilan SPinjam dsb.) + nama pengelola.
+ */
+export function detectManagerLoan(text: string, names: string[] = DEFAULT_MANAGER_NAMES): "PINJAM" | "KEMBALI" | null {
+  const t = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+  const who = names.map((n) => n.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()).filter((n) => n.length >= 2).some((n) => t.includes(` ${n} `));
+  if (!who) return null;
+  const ret = RETURN_VERB.test(t);
+  if (LOAN_VERB.test(t)) return ret ? "KEMBALI" : "PINJAM";
+  // "jojo kembalikan pinjaman 500rb": kata benda pinjaman + kata kembali
+  if (ret && /\bpinjaman\b/.test(t)) return "KEMBALI";
+  return null;
 }
 
 /**
