@@ -1,6 +1,7 @@
 import { prisma } from "./db";
 import { COA } from "./accounting";
 import { approveAndBook, createTransaction, FinanceError, type Actor } from "./finance";
+import { audit } from "./audit";
 import { jakartaDateTime, todayStr } from "./time";
 
 /**
@@ -127,6 +128,32 @@ export async function talanganSummary(): Promise<TalanganWallet[]> {
     out.push({ bank: w.bank, fromBank: w.fromBank, items, open, total, repaid, outstanding: Math.max(0, total - repaid), managerOutstanding });
   }
   return out;
+}
+
+/**
+ * Transfer masuk ke dompet simpanan yang sudah dibukukan tapi belum ditandai sebagai pengembalian talangan
+ * (mis. dicatat sebagai transfer biasa). Transfer dana sisihan (punya catatan sisihan) tidak ikut.
+ */
+export async function unmarkedRepays(walletId: string) {
+  const start = jakartaDateTime(await talanganStart(), "00:00");
+  return prisma.financeTransaction.findMany({
+    where: { direction: "TRANSFER", status: "DIBUKUKAN", deletedAt: null, bailoutRepay: false, toAccountId: walletId, date: { gte: start }, reserveEntries: { none: {} } },
+    orderBy: { date: "asc" },
+    take: 20,
+  });
+}
+
+/** Tandai transfer yang sudah dibukukan ke dompet simpanan sebagai pengembalian talangan (jurnal tidak berubah) */
+export async function markTalanganRepay(id: string, actor: Actor & { id: string }) {
+  const t = await prisma.financeTransaction.findUniqueOrThrow({ where: { id }, include: { reserveEntries: { select: { id: true } } } });
+  if (t.status !== "DIBUKUKAN" || t.direction !== "TRANSFER") throw new FinanceError("Hanya transfer yang sudah dibukukan yang bisa ditandai");
+  if (t.bailoutRepay) throw new FinanceError("Transfer ini sudah tercatat sebagai pengembalian talangan");
+  if (t.reserveEntries.length) throw new FinanceError("Transfer ini tercatat sebagai dana sisihan, bukan pengembalian talangan");
+  if (!(await talanganWallets()).some((w) => w.bank.id === t.toAccountId)) throw new FinanceError("Rekening tujuan transfer ini bukan dompet simpanan dana sisihan");
+  const u = await prisma.financeTransaction.update({ where: { id }, data: { bailoutRepay: true } });
+  await prisma.approvalLog.create({ data: { transactionId: id, action: "DIUBAH", fromStatus: t.status, toStatus: t.status, actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: "Ditandai sebagai pengembalian dana talangan" } });
+  await audit({ actorId: actor.id, actorName: actor.name }, "TALANGAN_TANDAI_KEMBALI", "FinanceTransaction", id, { number: t.number });
+  return u;
 }
 
 /** Total talangan belum dikembalikan semua dompet */

@@ -3,13 +3,13 @@ import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDate, todayStr } from "@/lib/time";
-import { talanganStart, talanganSummary } from "@/lib/talangan";
+import { talanganStart, talanganSummary, unmarkedRepays } from "@/lib/talangan";
 import { Badge, Card, Empty, Field, PageHeader, Stat } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { Submit } from "@/components/ActionForm";
+import { ActionForm, Submit } from "@/components/ActionForm";
 import { Paged } from "@/components/Paged";
-import { repayTalanganAction, setTalanganStart } from "./actions";
+import { markRepayAction, repayTalanganAction, setTalanganStart } from "./actions";
 
 export const metadata = { title: "Dana Talangan" };
 
@@ -23,6 +23,7 @@ export default async function TalanganPage({ searchParams }: { searchParams: Pro
     prisma.financeTransaction.findMany({ where: { bailoutRepay: true, deletedAt: null }, orderBy: { date: "desc" }, take: 20 }),
   ]);
   const total = wallets.reduce((t, w) => t + w.outstanding, 0);
+  const unmarked = new Map(await Promise.all(wallets.filter((w) => w.outstanding > 0).map(async (w) => [w.bank.id, await unmarkedRepays(w.bank.id)] as const)));
   const bankName = (id: string | null) => banks.find((b) => b.id === id)?.name ?? "-";
   return (
     <div className="space-y-5">
@@ -87,6 +88,19 @@ export default async function TalanganPage({ searchParams }: { searchParams: Pro
                   })}
                 </tbody>
               </table></Paged>
+            </div>
+          )}
+          {(unmarked.get(w.bank.id)?.length ?? 0) > 0 && (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <p className="mb-2">Transfer masuk ke {w.bank.name} yang tercatat sebagai transfer biasa. Bila ini sebenarnya pengembalian talangan, tandai di sini (saldo & jurnal tidak berubah).</p>
+              <ul className="divide-y divide-amber-100">
+                {unmarked.get(w.bank.id)!.map((t) => (
+                  <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
+                    <span>{fmtDate(t.date)} · <Link className="link font-mono text-xs" href={`/finance/${t.id}`}>{t.number}</Link> · {bankName(t.accountId)} · {(t.note ?? t.counterparty ?? "").slice(0, 50)} · <b className="tabular-nums">{idr(t.amount)}</b></span>
+                    <ActionForm action={markRepayAction}><input type="hidden" name="id" value={t.id} /><Submit className="btn-secondary btn-sm" pendingText="Menyimpan…">Tandai pengembalian</Submit></ActionForm>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </Card>

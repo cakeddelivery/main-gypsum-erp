@@ -17,7 +17,7 @@ import { handleTelegramUpdate } from "@/lib/bot";
 import { approveAndBook, cancelBookedTransaction, createTransaction } from "@/lib/finance";
 import { detectManagerLoan, matchAccount } from "@/lib/extract";
 import { receiptFromOcrText } from "@/lib/ocrReceiptText";
-import { talanganReminderText, talanganSummary } from "@/lib/talangan";
+import { markTalanganRepay, talanganReminderText, talanganSummary, unmarkedRepays } from "@/lib/talangan";
 import { jakartaDateTime, todayStr } from "@/lib/time";
 
 describe("Pinjaman pengelola: pengenalan teks", () => {
@@ -114,5 +114,27 @@ describe("Pinjaman pengelola: bot, kategori & dana talangan", () => {
     // Bersihkan: saldo ShopeePay kembali seperti semula untuk tes lain
     await cancelBookedTransaction(ops.id, owner, "uji selesai");
     expect(w.managerOutstanding).toBe(w0.managerOutstanding);
+  });
+
+  it("transfer biasa ke ShopeePay bisa ditandai sebagai pengembalian talangan; saldo tetap", async () => {
+    const seabank = (await prisma.bankAccount.findUniqueOrThrow({ where: { code: "SEABANK" } })).id;
+    const other = await prisma.txCategory.findFirstOrThrow({ where: { name: "Beban Lain-lain" } });
+    const u = 1_000 + (Date.now() % 900);
+    const book = async (input: Parameters<typeof createTransaction>[0]) => {
+      const { transaction } = await createTransaction(input, "MANUAL", owner, { submit: true });
+      return (await approveAndBook(transaction.id, owner)).transaction;
+    };
+    const cod = await book({ direction: "KELUAR", amount: 654_000 + u, date: jakartaDateTime(todayStr(), "08:00"), accountId: shopeepay, categoryId: other.id, note: "COD magnet uji" });
+    const back = await book({ direction: "TRANSFER", amount: 654_000 + u, date: jakartaDateTime(todayStr(), "08:30"), accountId: seabank, toAccountId: shopeepay, note: "Kembalikan ops COD magnet", reserveLink: { skip: true } });
+    const w1 = await wallet();
+    expect((await unmarkedRepays(shopeepay)).some((t) => t.id === back.id)).toBe(true);
+    await markTalanganRepay(back.id, owner);
+    await expect(markTalanganRepay(back.id, owner)).rejects.toThrow("sudah");
+    const w2 = await wallet();
+    expect(w2.repaid - w1.repaid).toBe(654_000 + u);
+    expect((await unmarkedRepays(shopeepay)).some((t) => t.id === back.id)).toBe(false);
+    // Bersihkan
+    await cancelBookedTransaction(back.id, owner, "uji selesai");
+    await cancelBookedTransaction(cod.id, owner, "uji selesai");
   });
 });

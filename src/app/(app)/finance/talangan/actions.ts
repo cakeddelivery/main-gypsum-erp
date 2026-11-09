@@ -1,7 +1,7 @@
 "use server";
 import { action, int, optStr, str } from "@/lib/action";
 import { saveProof } from "@/lib/storage";
-import { readProofAmount, repayTalangan } from "@/lib/talangan";
+import { markTalanganRepay, readProofAmount, repayTalangan } from "@/lib/talangan";
 import { prisma } from "@/lib/db";
 import { audit } from "@/lib/audit";
 import { todayStr } from "@/lib/time";
@@ -37,4 +37,14 @@ export const setTalanganStart = action(
     return "Tanggal mulai disimpan";
   },
   ["/finance/talangan", "/"],
+);
+
+/** Transfer yang sudah dibukukan ke dompet simpanan ditandai sebagai pengembalian talangan */
+export const markRepayAction = action(
+  "finance.approve",
+  async (fd, user) => {
+    const t = await markTalanganRepay(str(fd, "id"), { id: user.id, name: user.name });
+    return `${t.number} ditandai sebagai pengembalian talangan`;
+  },
+  ["/finance/talangan", "/finance", "/"],
 );
