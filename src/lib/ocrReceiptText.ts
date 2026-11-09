@@ -23,13 +23,16 @@ const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 /** Nama rekening usaha (name/alias ≥4 huruf) yang muncul di teks; dicocokkan tanpa spasi/tanda baca agar tahan salah baca OCR */
 function accountIn(text: string, accounts: ExtractAccount[]): string | null {
   const t = squash(text);
-  let best: { name: string; len: number } | null = null;
+  const hits: { name: string; start: number; end: number }[] = [];
   for (const a of accounts) {
     for (const k of [a.name, ...a.aliases.split(",")].map(squash).filter((k) => k.length >= 4)) {
-      if (t.includes(k) && (!best || k.length > best.len)) best = { name: a.name, len: k.length };
+      for (let i = t.indexOf(k); i >= 0; i = t.indexOf(k, i + 1)) hits.push({ name: a.name, start: i, end: i + k.length });
     }
   }
-  return best?.name ?? null;
+  // Kunci yang terpotong kunci lain yang lebih panjang ke kanan bukan kecocokan: "saldoshopee|pay" = ShopeePay,
+  // bukan Saldo Penjual Shopee
+  const ok = hits.filter((h) => !hits.some((o) => o !== h && o.start > h.start && o.start < h.end && o.end > h.end));
+  return ok.sort((a, b) => b.end - b.start - (a.end - a.start))[0]?.name ?? null;
 }
 
 /** Bersihkan sisa ikon/logo yang terbaca OCR di depan nama ("@ sumberjaya", "© Toko A") */

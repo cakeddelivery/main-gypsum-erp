@@ -3,13 +3,13 @@ import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDate, todayStr } from "@/lib/time";
-import { talanganStart, talanganSummary } from "@/lib/talangan";
+import { talanganStart, talanganSummary, unmarkedRepays } from "@/lib/talangan";
 import { Badge, Card, Empty, Field, PageHeader, Stat } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { Submit } from "@/components/ActionForm";
+import { ActionForm, Submit } from "@/components/ActionForm";
 import { Paged } from "@/components/Paged";
-import { repayTalanganAction, setTalanganStart } from "./actions";
+import { markRepayAction, repayTalanganAction, setTalanganStart } from "./actions";
 
 export const metadata = { title: "Dana Talangan" };
 
@@ -23,6 +23,7 @@ export default async function TalanganPage({ searchParams }: { searchParams: Pro
     prisma.financeTransaction.findMany({ where: { bailoutRepay: true, deletedAt: null }, orderBy: { date: "desc" }, take: 20 }),
   ]);
   const total = wallets.reduce((t, w) => t + w.outstanding, 0);
+  const unmarked = new Map(await Promise.all(wallets.filter((w) => w.outstanding > 0).map(async (w) => [w.bank.id, await unmarkedRepays(w.bank.id)] as const)));
   const bankName = (id: string | null) => banks.find((b) => b.id === id)?.name ?? "-";
   return (
     <div className="space-y-5">
@@ -40,7 +41,7 @@ export default async function TalanganPage({ searchParams }: { searchParams: Pro
       />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Belum dikembalikan" value={idr(total)} tone={total > 0 ? "red" : "green"} />
-        {wallets.map((w) => <Stat key={w.bank.id} label={w.bank.name} value={idr(w.outstanding)} hint={`talangan ${idr(w.total)} · kembali ${idr(w.repaid)}`} tone={w.outstanding > 0 ? "amber" : "green"} />)}
+        {wallets.map((w) => <Stat key={w.bank.id} label={w.bank.name} value={idr(w.outstanding)} hint={`talangan ${idr(w.total)} · kembali ${idr(w.repaid)}${w.managerOutstanding > 0 ? ` · pinjaman pengelola ${idr(w.managerOutstanding)}` : ""}`} tone={w.outstanding > 0 ? "amber" : "green"} />)}
       </div>
       {wallets.length === 0 && <Empty title="Belum ada dana sisihan dengan rekening simpanan" />}
       {wallets.map((w) => (
@@ -52,13 +53,14 @@ export default async function TalanganPage({ searchParams }: { searchParams: Pro
               <ModalForm action={repayTalanganAction} className="space-y-3">
                 <input type="hidden" name="walletId" value={w.bank.id} />
                 <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
-                  Transfer <b>{idr(w.outstanding)}</b> dari {w.fromBank?.name ?? "rekening operasional"} ke {w.bank.name}, lalu lampirkan buktinya.
+                  Transfer <b>{idr(w.outstanding - w.managerOutstanding || w.outstanding)}</b> dari {w.fromBank?.name ?? "rekening operasional"} ke {w.bank.name}, lalu lampirkan buktinya.
+                  {w.managerOutstanding > 0 && <> Pinjaman pengelola ({idr(w.managerOutstanding)}) dikembalikan oleh pengelola sendiri: catat sebagai uang masuk ke {w.bank.name} dengan kategori <b>Pengembalian Pinjaman Pengelola</b>.</>}
                   <ul className="mt-1 list-disc pl-4 text-xs">{w.open.slice(0, 10).map((i) => <li key={i.journalId}>{fmtDate(i.date)} · {i.label} {i.ref} · {i.description.slice(0, 40)} · {idr(i.amount)}</li>)}{w.open.length > 10 && <li>… {w.open.length - 10} lainnya</li>}</ul>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="Dari rekening"><select name="fromBankId" defaultValue={w.fromBank?.id ?? ""} className="input">{banks.filter((b) => b.id !== w.bank.id && !b.marketplace).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
                   <Field label="Tanggal transfer"><input type="date" name="date" defaultValue={todayStr()} className="input" /></Field>
-                  <Field label="Nominal (sesuai total talangan)" className="col-span-2"><input name="amount" defaultValue={w.outstanding} inputMode="numeric" className="input" required /></Field>
+                  <Field label="Nominal (sesuai total talangan)" className="col-span-2"><input name="amount" defaultValue={w.outstanding - w.managerOutstanding || w.outstanding} inputMode="numeric" className="input" required /></Field>
                 </div>
                 <Field label="Foto bukti transfer" hint="Nominal di bukti dicek otomatis harus sama dengan nominal di atas"><input type="file" name="proof" required accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
                 <label className="flex items-center gap-2 text-xs text-slate-600"><input type="checkbox" name="skipCheck" value="1" /> Nominal di bukti sudah benar (lewati pengecekan otomatis)</label>
@@ -86,6 +88,19 @@ export default async function TalanganPage({ searchParams }: { searchParams: Pro
                   })}
                 </tbody>
               </table></Paged>
+            </div>
+          )}
+          {(unmarked.get(w.bank.id)?.length ?? 0) > 0 && (
+            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <p className="mb-2">Transfer masuk ke {w.bank.name} yang tercatat sebagai transfer biasa. Bila ini sebenarnya pengembalian talangan, tandai di sini (saldo & jurnal tidak berubah).</p>
+              <ul className="divide-y divide-amber-100">
+                {unmarked.get(w.bank.id)!.map((t) => (
+                  <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
+                    <span>{fmtDate(t.date)} · <Link className="link font-mono text-xs" href={`/finance/${t.id}`}>{t.number}</Link> · {bankName(t.accountId)} · {(t.note ?? t.counterparty ?? "").slice(0, 50)} · <b className="tabular-nums">{idr(t.amount)}</b></span>
+                    <ActionForm action={markRepayAction}><input type="hidden" name="id" value={t.id} /><Submit className="btn-secondary btn-sm" pendingText="Menyimpan…">Tandai pengembalian</Submit></ActionForm>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
         </Card>

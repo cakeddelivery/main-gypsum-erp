@@ -13,6 +13,7 @@ const COA: [string, string, AccountType, boolean?][] = [
   ["1-1203", "Saldo Penjual Shopee", "ASET", true],
   ["1-1300", "Piutang Usaha", "ASET"],
   ["1-1310", "Piutang Karyawan (Kasbon)", "ASET"],
+  ["1-1320", "Piutang Pengelola", "ASET"],
   ["1-1401", "Persediaan Bahan Baku", "ASET"],
   ["1-1402", "Persediaan Barang Dalam Proses", "ASET"],
   ["1-1403", "Persediaan Barang Jadi", "ASET"],
@@ -96,6 +97,8 @@ async function main() {
     ["Perawatan Tempat & Alat Produksi", "KELUAR", "6-1450", "perawatan,pemeliharaan,perbaikan,reparasi,renovasi,servis,service,sparepart,suku cadang,pelumas,oli mesin,obeng,palu,gergaji,gerinda,sapu,alat pel,kain pel,pembersih,alat kebersihan,sabun,ember,lampu,tukang,bengkel,benerin,betulin,perlengkapan"],
     ["Pembelian Peralatan", "KELUAR", "1-2100", "mesin,peralatan,oven,kompresor,cetakan,mold"],
     ["Prive Pemilik", "KELUAR", "3-3000", "prive,ambil pribadi"],
+    ["Pinjaman Pengelola", "KELUAR", "1-1320", "pinjaman pengelola,dipinjam pengelola,pinjam pengelola"],
+    ["Pengembalian Pinjaman Pengelola", "MASUK", "1-1320", "pengembalian pinjaman pengelola,kembalikan pinjaman pengelola"],
     ["Beban Lain-lain", "KELUAR", "6-9000", "lain-lain,lainnya"],
   ];
   for (const [name, direction, coa, keywords] of cats) {
