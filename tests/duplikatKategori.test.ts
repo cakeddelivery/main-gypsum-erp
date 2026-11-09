@@ -14,12 +14,12 @@ vi.mock("@/lib/telegram", async (orig) => {
 
 import { prisma } from "@/lib/db";
 import { handleTelegramUpdate } from "@/lib/bot";
-import { cancelBookedTransaction, createTransaction } from "@/lib/finance";
+import { bookReserveTransfer, cancelBookedTransaction, createTransaction } from "@/lib/finance";
 import { cancelPurchase, createPurchase } from "@/lib/purchase";
 import { cancelAdvance, giveAdvance } from "@/lib/payroll";
 import { postReserve } from "@/lib/reserve";
 import { cancelSale, cancelSalePayment, createSale, paySale } from "@/lib/sales";
-import { mirrorJournal } from "@/lib/txMirror";
+import { mirrorJournal, originLabel } from "@/lib/txMirror";
 import { findSimilar } from "@/lib/similar";
 import { approveCategoryProposal, proposeCategory, rejectCategoryProposal, suggestCategories } from "@/lib/categorySuggest";
 import { jakartaDateTime, todayStr } from "@/lib/time";
@@ -114,6 +114,7 @@ describe("Uang rekening dari menu lain tampil tepat sekali di Transaksi (tanpa j
     const sis = await prisma.financeTransaction.findMany({ where: { journalId: e.journalId! } });
     expect(sis).toHaveLength(1);
     expect(sis[0]).toMatchObject({ origin: "SISIHAN", direction: "TRANSFER", accountId: bankA, toAccountId: bankB });
+    expect(originLabel(sis[0].origin, sis[0].direction)).toBe("Sisihan otomatis");
     expect(await bal(bankB)).toBe(before.b + Number(e.amount));
     expect(await bal(bankA)).toBe(before.a - Number(e.amount));
     // Sisihan otomatis tanpa bukti bukan duplikat transfer aslinya (nanti diserap, lihat applyReserveLink)
@@ -128,6 +129,19 @@ describe("Uang rekening dari menu lain tampil tepat sekali di Transaksi (tanpa j
     for (const p of await prisma.salePayment.findMany({ where: { saleId: sale.id, initial: false } })) await cancelSalePayment(p.id, "uji", owner);
     await cancelSale(sale.id, "uji", owner);
     expect(await prisma.financeTransaction.count({ where: { origin: "PENJUALAN", originRef: sale.number, status: "DIBUKUKAN" } })).toBe(0);
+  });
+});
+
+describe("Sisihan otomatis diserap transfer aslinya", () => {
+  it("baris 'Sisihan otomatis' otomatis Dibatalkan saat transfer berbukti untuk tanggal itu dibukukan; saldo tidak dobel", async () => {
+    const e = await postReserve(fundId, "2032-05-24", owner);
+    const auto = await prisma.financeTransaction.findFirstOrThrow({ where: { journalId: e.journalId! } });
+    const before = await bal(bankB);
+    const r = await bookReserveTransfer({ direction: "TRANSFER", amount: Number(e.amount), date: jakartaDateTime("2032-05-24", "20:00"), accountId: bankA, note: "nabung uji" }, [{ fundId, date: "2032-05-24", amount: Number(e.amount) }], "MANUAL", owner);
+    expect(r.booked).toBe(true);
+    expect((await prisma.financeTransaction.findUniqueOrThrow({ where: { id: auto.id } })).status).toBe("DIBATALKAN");
+    expect(await bal(bankB)).toBe(before);
+    expect(await prisma.financeTransaction.count({ where: { status: "DIBUKUKAN", toAccountId: bankB, date: { gte: jakartaDateTime("2032-05-24", "00:00"), lt: jakartaDateTime("2032-05-25", "00:00") } } })).toBe(1);
   });
 });
 

@@ -65,7 +65,7 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
     lines.push(
       "",
       "⚠️ <b>Mirip transaksi yang sudah ada</b> (nominal & tanggal sama):",
-      `<b>${esc(dup.number)}</b> · ${STATUS_LABEL[dup.status]}${dup.origin ? ` · menu ${esc(originLabel(dup.origin) ?? "")}` : ""}`,
+      `<b>${esc(dup.number)}</b> · ${STATUS_LABEL[dup.status]}${dup.origin ? ` · ${esc(originLabel(dup.origin, dup.direction) ?? "")}` : ""}`,
       `${dirOf(dup.direction)} ${idr(dup.amount)} · ${fmtDateTime(dup.date)}`,
       `Rekening: ${esc(banks.find((b) => b.id === dup.accountId)?.name ?? "—")}${dup.direction === "TRANSFER" ? ` → ${esc(banks.find((b) => b.id === dup.toAccountId)?.name ?? "—")}` : ""}${cats.find((c) => c.id === dup.categoryId) ? ` · ${esc(cats.find((c) => c.id === dup.categoryId)!.name)}` : ""}`,
       ...(dup.note ? [`Catatan: ${esc(dup.note.slice(0, 120))}`] : []),

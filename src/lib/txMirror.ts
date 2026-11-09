@@ -25,7 +25,9 @@ export const MIRROR_SOURCES: Record<string, { label: string; href: (ref: string 
   ASET: { label: "Aset tetap", href: () => "/akuntansi/aset" },
 };
 
-export const originLabel = (o: string | null | undefined) => (o ? MIRROR_SOURCES[o]?.label ?? o : null);
+/** Label asal baris tertaut. Sisihan harian yang dicatat sistem (transfer rekening asal → simpanan) = "Sisihan otomatis" */
+export const originLabel = (o: string | null | undefined, direction?: string | null) =>
+  o === "SISIHAN" && direction === "TRANSFER" ? "Sisihan otomatis" : o ? MIRROR_SOURCES[o]?.label ?? o : null;
 export const originHref = (o: string | null | undefined, ref: string | null | undefined) => (o && MIRROR_SOURCES[o] ? MIRROR_SOURCES[o].href(ref ?? null) : null);
 
 export function fingerprint(direction: string, amount: number, date: Date, accountId?: string | null) {
@@ -89,7 +91,7 @@ export async function mirrorJournal(tx: Tx, journalId: string, opts: { status?: 
         originRef: ref,
       },
     });
-    await tx.approvalLog.create({ data: { transactionId: t.id, action: "DIBUAT", toStatus: status, actorName: j.createdBy, note: `Tertaut dari ${originLabel(j.source)} (jurnal ${j.number})` } });
+    await tx.approvalLog.create({ data: { transactionId: t.id, action: "DIBUAT", toStatus: status, actorName: j.createdBy, note: `Tertaut dari ${originLabel(j.source, r.direction)} (jurnal ${j.number})` } });
     out.push(t);
   }
   return out;

@@ -8,7 +8,7 @@ import { describeParts, parseLink, reserveOptions } from "@/lib/reserveSync";
 import { walletForMarketplace } from "@/lib/extract";
 import Link from "next/link";
 import { STATUS_LABEL, missingFields, splitIssues } from "@/lib/finance";
-import { originHref, originLabel } from "@/lib/txMirror";
+import { MIRROR_SOURCES, originHref, originLabel } from "@/lib/txMirror";
 import { Badge, Card, ErrorBox, Field, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
@@ -65,8 +65,8 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
       </div>
       {t.origin && (
         <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-2 text-sm text-sky-800">
-          Baris ini tertaut dari menu <b>{originLabel(t.origin)}</b>{t.originRef ? ` (${t.originRef})` : ""}: uang rekening yang dibukukan di menu tersebut. Jurnalnya satu (jurnal menu sumber), jadi saldo tidak terhitung dua kali. Ubah atau batalkan di menu sumbernya; baris ini ikut menyesuaikan.{" "}
-          <Link className="link" href={originHref(t.origin, t.originRef) ?? "/finance"}>Buka menu {originLabel(t.origin)} ›</Link>
+          Baris ini tertaut dari <b>{originLabel(t.origin, t.direction)}</b>{t.originRef ? ` (${t.originRef})` : ""}: uang rekening yang dibukukan di menu tersebut. Jurnalnya satu (jurnal menu sumber), jadi saldo tidak terhitung dua kali. Ubah atau batalkan di menu sumbernya; baris ini ikut menyesuaikan.{" "}
+          <Link className="link" href={originHref(t.origin, t.originRef) ?? "/finance"}>Buka menu {MIRROR_SOURCES[t.origin].label} ›</Link>
         </div>
       )}
       {dup && <ErrorBox message={`Terindikasi duplikat dengan ${dup.number} (${idr(dup.amount)}, ${fmtDateTime(dup.date)}, status ${STATUS_LABEL[dup.status]}). Tinjau sebelum mengajukan.`} />}

@@ -89,8 +89,8 @@ import { originLabel } from "./txMirror";
 import { findSimilar } from "./similar";
 
 /** Baris tertaut dari menu lain hanya-baca di menu Transaksi: ubah/batalkan di menu sumbernya */
-export function assertOwnTransaction(cur: { origin: string | null; number: string }) {
-  if (cur.origin) throw new FinanceError(`${cur.number} berasal dari menu ${originLabel(cur.origin)}. Ubah atau batalkan di menu tersebut agar stok, hutang & dokumennya ikut menyesuaikan.`);
+export function assertOwnTransaction(cur: { origin: string | null; number: string; direction?: string }) {
+  if (cur.origin) throw new FinanceError(`${cur.number} berasal dari ${originLabel(cur.origin, cur.direction)} (menu ${originLabel(cur.origin)}). Ubah atau batalkan di menu tersebut agar stok, hutang & dokumennya ikut menyesuaikan.`);
 }
 
 /**

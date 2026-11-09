@@ -19,7 +19,7 @@ export const metadata = { title: "Transaksi" };
 const STATUSES: TxStatus[] = ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI", "DIBUKUKAN", "DITOLAK", "DIBATALKAN"];
 const TONE: Record<TxStatus, "gray" | "amber" | "blue" | "green" | "red"> = { DRAFT: "gray", PERLU_DITINJAU: "amber", MENUNGGU_KONFIRMASI: "blue", DIBUKUKAN: "green", DITOLAK: "red", DIBATALKAN: "red" };
 const SOURCE = { MANUAL: "Manual", TELEGRAM: "Telegram", AI: "AI/Hermes" };
-const srcLabel = (t: { source: keyof typeof SOURCE; origin: string | null }) => (t.origin ? `Menu ${originLabel(t.origin)}` : SOURCE[t.source]);
+const srcLabel = (t: { source: keyof typeof SOURCE; origin: string | null; direction: string }) => (t.origin ? (originLabel(t.origin, t.direction) ?? "") : SOURCE[t.source]);
 
 export default async function FinancePage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const user = await requirePerm("finance.view");
@@ -55,7 +55,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
   // Withdraw saldo penjual marketplace = pemasukan penjualan toko (MG / DL)
   const isWd = (t: { direction: string; accountId: string | null }) => t.direction === "TRANSFER" && !!banks.find((b) => b.id === t.accountId)?.marketplace;
   type PayRef = { payable: { number: string; kind: string; vendor: string } | null; categoryId: string | null };
-  const catLabel = (t: PayRef & { origin?: string | null }) => (t.origin ? (originLabel(t.origin) ?? "—") : t.payable ? `${t.payable.kind === "PINJAMAN" ? "Cicilan pinjaman" : "Bayar hutang"} · ${t.payable.vendor}` : name(cats, t.categoryId));
+  const catLabel = (t: PayRef & { origin?: string | null; direction?: string }) => (t.origin ? (originLabel(t.origin, t.direction) ?? "—") : t.payable ? `${t.payable.kind === "PINJAMAN" ? "Cicilan pinjaman" : "Bayar hutang"} · ${t.payable.vendor}` : name(cats, t.categoryId));
   const wdLabel = (t: { storeId: string | null }) => `Pemasukan penjualan · ${stores.find((x) => x.id === t.storeId)?.code ?? "toko?"}`;
   const qs = (s?: string) => { const u = new URLSearchParams(Object.entries({ ...sp, baru: undefined, sembunyi: undefined, status: s }).filter(([, v]) => v) as [string, string][]); return `/finance?${u}`; };
   return (

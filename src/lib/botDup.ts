@@ -46,7 +46,7 @@ async function hitsOf(s: Session) {
   const rows = await prisma.financeTransaction.findMany({ where: { id: { in: ids } }, orderBy: { date: "asc" } });
   const banks = await prisma.bankAccount.findMany({ select: { id: true, name: true } });
   const bank = (id: string | null) => banks.find((b) => b.id === id)?.name ?? "—";
-  return rows.map((t) => ({ t, line: `<b>${esc(t.number)}</b> · ${STATUS_LABEL[t.status]}${t.origin ? ` · menu ${esc(originLabel(t.origin) ?? "")}` : ""}\n${dirLabel(t.direction)} ${idr(t.amount)} · ${fmtDateTime(t.date)}\nRekening: ${esc(bank(t.accountId))}${t.toAccountId ? ` → ${esc(bank(t.toAccountId))}` : ""}${t.note ? `\n<i>${esc(t.note.slice(0, 100))}</i>` : ""}` }));
+  return rows.map((t) => ({ t, line: `<b>${esc(t.number)}</b> · ${STATUS_LABEL[t.status]}${t.origin ? ` · ${esc(originLabel(t.origin, t.direction) ?? "")}` : ""}\n${dirLabel(t.direction)} ${idr(t.amount)} · ${fmtDateTime(t.date)}\nRekening: ${esc(bank(t.accountId))}${t.toAccountId ? ` → ${esc(bank(t.toAccountId))}` : ""}${t.note ? `\n<i>${esc(t.note.slice(0, 100))}</i>` : ""}` }));
 }
 
 export function dupButtons(prefix = "f:"): InlineButton[][] {
