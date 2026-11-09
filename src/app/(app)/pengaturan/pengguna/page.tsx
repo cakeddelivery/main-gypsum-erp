@@ -1,4 +1,5 @@
 import { requirePerm } from "@/lib/auth";
+import { PasswordInput } from "@/components/PasswordInput";
 import { prisma } from "@/lib/db";
 import { ALL_PERMISSIONS, PERMISSIONS, RESTRICTED, ROLE_LABEL, ROLES, effectivePermissions } from "@/lib/rbac";
 import { fmtDateTime } from "@/lib/time";
@@ -29,7 +30,8 @@ export default async function PenggunaPage({ searchParams }: { searchParams: Pro
       <Field label="Nama"><input name="name" defaultValue={u?.name} className="input" required /></Field>
       <Field label="Role"><select name="role" defaultValue={u?.role ?? "ADMIN"} className="input">{roles.map((r) => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}</select></Field>
       <Field label="Divisi (Kapten)"><select name="divisionId" defaultValue={u?.divisionId ?? ""} className="input"><option value="">—</option>{divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
-      <Field label={u ? "Reset password (opsional)" : "Password"} hint="Minimal 8 karakter" className="col-span-2"><input type="password" name="password" autoComplete="new-password" className="input" /></Field>
+      <Field label="Email (opsional)" hint="Untuk lupa password & login dengan Google" className="col-span-2"><input type="email" name="email" defaultValue={u?.email ?? ""} className="input" autoCapitalize="none" autoComplete="off" placeholder="nama@gmail.com" /></Field>
+      <Field label={u ? "Reset password (opsional)" : "Password"} hint="Minimal 8 karakter" className="col-span-2"><PasswordInput name="password" autoComplete="new-password" className="input" /></Field>
       {u && <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="active" defaultChecked={u.active} /> Aktif</label>}
       <div className="col-span-2"><Submit>Simpan</Submit></div>
     </ModalForm>
@@ -45,7 +47,7 @@ export default async function PenggunaPage({ searchParams }: { searchParams: Pro
         <div className="table-wrap">
           <Paged><table className="tbl">
             <thead><tr><th>Username</th><th>Nama</th><th>Role</th><th>Karyawan/Divisi</th><th>Login terakhir</th><th>Status</th><th /></tr></thead>
-            <tbody>{users.map((u) => <tr key={u.id}><td className="font-mono text-xs">{u.username}</td><td>{u.name}</td><td><Badge tone="blue">{ROLE_LABEL[u.role]}</Badge></td><td className="text-xs">{u.employee?.code}{u.division && ` · ${u.division.name}`}</td><td className="text-xs">{fmtDateTime(u.lastLoginAt)}</td><td>{u.active ? (u.lockedUntil && u.lockedUntil > new Date() ? <Badge tone="red">Terkunci</Badge> : <Badge tone="green">Aktif</Badge>) : <Badge>Nonaktif</Badge>}</td><td>{(u.role !== "OWNER" || me.role === "OWNER") && <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${u.username}`}>{form(u)}</Modal>}</td></tr>)}</tbody>
+            <tbody>{users.map((u) => <tr key={u.id}><td className="font-mono text-xs">{u.username}</td><td>{u.name}{u.email && <div className="text-xs text-slate-500">{u.email}</div>}</td><td><Badge tone="blue">{ROLE_LABEL[u.role]}</Badge></td><td className="text-xs">{u.employee?.code}{u.division && ` · ${u.division.name}`}</td><td className="text-xs">{fmtDateTime(u.lastLoginAt)}</td><td>{u.active ? (u.lockedUntil && u.lockedUntil > new Date() ? <Badge tone="red">Terkunci</Badge> : <Badge tone="green">Aktif</Badge>) : <Badge>Nonaktif</Badge>}</td><td>{(u.role !== "OWNER" || me.role === "OWNER") && <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${u.username}`}>{form(u)}</Modal>}</td></tr>)}</tbody>
           </table></Paged>
         </div>
       ) : (

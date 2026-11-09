@@ -80,25 +80,54 @@ model Shift {
 }
 
 model User {
-  id             String             @id @default(cuid())
-  username       String             @unique
+  id             String               @id @default(cuid())
+  username       String               @unique
   name           String
+  /// Email opsional (unik, huruf kecil): untuk lupa password & login dengan Google
+  email          String?              @unique
   passwordHash   String
   role           Role
-  active         Boolean            @default(true)
-  employeeId     String?            @unique
-  employee       Employee?          @relation(fields: [employeeId], references: [id])
+  active         Boolean              @default(true)
+  employeeId     String?              @unique
+  employee       Employee?            @relation(fields: [employeeId], references: [id])
   divisionId     String?
-  division       Division?          @relation("DivisionCaptain", fields: [divisionId], references: [id])
-  failedLogins   Int                @default(0)
+  division       Division?            @relation("DivisionCaptain", fields: [divisionId], references: [id])
+  failedLogins   Int                  @default(0)
   lockedUntil    DateTime?
   /// Naik setiap password diganti/direset; JWT dengan versi lama ditolak (sesi lama dicabut)
-  sessionVersion Int                @default(0)
+  sessionVersion Int                  @default(0)
   lastLoginAt    DateTime?
-  createdAt      DateTime           @default(now())
+  createdAt      DateTime             @default(now())
   telegram       TelegramIdentity[]
   alertReads     AlertRead[]
   boronganPerson BoronganPerson?
+  resetTokens    PasswordResetToken[]
+}
+
+/// Token reset password (lupa password). Hanya hash SHA-256 yang disimpan; sekali pakai, berlaku 30 menit.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  ip        String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, createdAt])
+}
+
+/// Catatan permintaan lupa password (untuk batas per IP & per akun, termasuk akun yang tidak ada).
+model PasswordResetRequest {
+  id         String   @id @default(cuid())
+  ip         String
+  identifier String
+  createdAt  DateTime @default(now())
+
+  @@index([ip, createdAt])
+  @@index([identifier, createdAt])
+  @@index([createdAt])
 }
 
 /// Catatan percobaan login (untuk batas per IP & kunci bertahap). Dibersihkan otomatis setelah 2 hari.
@@ -1109,15 +1138,15 @@ enum AccountType {
 }
 
 model CoaAccount {
-  id         String        @id @default(cuid())
-  code       String        @unique
+  id         String          @id @default(cuid())
+  code       String          @unique
   name       String
   type       AccountType
-  isCash     Boolean       @default(false)
+  isCash     Boolean         @default(false)
   parentId   String?
-  parent     CoaAccount?   @relation("CoaTree", fields: [parentId], references: [id])
-  children   CoaAccount[]  @relation("CoaTree")
-  active     Boolean       @default(true)
+  parent     CoaAccount?     @relation("CoaTree", fields: [parentId], references: [id])
+  children   CoaAccount[]    @relation("CoaTree")
+  active     Boolean         @default(true)
   lines      JournalLine[]
   banks      BankAccount[]
   categories TxCategory[]
