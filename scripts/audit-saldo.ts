@@ -16,6 +16,7 @@
  */
 import { writeFileSync } from "node:fs";
 import { PrismaClient } from "@prisma/client";
+import { activeDuplicateJournals } from "../src/lib/auditChecks";
 
 const prisma = new PrismaClient();
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3);
@@ -138,9 +139,11 @@ async function main() {
   const dups = [...groups.values()].filter((g) => g.length > 1);
   log(`Kemungkinan dobel (arah, nominal, rekening & tanggal sama): ${dups.length} kelompok`);
   for (const g of dups) log(`  ${g.map((t) => t.number).join(", ")} · ${g[0].direction} ${idr(Number(g[0].amount))} ${wib(g[0].date).slice(0, 10)} · ${g.map((t) => t.note ?? t.counterparty ?? "").join(" | ").slice(0, 80)}`);
-  const multiJ = await prisma.journal.groupBy({ by: ["source", "sourceId"], where: { sourceId: { not: null }, reversalOfId: null, date: { gte: start } }, _count: true, having: { sourceId: { _count: { gt: 1 } } } });
-  log(`Jurnal ganda untuk sumber yang sama: ${multiJ.length}`);
-  for (const m of multiJ) log(`  ${m.source} ${m.sourceId} × ${m._count}`);
+  // Jurnal yang sudah dibalik (ganti toko, ubah kategori, batal & catat ulang) tidak dihitung; hanya sumber "satu jurnal"
+  // per dokumen, ditambah pemasukan penjualan withdraw yang tercatat lebih dari sekali
+  const multiJ = await activeDuplicateJournals(prisma, start);
+  log(`Jurnal ganda yang masih aktif untuk sumber yang sama: ${multiJ.length}`);
+  for (const m of multiJ) log(`  ⚠ ${m.kind === "PENJUALAN_WD" ? "Pemasukan penjualan withdraw dobel" : m.source} ${txById.get(m.sourceId)?.number ?? m.sourceId}: ${m.numbers.join(", ")}`);
 
   log("\n== 5. RINGKASAN ==");
   for (const s of summary) log(s);
