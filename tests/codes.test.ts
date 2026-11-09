@@ -27,7 +27,7 @@ describe("Kode otomatis", () => {
 
   it("COA ikut digit tipe, divisi/shift/rekening/supplier unik", async () => {
     expect(await autoCode.coa(prisma, "BEBAN")).toBe("6-2000");
-    expect(await autoCode.coa(prisma, "HPP")).toBe("5-1100");
+    expect(await autoCode.coa(prisma, "HPP")).toBe("5-1200");
     expect(await autoCode.division(prisma, "Divisi Cetak Baru")).toBe("CTB");
     expect(await autoCode.division(prisma, "Cetak")).toBe("CTK2");
     expect(await autoCode.shift(prisma)).toBe("S3");

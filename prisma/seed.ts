@@ -36,12 +36,14 @@ const COA: [string, string, AccountType, boolean?][] = [
   ["4-1300", "Pendapatan Ongkir", "PENDAPATAN"],
   ["4-9000", "Pendapatan Lain-lain", "PENDAPATAN"],
   ["5-1000", "Harga Pokok Penjualan", "HPP"],
+  ["5-1100", "HPP Pesanan Custom (tanpa stok)", "HPP"],
   ["6-1100", "Beban Gaji & Upah Produksi", "BEBAN"],
   ["6-1150", "Beban Kompensasi Pengelola (Owner)", "BEBAN"],
   ["6-1200", "Beban Transport", "BEBAN"],
   ["6-1300", "Beban Listrik, Air & Gas", "BEBAN"],
   ["6-1400", "Beban Packing & Operasional", "BEBAN"],
   ["6-1500", "Beban Admin & Layanan Platform", "BEBAN"],
+  ["6-1550", "Beban Langganan Software & AI", "BEBAN"],
   ["6-1600", "Beban Iklan & Promosi", "BEBAN"],
   ["6-1700", "Beban Penyusutan", "BEBAN"],
   ["6-1800", "Beban Reject & Selisih Persediaan", "BEBAN"],
@@ -99,6 +101,8 @@ async function main() {
     ["Prive Pemilik", "KELUAR", "3-3000", "prive,ambil pribadi"],
     ["Pinjaman Pengelola", "KELUAR", "1-1320", "pinjaman pengelola,dipinjam pengelola,pinjam pengelola"],
     ["Pengembalian Pinjaman Pengelola", "MASUK", "1-1320", "pengembalian pinjaman pengelola,kembalikan pinjaman pengelola"],
+    ["Bahan Pesanan Custom", "KELUAR", "5-1100", "custom label,label custom,stiker custom,sticker custom,print custom,cetak custom,custom print,custom cetak,percetakan,warna print"],
+    ["Langganan Software & AI", "KELUAR", "6-1550", "subscription,chatgpt,chat gpt,claude,canva,capcut,google one,langganan ai,software,aplikasi premium"],
     ["Beban Lain-lain", "KELUAR", "6-9000", "lain-lain,lainnya"],
   ];
   for (const [name, direction, coa, keywords] of cats) {
