@@ -11,6 +11,7 @@ import { addDays, dateStr, fmtDate, jakartaDateTime, jakartaParts, MONTHS, today
 import { answerCallback, chatAction, editTelegram, esc, sendTelegram, sendTelegramDocument, type InlineButton } from "./telegram";
 import { renderDocJpg, RenderError } from "./render";
 import { inputMenuRows } from "./botFlow";
+import { sendSaleNota } from "./botSales";
 
 /** Teks tombol menu tetap di bawah kolom chat */
 export const MENU_TEXT = "📋 Menu";
@@ -296,6 +297,11 @@ export async function handleMenuCallback(i: BotIdent, cbId: string, chatId: stri
     case "spp":
       if (!can(i, "payroll.view")) return answerCallback(cbId, "Anda tidak berwenang");
       return show(await slipsOfPeriod(a1, Math.max(0, Number(a2) || 0)));
+    case "nota":
+      // Nota penjualan JPG (dari tombol setelah cicilan / pengingat piutang)
+      if (!can(i, "sales.view", "sales.manage")) return answerCallback(cbId, "Anda tidak berwenang");
+      await answerCallback(cbId, "Membuat nota JPG, tunggu sebentar…");
+      return sendSaleNota(i, chatId, a1);
     case "j": {
       const doc = await docFor(i, a1, a2 ?? "");
       if (typeof doc === "string") return answerCallback(cbId, doc);

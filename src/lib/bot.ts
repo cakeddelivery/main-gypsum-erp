@@ -14,6 +14,7 @@ import { clearSession, getSession, handleFlowCallback, handleFlowLocation, handl
 import { detectPurchase, extractSplits, rawMaterials } from "./botPurchase";
 import { prefilledPayablePayment, prefilledPurchase, prefilledReserve, prefilledTalangan, talanganPhoto } from "./botFlow3";
 import { talanganSummary } from "./talangan";
+import { salePaymentPhoto } from "./botSales";
 import { detectPayablePayment } from "./botPurchase";
 import { openPayables } from "./payables";
 import { matchReserveTransfer } from "./reserve";
@@ -220,6 +221,15 @@ export async function handleTelegramUpdate(u: TgUpdate) {
       }
       await chatAction(chatId, "typing").catch(() => {});
       return startPrefilledFlow({ i: ident, chatId }, await talanganPhoto({ i: ident, chatId }, s, photo, String(msg.message_id)));
+    }
+    // Isian cicilan piutang penjualan menunggu foto bukti (opsional)
+    if (s?.flow === "jcil" && s.step === "proof" && s.userId === ident.userId) {
+      const photo = await downloadTelegramFile(msg.photo[msg.photo.length - 1].file_id);
+      if (!photo) {
+        await sendTelegram(chatId, "Foto gagal diunduh, coba kirim ulang.");
+        return;
+      }
+      return startPrefilledFlow({ i: ident, chatId }, await salePaymentPhoto(s, photo));
     }
   }
   if (text === MENU_TEXT || (text.startsWith("/") && text !== "/batal")) await clearSession(chatId);
