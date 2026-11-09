@@ -2,6 +2,7 @@ import { prisma } from "./db";
 import { type SplitInput, createTransaction, missingFields, splitIssues, STATUS_LABEL } from "./finance";
 import { matchStore } from "./extract";
 import { originLabel } from "./txMirror";
+import type { CatSuggestion } from "./categorySuggest";
 import { esc, sendTelegram, type InlineButton } from "./telegram";
 import { idr } from "./money";
 import { addDays, fmtDate, fmtDateTime, todayStr } from "./time";
@@ -88,8 +89,22 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
     lines.push(`\n${pick ? "Ganti" : "Pilih"} rekening tujuan:`);
     buttons.push(...chunk(banks.filter((b) => b.id !== t.accountId).map((b) => ({ text: `${b.id === t.toAccountId ? "✓ " : ""}${b.name}`, callback_data: `to:${t.id}:${b.id}` })), 2));
   } else if (need === "cat") {
-    lines.push(`\n${pick ? "Ganti" : "Pilih"} kategori:`);
-    buttons.push(...chunk(cats.slice(0, 40).map((c) => ({ text: `${c.id === t.categoryId ? "✓ " : ""}${c.name}`, callback_data: `cat:${t.id}:${cbId(c.id)}` })), 2));
+    // Saran kategori (disimpan saat draft dibuat): 1–3 tombol + "Kategori lain"; tidak cocok = usul kategori baru
+    const sug = (t.aiExtraction as { catSuggest?: CatSuggestion } | null)?.catSuggest;
+    const picks = (sug?.picks ?? []).filter((p) => cats.some((c) => c.id === p.id));
+    const proposal = sug?.proposal && !cats.some((c) => c.name.toLowerCase() === sug.proposal!.name.toLowerCase()) ? sug.proposal : null;
+    if (!pick && picks.length) {
+      lines.push(`\n💡 Saran kategori (${picks.map((p) => p.why).filter((w, k, a) => a.indexOf(w) === k).join(", ")}):`);
+      buttons.push(...picks.map((p) => [{ text: `✨ ${p.name}`, callback_data: `cat:${t.id}:${cbId(p.id)}` }]));
+      buttons.push([{ text: "📋 Kategori lain", callback_data: `chg:${t.id}:cat` }]);
+    } else {
+      lines.push(`\n${pick ? "Ganti" : "Pilih"} kategori:`);
+      buttons.push(...chunk(cats.slice(0, 40).map((c) => ({ text: `${c.id === t.categoryId ? "✓ " : ""}${c.name}`, callback_data: `cat:${t.id}:${cbId(c.id)}` })), 2));
+    }
+    if (proposal) {
+      lines.push(`➕ Belum ada kategori yang cocok? Usulan: <b>${esc(proposal.name)}</b> (${proposal.coaType === "PENDAPATAN" ? "pendapatan" : proposal.coaType === "HPP" ? "HPP" : "beban"}${proposal.parentLabel ? `, induk ${esc(proposal.parentLabel)}` : ""}). Dibuat setelah disetujui Owner/Finance.`);
+      buttons.push([{ text: `➕ Usul kategori baru: ${proposal.name}`.slice(0, 60), callback_data: `kn:${t.id}` }]);
+    }
   } else if (need?.startsWith("s") && need !== "st") {
     const k = Number(need.slice(1));
     const sp = t.splits[k];
