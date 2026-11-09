@@ -158,6 +158,7 @@ cd ~/main-gypsum-erp && git pull origin main && npm run backup && npm ci && npx 
 | `npm run rapikan:hutang -- --data=/tmp/pinjaman.json` | catat pinjaman lama (JSON di luar repo) | sudah |
 | `npm run satukan:supplier -- --gabung="Supplier BG Klip Label" --ke="Afdhol Grafika"` | gabung supplier dobel | sudah |
 | `npm run sinkron:sisihan` (`--pilih=TRX:k`, `--lewati=TRX`) | sinkron transfer lama ↔ dana sisihan | sudah |
+| `npm run tautkan:transaksi` | tautkan uang rekening lama dari menu lain (pembelian, gaji, kasbon, borongan, sisihan, penjualan, pinjaman, piutang, aset) ke menu Transaksi sebagai baris tertaut; tanpa jurnal baru, saldo tidak berubah, aman diulang | dijalankan user setelah PR #60 |
 | `npm run backup` / `restore` / `backup:buka` | backup & pulihkan | rutin |
 
 Skrip dari PR #38 (sudah merge): `audit:saldo`, `scripts/koreksi-saldo-nov.ts`, `scripts/koreksi-transaksi-nov.ts`, `scripts/catat-bunga.ts`.
