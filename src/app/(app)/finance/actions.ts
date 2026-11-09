@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int } from "@/lib/action";
-import { attachTransactionProof, linkBookedTransfer, setReserveLink, changeBookedStore, reclassifyBooked, cancelBookedTransaction, deleteClosedTransactions, approveAndBook, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
+import { attachTransactionProof, linkBookedTransfer, setReserveLink, changeBookedStore, reclassifyBooked, cancelBookedTransaction, deleteClosedTransactions, restoreClosedTransactions, approveAndBook, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
 import { saveProof } from "@/lib/storage";
 import { reserveOptions } from "@/lib/reserveSync";
 import { todayStr } from "@/lib/time";
@@ -126,6 +126,17 @@ export const deleteTx = action("finance.approve", async (fd, user) => {
   const n = await deleteClosedTransactions(ids, { id: user.id, name: user.name });
   if (str(fd, "back")) redirect("/finance");
   return `${n} transaksi dihapus dari daftar`;
+}, ["/finance", "/"]);
+
+/** Tampilkan lagi transaksi yang disembunyikan (satu, atau semua yang disembunyikan pada status tertentu) */
+export const restoreTx = action("finance.approve", async (fd, user) => {
+  const status = str(fd, "status");
+  const ids = status
+    ? (await prisma.financeTransaction.findMany({ where: { status: z.enum(["DIBATALKAN", "DITOLAK"]).parse(status), deletedAt: { not: null } }, select: { id: true } })).map((r) => r.id)
+    : fd.getAll("id").map(String).filter(Boolean);
+  if (!ids.length) return "Tidak ada transaksi yang disembunyikan";
+  const n = await restoreClosedTransactions(ids, { id: user.id, name: user.name });
+  return `${n} transaksi ditampilkan lagi di daftar`;
 }, ["/finance", "/"]);
 
 /** Hapus semua transaksi berstatus tertentu (Dibatalkan/Ditolak) sekaligus */

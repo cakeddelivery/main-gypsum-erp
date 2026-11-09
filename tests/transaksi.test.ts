@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
-import { approveAndBook, bankBalances, cancelBookedTransaction, changeBookedStore, createTransaction, deleteClosedTransactions, rejectTransaction } from "@/lib/finance";
+import { approveAndBook, bankBalances, cancelBookedTransaction, changeBookedStore, createTransaction, deleteClosedTransactions, rejectTransaction, restoreClosedTransactions } from "@/lib/finance";
 import { cashMovements, profitLoss } from "@/lib/accounting";
 import { extractTime, extractTransaction, mergeReceipt } from "@/lib/extract";
 import { receiptFromOcrText } from "@/lib/ocrReceiptText";
@@ -85,6 +85,14 @@ describe("Hapus transaksi dibatalkan/ditolak", () => {
     const rows = await prisma.financeTransaction.findMany({ where: { id: { in: [booked.id, rejected.id] } } });
     expect(rows.every((r) => r.deletedAt && r.deletedBy === actor.name)).toBe(true);
     await expect(deleteClosedTransactions([booked.id], actor)).rejects.toThrow(/sudah dihapus/);
+    // Tampilkan lagi: kembali ke daftar, saldo tetap, tercatat di riwayat
+    expect(await restoreClosedTransactions([rejected.id], actor)).toBe(1);
+    const back = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: rejected.id }, include: { approvals: true } });
+    expect(back.deletedAt).toBeNull();
+    expect(back.status).toBe("DITOLAK");
+    expect(back.approvals.some((x) => x.action === "DITAMPILKAN_LAGI")).toBe(true);
+    expect((await bankBalances()).find((b) => b.id === bank.id)!.balance).toBe(before);
+    await expect(restoreClosedTransactions([rejected.id], actor)).rejects.toThrow(/sudah tampil/);
   });
 });
 

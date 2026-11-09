@@ -641,6 +641,21 @@ export async function deleteClosedTransactions(ids: string[], actor: Actor & { i
   });
 }
 
+/** Tampilkan lagi transaksi Dibatalkan/Ditolak yang pernah disembunyikan dari daftar Transaksi */
+export async function restoreClosedTransactions(ids: string[], actor: Actor & { id: string }) {
+  if (!ids.length) throw new FinanceError("Tidak ada transaksi yang dipilih");
+  return prisma.$transaction(async (tx) => {
+    const rows = await tx.financeTransaction.findMany({ where: { id: { in: ids }, deletedAt: { not: null } } });
+    if (!rows.length) throw new FinanceError("Transaksi sudah tampil di daftar");
+    await tx.financeTransaction.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: { deletedAt: null, deletedBy: null } });
+    for (const r of rows) {
+      await tx.approvalLog.create({ data: { transactionId: r.id, action: "DITAMPILKAN_LAGI", fromStatus: r.status, toStatus: r.status, actorUserId: actor.id, actorName: actor.name, note: "Ditampilkan lagi di daftar Transaksi" } });
+    }
+    await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_DITAMPILKAN_LAGI", "FinanceTransaction", rows.length === 1 ? rows[0].id : null, { numbers: rows.map((r) => r.number) }, tx);
+    return rows.length;
+  });
+}
+
 /** Saldo rekening = saldo akun COA terkait */
 /** Saldo buku tiap rekening sampai akhir tanggal `upTo` (WIB) */
 export async function bankBalancesAt(upTo: string) {

@@ -9,7 +9,7 @@ import { Badge, Empty, FilterBar, Field, PageHeader, Tabs } from "@/components/u
 import { Modal } from "@/components/Modal";
 import type { Prisma, TxStatus } from "@prisma/client";
 import { TxForm } from "./TxForm";
-import { createTx, deleteAllClosedTx, extractAction } from "./actions";
+import { createTx, deleteAllClosedTx, extractAction, restoreTx } from "./actions";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Paged } from "@/components/Paged";
 import { DownloadCsv } from "@/components/DownloadCsv";
@@ -24,8 +24,10 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
   const sp = await searchParams;
   const status = STATUSES.includes(sp.status as TxStatus) ? (sp.status as TxStatus) : undefined;
   const sellerIds = sp.direction === "WD" ? (await prisma.bankAccount.findMany({ where: { marketplace: true }, select: { id: true } })).map((b) => b.id) : [];
+  // ?sembunyi=1 → hanya transaksi Dibatalkan/Ditolak yang pernah disembunyikan dari daftar
+  const hidden = sp.sembunyi === "1";
   const where: Prisma.FinanceTransactionWhereInput = {
-    deletedAt: null,
+    deletedAt: hidden ? { not: null } : null,
     ...(sp.source ? { source: sp.source as never } : {}),
     ...(sp.direction === "WD" ? { direction: "TRANSFER" as const, accountId: { in: sellerIds } } : sp.direction ? { direction: sp.direction as never } : {}),
 
@@ -37,13 +39,14 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
       ...(sp.q ? [{ OR: [{ number: { contains: sp.q, mode: "insensitive" as const } }, { note: { contains: sp.q, mode: "insensitive" as const } }, { counterparty: { contains: sp.q, mode: "insensitive" as const } }] }] : []),
     ],
   };
-  const [rows, counts, banks, cats, stores, def] = await Promise.all([
+  const [rows, counts, banks, cats, stores, def, hiddenCount] = await Promise.all([
     prisma.financeTransaction.findMany({ where: { ...where, ...(status ? { status } : {}) }, orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: 200, include: { payable: { select: { number: true, kind: true, vendor: true } } } }),
     prisma.financeTransaction.groupBy({ by: ["status"], where, _count: true }),
     prisma.bankAccount.findMany(),
     prisma.txCategory.findMany(),
     prisma.store.findMany({ orderBy: { code: "asc" } }),
     prisma.setting.findUnique({ where: { key: "default_store_id" } }),
+    status === "DIBATALKAN" || status === "DITOLAK" ? prisma.financeTransaction.count({ where: { status, deletedAt: { not: null } } }) : 0,
   ]);
   const name = (list: { id: string; name: string }[], id: string | null) => list.find((x) => x.id === id)?.name ?? "—";
   // Withdraw saldo penjual marketplace = pemasukan penjualan toko (MG / DL)
@@ -51,7 +54,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
   type PayRef = { payable: { number: string; kind: string; vendor: string } | null; categoryId: string | null };
   const catLabel = (t: PayRef) => (t.payable ? `${t.payable.kind === "PINJAMAN" ? "Cicilan pinjaman" : "Bayar hutang"} · ${t.payable.vendor}` : name(cats, t.categoryId));
   const wdLabel = (t: { storeId: string | null }) => `Pemasukan penjualan · ${stores.find((x) => x.id === t.storeId)?.code ?? "toko?"}`;
-  const qs = (s?: string) => { const u = new URLSearchParams(Object.entries({ ...sp, baru: undefined, status: s }).filter(([, v]) => v) as [string, string][]); return `/finance?${u}`; };
+  const qs = (s?: string) => { const u = new URLSearchParams(Object.entries({ ...sp, baru: undefined, sembunyi: undefined, status: s }).filter(([, v]) => v) as [string, string][]); return `/finance?${u}`; };
   return (
     <div>
       <PageHeader title="Transaksi" subtitle="Pemasukan, pengeluaran & transfer dari input manual, Telegram, dan AI · IDR · WIB" actions={<><DownloadCsv filename={`transaksi-${todayStr()}`} rows={[["Nomor", "Tanggal", "Arah", "Jumlah (Rp)", "Rekening", "Ke rekening", "Kategori", "Toko", "Pihak", "Catatan", "Status"], ...rows.map((t) => [t.number, fmtDateTime(t.date), t.direction, Number(t.amount), name(banks, t.accountId), t.toAccountId ? name(banks, t.toAccountId) : "", catLabel(t), t.storeId ? name(stores, t.storeId) : "", t.counterparty ?? "", t.note ?? "", STATUS_LABEL[t.status]])]} />{user.can("finance.approve") && <Link href="/finance/sisihan" className="btn-secondary">Dana sisihan</Link>}{user.can("finance.approve") && <Link href="/finance/talangan" className="btn-secondary">Dana talangan</Link>}{(user.can("finance.approve") || user.can("accounting.view")) && <Link href="/finance/mutasi" className="btn-secondary">Mutasi rekening</Link>}{user.can("accounting.post") && <Link href="/akuntansi/saldo-rekening" className="btn-secondary">Atur saldo rekening</Link>}{user.can("finance.create") && (
@@ -61,7 +64,21 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
         </Modal>
       )}</>} />
       <Tabs current={status ?? "ALL"} tabs={[{ key: "ALL", label: "Semua", href: qs(undefined), count: counts.reduce((s, c) => s + c._count, 0) }, ...STATUSES.map((s) => ({ key: s, label: STATUS_LABEL[s], href: qs(s), count: counts.find((c) => c.status === s)?._count ?? 0 }))]} />
-      {(status === "DIBATALKAN" || status === "DITOLAK") && user.can("finance.approve") && (counts.find((c) => c.status === status)?._count ?? 0) > 0 && (
+      {(status === "DIBATALKAN" || status === "DITOLAK") && (hidden || hiddenCount > 0) && (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          <span>{hidden ? `Menampilkan ${hiddenCount} transaksi ${STATUS_LABEL[status].toLowerCase()} yang disembunyikan dari daftar.` : `${hiddenCount} transaksi ${STATUS_LABEL[status].toLowerCase()} disembunyikan dari daftar.`}</span>
+          <span className="flex flex-wrap gap-2">
+            {hidden && user.can("finance.approve") && hiddenCount > 0 && (
+              <ActionForm action={restoreTx} confirm={`Tampilkan lagi semua transaksi ${STATUS_LABEL[status].toLowerCase()} yang disembunyikan?`}>
+                <input type="hidden" name="status" value={status} />
+                <Submit className="btn-secondary btn-sm" pendingText="Memproses…">Tampilkan lagi semua di daftar</Submit>
+              </ActionForm>
+            )}
+            <Link href={hidden ? qs(status) : `${qs(status)}&sembunyi=1`} className="btn-secondary btn-sm">{hidden ? "← Kembali ke daftar" : "Tampilkan yang disembunyikan"}</Link>
+          </span>
+        </div>
+      )}
+      {!hidden && (status === "DIBATALKAN" || status === "DITOLAK") && user.can("finance.approve") && (counts.find((c) => c.status === status)?._count ?? 0) > 0 && (
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600">
           <span>Transaksi {STATUS_LABEL[status].toLowerCase()} tidak memengaruhi saldo. Hapus dari daftar agar tidak mengganggu; riwayat & jurnalnya tetap tersimpan untuk audit.</span>
           <ActionForm action={deleteAllClosedTx} confirm={`Hapus semua transaksi ${STATUS_LABEL[status].toLowerCase()} dari daftar?`}>
@@ -72,6 +89,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
       )}
       <FilterBar>
         {status && <input type="hidden" name="status" value={status} />}
+        {hidden && <input type="hidden" name="sembunyi" value="1" />}
         <Field label="Cari"><input name="q" defaultValue={sp.q} className="input" placeholder="No. / catatan / pihak" /></Field>
         <Field label="Sumber"><select name="source" defaultValue={sp.source ?? ""} className="input"><option value="">Semua</option>{Object.entries(SOURCE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
         <Field label="Jenis"><select name="direction" defaultValue={sp.direction ?? ""} className="input"><option value="">Semua</option><option value="MASUK">Masuk</option><option value="KELUAR">Keluar</option><option value="TRANSFER">Transfer</option><option value="WD">Withdraw (pemasukan)</option></select></Field>
@@ -90,7 +108,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
                     <div><div className="text-xs text-slate-400">{t.number} · {SOURCE[t.source]}</div><div className="text-sm font-medium">{t.note || catLabel(t)}</div>{isWd(t) && <div className="text-xs text-emerald-700">Withdraw · {wdLabel(t)}</div>}</div>
                     <div className={`text-right font-semibold tabular-nums ${t.direction === "MASUK" || isWd(t) ? "text-emerald-600" : t.direction === "KELUAR" ? "text-rose-600" : "text-slate-700"}`}>{t.direction === "KELUAR" ? "−" : t.direction === "MASUK" || isWd(t) ? "+" : "⇄"}{idr(t.amount)}</div>
                   </div>
-                  <div className="mt-1 flex items-center justify-between text-xs text-slate-500"><span>{fmtDateTime(t.date)} · {name(banks, t.accountId)}</span><Badge tone={TONE[t.status]}>{STATUS_LABEL[t.status]}</Badge></div>
+                  <div className="mt-1 flex items-center justify-between text-xs text-slate-500"><span>{fmtDateTime(t.date)} · {name(banks, t.accountId)}</span><span className="flex gap-1">{t.deletedAt && <Badge tone="gray">Disembunyikan</Badge>}<Badge tone={TONE[t.status]}>{STATUS_LABEL[t.status]}</Badge></span></div>
                 </Link>
               </li>
             ))}
@@ -104,7 +122,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
                     <td><Link className="link font-mono text-xs" href={`/finance/${t.id}`}>{t.number}</Link>{t.duplicateOfId && <span title="Terindikasi duplikat" className="ml-1">⚠️</span>}{t.proofPath && <span title="Ada bukti" className="ml-1">📎</span>}</td>
                     <td>{fmtDateTime(t.date)}</td><td>{isWd(t) ? <span className="text-emerald-700">Withdraw</span> : t.direction === "MASUK" ? "Masuk" : t.direction === "KELUAR" ? "Keluar" : "Transfer"}</td>
                     <td className={`num font-medium ${t.direction === "MASUK" || isWd(t) ? "text-emerald-600" : t.direction === "KELUAR" ? "text-rose-600" : ""}`}>{isWd(t) ? "+" : ""}{idr(t.amount)}</td>
-                    <td><Badge tone={TONE[t.status]}>{STATUS_LABEL[t.status]}</Badge></td>
+                    <td><Badge tone={TONE[t.status]}>{STATUS_LABEL[t.status]}</Badge>{t.deletedAt && <> <Badge tone="gray">Disembunyikan</Badge></>}</td>
                     <td>{name(banks, t.accountId)}{t.direction === "TRANSFER" && ` → ${name(banks, t.toAccountId)}`}</td>
                     <td>{isWd(t) ? <span className={t.storeId ? "text-emerald-700" : "text-amber-700"}>{wdLabel(t)}</span> : t.direction === "TRANSFER" ? "—" : catLabel(t)}</td>
                     <td>{SOURCE[t.source]}</td>
