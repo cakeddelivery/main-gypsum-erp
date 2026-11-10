@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { LinkPending } from "./LinkPending";
+import { Suspense } from "react";
+import { FilterMemory } from "./FilterMemory";
 
 export function PageHeader({ title, subtitle, actions }: { title: string; subtitle?: React.ReactNode; actions?: React.ReactNode }) {
   return (
@@ -107,6 +109,9 @@ export function FilterBar({ children }: { children: React.ReactNode }) {
       <button className="btn-secondary col-span-2" type="submit">
         Terapkan
       </button>
+      <Suspense fallback={null}>
+        <FilterMemory />
+      </Suspense>
     </form>
   );
 }
