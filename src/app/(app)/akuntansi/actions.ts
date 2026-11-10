@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { autoCode } from "@/lib/codes";
 import { action, str, optStr, int } from "@/lib/action";
 import { audit } from "@/lib/audit";
-import { closePeriod, postJournal, reverseJournal, COA, type LineInput } from "@/lib/accounting";
+import { closePeriod, postJournal, COA, type LineInput } from "@/lib/accounting";
 import { nextNumber } from "@/lib/numbering";
 import { jakartaDateTime, todayStr } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
@@ -13,6 +13,7 @@ import { createLoanRecord } from "@/lib/payables";
 import { resolveSupplier } from "@/lib/suppliers";
 import { saveProof } from "@/lib/storage";
 import { paySale } from "@/lib/sales";
+import { reverseFromJournalMenu } from "@/lib/journalSource";
 
 /** Foto/PDF nota atau bukti transfer dari form (opsional) */
 async function proofOf(fd: FormData): Promise<{ path: string; mime: string } | null> {
@@ -44,7 +45,7 @@ export const manualJournal = action(
 export const reverse = action(
   "accounting.post",
   async (fd, user) => {
-    const j = await prisma.$transaction((tx) => reverseJournal(tx, str(fd, "id"), d(fd), user, str(fd, "reason") || "Koreksi"));
+    const j = await prisma.$transaction((tx) => reverseFromJournalMenu(tx, str(fd, "id"), d(fd), user, str(fd, "reason") || "Koreksi"));
     return `Jurnal pembalik ${j.number} dibuat`;
   },
   ["/akuntansi"],
