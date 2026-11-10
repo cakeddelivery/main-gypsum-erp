@@ -1,10 +1,19 @@
 "use client";
 import { toCsv, type Cell } from "@/lib/csv";
+import { isIosStandalone } from "./Pwa";
 
 /** Tombol "Unduh Excel": menyimpan data tabel sebagai CSV (terbuka langsung di Excel / Google Sheets). */
 export function DownloadCsv({ rows, filename, label = "Unduh Excel" }: { rows: Cell[][]; filename: string; label?: string }) {
-  const save = () => {
+  const save = async () => {
     const blob = new Blob([toCsv(rows)], { type: "text/csv;charset=utf-8" });
+    // Aplikasi terpasang di iPhone tidak punya tombol kembali setelah membuka file; pakai menu Bagikan
+    if (isIosStandalone()) {
+      const file = new File([blob], `${filename}.csv`, { type: "text/csv" });
+      if (typeof navigator.canShare === "function" && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: filename }).catch(() => {});
+        return;
+      }
+    }
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;

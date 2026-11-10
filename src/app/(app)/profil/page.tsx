@@ -8,6 +8,7 @@ import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { initials } from "@/lib/initials";
+import { InstallAppCard } from "@/components/Pwa";
 import { PasswordInput } from "@/components/PasswordInput";
 import { changeOwnPassword, saveOwnEmail } from "./actions";
 
@@ -73,6 +74,7 @@ export default async function ProfilPage() {
           <ThemeToggle withLabel />
           <p className="mt-3 text-xs text-slate-500">Untuk mengubah nama, role, atau divisi, hubungi Owner/Admin.</p>
         </Card>
+        <InstallAppCard />
       </div>
     </div>
   );
