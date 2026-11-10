@@ -7,6 +7,7 @@ import { esc, sendTelegram, type InlineButton } from "./telegram";
 import { idr } from "./money";
 import { addDays, fmtDate, fmtDateTime, todayStr } from "./time";
 import { isTiktokSeller } from "./wdProcess";
+import type { SellerWithdrawal } from "./wdProof";
 
 /**
  * Draft transaksi dari pesan/foto bot: membuat draft (setelah cek transaksi mirip) dan kartu draft bertombol.
@@ -41,6 +42,9 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
   // WD TikTok: dana baru masuk bank 1–3 hari kemudian → konfirmasi = Dalam Proses, tanggal terima ditanyakan saat "Uang diterima"
   const tiktok = t.direction === "TRANSFER" && isTiktokSeller(bank);
   const dateNeeded = dateUnconfirmed(t) && !tiktok;
+  // Screenshot "Detail penarikan dana" Seller Center: Pengajuan = tanggal transfer, Berhasil ditransfer = uang masuk bank
+  const sw = (t.aiExtraction as { seller?: SellerWithdrawal } | null)?.seller ?? null;
+  const swAt = (x: { date: string; time: string | null } | null) => (x ? `${fmtDate(x.date)}${x.time ? ` ${x.time}` : ""}` : "—");
   const dirOf = (d: string) => (d === "MASUK" ? "Pemasukan" : d === "KELUAR" ? "Pengeluaran" : "Transfer internal");
   const lines = [
     `<b>${esc(t.number)}</b> · ${STATUS_LABEL[t.status]}`,
@@ -63,7 +67,15 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
     t.note ? `Catatan: ${esc(t.note.slice(0, 200))}` : "",
     t.direction === "TRANSFER" && bank?.marketplace ? `💰 Withdraw saldo penjual: otomatis dicatat juga sebagai pemasukan penjualan ${idr(t.amount)}${tiktok ? " saat uangnya diterima" : ""}` : "",
     tiktok && t.status === "DALAM_PROSES" ? `⏳ <b>Dalam proses</b>: uang belum masuk ${to ? esc(to.name) : "rekening"}${t.sentAt ? ` (ditransfer ${fmtDateTime(t.sentAt)})` : ""}. Saldo belum berubah.` : "",
-    tiktok && ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"].includes(t.status) ? "⏳ Dana WD TikTok baru masuk bank 1–3 hari setelah ditransfer. Bila belum masuk, konfirmasi dulu (Dalam Proses), lalu tekan 💰 Uang diterima saat sudah masuk." : "",
+    ...(tiktok && sw
+      ? [
+          `📄 Detail penarikan Seller Center${sw.ref ? ` · No. Ref ${esc(sw.ref)}` : ""}`,
+          `Pengajuan: ${swAt(sw.submitted)}`,
+          sw.transferred ? `✅ Berhasil ditransfer: <b>${swAt(sw.transferred)}</b> (uang sudah masuk ${to ? esc(to.name) : "rekening"})` : "⏳ Belum \"Berhasil ditransfer\" (masih diproses)",
+          sw.last4 && to && !`${to.name} ${to.aliases} ${to.code}`.includes(sw.last4) ? `⚠️ Rekening di bukti ****${esc(sw.last4)} berbeda dengan tujuan ${esc(to.name)}. Periksa lagi.` : "",
+        ]
+      : []),
+    tiktok && !sw?.transferred && ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"].includes(t.status) ? "⏳ Dana WD TikTok baru masuk bank 1–3 hari setelah ditransfer. Bila belum masuk, konfirmasi dulu (Dalam Proses), lalu tekan 💰 Uang diterima saat sudah masuk (atau kirim screenshot \"Berhasil ditransfer\")." : "",
     dateNeeded ? "📅 <b>Bukti withdraw tidak mencantumkan tanggal.</b> Pastikan tanggal dana masuk ke rekening sebelum dibukukan." : "",
   ].filter(Boolean);
   if (dup) {
@@ -149,7 +161,9 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
   if (edit.length) buttons.push(...chunk(edit, 3));
   if (t.splits.length && splitSum !== Number(t.amount)) buttons.push([{ text: `Pakai total rincian (${idr(splitSum)})`, callback_data: `sa:${t.id}` }]);
   if (t.splits.length) buttons.push([{ text: "🔗 Gabung jadi 1 kategori", callback_data: `sx:${t.id}` }]);
-  if (missing.length === 0 && !t.duplicateOfId && tiktok) buttons.push([{ text: "⏳ Konfirmasi (uang belum masuk)", callback_data: `ok:${t.id}` }], [{ text: "💰 Uang sudah diterima", callback_data: `wr:${t.id}` }, { text: "❌ Tolak", callback_data: `no:${t.id}` }]);
+  if (missing.length === 0 && !t.duplicateOfId && tiktok && sw?.transferred) buttons.push([{ text: "✅ Simpan (uang sudah masuk, dibukukan)", callback_data: `ok:${t.id}` }], [{ text: "❌ Tolak", callback_data: `no:${t.id}` }]);
+  else if (missing.length === 0 && !t.duplicateOfId && tiktok && sw) buttons.push([{ text: "⏳ Simpan (dalam proses)", callback_data: `ok:${t.id}` }], [{ text: "❌ Tolak", callback_data: `no:${t.id}` }]);
+  else if (missing.length === 0 && !t.duplicateOfId && tiktok) buttons.push([{ text: "⏳ Konfirmasi (uang belum masuk)", callback_data: `ok:${t.id}` }], [{ text: "💰 Uang sudah diterima", callback_data: `wr:${t.id}` }, { text: "❌ Tolak", callback_data: `no:${t.id}` }]);
   else if (missing.length === 0 && !t.duplicateOfId && !dateNeeded) buttons.push([{ text: "✅ Konfirmasi & bukukan", callback_data: `ok:${t.id}` }, { text: "❌ Tolak", callback_data: `no:${t.id}` }]);
   else if (!t.duplicateOfId) buttons.push([{ text: "❌ Tolak", callback_data: `no:${t.id}` }]);
   return { text: lines.join("\n"), buttons };
@@ -200,6 +214,7 @@ export type DraftInput = {
   storeId?: string | null;
   askStore?: boolean;
   splits?: SplitInput[];
+  withdrawRef?: string | null;
 };
 
 export async function createDraft(chatId: string, ident: DraftIdent, d: DraftInput & { dupAckIds?: string[] }) {
@@ -224,6 +239,7 @@ export async function createDraft(chatId: string, ident: DraftIdent, d: DraftInp
       storeId: d.storeId ?? null,
       askStore: d.askStore,
       dupAckIds: d.dupAckIds ?? [],
+      withdrawRef: d.withdrawRef ?? null,
     },
     "TELEGRAM",
     { id: ident.userId, name: ident.user.name, telegramId: ident.telegramUserId },

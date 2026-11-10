@@ -28,6 +28,8 @@ export type SimilarQuery = {
    * TANGGAL LAIN (mis. OPS 8 Nov & OPS 9 Nov ditransfer bersamaan) bukan duplikat.
    */
   reserveParts?: { fundId: string; date: string }[];
+  /** Withdraw TikTok: No. Referensi Seller Center. Sama = duplikat pasti (tanggal/nominal apa pun) */
+  withdrawRef?: string | null;
 };
 
 export type SimilarHit = {
@@ -65,6 +67,11 @@ export function overlap(a: Set<string>, b: Set<string>) {
 }
 
 export async function findSimilar(db: Db, q: SimilarQuery, limit = 3): Promise<SimilarHit[]> {
+  // No. Referensi withdraw sama = duplikat pasti
+  const byRef = q.withdrawRef
+    ? await db.financeTransaction.findMany({ where: { withdrawRef: q.withdrawRef, status: { notIn: ["DITOLAK", "DIBATALKAN"] }, deletedAt: null, id: q.excludeIds?.length ? { notIn: q.excludeIds } : undefined }, take: 3 })
+    : [];
+  if (byRef.length) return byRef.map((r) => ({ id: r.id, number: r.number, date: r.date, amount: Number(r.amount), direction: r.direction, accountId: r.accountId, toAccountId: r.toAccountId, status: r.status, origin: r.origin, note: r.note, counterparty: r.counterparty, categoryId: r.categoryId, score: 100 })).slice(0, limit);
   if (!(q.amount > 0) || isNaN(q.date.getTime())) return [];
   const day = todayStr(q.date);
   const from = dayRange(addDays(day, -1)).start;

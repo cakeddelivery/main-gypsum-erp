@@ -2,7 +2,9 @@ import { prisma } from "./db";
 import { effectivePermissions } from "./rbac";
 import { DEFAULT_MANAGER_NAMES, detectManagerLoan, extractDate, extractTransaction, hasExplicitAmount, matchStore, mergeReceipt } from "./extract";
 import { readReceipt, type ReceiptRead } from "./receipt";
-import { ocrReceipt } from "./ocrReceipt";
+import { ocrImageText, ocrReceipt } from "./ocrReceipt";
+import { receiptFromOcrText } from "./ocrReceiptText";
+import { parseSellerWithdrawal } from "./wdProof";
 import { type SplitInput, splitIssues, createTransaction, FinanceError, rejectTransaction, STATUS_LABEL, submitForConfirmation, updateTransaction, missingFields } from "./finance";
 import { answerCallback, chatAction, downloadTelegramFile, editTelegram, esc, sendTelegram, withReplyTo, type InlineButton } from "./telegram";
 import { saveProof } from "./storage";
@@ -25,8 +27,8 @@ export { draftMessage } from "./botDraft";
 import { appUrl, guardDup } from "./botDup";
 import { approveCategoryProposal, canApproveCategory, proposeCategory, rejectCategoryProposal, suggestCategories, type CatSuggestion } from "./categorySuggest";
 import type { Session } from "./botKit";
-import { confirmTransaction, isTiktokWithdraw } from "./wdProcess";
-import { wdCallback, wdProofMessageHook } from "./botWd";
+import { confirmTransaction, isTiktokSeller, isTiktokWithdraw, tiktokDestination } from "./wdProcess";
+import { handleSellerScreenshot, wdCallback, wdProofMessageHook } from "./botWd";
 import { balanceCheckCallback, balanceCheckMessageHook } from "./balanceCheck";
 import { groupRelevant, isAllowedGroup, toggleGroupRecap, toggleGroupReminders, normalizeCommand, registerGroup, unregisterGroup } from "./botGroup";
 import { isGroupChat } from "./botKit";
@@ -199,6 +201,18 @@ async function handleMessage(u: TgUpdate) {
     photo = await downloadTelegramFile(largest.file_id);
     if (photo) proofPath = await saveProof(photo, "image/jpeg").catch(() => null);
   }
+  // Foto dibaca OCR dulu: screenshot "Detail penarikan dana" Seller Center TikTok langsung dikenali (nominal, No. Ref,
+  // Pengajuan & Berhasil ditransfer). Teks OCR juga dipakai lagi sebagai cadangan bila AI gagal (tidak dibaca dua kali).
+  let ocrText: string | null = null;
+  if (photo) {
+    await chatAction(chatId, "typing").catch(() => {});
+    ocrText = await withTimeout((async () => ocrImageText(photo!))(), 20_000, "OCR terlalu lama").catch((e) => {
+      console.error("ocrImageText:", e instanceof Error ? e.message : e);
+      return null;
+    });
+    const w = ocrText ? parseSellerWithdrawal(ocrText) : null;
+    if (w) return handleSellerScreenshot({ i: ident, chatId }, w, { caption: text, proofPath, messageId: String(msg.message_id), ocrText: ocrText! });
+  }
   const [banks, cats] = await Promise.all([prisma.bankAccount.findMany({ where: { active: true } }), prisma.txCategory.findMany({ where: { active: true } })]);
   let ex = extractTransaction(text || "foto bukti", banks, cats);
   // Foto bukti + caption keterangan: nominal, tanggal & rekening dibaca dari foto
@@ -216,7 +230,7 @@ async function handleMessage(u: TgUpdate) {
     });
     // AI tidak terpasang / kuota habis / tidak menemukan nominal → baca foto dengan OCR di server
     if (!receipt?.amount || !receipt.direction || !receipt.account) {
-      const ocr = await withTimeout(ocrReceipt(photo, banks), 20_000, "OCR terlalu lama").catch((e) => {
+      const ocr = await withTimeout(ocrText != null ? Promise.resolve(receiptFromOcrText(ocrText, banks)) : ocrReceipt(photo, banks), 20_000, "OCR terlalu lama").catch((e) => {
         console.error("ocrReceipt:", e instanceof Error ? e.message : e);
         return null;
       });
@@ -248,6 +262,8 @@ async function handleMessage(u: TgUpdate) {
   }
   // Withdraw saldo penjual: toko dibedakan dari inisial MG / DL (atau nama toko); bila tidak ada, ditanyakan
   const seller = ex.direction === "TRANSFER" ? banks.find((b) => b.id === ex.accountId && b.marketplace) : null;
+  // WD TikTok selalu masuk Seabank 5984: rekening tujuan tidak ditanyakan
+  if (seller && isTiktokSeller(seller) && (!ex.toAccountId || ex.toAccountId === seller.id)) ex.toAccountId = (await tiktokDestination()).bank?.id ?? ex.toAccountId;
   const stores = seller ? await prisma.store.findMany({ where: { active: true } }) : [];
   const storeId = seller ? matchStore([text, receipt?.counterparty].filter(Boolean).join(" "), stores) : null;
   // Kategori belum dikenali: saran 1–3 kategori (kata kunci → riwayat → AI bila ada) atau usulan kategori baru
