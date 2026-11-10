@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { action } from "@/lib/action";
 import { RECIPIENT_SETTING } from "@/lib/balanceCheck";
 
-/** Penerima cek saldo pagi (username, dipisah koma). Kosong = bawaan: Jojo, atau Owner bila Jojo belum tertaut Telegram */
+/** Penerima cek saldo pagi (username, dipisah koma). Kosong = bawaan: Jojo. Owner selalu ikut menerima */
 export const setRecipients = action("settings.manage", async (fd) => {
   const ids = fd.getAll("userId").map(String).filter(Boolean);
   const users = ids.length ? await prisma.user.findMany({ where: { id: { in: ids } }, select: { username: true } }) : [];

@@ -347,10 +347,19 @@ describe("Cek saldo pagi", () => {
     jojo = { id: u.id, name: u.name };
     await prisma.telegramIdentity.upsert({ where: { telegramUserId: String(JOJO_TG) }, create: { telegramUserId: String(JOJO_TG), userId: u.id, chatId: String(JOJO_TG), canSubmit: false }, update: { active: true, chatId: String(JOJO_TG) } });
     await prisma.setting.upsert({ where: { key: RECIPIENT_SETTING }, create: { key: RECIPIENT_SETTING, value: "jojo_uji_j" }, update: { value: "jojo_uji_j" } });
+    // Owner tertaut Telegram: harus selalu ikut menerima daftar saldo
+    const owner = await prisma.user.findUniqueOrThrow({ where: { username: "owner" } });
+    if (!(await prisma.telegramIdentity.findFirst({ where: { userId: owner.id, active: true, chatId: { not: null } } })))
+      await prisma.telegramIdentity.upsert({ where: { telegramUserId: "990077001" }, create: { telegramUserId: "990077001", userId: owner.id, chatId: "990077001", canSubmit: true }, update: { active: true, chatId: "990077001" } });
   });
 
   it("penerima dari setting; parse saldo yang diketik", async () => {
-    expect((await balanceCheckRecipients()).map((r) => r.userId)).toEqual([jojo.id]);
+    const rec = await balanceCheckRecipients();
+    // Pengecek dari setting + semua Owner yang tertaut Telegram; tiap chat sekali
+    expect(rec[0].userId).toBe(jojo.id);
+    const owners = await prisma.telegramIdentity.findMany({ where: { active: true, chatId: { not: null }, user: { active: true, role: "OWNER" } } });
+    for (const o of owners) expect(rec.some((r) => r.chatId === o.chatId)).toBe(true);
+    expect(new Set(rec.map((r) => r.chatId)).size).toBe(rec.length);
     expect(parseBalance("1.234.567")).toBe(1_234_567);
     expect(parseBalance("Rp 1,234,567")).toBe(1_234_567);
     expect(parseBalance("1.234.567,00")).toBe(1_234_567);
@@ -361,12 +370,15 @@ describe("Cek saldo pagi", () => {
   it("05.00: saldo per rekening bukan saldo penjual (kemarin 23.59 + saat ini), tombol Sesuai/Tidak/Semua; aman diulang", async () => {
     sent.length = 0;
     const r = await sendBalanceCheck(now);
-    expect(r.sent).toBe(1);
+    expect(r.sent).toBe((await balanceCheckRecipients()).length);
     const rows = await prisma.balanceCheck.findMany({ where: { date: new Date(`${date}T00:00:00Z`) }, include: { bankAccount: true } });
     expect(rows.some((x) => x.bankAccountId === bankJ)).toBe(true);
     expect(rows.some((x) => x.bankAccount.marketplace)).toBe(false);
     expect(rows.find((x) => x.bankAccountId === bankJ)!.bookBalance).toBe(BigInt(await bal(bankJ)));
     const m = sent.find((x) => x.chat === String(JOJO_TG))!;
+    const ownerChats = (await prisma.telegramIdentity.findMany({ where: { active: true, chatId: { not: null }, user: { active: true, role: "OWNER" } } })).map((o) => o.chatId);
+    expect(ownerChats.length).toBeGreaterThan(0);
+    for (const c of ownerChats) expect(sent.some((x) => x.chat === c && x.text.includes("Cek saldo pagi"))).toBe(true);
     expect(m.text).toContain("23.59");
     const data = m.buttons!.flat().map((x) => x.callback_data);
     expect(data).toContain(`cs:all:20310315`);
@@ -399,7 +411,7 @@ describe("Cek saldo pagi", () => {
     // Pengingat 12.00 (sebelum selesai): ada yang belum dijawab → dikirim sekali
     sent.length = 0;
     const r1 = await sendBalanceCheckReminder(jakartaDateTime("2031-03-16", "12:00"));
-    expect(r1.sent).toBe(1);
+    expect(r1.sent).toBe((await balanceCheckRecipients()).length);
     expect(sent[0].text).toContain("Pengingat cek saldo");
     expect((await sendBalanceCheckReminder(jakartaDateTime("2031-03-16", "12:05"))).skipped).toBe("sudah diingatkan");
 
