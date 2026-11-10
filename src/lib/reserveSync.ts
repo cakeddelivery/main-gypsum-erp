@@ -33,6 +33,48 @@ const ANY_WORDS = /\b(sisih|sisihan|disisihkan|nabung|menabung|tabungan|kompensa
 
 const idr = (n: number) => `Rp ${n.toLocaleString("id-ID")}`;
 
+/** Judul jenis dana sisihan di kartu bot */
+export const RESERVE_TITLE: Record<string, string> = { OWNER: "Sisihan Kompensasi Pengelola", LOAN_SAVING: "Sisihan Nabung Bayar Hutang" };
+
+/**
+ * Keterangan yang jelas menyebut transfer sisihan: "OPS 9 nov" / "kompensasi" = dana Kompensasi Pengelola,
+ * "nabung spinjam 9 nov" / "nabung bayar hutang" = tabungan cicilan. "spinjam" BUKAN kata kerja pinjam (bukan
+ * pinjaman pengelola). Kedua jenis sekaligus = tidak jelas (null).
+ */
+export function reserveIntent(text: string): "OWNER" | "LOAN_SAVING" | null {
+  const t = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+  const owner = /\s(ops|kompensasi|gaji owner|sisihan owner|sisihan pengelola)\s/.test(t);
+  const loan = /\s(nabung|menabung|spinjam|tabungan cicilan|nabung bayar hutang|nabung hutang)\s/.test(t);
+  if (owner === loan) return null;
+  return owner ? "OWNER" : "LOAN_SAVING";
+}
+
+/**
+ * Rincian sisihan untuk transfer berketerangan jelas (reserveIntent): dana sejenis yang aktif dengan SATU alur
+ * rekening (mis. Kompensasi Cak Ed + Jojo: Seabank 5984 → ShopeePay), tanggal sisihan = tanggal di keterangan.
+ * Kompensasi: nominal harus kelipatan jatah harian (1 hari = tanggal itu, n hari = n hari s/d tanggal itu).
+ * Tabungan cicilan: nominal bebas di tanggal itu. null bila dana/alur tidak jelas.
+ */
+export async function intentReserve(db: Db, kind: "OWNER" | "LOAN_SAVING", amount: number, day: string) {
+  const funds = await db.reserveFund.findMany({ where: { active: true, kind, toBankId: { not: null } }, orderBy: { name: "asc" } });
+  const routes = new Set(funds.map((f) => `${f.fromBankId}>${f.toBankId}`));
+  if (!funds.length || routes.size !== 1 || !(amount > 0)) return null;
+  let parts: ReservePart[];
+  let dates: string[];
+  if (kind === "LOAN_SAVING") {
+    if (funds.length !== 1) return null;
+    dates = [day];
+    parts = [{ fundId: funds[0].id, date: day, amount }];
+  } else {
+    const perDay = funds.reduce((t, f) => t + Number(f.dailyAmount), 0);
+    if (!(perDay > 0) || amount % perDay !== 0 || amount / perDay > 31) return null;
+    dates = Array.from({ length: amount / perDay }, (_, k) => addDays(day, -k)).sort();
+    parts = funds.flatMap((f) => dates.map((date) => ({ fundId: f.id, date, amount: Number(f.dailyAmount) })));
+  }
+  const label = `${RESERVE_TITLE[kind]} ${dates.length > 1 ? `${dates.length} hari s/d ` : ""}${Number(day.slice(8))} ${["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"][Number(day.slice(5, 7)) - 1]}`;
+  return { fromBankId: funds[0].fromBankId, toBankId: funds[0].toBankId!, option: { fundIds: funds.map((f) => f.id), dates, amount, label, routeMatch: true, parts } as ReserveOption };
+}
+
 /**
  * Kemungkinan dana sisihan untuk satu transfer: rekening asal/tujuan sama dengan alur dana, dan nominal =
  * kelipatan sisihan harian (satu dana, atau beberapa dana sejenis dengan alur sama mis. kompensasi Cak Ed + Jojo).

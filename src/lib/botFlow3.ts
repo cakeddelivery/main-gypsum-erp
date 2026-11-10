@@ -12,7 +12,7 @@ import { saveProof } from "./storage";
 import { BoronganError, boronganScope, BORONGAN_ROLE_LABEL, createHandover, HANDOVER_LABEL, payLines, receiveHandover, recordResult, settlePoint, type Scope } from "./borongan";
 import { StockError } from "./stock";
 import { idr, parseIDR } from "./money";
-import { addDays, dateOnly, fmtDate, jakartaDateTime, todayStr } from "./time";
+import { addDays, dateOnly, fmtDate, fmtDateTime, jakartaDateTime, todayStr } from "./time";
 import { esc, type InlineButton } from "./telegram";
 import { cancelRow, can, chunk, fmtQty, itemChoices, itemPrompt, MENU_TEXT, PAGE, pager, parseCount, parseQty, type Ctx, type Prompt, type Session } from "./botKit";
 import type { BotIdent } from "./botMenu";
@@ -1040,8 +1040,11 @@ const reserveFromProof: FlowDef = {
     const funds = await prisma.reserveFund.findMany({ where: { id: { in: o.fundIds } } });
     const done = await prisma.reserveEntry.findMany({ where: { fundId: { in: o.fundIds }, type: "SISIH", date: { in: o.dates.map((x) => dateOnly(x)) } } });
     const already = done.length === o.fundIds.length * o.dates.length;
+    const tx0 = d.tx ? (JSON.parse(String(d.tx)) as { amount: number; date: string; accountId: string | null; toAccountId?: string | null }) : null;
+    const bks = tx0 ? await prisma.bankAccount.findMany({ where: { id: { in: [tx0.accountId, tx0.toAccountId].filter((x): x is string => !!x) } } }) : [];
+    const bankName = (id: string | null | undefined) => bks.find((b) => b.id === id)?.name ?? "—";
     return {
-      text: `${head}\n\nDikenali sebagai sisihan <b>${esc(funds.map((f) => f.name).join(" + "))}</b>\nTanggal: ${fmtDates(o.dates)}\n${d.tx && o.parts?.length ? "Transfer dicatat di Transaksi dan langsung dibukukan; sisihannya tercatat dengan bukti transfer ini." + (done.length ? " Sisihan tanggal tsb yang sudah dicatat tanpa bukti memakai transfer ini (tidak dobel)." : "") : already ? "Sisihan tanggal tsb sudah tercatat, bukti transfer akan dilampirkan (tidak ada jurnal baru)." : done.length ? "Sebagian sudah tercatat: yang sudah hanya dilampiri bukti, sisanya dicatat sekarang." : "Sisihan akan dicatat dan bukti transfer dilampirkan."}\n\nBenar?`,
+      text: `${head}\n\n${o.label.startsWith("Sisihan ") ? `Dikenali sebagai <b>${esc(o.label)}</b>\nDana: ${esc(funds.map((f) => f.name).join(" + "))}` : `Dikenali sebagai sisihan <b>${esc(funds.map((f) => f.name).join(" + "))}</b>`}\nTanggal sisihan: ${fmtDates(o.dates)}${tx0 ? `\nTransfer: ${idr(tx0.amount)} · ${fmtDateTime(new Date(tx0.date))} · ${esc(bankName(tx0.accountId))} → ${esc(bankName(tx0.toAccountId))}` : ""}\n${d.tx && o.parts?.length ? "Transfer dicatat di Transaksi dan langsung dibukukan; sisihannya tercatat dengan bukti transfer ini." + (done.length ? " Sisihan tanggal tsb yang sudah dicatat tanpa bukti memakai transfer ini (tidak dobel)." : "") : already ? "Sisihan tanggal tsb sudah tercatat, bukti transfer akan dilampirkan (tidak ada jurnal baru)." : done.length ? "Sebagian sudah tercatat: yang sudah hanya dilampiri bukti, sisanya dicatat sekarang." : "Sisihan akan dicatat dan bukti transfer dilampirkan."}\n\nBenar?`,
       buttons: [[{ text: "✅ Benar, simpan", callback_data: "f:ok" }], ...(opts.length > 1 ? [[{ text: "🔁 Pilih dana lain", callback_data: "f:pick" }]] : []), ...plainRow, [{ text: "❌ Batal", callback_data: "f:x" }]],
     };
   },

@@ -18,6 +18,7 @@ import { salePaymentPhoto } from "./botSales";
 import { detectPayablePayment } from "./botPurchase";
 import { openPayables } from "./payables";
 import { matchReserveTransfer } from "./reserve";
+import { intentReserve, reserveIntent } from "./reserveSync";
 import { supplierKey, supplierNames } from "./suppliers";
 import { cbId, chunk, createDraft, dateUnconfirmed, draftMessage, resolveCategory, type DraftInput, type Pick } from "./botDraft";
 export { draftMessage } from "./botDraft";
@@ -194,7 +195,7 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   const stores = seller ? await prisma.store.findMany({ where: { active: true } }) : [];
   const storeId = seller ? matchStore([text, receipt?.counterparty].filter(Boolean).join(" "), stores) : null;
   // Kategori belum dikenali: saran 1–3 kategori (kata kunci → riwayat → AI bila ada) atau usulan kategori baru
-  const catSuggest = ex.direction !== "TRANSFER" && !ex.categoryId && !splits.length ? await suggestCategories(prisma, { direction: ex.direction, text: [text, receipt?.counterparty].filter(Boolean).join(" ") }, { ai: true }).catch(() => null) : null;
+  const catSuggest = ex.direction !== "TRANSFER" && !ex.categoryId && !splits.length && !reserveIntent(text) ? await suggestCategories(prisma, { direction: ex.direction, text: [text, receipt?.counterparty].filter(Boolean).join(" ") }, { ai: true }).catch(() => null) : null;
   const draft: DraftInput = {
     direction: ex.direction,
     amount: ex.amount,
@@ -215,6 +216,20 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   };
   const ctx = { i: ident, chatId };
   const basis = [text, receipt?.counterparty].filter(Boolean).join(" ");
+  // Keterangan jelas transfer sisihan ("OPS 9 nov" = Kompensasi Pengelola, "nabung spinjam 9 nov" = tabungan cicilan):
+  // rekening asal/tujuan = alur dana sisihannya (bukan bacaan foto yang bisa tertukar dengan nama penerima),
+  // tanggal sisihan = tanggal di keterangan, waktu transfer = waktu di bukti
+  const intent = !loan && !splits.length && text && ident.perms.has("finance.approve") ? reserveIntent(text) : null;
+  if (intent && ex.amount) {
+    const day = extractDate(text) ?? ex.date ?? todayStr();
+    const r = await intentReserve(prisma, intent, ex.amount, day);
+    if (r) {
+      const when = receipt?.date ? jakartaDateTime(receipt.date, receipt.time ?? txTime(receipt.date, null)) : new Date(draft.date);
+      const tx: DraftInput = { ...draft, direction: "TRANSFER", accountId: r.fromBankId, toAccountId: r.toBankId, categoryId: null, splits: undefined, askStore: false, storeId: null, date: when.toISOString(), aiExtraction: { ...(draft.aiExtraction as object), reserveIntent: intent, reserveDay: day } };
+      const session = await prefilledReserve(ctx, { options: [r.option], sure: true, proofPath, tx });
+      if (session) return startPrefilledFlow(ctx, session);
+    }
+  }
   // Transfer ke rekening simpanan sebesar talangan yang belum dikembalikan (atau berketerangan "talangan") = pengembalian talangan
   if (!loan && !splits.length && ex.direction === "TRANSFER" && ex.toAccountId && ident.perms.has("finance.approve")) {
     const w = (await talanganSummary()).find((x) => x.bank.id === ex.toAccountId && x.outstanding > 0);
