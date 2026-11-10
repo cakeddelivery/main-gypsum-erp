@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { autoCode } from "@/lib/codes";
 import { action, str, optStr, int } from "@/lib/action";
 import { audit } from "@/lib/audit";
-import { closePeriod, postJournal, COA, type LineInput } from "@/lib/accounting";
+import { AccountingError, closePeriod, postJournal, COA, type LineInput } from "@/lib/accounting";
 import { nextNumber } from "@/lib/numbering";
 import { jakartaDateTime, todayStr } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
@@ -57,6 +57,13 @@ export const saveCoa = action(
     const id = optStr(fd, "id");
     const data = { name: z.string().min(3).parse(str(fd, "name")), type: str(fd, "type") as AccountType, isCash: fd.get("isCash") === "on", active: id ? fd.get("active") === "on" : true };
     // Kode akun otomatis: digit tipe + kelompok berikutnya (6-2000); kode lama tidak diubah karena dipakai jurnal sistem
+    if (id) {
+      // Tipe & akun kas menentukan saldo normal, letak di laporan, dan arus kas seluruh riwayat: dikunci bila sudah dipakai jurnal
+      const cur = await prisma.coaAccount.findUniqueOrThrow({ where: { id }, include: { _count: { select: { lines: true } } } });
+      if (cur._count.lines > 0 && (cur.type !== data.type || cur.isCash !== data.isCash)) {
+        throw new AccountingError(`Akun ${cur.code} sudah dipakai ${cur._count.lines} baris jurnal: tipe dan centang akun kas/bank tidak bisa diubah. Buat akun baru lalu pindahkan saldonya dengan jurnal manual.`);
+      }
+    }
     const a = id ? await prisma.coaAccount.update({ where: { id }, data }) : await prisma.coaAccount.create({ data: { ...data, code: await autoCode.coa(prisma, data.type) } });
     await audit(user, id ? "AKUN_COA_DIUBAH" : "AKUN_COA_DIBUAT", "CoaAccount", a.id, data);
     return "Akun tersimpan";
