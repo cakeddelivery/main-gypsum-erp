@@ -150,7 +150,8 @@ export async function removeChecklistPhoto(fd: FormData): Promise<{ ok: boolean;
 
 /**
  * Stock opname dari laporan: stok sistem tiap bahan disesuaikan ke hasil hitung fisik
- * (selisih dicatat sebagai mutasi PENYESUAIAN di lokasi bahan baku).
+ * (selisih dicatat sebagai mutasi PENYESUAIAN di lokasi bahan baku). Stok berkurang = pemakaian bahan → akun HPP
+ * "Pemakaian Bahan Baku"; revisi hitungan ikut akun itu. Stok bertambah di hitungan pertama tetap selisih persediaan.
  * Laporan yang direvisi & dikirim ulang hanya menerapkan selisih hitungan baru vs hitungan yang dulu diterapkan,
  * agar mutasi stok setelah laporan pertama (mis. pembelian) tidak tertimpa hitungan lama.
  */
@@ -168,7 +169,7 @@ async function applyStockCount(report: { id: string; stockApplied: boolean; stoc
       const before = applied.get(row.itemId);
       const diff = Math.round((before != null ? row.qty - before : row.qty - (await itemQty(tx, row.itemId))) * 1000) / 1000;
       if (diff === 0) continue;
-      await recordMovement(tx, { type: "PENYESUAIAN", itemId: row.itemId, qty: Math.abs(diff), fromLocationId: raw, increase: diff > 0, allowNegative: true, ref: `LAP:${report.id}`, note: before != null ? "Revisi stock opname laporan shift" : "Stock opname laporan shift", date }, user);
+      await recordMovement(tx, { type: "PENYESUAIAN", itemId: row.itemId, qty: Math.abs(diff), fromLocationId: raw, increase: diff > 0, usage: diff < 0 || before != null, allowNegative: true, ref: `LAP:${report.id}`, note: before != null ? "Revisi stock opname laporan shift" : "Stock opname laporan shift", date }, user);
       n++;
     }
     const snapshot = [...(prev ?? []).filter((p) => !rows.some((r) => r.itemId === p.itemId && r.qty != null)), ...rows.filter((r) => r.qty != null)];
