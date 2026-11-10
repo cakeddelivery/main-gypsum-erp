@@ -77,8 +77,13 @@ export function resolveReceivedAt(amount: number, proof: WdProof | null | undefi
   if (!check.ok && !manual) throw new FinanceError(`Bukti belum valid: ${check.issues.join("; ")}. Kirim screenshot yang menampilkan nominal, tanggal & jam${opts.canApprove ? ", atau tandai sudah dicek manual" : ""}.`);
   if (manual && !opts.canApprove) throw new FinanceError("Bukti tidak terbaca otomatis: hanya Owner/Finance yang dapat menyimpan dengan cek manual");
   const hm = opts.receivedAt && !isNaN(opts.receivedAt.getTime()) ? opts.receivedAt.toLocaleTimeString("en-GB", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", hour12: false }) : nowTimeStr();
-  const at = proof.read?.date ? jakartaDateTime(proof.read.date, proof.read.time ?? hm) : opts.receivedAt ?? null;
+  // Bukti Seller Center: tanggalnya = ditransfer; uang masuk bank 1–3 hari kemudian → waktu terima boleh diubah
+  // (tidak sebelum tanggal transfer). Bukti mutasi bank: tanggal & jam di bukti = waktu terima.
+  const seller = check.ok && proof.read?.source === "seller";
+  const fromProof = proof.read?.date ? jakartaDateTime(proof.read.date, proof.read.time ?? hm) : null;
+  const at = seller && opts.receivedAt && !isNaN(opts.receivedAt.getTime()) ? opts.receivedAt : (fromProof ?? opts.receivedAt ?? null);
   if (!at || isNaN(at.getTime())) throw new FinanceError("Tanggal/jam terima tidak valid");
+  if (seller && fromProof && at.getTime() < fromProof.getTime()) throw new FinanceError(`Uang tidak mungkin diterima sebelum ditransfer (${fmtDateTime(fromProof)} di Seller Center)`);
   return { at, check, manual };
 }
 

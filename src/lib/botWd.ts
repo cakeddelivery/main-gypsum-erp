@@ -3,7 +3,7 @@ import { FinanceError, submitForConfirmation } from "./finance";
 import { answerCallback, chatAction, downloadTelegramFile, editTelegram, esc, sendTelegram, type InlineButton } from "./telegram";
 import { clearSession, getSession } from "./botFlow";
 import { saveProof } from "./storage";
-import { checkWdProof, type WdProofRead } from "./wdProof";
+import { checkWdProof, SELLER_NOTE, type WdProofRead } from "./wdProof";
 import { readWdProofFile } from "./wdProofServer";
 import { addDays, fmtDate, fmtDateTime, jakartaDateTime, nowTimeStr, todayStr } from "./time";
 import { idr } from "./money";
@@ -90,12 +90,15 @@ export async function wdCallback(ident: WdIdent, cbId: string, chatId: string, m
   }
   if (action !== "wd" || !(a === "ok" || /^\d{8}$/.test(a ?? ""))) return answerCallback(cbId, "Tanggal tidak valid");
   if (!sess) return answerCallback(cbId, "Kirim screenshot bukti uang masuk dulu");
-  const manual = a !== "ok";
+  const proofRead = sess.data.read ? (JSON.parse(String(sess.data.read)) as WdProofRead) : null;
+  // Bukti Seller Center valid: tanggal terima boleh dipilih (uang masuk bank 1–3 hari setelah ditransfer)
+  const sellerOk = proofRead?.source === "seller" && checkWdProof(proofRead, Number(t.amount)).ok;
+  const manual = a !== "ok" && !sellerOk;
   if (manual && !isApprover(ident)) return answerCallback(cbId, "Bukti tidak terbaca: hanya Owner/Finance yang dapat menyimpan dengan cek manual");
-  const date = manual ? `${a.slice(0, 4)}-${a.slice(4, 6)}-${a.slice(6, 8)}` : null;
-  const receivedAt = date ? jakartaDateTime(date, date === todayStr() ? nowTimeStr() : "12:00") : null;
+  const date = a !== "ok" ? `${a.slice(0, 4)}-${a.slice(4, 6)}-${a.slice(6, 8)}` : null;
+  const receivedAt = date ? jakartaDateTime(date, date === todayStr() ? nowTimeStr() : sellerOk && date === proofRead?.date && proofRead.time ? proofRead.time : "12:00") : null;
   const actor = { id: ident.userId, name: ident.user.name, telegramId: ident.telegramUserId };
-  const proof = { path: String(sess.data.path), mime: String(sess.data.mime ?? "image/jpeg"), read: sess.data.read ? (JSON.parse(String(sess.data.read)) as WdProofRead) : null };
+  const proof = { path: String(sess.data.path), mime: String(sess.data.mime ?? "image/jpeg"), read: proofRead };
   try {
     if (pending) {
       // Dari kartu draft: "Uang sudah diterima" = konfirmasi + langsung dibukukan
@@ -156,7 +159,12 @@ export async function wdProofMessageHook(ident: WdIdent, chatId: string, msg: Tg
   const read = await readWdProofFile(buf, mime, Number(t.amount));
   const c = checkWdProof(read, Number(t.amount));
   await prisma.botSession.update({ where: { chatId }, data: { step: "confirm", data: { ...s.data, path, mime, read: JSON.stringify(read) } } });
-  if (c.ok) {
+  if (c.ok && read!.source === "seller") {
+    // Seller Center: tanggal = ditransfer; pilih tanggal uang masuk bank (tanggal transfer s/d hari ini)
+    const days = Array.from({ length: 8 }, (_, k) => addDays(todayStr(), -k)).filter((d) => d >= read!.date!);
+    const buttons: InlineButton[][] = [[{ text: `✅ Diterima ${fmtDate(read!.date)}${read!.time ? ` ${read!.time}` : ""} (sesuai bukti)`.slice(0, 60), callback_data: `wd:${t.id}:ok${sfx}` }], ...chunk(days.map((d) => ({ text: d === todayStr() ? "Hari ini" : d === addDays(todayStr(), -1) ? "Kemarin" : fmtDate(d), callback_data: `wd:${t.id}:${d.replace(/-/g, "")}${sfx}` })), 3)];
+    await sendTelegram(chatId, `✅ <b>Bukti valid</b> (Seller Center) · ${esc(t.number)}\nNominal ${idr(t.amount)} cocok · ditransfer ${fmtDate(read!.date)}${read!.time ? ` jam ${read!.time}` : ""}\n\nℹ️ ${SELLER_NOTE}\n\nKapan uangnya masuk bank?`, { type: "WD_BUKTI", buttons });
+  } else if (c.ok) {
     await sendTelegram(chatId, `✅ <b>Bukti valid</b> · ${esc(t.number)}\nNominal ${idr(t.amount)} cocok · tanggal ${fmtDate(read!.date)}${read!.time ? ` jam ${read!.time}` : ""}\n\nSimpan sebagai uang diterima?`, { type: "WD_BUKTI", buttons: [[{ text: `✅ Simpan: diterima ${fmtDate(read!.date)}${read!.time ? ` ${read!.time}` : ""}`.slice(0, 60), callback_data: `wd:${t.id}:ok${sfx}` }]] });
   } else {
     const approver = isApprover(ident);

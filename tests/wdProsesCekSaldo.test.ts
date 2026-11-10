@@ -28,6 +28,7 @@ import { activeDuplicateJournals } from "@/lib/auditChecks";
 import { addDays, jakartaDateTime, todayStr } from "@/lib/time";
 import { confirmTransaction, inProcessSummary, inProcessWithdrawals, isTiktokSeller, receiveWithdraw } from "@/lib/wdProcess";
 import { sendWdProcessReminder } from "@/lib/jobs";
+import { readWdProofText } from "@/lib/wdProof";
 import { balanceCheckRecipients, checkMessage, parseBalance, prepareChecks, RECIPIENT_SETTING, sendBalanceCheck, sendBalanceCheckReminder } from "@/lib/balanceCheck";
 
 // Data tes terisolasi: rekening sendiri (bukan 0006/5984), nominal unik
@@ -266,6 +267,36 @@ describe("WD TikTok Dalam Proses", () => {
     expect(done.status).toBe("DIBUKUKAN");
     expect(done.receivedProofRead).toMatchObject({ manual: true });
     expect((await prisma.approvalLog.findFirstOrThrow({ where: { transactionId: t.id, action: "UANG_DITERIMA" } })).note).toContain("dicek manual");
+  });
+
+  it("bukti Seller Center: catatan 1–3 hari, tanggal terima dipilih (tidak sebelum ditransfer)", async () => {
+    const amt = uniq(611_000);
+    const t = await newWd(amt);
+    await confirmTransaction(t.id, owner);
+    const kemarin = addDays(todayStr(), -1);
+    const seller = { path: "uji/s.jpg", mime: "image/jpeg", read: { ...readWdProofText(`Riwayat penarikan\nDitransfer ke bank\n${kemarin.split("-").reverse().join("/")} 20:15\nJumlah Rp ${amt.toLocaleString("id-ID")}`), } };
+    expect(seller.read.source).toBe("seller");
+    await expect(receiveWithdraw(t.id, owner, { canApprove: true, proof: seller, receivedAt: jakartaDateTime(kemarin, "10:00") })).rejects.toThrow(/sebelum ditransfer/);
+    const got = jakartaDateTime(todayStr(), "00:30");
+    const r = await receiveWithdraw(t.id, owner, { canApprove: true, proof: seller, receivedAt: got }, new Date(got.getTime() + 60_000));
+    expect(r.transaction.receivedAt?.getTime()).toBe(got.getTime());
+
+    // Bot: tombol tanggal mulai tanggal transfer, catatan 1–3 hari
+    const u = await newWd(amt + 3);
+    await confirmTransaction(u.id, owner);
+    await tap(`wr:${u.id}`);
+    ocr.text = `Seller Center\nDitransfer ke bank\n${kemarin.split("-").reverse().join("/")} 20:15\nRp${(amt + 3).toLocaleString("id-ID")}`;
+    await photo("img-seller");
+    expect(sent.at(-1)?.text).toContain("1–3 hari");
+    const datas = btns().map((x) => x.callback_data);
+    expect(datas).toContain(`wd:${u.id}:ok`);
+    expect(datas).toContain(`wd:${u.id}:${todayStr().replace(/-/g, "")}`);
+    expect(datas).not.toContain(`wd:${u.id}:${addDays(todayStr(), -2).replace(/-/g, "")}`);
+    await tap(`wd:${u.id}:${todayStr().replace(/-/g, "")}`);
+    const done = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: u.id } });
+    expect(done.status).toBe("DIBUKUKAN");
+    expect(done.receivedProofRead).toMatchObject({ source: "seller", manual: false });
+    expect(done.receivedAt?.toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" })).toBe(todayStr());
   });
 
   it("validasi bukti: wajib ada; nominal harus cocok; tanggal/jam dari bukti; bukan penyetuju tidak boleh cek manual", async () => {

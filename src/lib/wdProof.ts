@@ -6,7 +6,17 @@ import { amountFromOcrText, parseRupiah } from "./ocrAmount";
  * menunjukkan dana sudah ditransfer. Dari teksnya (OCR di browser/server, atau AI) dibaca nominal, tanggal & jam.
  * Modul ini tanpa database/Node agar bisa dipakai di browser (form web) maupun server (bot & validasi server).
  */
-export type WdProofRead = { amounts: number[]; amount: number | null; date: string | null; time: string | null };
+/** source: "seller" = Seller Center TikTok (tanggal = ditransfer, uang masuk bank 1–3 hari kemudian), "bank" = mutasi bank */
+export type WdProofRead = { amounts: number[]; amount: number | null; date: string | null; time: string | null; source?: "bank" | "seller" | null };
+
+export const SELLER_NOTE = "Bukti dari Seller Center TikTok: uang biasanya masuk bank 1–3 hari setelah tanggal ini. Pastikan tanggal & jam terima sesuai mutasi bank.";
+
+/** Jenis bukti dari teksnya */
+export function proofSource(text: string): "bank" | "seller" | null {
+  if (/ditransfer ke bank|seller ?cent(er|re)|riwayat penarikan|penarikan dana|tarik saldo|withdraw/i.test(text)) return "seller";
+  if (/uang masuk|dana masuk|transfer masuk|mutasi|kredit|seabank|diterima dari/i.test(text)) return "bank";
+  return null;
+}
 
 const RP = /\b[RrAHK]\s*[pP]\.?\s*:?\s*([0-9]{1,3}(?:[.,\s][0-9]{3})+(?:[.,][0-9]{2})?|[0-9]{4,})(?![0-9])/g;
 const THOUSANDS = /(?<![\d.,])([0-9]{1,3}(?:[.,][0-9]{3})+(?:[.,][0-9]{2})?)(?![\d.,])/g;
@@ -40,7 +50,7 @@ export function readWdProofText(text: string, now: Date = new Date()): WdProofRe
     }
   }
   if (date && !time) for (const l of lines.filter((l) => !/\b(no|ref|id)\b/i.test(l))) if ((time = extractTime(l))) break;
-  return { amounts: amountsInText(text), amount: amountFromOcrText(text), date, time };
+  return { amounts: amountsInText(text), amount: amountFromOcrText(text), date, time, source: proofSource(text) };
 }
 
 /** Gabungkan dua hasil baca (mis. OCR + AI): nominal digabung, tanggal/jam diambil yang ada */
@@ -50,6 +60,7 @@ export function mergeWdProof(a: WdProofRead | null, b: WdProofRead | null): WdPr
     amount: a?.amount ?? b?.amount ?? null,
     date: a?.date ?? b?.date ?? null,
     time: (a?.date ? a?.time : null) ?? b?.time ?? a?.time ?? null,
+    source: a?.source ?? b?.source ?? null,
   };
 }
 

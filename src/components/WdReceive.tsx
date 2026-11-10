@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ActionForm, Submit } from "./ActionForm";
 import { CLOSE_MS } from "./Modal";
 import { ocrInBrowser, shrinkImage } from "./ocrClient";
-import { checkWdProof, readWdProofText } from "@/lib/wdProof";
+import { checkWdProof, readWdProofText, SELLER_NOTE } from "@/lib/wdProof";
 import type { ActionResult } from "@/lib/action";
 
 type Bank = { id: string; name: string };
@@ -43,7 +43,7 @@ export function WdReceiveFields({ id, amount, toAccountId, banks, date, time, co
       const c = checkWdProof(r, amount);
       if (r.date) setD(r.date);
       if (r.time) setTm(r.time);
-      setCheck(c.ok ? { ok: true, text: `✓ Terbaca Rp${amount.toLocaleString("id-ID")} · ${r.date}${r.time ? ` ${r.time}` : ""}. Tanggal & jam diisi dari bukti.` } : { ok: false, text: `⚠️ ${c.issues.join("; ")}. Pastikan screenshot menampilkan nominal, tanggal & jam.` });
+      setCheck(c.ok ? { ok: true, text: `✓ Terbaca Rp${amount.toLocaleString("id-ID")} · ${r.date}${r.time ? ` ${r.time}` : ""}. ${r.source === "seller" ? `${SELLER_NOTE} Ubah tanggal/jam di bawah bila perlu.` : "Tanggal & jam diisi dari bukti."}` } : { ok: false, text: `⚠️ ${c.issues.join("; ")}. Pastikan screenshot menampilkan nominal, tanggal & jam.` });
     } finally {
       setReading(false);
     }
@@ -78,7 +78,7 @@ export function WdReceiveFields({ id, amount, toAccountId, banks, date, time, co
           </select>
         </label>
       </div>
-      <p className="text-xs text-slate-500">Tanggal & jam yang tertulis di bukti dipakai sebagai waktu uang diterima.</p>
+      <p className="text-xs text-slate-500">Bukti mutasi bank: tanggal & jam di bukti dipakai sebagai waktu terima. Bukti Seller Center: isi tanggal & jam uang masuk di bank (tidak sebelum tanggal transfer).</p>
       {canApprove && check && !check.ok && (
         <label className="flex items-start gap-2 text-xs text-slate-700">
           <input type="checkbox" name="manual" className="mt-0.5" />
