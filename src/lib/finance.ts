@@ -75,6 +75,8 @@ export type TxInput = {
   bailoutRepay?: boolean;
   /** Transaksi mirip yang sudah dinyatakan pengguna "berbeda, tetap simpan" */
   dupAckIds?: string[] | null;
+  /** Withdraw TikTok: No. Referensi Seller Center (sama = duplikat pasti) */
+  withdrawRef?: string | null;
 };
 
 export type SplitInput = { categoryId?: string | null; amount: number; note?: string | null; itemId?: string | null; qty?: number | null };
@@ -110,7 +112,7 @@ export function assertOwnTransaction(cur: { origin: string | null; number: strin
  * Transaksi lain yang mirip (lihat findSimilar): dipakai menandai duplikat (duplicateOfId → Perlu Ditinjau).
  * Transaksi yang sudah dinyatakan berbeda (dupAckIds) tidak ditandai lagi.
  */
-export async function findDuplicate(tx: Tx | typeof prisma, input: { direction: TxDirection; amount: number; date: Date; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; note?: string | null; counterparty?: string | null; rawText?: string | null; reserveLink?: unknown }, excludeId?: string, ack: string[] = []) {
+export async function findDuplicate(tx: Tx | typeof prisma, input: { direction: TxDirection; amount: number; date: Date; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; note?: string | null; counterparty?: string | null; rawText?: string | null; reserveLink?: unknown; withdrawRef?: string | null }, excludeId?: string, ack: string[] = []) {
   const link = "reserveLink" in input ? parseLink(input.reserveLink) : null;
   const reserveParts = link && "parts" in link ? link.parts : undefined;
   const hits = await findSimilar(tx, { ...input, reserveParts, text: [input.note, input.counterparty, input.rawText].filter(Boolean).join(" "), excludeIds: [...(excludeId ? [excludeId] : []), ...ack] }, 1);
@@ -184,6 +186,7 @@ export async function createTransaction(input: TxInput, source: TxSource, actor:
         proofPath: input.proofPath ?? null,
         proofMime: input.proofMime ?? null,
         aiExtraction: input.aiExtraction ?? undefined,
+        withdrawRef: input.withdrawRef ?? null,
         status,
         fingerprint: fingerprint(input.direction, input.amount, input.date, input.accountId),
         duplicateOfId: dup?.id ?? null,
