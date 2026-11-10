@@ -7,6 +7,7 @@ import { NotificationBell, ProfileMenu, type HeaderAlert } from "./HeaderMenus";
 import { ThemeToggle } from "./ThemeToggle";
 import { Toaster } from "./Toaster";
 import { ChoiceEnhancer } from "./ChoiceEnhancer";
+import { NavTracker } from "./FilterMemory";
 import { NavProgress } from "./NavProgress";
 import { LinkPending } from "./LinkPending";
 
@@ -117,6 +118,9 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
       </div>
       <Toaster />
       <ChoiceEnhancer />
+      <Suspense fallback={null}>
+        <NavTracker />
+      </Suspense>
       <nav
         aria-label="Menu utama"
         style={{ gridTemplateColumns: `repeat(${bottomNav.length + (showMenuSlot ? 1 : 0)}, minmax(0,1fr))` }}

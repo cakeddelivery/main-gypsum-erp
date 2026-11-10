@@ -130,6 +130,21 @@ export async function sendBudgetNotice(now: Date = new Date()) {
   return { sent, failed: recipients.length - sent };
 }
 
+/** Pengingat withdraw TikTok Dalam Proses ke Owner & Finance — HANYA bila ada; tombol "Uang diterima" per WD */
+export async function sendWdProcessReminder(now: Date = new Date()) {
+  const { reminderMessage } = await import("./botWd");
+  const m = await reminderMessage();
+  if (!m.text) return { sent: 0, skipped: "tidak ada withdraw dalam proses" };
+  const recipients = await prisma.telegramIdentity.findMany({ where: { active: true, chatId: { not: null }, user: { active: true, role: { in: ["OWNER", "FINANCE"] } } } });
+  if (!telegramConfigured() || !recipients.length) {
+    await prisma.notificationLog.create({ data: { channel: "TELEGRAM", type: "WD_PROSES", target: todayStr(now), status: "GAGAL", payload: m.text.slice(0, 2000), error: !telegramConfigured() ? "TELEGRAM_BOT_TOKEN belum diatur" : "Owner/Finance belum tertaut Telegram" } });
+    return { sent: 0, failed: recipients.length };
+  }
+  let sent = 0;
+  for (const r of recipients) if ((await sendTelegram(r.chatId!, m.text, { buttons: m.buttons, type: "WD_PROSES" })).ok) sent++;
+  return { sent, failed: recipients.length - sent, withdrawals: m.rows.length };
+}
+
 async function ranToday(key: string, date: string) {
   const s = await prisma.setting.findUnique({ where: { key } });
   return s?.value === date;
@@ -143,6 +158,8 @@ async function markRan(key: string, date: string) {
  * Jalankan job yang jatuh tempo (dipanggil tiap menit oleh scheduler / cron):
  * - 06.00 WIB: slip gaji bulanan untuk siklus karyawan yang selesai (gajian H+7)
  * - 07.00 WIB: rekap harian Telegram
+ * - 05.00 WIB: cek saldo pagi (saldo kemarin 23.59 per rekening) ke Jojo/penerima cek saldo; 12.00 WIB: satu pengingat bila belum dijawab
+ * - 08.00 WIB: pengingat withdraw TikTok Dalam Proses ke Owner & Finance (hanya bila ada)
  * - 08.00 WIB: pengingat dana talangan ke Owner & Finance (bila ada yang belum dikembalikan)
  * - 08.00 WIB: pengingat piutang penjualan jatuh tempo ke Owner & Finance (sekali per nota per hari)
  * - 08.00 WIB: peringatan anggaran beban ≥80% / ≥100% ke Owner (sekali per ambang per akun per bulan)
@@ -163,6 +180,20 @@ export async function runDueJobs(now: Date = new Date()) {
   if (minutes >= 7 * 60 && !(await ranToday("job_daily_recap_last", date))) {
     await markRan("job_daily_recap_last", date);
     results.dailyRecap = await logFailure("REKAP_HARIAN", date, () => sendDailyRecap(now));
+  }
+  if (minutes >= 5 * 60 && !(await ranToday("job_cek_saldo_last", date))) {
+    await markRan("job_cek_saldo_last", date);
+    const { sendBalanceCheck } = await import("./balanceCheck");
+    results.balanceCheck = await logFailure("CEK_SALDO", date, () => sendBalanceCheck(now));
+  }
+  if (minutes >= 12 * 60 && !(await ranToday("job_cek_saldo_ingat_last", date))) {
+    await markRan("job_cek_saldo_ingat_last", date);
+    const { sendBalanceCheckReminder } = await import("./balanceCheck");
+    results.balanceCheckReminder = await logFailure("CEK_SALDO_INGAT", date, () => sendBalanceCheckReminder(now));
+  }
+  if (minutes >= 8 * 60 && !(await ranToday("job_wd_proses_last", date))) {
+    await markRan("job_wd_proses_last", date);
+    results.wdProcess = await logFailure("WD_PROSES", date, () => sendWdProcessReminder(now));
   }
   if (minutes >= 8 * 60 && !(await ranToday("job_talangan_last", date))) {
     await markRan("job_talangan_last", date);

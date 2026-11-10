@@ -19,6 +19,9 @@ function setValue(sel: HTMLSelectElement, v: string) {
   sel.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+/** Layar sentuh (HP/tablet): jangan langsung memunculkan keyboard, karena keyboard menutupi daftar pilihan */
+const isTouch = () => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
+
 const label = (o: HTMLOptionElement) => o.text.trim() || "—";
 /** Opsi petunjuk seperti "— pilih supplier —" (value kosong & disabled) tidak dihitung/ditampilkan sebagai pilihan */
 const isPlaceholder = (o: HTMLOptionElement) => o.value === "" && o.disabled;
@@ -46,11 +49,11 @@ function renderButtons(sel: HTMLSelectElement, host: HTMLDivElement) {
  * Panel lebih lebar dari kotaknya: geser ke kiri/kanan agar tetap di dalam layar
  * dan di dalam popup (modal/dialog) yang memotong isi yang meluber.
  */
-function place(panel: HTMLDivElement, host: HTMLDivElement) {
+function place(panel: HTMLDivElement, host: HTMLDivElement, vw: number) {
   panel.style.left = "0px";
   const box = host.closest("dialog, .modal")?.getBoundingClientRect();
   const minX = Math.max(8, (box?.left ?? 0) + 8);
-  const maxX = Math.min(window.innerWidth - 8, (box?.right ?? window.innerWidth) - 8);
+  const maxX = Math.min(vw - 8, (box?.right ?? vw) - 8);
   const r = panel.getBoundingClientRect();
   let shift = 0;
   if (r.right > maxX) shift = maxX - r.right;
@@ -118,15 +121,24 @@ function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
     const r = trigger.getBoundingClientRect();
     const below = window.innerHeight - r.bottom;
     host.classList.toggle("choice-up", below < 300 && r.top > below);
+    // Ukur lebar layar SEBELUM panel tampil: di HP, panel yang meluber membuat halaman ikut melebar
+    const vw = Math.min(window.innerWidth, document.documentElement.clientWidth || window.innerWidth);
+    panel.style.maxWidth = `${Math.max(200, vw - 16)}px`;
     panel.hidden = false;
-    place(panel, host);
+    place(panel, host, vw);
     trigger.setAttribute("aria-expanded", "true");
     document.addEventListener("pointerdown", onOutside, true);
-    search.focus();
+    window.visualViewport?.addEventListener("resize", fit);
+    // Di HP kotak cari tidak langsung aktif; ketuk kotak cari bila ingin mengetik
+    if (!isTouch()) search.focus();
     list.querySelector("[aria-selected]")?.scrollIntoView({ block: "nearest" });
   };
   const close = () => {
     if (panel.hidden) return;
+    if (panel.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
+    list.style.maxHeight = "";
+    window.visualViewport?.removeEventListener("resize", fit);
+    panel.style.maxWidth = "";
     panel.hidden = true;
     trigger.setAttribute("aria-expanded", "false");
     document.removeEventListener("pointerdown", onOutside, true);
@@ -134,6 +146,24 @@ function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
   st.close = close;
   trigger.addEventListener("click", () => (panel.hidden ? open() : close()));
   search.addEventListener("input", fill);
+  // HP: saat kotak cari diketuk dan keyboard muncul, geser kolom ke atas layar dan batasi tinggi daftar
+  // agar pilihan tidak tertutup keyboard
+  const fit = () => {
+    if (panel.hidden || !isTouch()) return;
+    const vv = window.visualViewport;
+    const viewH = vv ? vv.height + vv.offsetTop : window.innerHeight;
+    const top = list.getBoundingClientRect().top;
+    list.style.maxHeight = `${Math.max(120, Math.floor(viewH - top - 12))}px`;
+  };
+  search.addEventListener("focus", () => {
+    if (!isTouch()) return;
+    host.classList.remove("choice-up");
+    setTimeout(() => {
+      trigger.scrollIntoView({ block: "start", behavior: "smooth" });
+      setTimeout(fit, 350);
+    }, 250);
+  });
+
   search.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -179,6 +209,18 @@ function enhance(sel: HTMLSelectElement) {
     sel.after(host);
     sel.classList.add("choice-native");
     sel.tabIndex = -1;
+    sel.setAttribute("aria-hidden", "true");
+    // <select> asli tidak boleh membuka pilihan bawaan HP (iPhone kadang memindahkan fokus ke sini
+    // setelah pilihan diklik sehingga dropdown muncul dua kali). Alihkan fokusnya ke tombol pengganti.
+    sel.addEventListener("focus", () => {
+      // Biarkan pesan "wajib diisi" bawaan browser tampil bila pilihan masih kosong
+      if (!sel.validity.valid) return;
+      sel.blur();
+      const t = states.get(sel)?.host.querySelector<HTMLElement>(".choice-trigger, button");
+      t?.focus({ preventScroll: true });
+    });
+    sel.addEventListener("mousedown", (e) => e.preventDefault());
+    sel.addEventListener("touchstart", (e) => e.preventDefault(), { passive: false });
     st = { host, mode, sig };
     states.set(sel, st);
   }

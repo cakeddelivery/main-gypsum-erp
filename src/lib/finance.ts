@@ -15,6 +15,7 @@ export const STATUS_LABEL: Record<TxStatus, string> = {
   DRAFT: "Draft",
   PERLU_DITINJAU: "Perlu Ditinjau",
   MENUNGGU_KONFIRMASI: "Menunggu Konfirmasi",
+  DALAM_PROSES: "Dalam Proses",
   DIBUKUKAN: "Dibukukan",
   DITOLAK: "Ditolak",
   DIBATALKAN: "Dibatalkan",
@@ -30,6 +31,18 @@ export function withdrawIncomeLines(sellerCoaId: string, sellerName: string, amo
   ];
 }
 export const WITHDRAW_INCOME_SOURCE = "WITHDRAW_PENJUALAN";
+/** Jurnal ke-2 withdraw TikTok: uang diterima (Dana dalam Perjalanan → rekening bank) */
+export const WD_RECEIVED_SOURCE = "WD_DITERIMA";
+/** Setting berisi kode akun COA "Dana dalam Perjalanan" (dibuat migrasi 20261111100000) */
+export const TRANSIT_SETTING = "coa_dana_perjalanan";
+
+/** Akun perantara "Dana dalam Perjalanan" (aset lancar, akun kas): WD TikTok yang sudah ditransfer tetapi belum masuk bank */
+export async function transitAccount(tx: Tx | typeof prisma) {
+  const code = (await tx.setting.findUnique({ where: { key: TRANSIT_SETTING } }))?.value;
+  const acc = code ? await tx.coaAccount.findUnique({ where: { code } }) : await tx.coaAccount.findFirst({ where: { name: "Dana dalam Perjalanan" } });
+  if (!acc) throw new FinanceError('Akun COA "Dana dalam Perjalanan" belum ada. Jalankan: npx prisma migrate deploy');
+  return acc;
+}
 
 export type TxInput = {
   direction: TxDirection;
@@ -264,6 +277,7 @@ export async function rejectTransaction(id: string, actor: Actor, reason: string
   if (!reason?.trim()) throw new FinanceError("Alasan penolakan wajib diisi");
   return prisma.$transaction(async (tx) => {
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
+    if (cur.status === "DALAM_PROSES") throw new FinanceError("Withdraw Dalam Proses sudah berjurnal (penjualan diakui): gunakan Batalkan agar jurnalnya dibalik");
     if (!EDITABLE.includes(cur.status)) throw new FinanceError("Transaksi sudah final");
     const t = await tx.financeTransaction.update({ where: { id }, data: { status: "DITOLAK" } });
     await tx.approvalLog.create({ data: { transactionId: id, action: "DITOLAK", fromStatus: cur.status, toStatus: "DITOLAK", actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: reason } });
@@ -284,7 +298,7 @@ export async function approveAndBook(id: string, actor: Actor & { id: string }, 
 type TxRow = Prisma.FinanceTransactionGetPayload<object>;
 
 /** Baris jurnal transaksi (rekening ↔ kategori / rincian / hutang). Hutang: Dr Hutang pokok + Dr Beban Bunga / Cr rekening */
-async function txJournalLines(tx: Tx, cur: TxRow, reserveParts: ReservePart[] = []): Promise<LineInput[]> {
+async function txJournalLines(tx: Tx, cur: TxRow, reserveParts: ReservePart[] = [], opts: { transitId?: string } = {}): Promise<LineInput[]> {
   const splits = await tx.financeTxSplit.findMany({ where: { transactionId: cur.id }, orderBy: { sortOrder: "asc" } });
   const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: cur.accountId! } });
   const amount = Number(cur.amount);
@@ -296,10 +310,16 @@ async function txJournalLines(tx: Tx, cur: TxRow, reserveParts: ReservePart[] = 
   if (cur.direction === "TRANSFER") {
     const to = await tx.bankAccount.findUniqueOrThrow({ where: { id: cur.toAccountId! } });
     // Transfer internal: hanya memindahkan saldo antar rekening (bukan pendapatan/beban)
-    const lines: LineInput[] = [
-      { accountId: to.coaAccountId, debit: amount, memo: `Transfer dari ${bank.name}` },
-      { accountId: bank.coaAccountId, credit: amount, memo: `Transfer ke ${to.name}` },
-    ];
+    // WD TikTok Dalam Proses: tujuan sementara = Dana dalam Perjalanan (masuk bank saat "Uang diterima")
+    const lines: LineInput[] = opts.transitId
+      ? [
+          { accountId: opts.transitId, debit: amount, memo: `Dana dalam perjalanan ke ${to.name}` },
+          { accountId: bank.coaAccountId, credit: amount, memo: `Withdraw ke ${to.name} (dalam proses)` },
+        ]
+      : [
+          { accountId: to.coaAccountId, debit: amount, memo: `Transfer dari ${bank.name}` },
+          { accountId: bank.coaAccountId, credit: amount, memo: `Transfer ke ${to.name}` },
+        ];
     // Withdraw saldo penjual marketplace = hasil penjualan di Shopee/TikTok: sekaligus dicatat sebagai pemasukan
     // (Dr Saldo Penjual / Cr Penjualan), sehingga saldo penjual tidak minus dan omzet toko tercatat
     if (bank.marketplace) lines.unshift(...withdrawIncomeLines(bank.coaAccountId, bank.name, amount));
@@ -395,6 +415,7 @@ async function bookInTx(tx: Tx, id: string, actor: Actor & { id: string }, note?
     await tx.$queryRaw`SELECT id FROM "FinanceTransaction" WHERE id = ${id} FOR UPDATE`;
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
     if (cur.status === "DIBUKUKAN") throw new FinanceError("Transaksi sudah dibukukan");
+    if (cur.status === "DALAM_PROSES") throw new FinanceError("Withdraw ini masih Dalam Proses: tekan \"Uang diterima\" setelah uangnya masuk rekening");
     if (cur.status !== "MENUNGGU_KONFIRMASI") throw new FinanceError("Hanya transaksi berstatus Menunggu Konfirmasi yang dapat dibukukan");
     const splits = await tx.financeTxSplit.findMany({ where: { transactionId: id }, orderBy: { sortOrder: "asc" } });
     const missing = [...missingFields(cur), ...splitIssues(cur.amount, cur.direction, splits)];
@@ -435,6 +456,35 @@ async function bookInTx(tx: Tx, id: string, actor: Actor & { id: string }, note?
 }
 
 /**
+ * Jurnal 1 withdraw TikTok (status Dalam Proses), bertanggal transfer: pemasukan penjualan (Dr Saldo Penjual /
+ * Cr Penjualan) + Dr Dana dalam Perjalanan / Cr Saldo Penjual. Rekening bank belum berubah.
+ */
+export async function postWdSent(tx: Tx, cur: TxRow, actor: Actor & { id: string }) {
+  const transit = await transitAccount(tx);
+  const lines = await txJournalLines(tx, cur, [], { transitId: transit.id });
+  return postJournal(tx, { date: cur.date, storeId: cur.storeId!, description: `${cur.number} ${cur.note ?? ""}`.trim().slice(0, 200), source: "FINANCE", sourceId: cur.id, actor: { id: actor.id, name: actor.name }, lines });
+}
+
+/** Jurnal 2 withdraw TikTok ("Uang diterima"), bertanggal terima: Dr rekening bank / Cr Dana dalam Perjalanan */
+export async function postWdReceived(tx: Tx, cur: TxRow, toAccountId: string, date: Date, actor: Actor & { id: string }) {
+  const transit = await transitAccount(tx);
+  const to = await tx.bankAccount.findUniqueOrThrow({ where: { id: toAccountId } });
+  const amount = Number(cur.amount);
+  return postJournal(tx, {
+    date,
+    storeId: cur.storeId!,
+    description: `${cur.number} uang diterima ${to.name}`.slice(0, 200),
+    source: WD_RECEIVED_SOURCE,
+    sourceId: cur.id,
+    actor: { id: actor.id, name: actor.name },
+    lines: [
+      { accountId: to.coaAccountId, debit: amount, memo: `Withdraw ${cur.number} diterima` },
+      { accountId: transit.id, credit: amount, memo: `Dana dalam perjalanan → ${to.name}` },
+    ],
+  });
+}
+
+/**
  * Batalkan transaksi yang sudah dibukukan: jurnal asli tidak diubah, dibuat jurnal pembalik sehingga
  * saldo rekening & laba rugi kembali seperti sebelum transaksi. Pembalik bertanggal sama dengan transaksi
  * bila periodenya masih terbuka (laporan harian bersih), atau hari ini bila periodenya sudah ditutup.
@@ -445,7 +495,7 @@ export async function cancelBookedTransaction(id: string, actor: Actor & { id: s
     await tx.$queryRaw`SELECT id FROM "FinanceTransaction" WHERE id = ${id} FOR UPDATE`;
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
     assertOwnTransaction(cur);
-    if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi berstatus Dibukukan yang dapat dibatalkan");
+    if ((cur.status !== "DIBUKUKAN" && cur.status !== "DALAM_PROSES") || !cur.journalId) throw new FinanceError("Hanya transaksi berstatus Dibukukan / Dalam Proses yang dapat dibatalkan");
     const date = await assertPeriodOpen(tx, cur.date).then(() => cur.date, () => now);
     const rev = await reverseJournal(tx, cur.journalId, date, { id: actor.id, name: actor.name }, `batal ${cur.number} — ${reason.trim()}`.slice(0, 150));
     // Pembayaran hutang dibatalkan: sisa hutangnya kembali, saldo tabungan cicilan juga
@@ -454,14 +504,18 @@ export async function cancelBookedTransaction(id: string, actor: Actor & { id: s
     // Sisihan yang dicatat dari transfer ini ikut batal (jurnalnya sudah dibalik di atas)
     await tx.reserveEntry.deleteMany({ where: { transactionId: cur.id, type: "SISIH" } });
     // Pemasukan penjualan susulan untuk withdraw lama (skrip perbaikan) ikut dibalik
-    for (const extra of await tx.journal.findMany({ where: { source: WITHDRAW_INCOME_SOURCE, sourceId: cur.id } })) {
-      if (!(await tx.journal.findFirst({ where: { reversalOfId: extra.id } }))) await reverseJournal(tx, extra.id, date, { id: actor.id, name: actor.name }, `batal ${cur.number}`);
+    // Withdraw TikTok: jurnal "uang diterima" (Dana dalam Perjalanan → bank) ikut dibalik
+    for (const extra of await tx.journal.findMany({ where: { source: { in: [WITHDRAW_INCOME_SOURCE, WD_RECEIVED_SOURCE] }, sourceId: cur.id, reversalOfId: null } })) {
+      if (!(await tx.journal.findFirst({ where: { reversalOfId: extra.id } }))) {
+        const d = extra.source === WD_RECEIVED_SOURCE ? await assertPeriodOpen(tx, extra.date).then(() => extra.date, () => now) : date;
+        await reverseJournal(tx, extra.id, d, { id: actor.id, name: actor.name }, `batal ${cur.number}`);
+      }
     }
     // Bahan baku dari rincian ikut dikeluarkan lagi dari gudang
     const stockIn = await tx.stockMovement.findMany({ where: { ref: cur.number, type: "PENERIMAAN" } });
     for (const m of stockIn) await recordMovement(tx, { type: "PENGELUARAN", itemId: m.itemId, qty: Number(m.qty), fromLocationId: m.toLocationId, ref: `BATAL ${cur.number}`, note: `Pembatalan ${cur.number}`, date, allowNegative: true, noJournal: true }, { id: actor.id, name: actor.name });
     const t = await tx.financeTransaction.update({ where: { id }, data: { status: "DIBATALKAN" } });
-    await tx.approvalLog.create({ data: { transactionId: id, action: "DIBATALKAN", fromStatus: "DIBUKUKAN", toStatus: "DIBATALKAN", actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: `${reason.trim()} · jurnal pembalik ${rev.number}` } });
+    await tx.approvalLog.create({ data: { transactionId: id, action: "DIBATALKAN", fromStatus: cur.status, toStatus: "DIBATALKAN", actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: `${reason.trim()} · jurnal pembalik ${rev.number}` } });
     await audit({ actorId: actor.id, actorName: actor.name }, "TRANSAKSI_DIBATALKAN", "FinanceTransaction", id, { reason, reversal: rev.number }, tx);
     return { transaction: t, reversal: rev };
   });
@@ -476,7 +530,7 @@ export async function changeBookedStore(id: string, storeId: string, actor: Acto
     await tx.$queryRaw`SELECT id FROM "FinanceTransaction" WHERE id = ${id} FOR UPDATE`;
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
     assertOwnTransaction(cur);
-    if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi Dibukukan yang tokonya diganti lewat menu ini; draft cukup diubah biasa");
+    if ((cur.status !== "DIBUKUKAN" && cur.status !== "DALAM_PROSES") || !cur.journalId) throw new FinanceError("Hanya transaksi Dibukukan / Dalam Proses yang tokonya diganti lewat menu ini; draft cukup diubah biasa");
     if (cur.direction !== "TRANSFER") throw new FinanceError("Toko hanya membedakan withdraw (transfer internal)");
     if (cur.storeId === storeId) throw new FinanceError("Toko sudah sama");
     const store = await tx.store.findUniqueOrThrow({ where: { id: storeId } });
@@ -484,11 +538,13 @@ export async function changeBookedStore(id: string, storeId: string, actor: Acto
     const who = { id: actor.id, name: actor.name };
     const repost = async (journalId: string) => {
       const j = await tx.journal.findUniqueOrThrow({ where: { id: journalId }, include: { lines: true } });
-      await reverseJournal(tx, j.id, date, who, `ganti toko ${cur.number} ke ${store.name}`);
-      return postJournal(tx, { date, storeId, description: j.description, source: j.source, sourceId: j.sourceId, actor: who, lines: j.lines.map((l) => ({ accountId: l.accountId, debit: Number(l.debit), credit: Number(l.credit), memo: l.memo ?? undefined })) });
+      // Jurnal "uang diterima" tetap bertanggal terima (bila periodenya masih terbuka)
+      const d = j.source === WD_RECEIVED_SOURCE ? await assertPeriodOpen(tx, j.date).then(() => j.date, () => now) : date;
+      await reverseJournal(tx, j.id, d, who, `ganti toko ${cur.number} ke ${store.name}`);
+      return postJournal(tx, { date: d, storeId, description: j.description, source: j.source, sourceId: j.sourceId, actor: who, lines: j.lines.map((l) => ({ accountId: l.accountId, debit: Number(l.debit), credit: Number(l.credit), memo: l.memo ?? undefined })) });
     };
     const main = await repost(cur.journalId);
-    for (const extra of await tx.journal.findMany({ where: { source: WITHDRAW_INCOME_SOURCE, sourceId: cur.id } })) {
+    for (const extra of await tx.journal.findMany({ where: { source: { in: [WITHDRAW_INCOME_SOURCE, WD_RECEIVED_SOURCE] }, sourceId: cur.id, reversalOfId: null } })) {
       if (!(await tx.journal.findFirst({ where: { reversalOfId: extra.id } }))) await repost(extra.id);
     }
     const t = await tx.financeTransaction.update({ where: { id }, data: { storeId, journalId: main.id } });
@@ -702,6 +758,7 @@ export async function linkBookedTransfer(id: string, opts: { parts?: ReservePart
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
     assertOwnTransaction(cur);
     if (cur.status !== "DIBUKUKAN" || !cur.journalId) throw new FinanceError("Hanya transaksi Dibukukan; transaksi lain otomatis dicocokkan saat dibukukan");
+    if (cur.sentAt) throw new FinanceError("Withdraw TikTok (lewat Dana dalam Perjalanan) tidak bisa dijadikan dana sisihan");
     // Pengeluaran yang sebenarnya pindah ke rekening simpanan (mis. "nabung spinjam" tercatat sebagai keluar) diubah jadi transfer
     const convert = cur.direction === "KELUAR";
     if (cur.direction !== "TRANSFER" && !convert) throw new FinanceError("Hanya transfer antar rekening yang bisa menjadi sisihan");
