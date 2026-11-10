@@ -23,6 +23,11 @@ export type SimilarQuery = {
   categoryId?: string | null;
   /** Transaksi yang dikecualikan (mis. dirinya sendiri) dan yang sudah dinyatakan berbeda */
   excludeIds?: string[];
+  /**
+   * Transfer sisihan: dicocokkan per tanggal sisihannya. Transfer lain di hari yang sama yang menjadi bukti sisihan
+   * TANGGAL LAIN (mis. OPS 8 Nov & OPS 9 Nov ditransfer bersamaan) bukan duplikat.
+   */
+  reserveParts?: { fundId: string; date: string }[];
 };
 
 export type SimilarHit = {
@@ -95,6 +100,13 @@ export async function findSimilar(db: Db, q: SimilarQuery, limit = 3): Promise<S
     if (!sameDay && words < 2 && !sameCat) continue;
     const score = (sameDay ? 3 : 0) + (q.accountId && r.accountId === q.accountId ? 2 : 0) + Math.min(words, 3) + (q.categoryId && r.categoryId === q.categoryId ? 1 : 0);
     hits.push({ id: r.id, number: r.number, date: r.date, amount: Number(r.amount), direction: r.direction, accountId: r.accountId, toAccountId: r.toAccountId, status: r.status, origin: r.origin, note: r.note, counterparty: r.counterparty, categoryId: r.categoryId, score });
+  }
+  if (q.reserveParts?.length && hits.length) {
+    const entries = await db.reserveEntry.findMany({ where: { transactionId: { in: hits.map((h) => h.id) }, type: "SISIH" }, select: { transactionId: true, fundId: true, date: true } });
+    const want = new Set(q.reserveParts.map((p) => `${p.fundId}|${p.date}`));
+    const other = new Set(entries.filter((e) => !want.has(`${e.fundId}|${e.date.toISOString().slice(0, 10)}`)).map((e) => e.transactionId!));
+    const same = new Set(entries.filter((e) => want.has(`${e.fundId}|${e.date.toISOString().slice(0, 10)}`)).map((e) => e.transactionId!));
+    return hits.filter((h) => same.has(h.id) || !other.has(h.id)).sort((a, b) => b.score - a.score).slice(0, limit);
   }
   return hits.sort((a, b) => b.score - a.score).slice(0, limit);
 }

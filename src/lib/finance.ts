@@ -110,8 +110,10 @@ export function assertOwnTransaction(cur: { origin: string | null; number: strin
  * Transaksi lain yang mirip (lihat findSimilar): dipakai menandai duplikat (duplicateOfId → Perlu Ditinjau).
  * Transaksi yang sudah dinyatakan berbeda (dupAckIds) tidak ditandai lagi.
  */
-export async function findDuplicate(tx: Tx | typeof prisma, input: { direction: TxDirection; amount: number; date: Date; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; note?: string | null; counterparty?: string | null; rawText?: string | null }, excludeId?: string, ack: string[] = []) {
-  const hits = await findSimilar(tx, { ...input, text: [input.note, input.counterparty, input.rawText].filter(Boolean).join(" "), excludeIds: [...(excludeId ? [excludeId] : []), ...ack] }, 1);
+export async function findDuplicate(tx: Tx | typeof prisma, input: { direction: TxDirection; amount: number; date: Date; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; note?: string | null; counterparty?: string | null; rawText?: string | null; reserveLink?: unknown }, excludeId?: string, ack: string[] = []) {
+  const link = "reserveLink" in input ? parseLink(input.reserveLink) : null;
+  const reserveParts = link && "parts" in link ? link.parts : undefined;
+  const hits = await findSimilar(tx, { ...input, reserveParts, text: [input.note, input.counterparty, input.rawText].filter(Boolean).join(" "), excludeIds: [...(excludeId ? [excludeId] : []), ...ack] }, 1);
   return hits[0] ?? null;
 }
 
