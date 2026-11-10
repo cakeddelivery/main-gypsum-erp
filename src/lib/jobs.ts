@@ -23,7 +23,8 @@ export async function dailyRecapText(now: Date, forDate?: string) {
   const finished = await prisma.productionEntry.aggregate({ where: { date: dateOnly(date), stage: "BARANG_JADI" }, _sum: { qtyGood: true } });
   const banks = await bankBalances();
   const low = await lowStockItems();
-  const unsent = await prisma.shiftReport.count({ where: { date: dateOnly(date), status: { not: "TERKIRIM" } } });
+  const { unsentReportCount } = await import("./shiftReportStock");
+  const unsent = await unsentReportCount(date);
   const g = (d: string) => booked.find((b) => b.direction === d);
   const p = (s: string) => pending.find((x) => x.status === s)?._count ?? 0;
   return [
@@ -169,6 +170,7 @@ async function markRan(key: string, date: string) {
  * - 08.00 WIB: pengingat dana talangan ke Owner & Finance (bila ada yang belum dikembalikan)
  * - 08.00 WIB: pengingat piutang penjualan jatuh tempo ke Owner & Finance (sekali per nota per hari)
  * - 08.00 WIB: peringatan anggaran beban ≥80% / ≥100% ke Owner (sekali per ambang per akun per bulan)
+ * - 19.00 WIB: pengingat order bahan baku (stok akhir shift terakhir ≤ limit) ke Owner & Admin (hanya bila ada)
  * - Tanggal tutup buku (Pengaturan, default 10) pukul 09.00 WIB: tutup buku bulan sebelumnya.
  *   Tidak tanggal 1 agar bukti transaksi akhir bulan yang terlambat masuk masih bisa dibukukan.
  * Job yang gagal dicatat di log notifikasi (tidak diulang tiap menit).
@@ -212,6 +214,11 @@ export async function runDueJobs(now: Date = new Date()) {
   if (minutes >= 8 * 60 && !(await ranToday("job_budget_last", date))) {
     await markRan("job_budget_last", date);
     results.budget = await logFailure("ANGGARAN", date, () => sendBudgetNotice(now));
+  }
+  if (minutes >= 19 * 60 && !(await ranToday("job_order_bahan_last", date))) {
+    await markRan("job_order_bahan_last", date);
+    const { sendMaterialOrderReminder } = await import("./shiftReportStock");
+    results.materialOrder = await logFailure("ORDER_BAHAN", date, () => sendMaterialOrderReminder(now));
   }
   const closeDay = await autoCloseDay();
   if (p.day === closeDay && minutes >= 9 * 60 && !(await ranToday("job_month_close_last", date))) {

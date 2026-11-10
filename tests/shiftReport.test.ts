@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { effectivePermissions } from "@/lib/rbac";
 import { applyDivisionSetup } from "@/lib/divisionSetup";
-import { DIVISION_SETUP, isDone, needsOrder, parseWork, summaryOf, workLines, type WorkData } from "@/lib/shiftReport";
+import { DIVISION_SETUP, expectedReportCount, isDone, needsOrder, parseWork, shiftEndAt, summaryOf, workLines, type WorkData } from "@/lib/shiftReport";
 
 describe("Format laporan penutup shift (sesuai contoh)", () => {
   it("Produksi: total panen per oven & total hasil cetak", () => {
@@ -15,7 +15,9 @@ describe("Format laporan penutup shift (sesuai contoh)", () => {
   });
   it("Giftbox: patung = giftbox × 5", () => {
     const work: WorkData = { resi: { shopee: null, tiktok: null }, giftbox: { MIX: 14, CEW: 6, CWO: 4, HWN: 16, TRN: 2, "MIX-PLT": 1, "CEW-PLT": 2, "CWO-PLT": 1, "HWN-PLT": 2, "TRN-PLT": 1 } };
-    expect(summaryOf("GIFTBOX", work).map((s) => s.value)).toEqual([0, 245]);
+    // Resi kosong tidak tampil; total giftbox (box) tampil
+    expect(summaryOf("GIFTBOX", work)).toEqual([{ label: "Total giftbox", unit: "box", value: 49 }, { label: "Total patung", unit: "pcs", value: 245 }]);
+    expect(summaryOf("GIFTBOX", { ...work, resi: { shopee: 3, tiktok: null } }).map((s) => s.label)).toEqual(["Total resi", "Total giftbox", "Total patung"]);
   });
   it("Packing: paket mix dikali isi + satuan", () => {
     const work: WorkData = { resi: { shopee: 38, tiktok: 29 }, mix: { p12: 0, p24: 18, p48: 4, p96: 0 }, satuan: { cowok: 8, cewek: 37, transportasi: 33, hewan: 0 } };
@@ -34,6 +36,23 @@ describe("Format laporan penutup shift (sesuai contoh)", () => {
     expect(needsOrder({ qty: null, limit: 15 })).toBe(false);
     expect(isDone({ label: "Lantai", photo: true, done: true, photoPath: null })).toBe(false);
     expect(isDone({ label: "Lantai", photo: true, done: false, photoPath: "x.jpg" })).toBe(true);
+  });
+});
+
+describe("Waktu shift & kelengkapan laporan", () => {
+  it("stok akhir dicatat per jam selesai shift (WIB), tidak di masa depan", () => {
+    const later = new Date("2026-12-01T00:00:00Z");
+    expect(shiftEndAt(new Date("2026-11-10T00:00:00Z"), { startTime: "07:00", endTime: "15:00" }, later).toISOString()).toBe("2026-11-10T08:00:00.000Z");
+    expect(shiftEndAt(new Date("2026-11-10T00:00:00Z"), { startTime: "15:00", endTime: "23:00" }, later).toISOString()).toBe("2026-11-10T16:00:00.000Z");
+    // Lewat tengah malam: selesai esok hari
+    expect(shiftEndAt(new Date("2026-11-10T00:00:00Z"), { startTime: "22:00", endTime: "06:00" }, later).toISOString()).toBe("2026-11-10T23:00:00.000Z");
+    const now = new Date("2026-11-10T05:00:00Z");
+    expect(shiftEndAt(new Date("2026-11-10T00:00:00Z"), { startTime: "07:00", endTime: "15:00" }, now)).toEqual(now);
+  });
+  it("jumlah laporan per hari mengikuti jumlah shift tiap divisi", () => {
+    // Produksi 2 shift + Giftbox, Packing, Assembling 1 shift = 5, bukan 2 × 4 = 8
+    expect(expectedReportCount([{ shiftCount: 2 }, { shiftCount: 1 }, { shiftCount: 1 }, { shiftCount: 1 }], 2)).toBe(5);
+    expect(expectedReportCount([{ shiftCount: 2 }], 1)).toBe(1);
   });
 });
 

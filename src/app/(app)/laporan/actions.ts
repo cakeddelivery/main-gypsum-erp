@@ -8,7 +8,8 @@ import { audit } from "@/lib/audit";
 import { dateOnly, fmtDay } from "@/lib/time";
 import { assertPerm, ForbiddenError } from "@/lib/auth";
 import { sendTelegram, telegramConfigured, esc } from "@/lib/telegram";
-import { STAGE_LABEL, itemQty, locationSettings, recordMovement } from "@/lib/stock";
+import { STAGE_LABEL } from "@/lib/stock";
+import { applyShiftStockCount } from "@/lib/shiftReportStock";
 import { saveProof } from "@/lib/storage";
 import { isDone, isTemplate, needsOrder, parseWork, summaryOf, toEntries, workLines, type ChecklistEntry, type StockCountRow } from "@/lib/shiftReport";
 
@@ -148,42 +149,15 @@ export async function removeChecklistPhoto(fd: FormData): Promise<{ ok: boolean;
   }
 }
 
-/**
- * Stock opname dari laporan: stok sistem tiap bahan disesuaikan ke hasil hitung fisik
- * (selisih dicatat sebagai mutasi PENYESUAIAN di lokasi bahan baku). Stok berkurang = pemakaian bahan → akun HPP
- * "Pemakaian Bahan Baku"; revisi hitungan ikut akun itu. Stok bertambah di hitungan pertama tetap selisih persediaan.
- * Laporan yang direvisi & dikirim ulang hanya menerapkan selisih hitungan baru vs hitungan yang dulu diterapkan,
- * agar mutasi stok setelah laporan pertama (mis. pembelian) tidak tertimpa hitungan lama.
- */
-async function applyStockCount(report: { id: string; stockApplied: boolean; stockAppliedCount: Prisma.JsonValue | null }, rows: StockCountRow[], user: User, date: Date) {
-  const { raw } = await locationSettings(prisma);
-  if (!raw) return 0;
-  const prev = report.stockApplied ? (report.stockAppliedCount as StockCountRow[] | null) : null;
-  // Laporan lama yang sudah diterapkan tanpa catatan hitungan: jangan timpa stok terkini
-  if (report.stockApplied && !prev) return 0;
-  let n = 0;
-  await prisma.$transaction(async (tx) => {
-    const applied = new Map((prev ?? []).map((p) => [p.itemId, p.qty]));
-    for (const row of rows) {
-      if (row.qty == null) continue;
-      const before = applied.get(row.itemId);
-      const diff = Math.round((before != null ? row.qty - before : row.qty - (await itemQty(tx, row.itemId))) * 1000) / 1000;
-      if (diff === 0) continue;
-      await recordMovement(tx, { type: "PENYESUAIAN", itemId: row.itemId, qty: Math.abs(diff), fromLocationId: raw, increase: diff > 0, usage: diff < 0 || before != null, allowNegative: true, ref: `LAP:${report.id}`, note: before != null ? "Revisi stock opname laporan shift" : "Stock opname laporan shift", date }, user);
-      n++;
-    }
-    const snapshot = [...(prev ?? []).filter((p) => !rows.some((r) => r.itemId === p.itemId && r.qty != null)), ...rows.filter((r) => r.qty != null)];
-    await tx.shiftReport.update({ where: { id: report.id }, data: { stockApplied: true, stockAppliedCount: snapshot as unknown as Prisma.InputJsonValue } });
-  }, { timeout: 30000 });
-  return n;
-}
-
 export const sendReport = action(
   "report.create",
   async (fd, user) => {
     const id = str(fd, "id");
     await guardReport(id, user);
     const r = await prisma.shiftReport.findUniqueOrThrow({ where: { id }, include: { shift: true, division: true } });
+    // Stok akhir shift = stock opname bahan baku divisi (per jam selesai shift). Diterapkan dulu: bila gagal
+    // (mis. periode sudah ditutup), laporan tidak dikirim agar pesan dan stok tidak berbeda.
+    const stockRes = await applyShiftStockCount(id, user);
     const template = r.division.reportTemplate;
     const checklist = toEntries(r.checklist) as ChecklistEntry[];
     const stock = r.stockCount as StockCountRow[];
@@ -232,11 +206,10 @@ export const sendReport = action(
       prisma.reportSend.create({ data: { reportId: id, sentBy: user.name, channel, status, error } }),
       prisma.shiftReport.update({ where: { id }, data: { status: status === "GAGAL" ? r.status : "TERKIRIM" } }),
     ]);
-    // Stok akhir shift = stock opname bahan baku divisi
-    const adjusted = await applyStockCount(r, stock, user, new Date());
-    await audit(user, "LAPORAN_DIKIRIM", "ShiftReport", id, { status, channel, stockAdjusted: adjusted });
-    if (status === "GAGAL") throw new Error(`Pengiriman gagal: ${error}`);
-    return status === "SEBAGIAN" ? "Terkirim sebagian, cek riwayat" : "Laporan terkirim";
+    await audit(user, "LAPORAN_DIKIRIM", "ShiftReport", id, { status, channel, stockAdjusted: stockRes.adjusted, stockSkipped: stockRes.skipped ?? null });
+    if (status === "GAGAL") throw new Error(`Pengiriman gagal: ${error}${stockRes.adjusted ? " (stok akhir shift sudah tercatat)" : ""}`);
+    const msg = status === "SEBAGIAN" ? "Terkirim sebagian, cek riwayat" : "Laporan terkirim";
+    return stockRes.skipped ? `${msg}. ${stockRes.skipped}` : msg;
   },
   ["/laporan", "/", "/stok"],
 );

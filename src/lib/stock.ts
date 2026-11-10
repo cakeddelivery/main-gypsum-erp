@@ -60,10 +60,12 @@ export async function itemQty(db: DB, itemId: string) {
   return Number(rows[0]?.qty ?? 0);
 }
 
-export async function qtyAt(db: DB, itemId: string, locationId: string) {
+/** Stok barang di satu lokasi; `until` = hanya mutasi sampai waktu itu (stok per jam tertentu) */
+export async function qtyAt(db: DB, itemId: string, locationId: string, until?: Date) {
   const rows = await db.$queryRaw<{ qty: Prisma.Decimal | null }[]>`
     SELECT SUM(CASE WHEN "toLocationId" = ${locationId} THEN qty ELSE 0 END) - SUM(CASE WHEN "fromLocationId" = ${locationId} THEN qty ELSE 0 END) AS qty
-    FROM "StockMovement" WHERE "itemId" = ${itemId} AND ("toLocationId" = ${locationId} OR "fromLocationId" = ${locationId})`;
+    FROM "StockMovement" WHERE "itemId" = ${itemId} AND ("toLocationId" = ${locationId} OR "fromLocationId" = ${locationId})
+    ${until ? Prisma.sql`AND "date" <= ${until}` : Prisma.empty}`;
   return Number(rows[0]?.qty ?? 0);
 }
 

@@ -29,9 +29,9 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
   if (can("report.create")) {
     tasks.push(
       (async () => {
-        const [shifts, divisions] = await Promise.all([prisma.shift.count({ where: { active: true } }), divisionId ? Promise.resolve(1) : prisma.division.count({ where: { active: true, code: { not: "GDG" } } })]);
-        const sent = await prisma.shiftReport.count({ where: { date: dateOnly(yesterday), status: "TERKIRIM", ...(divisionId ? { divisionId } : {}) } });
-        const missing = shifts * divisions - sent;
+        // Jumlah shift per divisi (Produksi 2, lainnya 1); laporan yang belum dibuat ikut terhitung
+        const { unsentReportCount } = await import("./shiftReportStock");
+        const missing = await unsentReportCount(yesterday, divisionId);
         if (missing > 0) out.push({ key: "report", label: "Laporan shift kemarin belum dikirim", count: missing, href: `/laporan?date=${yesterday}`, tone: "amber" });
       })(),
     );

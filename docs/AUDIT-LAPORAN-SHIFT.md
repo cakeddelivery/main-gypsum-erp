@@ -3,7 +3,7 @@
 Posisi kode: `main` sampai PR #74. Yang dibandingkan: 5 JPG "LAPORAN PENUTUP SHIFT · Standar Kinerja Operasional" yang sekarang dipakai tim (Produksi S1 10 Nov, Produksi S2 9 Nov, Packing S1, Giftbox S1, Assembling S1 10 Nov) dengan kode ERP:
 `src/lib/shiftReport.ts`, `src/lib/divisionSetup.ts`, `src/app/(app)/laporan/*`, `src/components/DownloadJpg.tsx`, `src/lib/render.ts`, `src/lib/botMenu.ts`, `src/lib/alerts.ts`, `src/lib/jobs.ts`, `src/lib/stock.ts`.
 
-Belum ada perubahan kode di tahap ini.
+Tahap 1 = temuan. Keputusan user (10 Nov) ada di bagian 7, paket perbaikan 1 di bagian 8, penjelasan A1 di bagian 9.
 
 ---
 
@@ -230,3 +230,83 @@ sudo -u postgres psql maingypsum -c "SELECT date::date AS tgl, count(*) AS mutas
 ```bash
 sudo -u postgres psql maingypsum -c "SELECT d.name AS divisi, t.stage, t.\"dailyQty\", t.\"employeeId\" IS NOT NULL AS per_orang FROM \"ProductionTarget\" t JOIN \"Division\" d ON d.id=t.\"divisionId\" WHERE t.active ORDER BY d.name;"
 ```
+
+---
+
+## 7. Keputusan user (10 Nov)
+
+Hasil cek VPS: di bulan November hanya ada 2 laporan ERP (Packing 3 Nov, Assembling 8 Nov), keduanya **DRAFT** dan belum pernah dikirim. Tidak ada laporan ERP tanggal 9–10 Nov. **Terbukti 5 JPG itu dari aplikasi lama.**
+
+| | Keputusan |
+|---|---|
+| A | **A1**: laporan shift jadi satu-satunya sumber hasil produksi (minta penjelasan detail, lihat bagian 9) |
+| B | **B3**: pindah ke laporan ERP setelah perbaikan selesai **dan** absensi + gaji sudah sinkron |
+| C | **C3**: hasil BMR/Mastrip diambil dari setoran Borongan |
+| D | **D3**: bebas. Tugas mana yang wajib foto sudah bisa diatur per tugas di Laporan Shift → Bahan & checklist divisi (centang "Wajib foto") |
+| E | **E2**: pengingat bot order bahan setiap **19.00 WIB** |
+| F | **F1**: target per divisi per shift + capaian % |
+| G | **G2**: Total resi (bila diisi) \| Total giftbox \| Total patung |
+| H | **H1**: JPG 1000 px |
+
+## 8. Paket perbaikan 1 (sudah dikerjakan di branch ini)
+
+1. **Stock opname per jam selesai shift**: dibandingkan dengan stok gudang bahan pada jam itu, dan mutasi bertanggal jam itu. Pembelian sesudah shift tidak lagi "terhapus" kalau laporan terlambat dikirim.
+2. **Bahan di titik borongan/driver tidak ikut dibandingkan** (bug baru yang ditemukan: dulu stok semua lokasi dibandingkan, tapi penyesuaian hanya di gudang).
+3. Laporan yang lebih lama **tidak menimpa** hitungan laporan yang lebih baru (divisi sama). Pesan ke pengirim: "Stok tidak diubah: sudah ada laporan lebih baru".
+4. Stock opname diterapkan **sebelum** dikirim ke Telegram. Kalau opname gagal (mis. periode sudah ditutup), laporan tidak dikirim.
+5. Peringatan Beranda dan rekap bot "laporan shift belum dikirim" sekarang mengikuti jumlah shift tiap divisi (Produksi 2, lainnya 1) dan menghitung juga laporan yang belum dibuat.
+6. Pengingat **order bahan baku 19.00 WIB** ke Owner & Admin yang tertaut Telegram (hanya bila ada bahan ≤ limit).
+7. Ringkasan Giftbox: "Total resi" hanya bila diisi, ditambah "Total giftbox (box)".
+8. JPG laporan shift, slip gaji, dan nota: lebar 1000 px.
+
+Belum dikerjakan (menunggu jawaban bagian 9): F1 target, C3 BMR dari Borongan, dan A1.
+
+## 9. Penjelasan A1: laporan shift jadi satu-satunya sumber hasil produksi
+
+### Alur barang yang diusulkan
+
+```
+Bubuk gypsum ─(Produksi: cetak + oven)─▶ PANEN = patung kering polos per varian      [stok setengah jadi]
+                                              │
+             ┌────────────────────────────────┴────────────────────────┐
+   (Assembling: + background, klip, plastik)                (Giftbox: 5 patung + dus + cat)
+             ▼                                                          ▼
+   PRODUK JADI satuan per varian  [barang jadi]              GIFTBOX per kode  [barang jadi]
+             │                                                          │
+   (Packing: resi satuan / paket mix) ─▶ keluar = HPP          (resi giftbox) ─▶ keluar = HPP
+```
+
+### Yang terjadi saat tombol "Kirim laporan" ditekan
+
+| Divisi | Angka | Masuk ke stok | Jurnal |
+|---|---|---|---|
+| Produksi | Panen per varian (Oven Besar + Kecil) | + patung kering per varian (setengah jadi) | Dr Persediaan Barang Dalam Proses / Cr HPP Pemakaian Bahan Baku, senilai bahan per pcs dari resep. Bahan bubuk sudah dibebankan lewat stock opname, jadi tidak dobel |
+| Produksi | Hasil cetak per orang | tidak ada (stok baru dihitung saat panen) | tidak ada. Hanya kinerja per orang, atau upah per pcs bila cetak dibayar borongan |
+| Produksi | Reject panen (mamel) | tidak masuk stok | dicatat jumlah + alasan (untuk analitik reject) |
+| Assembling | Produk jadi per varian (karyawan) | − patung kering, + produk jadi satuan | Dr Persediaan Barang Jadi / Cr BDP (nilai patung) + Cr HPP Pemakaian Bahan Baku (background, klip, plastik dari resep) |
+| Assembling | Baris BMR/Mastrip | **tidak diposting lagi**: sudah masuk lewat setoran Borongan (C3), hanya ditampilkan | tidak ada |
+| Giftbox | Giftbox per kode | − 5 patung per box, + stok giftbox | sama seperti Assembling |
+| Packing | Patung satuan + paket mix | − produk jadi (paket mix dipecah ke varian) | Dr HPP / Cr Persediaan Barang Jadi |
+| Packing / Giftbox | Resi | tidak mengubah stok | dicatat untuk analitik (pesanan per hari, Shopee vs TikTok) |
+
+### Kenapa tidak dobel
+
+- **Bahan baku**: tetap hanya dari stock opname laporan shift (seperti sekarang).
+- **Setengah jadi/barang jadi**: hanya dari laporan shift. Input manual di menu Produksi dan bot "input produksi" untuk tahap yang sama dimatikan (masih bisa dipakai untuk koreksi oleh Owner).
+- **Borongan**: setoran hasil Borongan tetap menambah stok sendiri. Laporan Assembling hanya menampilkannya.
+- **Opname barang jadi akhir bulan**: tetap dipakai, tapi sekarang hanya mencatat **selisih** (rusak/hilang/salah hitung). Barang yang sudah keluar lewat Packing tidak dihitung lagi, karena opname selalu dibandingkan dengan stok sistem.
+- **Revisi laporan yang sudah dikirim**: posting lama dibalik (jurnal balik), lalu diposting ulang dengan angka baru. Tidak ada yang dihapus.
+
+### Manfaatnya
+
+- Stok patung kering, produk jadi, dan giftbox selalu terlihat setiap hari, tidak hanya saat opname akhir bulan.
+- HPP penjualan marketplace tercatat harian (saat packing), bukan sekaligus di akhir bulan.
+- Rekap/analitik produksi (harian, mingguan, bulanan) otomatis dari laporan shift.
+
+### Yang perlu dijawab user sebelum dikerjakan
+
+1. **Hasil cetak per orang**: dibayar per pcs (masuk gaji) atau hanya kinerja?
+2. **Giftbox** memakai patung dari mana: produk jadi Assembling, atau patung kering polos yang dicat di Giftbox?
+3. **Paket mix 12/24/48/96**: isinya dipecah rata per varian (mis. paket 12 = 3 Hewan + 3 Cowok + 3 Transportasi + 3 Cewek), atau ada barang "paket mix" sendiri?
+4. **Resi giftbox**: giftbox dikirim oleh divisi Giftbox sendiri (stok giftbox berkurang dari laporan Giftbox), atau lewat Packing?
+5. **Reject panen**: perlu kolom reject + alasan di laporan Produksi?
