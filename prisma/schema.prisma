@@ -1088,6 +1088,11 @@ model FinanceTransaction {
   sentAt              DateTime?
   /// Withdraw TikTok: jam uang diterima di rekening bank (= tanggal pembukuan)
   receivedAt          DateTime?
+  /// Withdraw TikTok: screenshot bukti uang masuk (bank) / Seller Center "sudah ditransfer" (wajib saat Uang diterima)
+  receivedProofPath   String?
+  receivedProofMime   String?
+  /// Hasil baca bukti {amounts, amount, date, time, manual}
+  receivedProofRead   Json?
 
   @@index([fingerprint])
   @@index([origin])

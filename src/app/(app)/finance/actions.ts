@@ -6,12 +6,13 @@ import { action, str, optStr, int } from "@/lib/action";
 import { attachTransactionProof, linkBookedTransfer, setReserveLink, changeBookedStore, reclassifyBooked, cancelBookedTransaction, deleteClosedTransactions, restoreClosedTransactions, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
 import { saveProof } from "@/lib/storage";
 import { confirmTransaction, receiveWithdraw } from "@/lib/wdProcess";
+import { readWdProofFile } from "@/lib/wdProofServer";
 import { reserveOptions } from "@/lib/reserveSync";
 import { todayStr } from "@/lib/time";
 import { extractTransaction } from "@/lib/extract";
 import { detectPayablePayment } from "@/lib/botPurchase";
 import { openPayables } from "@/lib/payables";
-import { jakartaDateTime, txTime } from "@/lib/time";
+import { fmtDateTime, jakartaDateTime, txTime } from "@/lib/time";
 import { assertPerm } from "@/lib/auth";
 import type { TxDirection } from "@prisma/client";
 
@@ -92,13 +93,23 @@ export const approveTx = action("finance.approve", async (fd, user) => {
   return r.inProcess ? "Dikonfirmasi: withdraw TikTok Dalam Proses. Tekan \"Uang diterima\" setelah uangnya masuk rekening." : `Disetujui & dibukukan (${r.journal.number})`;
 }, ["/finance", "/", "/akuntansi"]);
 
-/** WD TikTok Dalam Proses: uang sudah masuk rekening → dibukukan dengan tanggal/jam terima */
+/**
+ * WD TikTok Dalam Proses: uang sudah masuk rekening → dibukukan dengan tanggal/jam dari bukti. Bukti (screenshot
+ * uang masuk / Seller Center "ditransfer") wajib; nominal & tanggalnya dibaca OCR (browser, dicek ulang di server).
+ */
 export const receiveWdTx = action(["finance.create", "finance.approve"], async (fd, user) => {
+  const id = str(fd, "id");
+  const file = fd.get("proof");
+  if (!file || typeof file !== "object" || !("arrayBuffer" in file) || file.size === 0) throw new Error("Wajib lampirkan screenshot bukti uang masuk / Seller Center TikTok (ada tanggal & jam)");
+  const buf = Buffer.from(await file.arrayBuffer());
+  const path = await saveProof(buf, file.type);
+  const t = await prisma.financeTransaction.findUniqueOrThrow({ where: { id }, select: { amount: true } });
+  const read = await readWdProofFile(buf, file.type, Number(t.amount), optStr(fd, "ocrText"));
   const date = str(fd, "date");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Tanggal terima wajib diisi");
   const time = /^\d{2}:\d{2}$/.test(str(fd, "time")) ? str(fd, "time") : "12:00";
-  const { journal } = await receiveWithdraw(str(fd, "id"), { id: user.id, name: user.name }, { receivedAt: jakartaDateTime(date, time), toAccountId: optStr(fd, "toAccountId"), canApprove: user.can("finance.approve") });
-  return `Uang diterima, dibukukan (${journal.number})`;
+  const manual = fd.get("manual") === "on" && user.can("finance.approve");
+  const { journal, transaction } = await receiveWithdraw(id, { id: user.id, name: user.name }, { receivedAt: /^\d{4}-\d{2}-\d{2}$/.test(date) ? jakartaDateTime(date, time) : null, toAccountId: optStr(fd, "toAccountId"), canApprove: user.can("finance.approve"), proof: { path, mime: file.type, read }, manual });
+  return `Uang diterima ${fmtDateTime(transaction.receivedAt)}, dibukukan (${journal.number})`;
 }, ["/finance", "/", "/akuntansi"]);
 
 export const rejectTx = action(["finance.review", "finance.approve"], async (fd, user) => {

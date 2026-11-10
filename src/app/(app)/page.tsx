@@ -65,12 +65,13 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
             <span className="shrink-0 font-semibold">Lihat →</span>
           </Link>
           <WdProcessPopup
-            rows={wdRows.map((r) => ({ id: r.id, number: r.number, amount: idr(r.amount), label: `${r.store ? `${r.store} · ` : ""}${r.from} → ${r.to} · ditransfer ${fmtDateTime(r.sentAt ?? r.date)}`, toAccountId: r.toAccountId }))}
+            rows={wdRows.map((r) => ({ id: r.id, number: r.number, amount: idr(r.amount), amountN: r.amount, label: `${r.store ? `${r.store} · ` : ""}${r.from} → ${r.to} · ditransfer ${fmtDateTime(r.sentAt ?? r.date)}`, toAccountId: r.toAccountId }))}
             banks={wdBanks}
             action={receiveWdTx}
             userKey={user.id}
             date={today}
             time={nowTimeStr()}
+            canApprove={canApprove}
           />
         </>
       )}

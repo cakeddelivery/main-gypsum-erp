@@ -2,7 +2,8 @@ import { prisma } from "./db";
 import { approveAndBook, FinanceError, missingFields, postWdReceived, postWdSent, type Actor } from "./finance";
 import { audit } from "./audit";
 import { idr } from "./money";
-import { fmtDateTime } from "./time";
+import { fmtDateTime, jakartaDateTime, nowTimeStr } from "./time";
+import { checkWdProof, type WdProofRead } from "./wdProof";
 
 /**
  * Withdraw TikTok "Dalam Proses" (pelajaran audit 9 Nov: dana WD TikTok baru masuk SeaBank 1–3 hari setelah
@@ -62,14 +63,35 @@ export async function canReceive(id: string, user: { id: string; canApprove: boo
   return !!(await prisma.approvalLog.findFirst({ where: { transactionId: id, action: "DIBUAT", actorUserId: user.id } }));
 }
 
+export type WdProof = { path: string; mime: string; read: WdProofRead | null };
+
 /**
- * "Uang diterima": WD Dalam Proses → jurnal 2 SEKALI, bertanggal/jam terima (Dana dalam Perjalanan → rekening
- * tujuan) → DIBUKUKAN. Rekening tujuan boleh diganti (mis. ternyata masuk ke rekening lain).
+ * Tanggal/jam terima dari bukti (wajib): nominal withdraw harus tertulis di bukti & tanggal terbaca. Bila bukti tidak
+ * terbaca otomatis, hanya penyetuju (Owner/Finance) yang boleh menyimpan dengan tanda "sudah dicek manual".
+ * Tanggal/jam yang terbaca di bukti dipakai sebagai waktu terima; isian manual hanya bila bukti tidak memuatnya.
  */
-export async function receiveWithdraw(id: string, actor: Actor & { id: string }, opts: { receivedAt: Date; toAccountId?: string | null; canApprove: boolean }, now: Date = new Date()) {
-  if (isNaN(opts.receivedAt.getTime())) throw new FinanceError("Tanggal/jam terima tidak valid");
-  if (opts.receivedAt.getTime() > now.getTime() + 5 * 60_000) throw new FinanceError("Tanggal/jam terima tidak boleh di masa depan");
+export function resolveReceivedAt(amount: number, proof: WdProof | null | undefined, opts: { receivedAt?: Date | null; manual?: boolean; canApprove: boolean }) {
+  if (!proof?.path) throw new FinanceError("Wajib lampirkan screenshot bukti: uang masuk di aplikasi bank, atau Seller Center TikTok yang menunjukkan dana sudah ditransfer (ada tanggal & jam).");
+  const check = checkWdProof(proof.read, amount);
+  const manual = !check.ok && !!opts.manual;
+  if (!check.ok && !manual) throw new FinanceError(`Bukti belum valid: ${check.issues.join("; ")}. Kirim screenshot yang menampilkan nominal, tanggal & jam${opts.canApprove ? ", atau tandai sudah dicek manual" : ""}.`);
+  if (manual && !opts.canApprove) throw new FinanceError("Bukti tidak terbaca otomatis: hanya Owner/Finance yang dapat menyimpan dengan cek manual");
+  const hm = opts.receivedAt && !isNaN(opts.receivedAt.getTime()) ? opts.receivedAt.toLocaleTimeString("en-GB", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", hour12: false }) : nowTimeStr();
+  const at = proof.read?.date ? jakartaDateTime(proof.read.date, proof.read.time ?? hm) : opts.receivedAt ?? null;
+  if (!at || isNaN(at.getTime())) throw new FinanceError("Tanggal/jam terima tidak valid");
+  return { at, check, manual };
+}
+
+/**
+ * "Uang diterima": WD Dalam Proses → jurnal 2 SEKALI, bertanggal/jam terima dari bukti (Dana dalam Perjalanan →
+ * rekening tujuan) → DIBUKUKAN. Rekening tujuan boleh diganti (mis. ternyata masuk ke rekening lain).
+ */
+export async function receiveWithdraw(id: string, actor: Actor & { id: string }, opts: { receivedAt?: Date | null; toAccountId?: string | null; canApprove: boolean; proof: WdProof | null; manual?: boolean }, now: Date = new Date()) {
   if (!(await canReceive(id, { id: actor.id, canApprove: opts.canApprove }))) throw new FinanceError("Hanya Owner/Finance atau pembuat transaksi yang dapat menandai uang diterima");
+  const amount = Number((await prisma.financeTransaction.findUniqueOrThrow({ where: { id }, select: { amount: true } })).amount);
+  const { at: receivedAt, check, manual } = resolveReceivedAt(amount, opts.proof, opts);
+  if (receivedAt.getTime() > now.getTime() + 5 * 60_000) throw new FinanceError("Tanggal/jam terima tidak boleh di masa depan");
+  const proof = opts.proof!;
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "FinanceTransaction" WHERE id = ${id} FOR UPDATE`;
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
@@ -79,10 +101,12 @@ export async function receiveWithdraw(id: string, actor: Actor & { id: string },
     if (!toAccountId || toAccountId === cur.accountId) throw new FinanceError("Rekening tujuan tidak valid");
     const to = await tx.bankAccount.findUnique({ where: { id: toAccountId } });
     if (!to?.active || to.marketplace) throw new FinanceError("Rekening tujuan harus rekening bank/dompet aktif, bukan saldo penjual");
-    const journal = await postWdReceived(tx, cur, toAccountId, opts.receivedAt, actor);
-    const t = await tx.financeTransaction.update({ where: { id }, data: { status: "DIBUKUKAN", receivedAt: opts.receivedAt, toAccountId } });
-    await tx.approvalLog.create({ data: { transactionId: id, action: "UANG_DITERIMA", fromStatus: "DALAM_PROSES", toStatus: "DIBUKUKAN", actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: `Uang diterima ${fmtDateTime(opts.receivedAt)} di ${to.name} · jurnal ${journal.number}` } });
-    await audit({ actorId: actor.id, actorName: actor.name }, "WD_UANG_DITERIMA", "FinanceTransaction", id, { journal: journal.number, receivedAt: opts.receivedAt }, tx);
+    const journal = await postWdReceived(tx, cur, toAccountId, receivedAt, actor);
+    const read = { ...(proof.read ?? { amounts: [], amount: null, date: null, time: null }), manual };
+    const t = await tx.financeTransaction.update({ where: { id }, data: { status: "DIBUKUKAN", receivedAt, toAccountId, receivedProofPath: proof.path, receivedProofMime: proof.mime, receivedProofRead: read } });
+    const how = manual ? `bukti dicek manual oleh ${actor.name} (${check.issues.join("; ")})` : `bukti terbaca ${proof.read?.date ?? ""} ${proof.read?.time ?? ""}`.trim();
+    await tx.approvalLog.create({ data: { transactionId: id, action: "UANG_DITERIMA", fromStatus: "DALAM_PROSES", toStatus: "DIBUKUKAN", actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: `Uang diterima ${fmtDateTime(receivedAt)} di ${to.name} · ${how} · jurnal ${journal.number}`.slice(0, 300) } });
+    await audit({ actorId: actor.id, actorName: actor.name }, "WD_UANG_DITERIMA", "FinanceTransaction", id, { journal: journal.number, receivedAt, proof: read }, tx);
     return { transaction: t, journal };
   });
 }

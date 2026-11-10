@@ -2,24 +2,70 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ActionForm, Submit } from "./ActionForm";
 import { CLOSE_MS } from "./Modal";
+import { ocrInBrowser, shrinkImage } from "./ocrClient";
+import { checkWdProof, readWdProofText } from "@/lib/wdProof";
 import type { ActionResult } from "@/lib/action";
 
 type Bank = { id: string; name: string };
 type Act = (p: ActionResult | null, fd: FormData) => Promise<ActionResult>;
 
-/** Isian "Uang diterima": tanggal & jam terima (bawaan: sekarang) + rekening tujuan (terisi) */
-export function WdReceiveFields({ id, toAccountId, banks, date, time, compact }: { id: string; toAccountId: string | null; banks: Bank[]; date: string; time: string; compact?: boolean }) {
+/**
+ * Isian "Uang diterima": screenshot bukti WAJIB (uang masuk di bank / Seller Center TikTok "ditransfer"). Begitu dipilih,
+ * foto dibaca OCR di browser: nominal dicocokkan dengan nominal withdraw, tanggal & jam diisi otomatis. Server membaca
+ * ulang & memvalidasi. Bukti tidak terbaca → hanya Owner/Finance yang boleh menyimpan dengan centang cek manual.
+ */
+export function WdReceiveFields({ id, amount, toAccountId, banks, date, time, compact, canApprove }: { id: string; amount: number; toAccountId: string | null; banks: Bank[]; date: string; time: string; compact?: boolean; canApprove?: boolean }) {
+  const [d, setD] = useState(date);
+  const [tm, setTm] = useState(time);
+  const [ocr, setOcr] = useState("");
+  const [reading, setReading] = useState(false);
+  const [check, setCheck] = useState<{ ok: boolean; text: string } | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const onFile = async () => {
+    const f = fileRef.current?.files?.[0];
+    setCheck(null);
+    setOcr("");
+    if (!f) return;
+    setReading(true);
+    try {
+      const small = await shrinkImage(f);
+      if (small !== f) {
+        try {
+          const dt = new DataTransfer();
+          dt.items.add(small);
+          fileRef.current!.files = dt.files;
+        } catch {}
+      }
+      const text = await ocrInBrowser(small);
+      if (!text) return setCheck({ ok: false, text: f.type === "application/pdf" ? "PDF dibaca di server saat disimpan." : "Foto belum terbaca di HP; dibaca ulang di server saat disimpan." });
+      setOcr(text.slice(0, 4000));
+      const r = readWdProofText(text);
+      const c = checkWdProof(r, amount);
+      if (r.date) setD(r.date);
+      if (r.time) setTm(r.time);
+      setCheck(c.ok ? { ok: true, text: `✓ Terbaca Rp${amount.toLocaleString("id-ID")} · ${r.date}${r.time ? ` ${r.time}` : ""}. Tanggal & jam diisi dari bukti.` } : { ok: false, text: `⚠️ ${c.issues.join("; ")}. Pastikan screenshot menampilkan nominal, tanggal & jam.` });
+    } finally {
+      setReading(false);
+    }
+  };
   return (
     <>
       <input type="hidden" name="id" value={id} />
+      <input type="hidden" name="ocrText" value={ocr} />
+      <label className="block text-xs text-slate-600">
+        Bukti uang masuk (wajib) — screenshot mutasi bank, atau Seller Center TikTok &quot;ditransfer ke bank&quot;
+        <input ref={fileRef} type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" required className="input mt-1 py-1.5" onChange={onFile} />
+      </label>
+      {reading && <p className="text-xs text-slate-500">Membaca bukti…</p>}
+      {check && <p className={`text-xs ${check.ok ? "text-emerald-700" : "text-amber-700"}`}>{check.text}</p>}
       <div className={compact ? "grid grid-cols-2 gap-2 sm:grid-cols-3" : "grid grid-cols-2 gap-3"}>
         <label className="block text-xs text-slate-600">
           Tanggal terima
-          <input type="date" name="date" defaultValue={date} max={date} required className="input mt-1" />
+          <input type="date" name="date" value={d} onChange={(e) => setD(e.target.value)} max={date} required className="input mt-1" />
         </label>
         <label className="block text-xs text-slate-600">
           Jam terima
-          <input type="time" name="time" defaultValue={time} required className="input mt-1" />
+          <input type="time" name="time" value={tm} onChange={(e) => setTm(e.target.value)} required className="input mt-1" />
         </label>
         <label className={`block text-xs text-slate-600 ${compact ? "col-span-2 sm:col-span-1" : "col-span-2"}`}>
           Masuk ke rekening
@@ -32,17 +78,24 @@ export function WdReceiveFields({ id, toAccountId, banks, date, time, compact }:
           </select>
         </label>
       </div>
+      <p className="text-xs text-slate-500">Tanggal & jam yang tertulis di bukti dipakai sebagai waktu uang diterima.</p>
+      {canApprove && check && !check.ok && (
+        <label className="flex items-start gap-2 text-xs text-slate-700">
+          <input type="checkbox" name="manual" className="mt-0.5" />
+          Bukti tidak terbaca otomatis — saya sudah mencocokkan nominal & tanggal secara manual (tercatat di riwayat)
+        </label>
+      )}
     </>
   );
 }
 
-export type PopupRow = { id: string; number: string; amount: string; label: string; toAccountId: string | null };
+export type PopupRow = { id: string; number: string; amount: string; amountN: number; label: string; toAccountId: string | null };
 
 /**
  * Popup otomatis di Beranda: daftar withdraw TikTok Dalam Proses. Muncul sekali per hari per pengguna
  * (diingat di browser). Tiap baris punya tombol "Uang diterima"; baris yang sudah dibukukan hilang dari popup.
  */
-export function WdProcessPopup({ rows: initial, banks, action, userKey, date, time }: { rows: PopupRow[]; banks: Bank[]; action: Act; userKey: string; date: string; time: string }) {
+export function WdProcessPopup({ rows: initial, banks, action, userKey, date, time, canApprove }: { rows: PopupRow[]; banks: Bank[]; action: Act; userKey: string; date: string; time: string; canApprove?: boolean }) {
   const [rows, setRows] = useState(initial);
   const [open, setOpen] = useState(false);
   const [closing, setClosing] = useState(false);
@@ -121,7 +174,7 @@ export function WdProcessPopup({ rows: initial, banks, action, userKey, date, ti
                   </div>
                   {openRow === r.id && (
                     <ActionForm action={action} className="mt-3 space-y-2" onSuccess={() => setRows((x) => x.filter((y) => y.id !== r.id))}>
-                      <WdReceiveFields id={r.id} toAccountId={r.toAccountId} banks={banks} date={date} time={time} compact />
+                      <WdReceiveFields id={r.id} amount={r.amountN} toAccountId={r.toAccountId} banks={banks} date={date} time={time} compact canApprove={canApprove} />
                       <div className="flex justify-end gap-2">
                         <button type="button" className="btn-secondary btn-sm" onClick={() => setOpenRow(null)}>
                           Batal

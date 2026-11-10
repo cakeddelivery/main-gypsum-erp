@@ -193,6 +193,20 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
               </div>
             </Card>
           )}
+          {t.receivedProofPath && (
+            <Card title="💰 Bukti uang diterima">
+              {(() => {
+                const r = t.receivedProofRead as { amount?: number | null; date?: string | null; time?: string | null; manual?: boolean } | null;
+                return (
+                  <div className="space-y-2 text-sm">
+                    <p>Diterima <b>{fmtDateTime(t.receivedAt)}</b> di {toBank?.name ?? "rekening"}.</p>
+                    <p className="text-xs text-slate-500">{r?.manual ? "⚠️ Bukti tidak terbaca otomatis, dicek manual oleh penyetuju (lihat riwayat)." : `Terbaca dari bukti: ${r?.amount ? idr(r.amount) : "—"} · ${r?.date ?? "—"}${r?.time ? ` ${r.time}` : ""}`}</p>
+                    <a className="link" href={`/api/files/wd-proof/${t.id}`} target="_blank" rel="noreferrer">📎 Lihat bukti</a>
+                  </div>
+                );
+              })()}
+            </Card>
+          )}
           {t.status === "DALAM_PROSES" && (
             <Card title="⏳ Dalam proses">
               <div className="space-y-3">
@@ -200,8 +214,8 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
                 {mayReceive ? (
                   <Modal trigger="💰 Uang diterima" triggerClass="btn-success w-full" title={`Uang diterima · ${t.number}`}>
                     <ModalForm action={receiveWdTx} className="space-y-3">
-                      <p className="text-sm text-slate-600">{idr(t.amount)} dibukukan dengan tanggal & jam uang masuk di rekening (lihat riwayat bank).</p>
-                      <WdReceiveFields id={t.id} toAccountId={t.toAccountId} banks={banks.filter((b) => !b.marketplace).map((b) => ({ id: b.id, name: b.name }))} date={todayStr()} time={nowTimeStr()} />
+                      <p className="text-sm text-slate-600">{idr(t.amount)} dibukukan dengan tanggal & jam uang masuk dari bukti. Lampirkan screenshot uang masuk di aplikasi bank, atau Seller Center TikTok yang menunjukkan dana sudah ditransfer.</p>
+                      <WdReceiveFields id={t.id} amount={Number(t.amount)} canApprove={user.can("finance.approve")} toAccountId={t.toAccountId} banks={banks.filter((b) => !b.marketplace).map((b) => ({ id: b.id, name: b.name }))} date={todayStr()} time={nowTimeStr()} />
                       <Submit className="btn-success" pendingText="Membukukan…">Simpan: uang diterima</Submit>
                     </ModalForm>
                   </Modal>

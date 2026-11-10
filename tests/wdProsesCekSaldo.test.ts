@@ -12,9 +12,13 @@ vi.mock("@/lib/telegram", async (orig) => {
     answerCallback: vi.fn(async () => ({ ok: true })),
     chatAction: vi.fn(async () => ({ ok: true })),
     // Lampiran mutasi: PDF kecil yang valid (magic bytes %PDF)
-    downloadTelegramFile: vi.fn(async () => Buffer.from("%PDF-1.4 mutasi uji")),
+    // Lampiran: file id "img…" = foto JPEG, lainnya PDF (magic bytes valid)
+    downloadTelegramFile: vi.fn(async (id: string) => (id.startsWith("img") ? Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]) : Buffer.from("%PDF-1.4 mutasi uji"))),
   };
 });
+// OCR server: teks bukti diatur per tes
+const ocr = { text: "" };
+vi.mock("@/lib/ocrReceipt", async (orig) => ({ ...(await orig<typeof import("@/lib/ocrReceipt")>()), ocrImageText: vi.fn(async () => ocr.text) }));
 
 import { prisma } from "@/lib/db";
 import { handleTelegramUpdate } from "@/lib/bot";
@@ -36,6 +40,15 @@ const say = (text: string, f = from) => handleTelegramUpdate({ update_id: n, mes
 const tap = (data: string, f = from) => handleTelegramUpdate({ update_id: n, callback_query: { id: String(n++), from: f, data, message: { message_id: 1, chat: { id: f.id } } } } as never);
 const btns = () => sent.at(-1)?.buttons?.flat() ?? [];
 const uniq = (base: number) => base + (Date.now() % 997);
+/** Bukti terbaca: nominal + tanggal (+ jam) seperti hasil OCR screenshot bank / Seller Center */
+const pf = (amount: number, at: Date = new Date(Date.now() - 60_000)) => {
+  const d = at.toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
+  const t = at.toLocaleTimeString("en-GB", { timeZone: "Asia/Jakarta", hour: "2-digit", minute: "2-digit", hour12: false });
+  return { path: "uji/bukti.jpg", mime: "image/jpeg", read: { amounts: [amount], amount, date: d, time: t } };
+};
+const amtOf = async (id: string) => Number((await prisma.financeTransaction.findUniqueOrThrow({ where: { id } })).amount);
+const proofText = (amount: number, d: string, hm: string) => `SeaBank\nUang Masuk\nRp${amount.toLocaleString("id-ID")}\nDari TIKTOK SHOP\n${d.split("-").reverse().join("/")} ${hm}`;
+const photo = (id: string) => handleTelegramUpdate({ update_id: n, message: { message_id: n++, chat, from, photo: [{ file_id: id }] } } as never);
 
 let owner: { id: string; name: string };
 let tiktok: string;
@@ -92,7 +105,7 @@ describe("WD TikTok Dalam Proses", () => {
     await expect(rejectTransaction(t.id, owner, "x")).rejects.toThrow(/Batalkan/);
 
     const got = jakartaDateTime(todayStr(), "08:18");
-    const { journal } = await receiveWithdraw(t.id, owner, { receivedAt: got, canApprove: true }, new Date(got.getTime() + 60_000));
+    const { journal } = await receiveWithdraw(t.id, owner, { canApprove: true, proof: pf(amt, got) }, new Date(got.getTime() + 60_000));
     const done = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: t.id } });
     expect(done).toMatchObject({ status: "DIBUKUKAN", journalId: r.journal!.id });
     expect(done.date.getTime()).toBe(t.date.getTime());
@@ -104,7 +117,7 @@ describe("WD TikTok Dalam Proses", () => {
     expect(await sales(sentDay)).toBe(s0 + amt); // tidak dobel
     expect(await bal(tiktok)).toBe(0);
     // Sekali saja
-    await expect(receiveWithdraw(t.id, owner, { receivedAt: got, canApprove: true })).rejects.toThrow(/sudah dibukukan/);
+    await expect(receiveWithdraw(t.id, owner, { canApprove: true, proof: pf(amt, got) })).rejects.toThrow(/sudah dibukukan/);
     expect(await prisma.journal.count({ where: { sourceId: t.id, source: "FINANCE" } })).toBe(1);
     expect(await prisma.journal.count({ where: { sourceId: t.id, source: "WD_DITERIMA" } })).toBe(1);
     // Pemeriksaan jurnal ganda (audit:saldo) tidak salah menandai
@@ -121,7 +134,7 @@ describe("WD TikTok Dalam Proses", () => {
     expect(acc).toMatchObject({ name: "Dana dalam Perjalanan", type: "ASET", isCash: true });
     expect(bs.assets.find((x) => x.code === acc.code)?.amount).toBe(await coaBal(transitId));
     expect(bs.balanced).toBe(true);
-    await receiveWithdraw(t.id, owner, { receivedAt: new Date(), canApprove: true });
+    await receiveWithdraw(t.id, owner, { canApprove: true, proof: pf(await amtOf(t.id)) });
   });
 
   it("batal saat Dalam Proses membalik jurnal 1; batal setelah diterima membalik jurnal 1 & 2", async () => {
@@ -130,16 +143,16 @@ describe("WD TikTok Dalam Proses", () => {
     const [b0, tr0, s0] = [await bal(bankJ), await coaBal(transitId), await sales(day)];
     const t = await newWd(amt, jakartaDateTime(day, "19:00"));
     await confirmTransaction(t.id, owner);
-    await expect(receiveWithdraw(t.id, owner, { receivedAt: new Date(Date.now() + 86_400_000), canApprove: true })).rejects.toThrow(FinanceError);
+    await expect(receiveWithdraw(t.id, owner, { canApprove: true, proof: pf(amt, new Date(Date.now() + 86_400_000)) })).rejects.toThrow(FinanceError);
     const other = await prisma.user.findFirstOrThrow({ where: { role: { not: "OWNER" }, active: true } });
-    await expect(receiveWithdraw(t.id, { id: other.id, name: other.name }, { receivedAt: new Date(), canApprove: false })).rejects.toThrow(/pembuat/);
+    await expect(receiveWithdraw(t.id, { id: other.id, name: other.name }, { canApprove: false, proof: pf(amt) })).rejects.toThrow(/pembuat/);
     await cancelBookedTransaction(t.id, owner, "uang tidak masuk");
     expect((await prisma.financeTransaction.findUniqueOrThrow({ where: { id: t.id } })).status).toBe("DIBATALKAN");
     expect([await bal(bankJ), await coaBal(transitId), await sales(day)]).toEqual([b0, tr0, s0]);
 
     const u = await newWd(amt + 1, jakartaDateTime(day, "19:05"));
     await confirmTransaction(u.id, owner);
-    await receiveWithdraw(u.id, owner, { receivedAt: new Date(), canApprove: true });
+    await receiveWithdraw(u.id, owner, { canApprove: true, proof: pf(await amtOf(u.id)) });
     expect(await bal(bankJ)).toBe(b0 + amt + 1);
     await cancelBookedTransaction(u.id, owner, "salah catat");
     expect([await bal(bankJ), await coaBal(transitId), await sales(day), await bal(tiktok)]).toEqual([b0, tr0, s0, 0]);
@@ -157,7 +170,7 @@ describe("WD TikTok Dalam Proses", () => {
     await changeBookedStore(t.id, dl, owner);
     expect([await salesOf(mg), await salesOf(dl), await coaBal(transitId)]).toEqual([mg0 - amt, dl0 + amt, tr0]);
     const b0 = await bal(bankJ);
-    await receiveWithdraw(t.id, owner, { receivedAt: new Date(), canApprove: true });
+    await receiveWithdraw(t.id, owner, { canApprove: true, proof: pf(await amtOf(t.id)) });
     await changeBookedStore(t.id, mg, owner);
     expect([await salesOf(mg), await salesOf(dl), await bal(bankJ), await coaBal(transitId) ]).toEqual([mg0, dl0, b0 + amt, tr0 - amt]);
     expect((await activeDuplicateJournals(prisma, jakartaDateTime(addDays(todayStr(), -3), "00:00"))).filter((g) => g.sourceId === t.id)).toEqual([]);
@@ -183,11 +196,11 @@ describe("WD TikTok Dalam Proses", () => {
     expect(s.count).toBe(await prisma.financeTransaction.count({ where: { status: "DALAM_PROSES", deletedAt: null } }));
     expect(s.total).toBe(rows.reduce((t, r) => t + r.amount, 0));
     expect(rows.find((r) => r.id === a.id)).toMatchObject({ to: "Bank Uji J", store: "MG", createdById: owner.id });
-    await receiveWithdraw(a.id, owner, { receivedAt: new Date(), canApprove: true });
+    await receiveWithdraw(a.id, owner, { canApprove: true, proof: pf(await amtOf(a.id)) });
     rows = await inProcessWithdrawals();
     expect(rows.some((r) => r.id === a.id)).toBe(false);
     expect(rows.some((r) => r.id === b.id)).toBe(true);
-    await receiveWithdraw(b.id, owner, { receivedAt: new Date(), canApprove: true });
+    await receiveWithdraw(b.id, owner, { canApprove: true, proof: pf(await amtOf(b.id)) });
   });
 
   it("bot: kartu WD TikTok → Konfirmasi (dalam proses) → tombol Uang diterima → pilih Kemarin → dibukukan", async () => {
@@ -205,30 +218,67 @@ describe("WD TikTok Dalam Proses", () => {
     expect(sent.at(-1)?.text).toContain("Dalam proses");
     expect(btns().map((x) => x.callback_data)).toEqual([`wr:${t.id}`]);
     expect(await bal(bankJ)).toBe(b0);
+    // Uang diterima: wajib screenshot bukti; tanggal & jam diambil dari bukti
     await tap(`wr:${t.id}`);
+    expect(sent.at(-1)?.text).toContain("screenshot bukti");
     const kemarin = addDays(todayStr(), -1);
-    const datas = btns().map((x) => x.callback_data);
-    expect(datas).toContain(`wd:${t.id}:${todayStr().replace(/-/g, "")}`);
-    expect(datas).toContain(`wp:${t.id}`);
-    expect(datas.every((d) => Buffer.byteLength(d) <= 64)).toBe(true);
-    await tap(`wp:${t.id}`);
-    expect(btns().length).toBeGreaterThanOrEqual(7);
-    await tap(`wd:${t.id}:${kemarin.replace(/-/g, "")}`);
+    // Bukti salah nominal → ditolak, belum dibukukan
+    ocr.text = proofText(amt + 5000, kemarin, "08:18");
+    await photo("img-salah");
+    expect(sent.at(-1)?.text).toContain("Bukti belum valid");
+    expect(btns().map((x) => x.callback_data)).toEqual([`wp:${t.id}`]);
+    await tap(`wd:${t.id}:ok`);
+    expect((await prisma.financeTransaction.findUniqueOrThrow({ where: { id: t.id } })).status).toBe("DALAM_PROSES");
+    // Bukti benar → tombol Simpan dengan tanggal/jam dari bukti
+    ocr.text = proofText(amt, kemarin, "08:18");
+    await photo("img-benar");
+    expect(sent.at(-1)?.text).toContain("Bukti valid");
+    const save = btns().find((x) => x.callback_data === `wd:${t.id}:ok`);
+    expect(save?.text).toContain("08:18");
+    expect(btns().every((x) => Buffer.byteLength(x.callback_data) <= 64)).toBe(true);
+    await tap(save!.callback_data);
     const done = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: t.id } });
     expect(done.status).toBe("DIBUKUKAN");
-    expect(done.receivedAt?.getTime()).toBe(jakartaDateTime(kemarin, "12:00").getTime());
+    expect(done.receivedAt?.getTime()).toBe(jakartaDateTime(kemarin, "08:18").getTime());
+    expect(done.receivedProofPath).toBeTruthy();
+    expect(done.receivedProofRead).toMatchObject({ amount: amt, date: kemarin, time: "08:18", manual: false });
     expect(await bal(bankJ)).toBe(b0 + amt);
     // Tekan lagi: tidak dobel
-    await tap(`wd:${t.id}:${kemarin.replace(/-/g, "")}`);
+    await tap(save!.callback_data);
     expect(await bal(bankJ)).toBe(b0 + amt);
   });
 
-  it("bot: 'Uang sudah diterima' langsung dari kartu draft = konfirmasi + dibukukan hari ini", async () => {
+  it("bot: bukti tidak terbaca → Owner bisa simpan dengan cek manual (tercatat); tanpa bukti tidak bisa", async () => {
     const amt = uniq(388_000);
     await say(`WD dari dompetjj MG ${amt} ke rekjj`);
     const t = await prisma.financeTransaction.findFirstOrThrow({ where: { telegramChatId: String(TG) }, orderBy: { createdAt: "desc" } });
+    // Tanpa bukti: tombol simpan ditolak
     await tap(`wd:${t.id}:${todayStr().replace(/-/g, "")}`);
-    expect((await prisma.financeTransaction.findUniqueOrThrow({ where: { id: t.id } })).status).toBe("DIBUKUKAN");
+    expect((await prisma.financeTransaction.findUniqueOrThrow({ where: { id: t.id } })).status).toBe("MENUNGGU_KONFIRMASI");
+    await tap(`wr:${t.id}`);
+    ocr.text = "foto buram tanpa angka";
+    await photo("img-buram");
+    expect(sent.at(-1)?.text).toContain("Bukti belum valid");
+    await tap(`wp:${t.id}`);
+    expect(btns().length).toBeGreaterThanOrEqual(7);
+    await tap(`wd:${t.id}:${todayStr().replace(/-/g, "")}`);
+    const done = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: t.id } });
+    expect(done.status).toBe("DIBUKUKAN");
+    expect(done.receivedProofRead).toMatchObject({ manual: true });
+    expect((await prisma.approvalLog.findFirstOrThrow({ where: { transactionId: t.id, action: "UANG_DITERIMA" } })).note).toContain("dicek manual");
+  });
+
+  it("validasi bukti: wajib ada; nominal harus cocok; tanggal/jam dari bukti; bukan penyetuju tidak boleh cek manual", async () => {
+    const amt = uniq(222_000);
+    const t = await newWd(amt);
+    await confirmTransaction(t.id, owner);
+    await expect(receiveWithdraw(t.id, owner, { canApprove: true, proof: null })).rejects.toThrow(/Wajib lampirkan/);
+    await expect(receiveWithdraw(t.id, owner, { canApprove: true, proof: pf(amt + 1) })).rejects.toThrow(/Bukti belum valid/);
+    const blank = { path: "uji/b.jpg", mime: "image/jpeg", read: null };
+    await expect(receiveWithdraw(t.id, owner, { canApprove: false, proof: blank, manual: true, receivedAt: new Date() })).rejects.toThrow(/Owner\/Finance/);
+    const at = jakartaDateTime(todayStr(), "06:05");
+    const r = await receiveWithdraw(t.id, owner, { canApprove: true, proof: pf(amt, at), receivedAt: new Date() }, new Date(at.getTime() + 60_000));
+    expect(r.transaction.receivedAt?.getTime()).toBe(at.getTime());
   });
 
   it("pengingat harian WD: hanya dikirim bila ada; tombol per WD; pesan diperbarui setelah diterima", async () => {
@@ -245,8 +295,10 @@ describe("WD TikTok Dalam Proses", () => {
     expect(msg.text).toContain("1 withdraw TikTok dalam proses");
     expect(msg.buttons?.flat().map((x) => x.callback_data)).toEqual([`wr:${t.id}:r`]);
     await tap(`wr:${t.id}:r`);
-    expect(btns().map((x) => x.callback_data)).toContain(`wd:${t.id}:${todayStr().replace(/-/g, "")}:r`);
-    await tap(`wd:${t.id}:${todayStr().replace(/-/g, "")}:r`);
+    ocr.text = proofText(await amtOf(t.id), todayStr(), "00:01");
+    await photo("img-ingat");
+    expect(btns().map((x) => x.callback_data)).toEqual([`wd:${t.id}:ok:r`]);
+    await tap(`wd:${t.id}:ok:r`);
     expect((await prisma.financeTransaction.findUniqueOrThrow({ where: { id: t.id } })).status).toBe("DIBUKUKAN");
     expect(sent.at(-1)?.text).toContain("Semua withdraw TikTok sudah diterima");
   });

@@ -25,7 +25,7 @@ import { appUrl, guardDup } from "./botDup";
 import { approveCategoryProposal, canApproveCategory, proposeCategory, rejectCategoryProposal, suggestCategories, type CatSuggestion } from "./categorySuggest";
 import type { Session } from "./botKit";
 import { confirmTransaction, isTiktokWithdraw } from "./wdProcess";
-import { wdCallback } from "./botWd";
+import { wdCallback, wdProofMessageHook } from "./botWd";
 import { balanceCheckCallback, balanceCheckMessageHook } from "./balanceCheck";
 
 type TgUser = { id: number; first_name?: string; username?: string };
@@ -83,6 +83,8 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   if (!ident.chatId) await prisma.telegramIdentity.update({ where: { id: ident.id }, data: { chatId } });
   // Cek saldo pagi "Tidak sesuai": saldo bank yang diketik + lampiran mutasi (foto/PDF)
   if (await balanceCheckMessageHook(ident, chatId, msg)) return;
+  // "Uang diterima" withdraw TikTok: screenshot bukti uang masuk (foto/PDF)
+  if (await wdProofMessageHook(ident, chatId, msg)) return;
   // Isian bertahap (produksi, absen, stok): lokasi & jawaban teks
   if (msg.location) {
     await handleFlowLocation(ident, chatId, msg.location, { forwarded: !!(msg.forward_origin || msg.forward_date), venue: !!msg.venue, ageSec: msg.date ? Math.floor(Date.now() / 1000) - msg.date : 0 });
