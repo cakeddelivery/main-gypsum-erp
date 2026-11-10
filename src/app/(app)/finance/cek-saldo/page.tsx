@@ -57,7 +57,7 @@ export default async function CekSaldoPage({ searchParams }: { searchParams: Pro
           )}
         </>}
       />
-      <Tabs current={status ?? "ALL"} tabs={[{ key: "ALL", label: "Semua", href: "/finance/cek-saldo", count: count() }, ...(["TIDAK_SESUAI", "MENUNGGU", "SESUAI"] as const).map((s) => ({ key: s, label: LABEL[s], href: `/finance/cek-saldo?status=${s}`, count: count(s) }))]} />
+      <Tabs current={status ?? "ALL"} tabs={[{ key: "ALL", label: "Semua", href: "/finance/cek-saldo?status=ALL", count: count() }, ...(["TIDAK_SESUAI", "MENUNGGU", "SESUAI"] as const).map((s) => ({ key: s, label: LABEL[s], href: `/finance/cek-saldo?status=${s}`, count: count(s) }))]} />
       {rows.length === 0 ? <Empty title="Belum ada pengecekan" hint="Pengecekan pertama dikirim bot besok pagi pukul 05.00 WIB." /> : (
         <div className="table-wrap">
           <Paged><table className="tbl">
