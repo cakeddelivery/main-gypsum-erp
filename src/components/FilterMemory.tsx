@@ -30,9 +30,50 @@ function write(path: string, q: string | null) {
   }
 }
 
+const CUR = "nav:cur";
+const PREV = "nav:prev";
+function ss(k: string) {
+  try {
+    return sessionStorage.getItem(k);
+  } catch {
+    return null;
+  }
+}
+const pathOf = (u: string | null) => (u ?? "").split("?")[0];
+/**
+ * Pathname halaman asal. "nav:cur"/"nav:prev" menyimpan path + query, sehingga hasilnya sama
+ * entah NavTracker sudah atau belum mencatat halaman ini.
+ */
+function cameFrom(here: string) {
+  const cur = ss(CUR);
+  return cur === here ? pathOf(ss(PREV)) : pathOf(cur);
+}
+
+/**
+ * Mencatat perpindahan halaman (dipasang sekali di Shell): setiap pathname ATAU query berubah,
+ * "nav:prev" = halaman sebelumnya, "nav:cur" = halaman sekarang. Klik tab di halaman yang sama
+ * membuat prev = cur = halaman ini, jadi FilterMemory tahu itu bukan "kembali dari halaman lain".
+ */
+export function NavTracker() {
+  const path = usePathname();
+  const sp = useSearchParams();
+  const qs = sp.toString();
+  useEffect(() => {
+    try {
+      const cur = sessionStorage.getItem(CUR);
+      if (cur !== null) sessionStorage.setItem(PREV, cur);
+      sessionStorage.setItem(CUR, qs ? `${path}?${qs}` : path);
+    } catch {
+      /* abaikan */
+    }
+  }, [path, qs]);
+  return null;
+}
+
 /**
  * Mengingat filter daftar (per halaman, selama tab browser terbuka).
- * Kembali ke daftar lewat menu/tautan tanpa filter → filter terakhir dipulihkan.
+ * Kembali ke daftar DARI HALAMAN LAIN (detail, menu bawah) tanpa filter → filter terakhir dipulihkan.
+ * Membuka tautan tanpa filter dari halaman yang sama (mis. tab "Semua") = filter sengaja dikosongkan.
  * Tombol "Reset" menghapus filter yang diingat.
  */
 export function FilterMemory() {
@@ -55,8 +96,12 @@ export function FilterMemory() {
     }
     const saved = read(path);
     if (saved && !sp.toString()) {
-      router.replace(`${path}?${saved}`);
-      return;
+      const here = sp.toString() ? `${path}?${sp.toString()}` : path;
+      if (cameFrom(here) !== path) {
+        router.replace(`${path}?${saved}`);
+        return;
+      }
+      write(path, null);
     }
     setActive(false);
   }, [path, q, sp, router]);
