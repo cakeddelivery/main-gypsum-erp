@@ -152,7 +152,7 @@ export async function wdProofMessageHook(ident: WdIdent, chatId: string, msg: Tg
   }
   const path = await saveProof(buf, mime).catch((e: Error) => e);
   if (path instanceof Error) {
-    await sendTelegram(chatId, `Bukti tidak bisa disimpan: ${esc(path.message)}. Kirim JPG/PNG/WEBP/PDF maks. 5 MB.`, { type: "WD_BUKTI" });
+    await sendTelegram(chatId, `Bukti tidak bisa disimpan: ${esc(path.message)}. Kirim JPG/PNG/WEBP/PDF maks. 15 MB.`, { type: "WD_BUKTI" });
     return true;
   }
   await chatAction(chatId, "typing").catch(() => {});

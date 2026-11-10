@@ -75,7 +75,7 @@ export default async function PiutangUtang({ searchParams }: { searchParams: Pro
             <Field label="Nama supplier baru" hint="Bila namanya sama/mirip dengan supplier yang ada, otomatis dipakai yang sudah ada"><input name="vendor" className="input" list="supplier-names" /><datalist id="supplier-names">{suppliers.flatMap((s) => [s.name, ...s.aliases.split(",").map((x) => x.trim()).filter(Boolean)]).map((n) => <option key={n} value={n} />)}</datalist></Field>
             <Field label="Untuk (akun debit)" className="col-span-2" hint="Barang/jasa yang diterima dari supplier: biasanya Persediaan Bahan Baku"><select name="debitAccountId" className="input" defaultValue={defDebit}>{debitAcc.map((a) => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}</select></Field>
             {common}
-            <Field label="Foto nota (opsional)" className="col-span-2" hint="JPG/PNG/PDF, maks 5 MB"><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
+            <Field label="Foto nota (opsional)" className="col-span-2" hint="JPG/PNG/PDF, maks 15 MB"><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
             <div className="col-span-2"><Submit>Simpan</Submit></div>
           </ModalForm>
         </Modal>

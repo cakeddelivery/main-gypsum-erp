@@ -245,7 +245,7 @@ export async function balanceCheckMessageHook(i: CsIdent, chatId: string, msg: T
   }
   const path = await saveProof(buf, mime).catch((e: Error) => e);
   if (path instanceof Error) {
-    await sendTelegram(chatId, `File tidak bisa disimpan: ${esc(path.message)}. Kirim JPG/PNG/WEBP/PDF maks. 5 MB.`, { buttons: doneBtn, type: "CEK_SALDO" });
+    await sendTelegram(chatId, `File tidak bisa disimpan: ${esc(path.message)}. Kirim JPG/PNG/WEBP/PDF maks. 15 MB.`, { buttons: doneBtn, type: "CEK_SALDO" });
     return true;
   }
   await addAttachment(row.id, { path, mime });

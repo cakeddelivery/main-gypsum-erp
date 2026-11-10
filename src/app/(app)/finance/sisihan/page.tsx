@@ -85,7 +85,7 @@ export default async function SisihanPage() {
                           <input type="hidden" name="fundId" value={f.id} />
                           <Field label="Tanggal"><input type="date" name="date" defaultValue={f.missing[f.missing.length - 1] ?? t} className="input" /></Field>
                           <Field label="Nominal" hint="Kosongkan untuk nominal harian"><input name="amount" inputMode="numeric" placeholder={String(Number(f.dailyAmount))} className="input" /></Field>
-                          <Field label="Bukti transfer (opsional)" hint="JPG/PNG/PDF, maks 5 MB"><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
+                          <Field label="Bukti transfer (opsional)" hint="JPG/PNG/PDF, maks 15 MB"><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
                           {f.missing.length > 0 && <p className="text-xs text-slate-500">Belum disisihkan: {f.missing.map((d) => fmtDay(new Date(`${d}T00:00:00Z`))).join(", ")}</p>}
                           <Submit>Catat</Submit>
                         </ModalForm>
@@ -99,7 +99,7 @@ export default async function SisihanPage() {
                             <Field label={`Nominal (saldo ${idr(f.balance)})`}><input name="amount" defaultValue={f.balance} inputMode="numeric" className="input" /></Field>
                             {f.kind === "LOAN_SAVING" && <Field label="Bunga / biaya (opsional)" hint="Kosong = otomatis dari jadwal cicilan bila nominalnya sama"><input name="interest" inputMode="numeric" className="input" placeholder="otomatis" /></Field>}
                             <Field label="Catatan"><input name="note" className="input" /></Field>
-                            <Field label="Bukti transfer (opsional)" hint="JPG/PNG/PDF, maks 5 MB"><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
+                            <Field label="Bukti transfer (opsional)" hint="JPG/PNG/PDF, maks 15 MB"><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
                             <Submit>Bukukan</Submit>
                           </ModalForm>
                         </Modal>
@@ -134,7 +134,7 @@ export default async function SisihanPage() {
                             {peers.map((x) => <label key={x.id} className="flex items-center gap-2"><input type="checkbox" name="entryId" value={x.id} defaultChecked /> {x.fund.name} · {idr(x.amount)}</label>)}
                           </fieldset>
                         ) : <input type="hidden" name="entryId" value={e.id} />}
-                        <Field label="Foto bukti transfer" hint="JPG/PNG/PDF, maks 5 MB"><input type="file" name="proof" required accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
+                        <Field label="Foto bukti transfer" hint="JPG/PNG/PDF, maks 15 MB"><input type="file" name="proof" required accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
                         <Submit>Lampirkan</Submit>
                       </ModalForm>
                     </Modal>

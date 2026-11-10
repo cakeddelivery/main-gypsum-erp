@@ -123,7 +123,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
                 <Modal trigger={t.proofPath ? "Ganti bukti" : "+ Lampirkan bukti"} triggerClass="btn-secondary btn-sm mt-2" title={`Bukti ${t.number}`}>
                   <ModalForm action={attachProofTx} className="space-y-3">
                     <input type="hidden" name="id" value={t.id} />
-                    <Field label="Foto / PDF bukti" hint="JPG/PNG/PDF, maks 5 MB. Ikut terlampir di dana sisihan yang tersambung. Jurnal tidak berubah."><input type="file" name="proof" required accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
+                    <Field label="Foto / PDF bukti" hint="JPG/PNG/PDF, maks 15 MB. Ikut terlampir di dana sisihan yang tersambung. Jurnal tidak berubah."><input type="file" name="proof" required accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></Field>
                     <Submit>Lampirkan</Submit>
                   </ModalForm>
                 </Modal>

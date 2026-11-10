@@ -70,7 +70,7 @@ export function PurchaseFields({ items, suppliers, banks, today, defaultBank }: 
     try {
       const fd = new FormData();
       const small = await shrinkImage(f);
-      // Foto yang dikirim saat simpan juga versi kecil (batas 5 MB)
+      // Foto yang dikirim saat simpan juga versi kecil (batas 15 MB)
       if (small !== f) {
         try {
           const dt = new DataTransfer();
