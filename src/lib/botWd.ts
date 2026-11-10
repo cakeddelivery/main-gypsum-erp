@@ -1,4 +1,5 @@
 import { prisma } from "./db";
+import { sessionKey } from "./botKit";
 import { FinanceError, submitForConfirmation } from "./finance";
 import { answerCallback, chatAction, downloadTelegramFile, editTelegram, esc, sendTelegram, type InlineButton } from "./telegram";
 import { clearSession, getSession } from "./botFlow";
@@ -78,11 +79,11 @@ export async function wdCallback(ident: WdIdent, cbId: string, chatId: string, m
   if (action === "wr") {
     // Bukti wajib: tunggu screenshot (foto/PDF) di chat ini
     const data = { id: t.id, r: fromReminder ? 1 : 0, msg: messageId };
-    await prisma.botSession.upsert({ where: { chatId }, create: { chatId, userId: ident.userId, flow: FLOW, step: "proof", data }, update: { userId: ident.userId, flow: FLOW, step: "proof", data } });
+    await prisma.botSession.upsert({ where: { chatId: sessionKey(chatId, ident.userId) }, create: { chatId: sessionKey(chatId, ident.userId), userId: ident.userId, flow: FLOW, step: "proof", data }, update: { userId: ident.userId, flow: FLOW, step: "proof", data } });
     await editTelegram(chatId, messageId, proofAsk(t), [back]);
     return answerCallback(cbId, "Kirim screenshot bukti");
   }
-  const s = await getSession(chatId);
+  const s = await getSession(chatId, ident.userId);
   const sess = s?.flow === FLOW && s.userId === ident.userId && s.data.id === t.id && s.data.path ? s : null;
   if (action === "wp") {
     // Tanggal manual (bukti tidak terbaca): 7 hari terakhir, hanya penyetuju
@@ -108,7 +109,7 @@ export async function wdCallback(ident: WdIdent, cbId: string, chatId: string, m
       await markInProcess(t.id, actor, "Dikonfirmasi via Telegram");
     }
     const r = await receiveWithdraw(t.id, actor, { receivedAt, canApprove: isApprover(ident), proof, manual });
-    await clearSession(chatId);
+    await clearSession(chatId, ident.userId);
     const done = `✅ ${esc(t.number)} ${idr(t.amount)} diterima ${fmtDateTime(r.transaction.receivedAt)}${manual ? " (dicek manual)" : ""} & dibukukan (${esc(r.journal.number)}).`;
     await editTelegram(chatId, messageId, done, []);
     const orig = Number(sess.data.msg);
@@ -131,13 +132,13 @@ type TgMsg = { message_id: number; text?: string; caption?: string; photo?: { fi
 
 /** Pesan saat menunggu bukti "Uang diterima": foto/PDF dibaca (OCR, AI cadangan) lalu divalidasi. true = ditangani. */
 export async function wdProofMessageHook(ident: WdIdent, chatId: string, msg: TgMsg): Promise<boolean> {
-  const s = await getSession(chatId);
+  const s = await getSession(chatId, ident.userId);
   if (s?.flow !== FLOW || s.userId !== ident.userId) return false;
   const text = (msg.text ?? msg.caption ?? "").trim();
   if (text.startsWith("/") || text === "📋 Menu") return false;
   const t = await prisma.financeTransaction.findUnique({ where: { id: String(s.data.id) } });
   if (!t || !["DALAM_PROSES", "DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"].includes(t.status)) {
-    await clearSession(chatId);
+    await clearSession(chatId, ident.userId);
     return false;
   }
   const sfx = Number(s.data.r) ? ":r" : "";
@@ -160,7 +161,7 @@ export async function wdProofMessageHook(ident: WdIdent, chatId: string, msg: Tg
   await chatAction(chatId, "typing").catch(() => {});
   const read = await readWdProofFile(buf, mime, Number(t.amount));
   const c = checkWdProof(read, Number(t.amount));
-  await prisma.botSession.update({ where: { chatId }, data: { step: "confirm", data: { ...s.data, path, mime, read: JSON.stringify(read) } } });
+  await prisma.botSession.update({ where: { chatId: sessionKey(chatId, ident.userId) }, data: { step: "confirm", data: { ...s.data, path, mime, read: JSON.stringify(read) } } });
   if (c.ok && read!.source === "seller") {
     // Seller Center: tanggal = ditransfer; pilih tanggal uang masuk bank (tanggal transfer s/d hari ini)
     const days = Array.from({ length: 8 }, (_, k) => addDays(todayStr(), -k)).filter((d) => d >= read!.date!);

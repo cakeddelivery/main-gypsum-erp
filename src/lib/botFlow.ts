@@ -11,7 +11,7 @@ import { idr } from "./money";
 import { addDays, dateOnly, fmtDate, fmtDateTime, jakartaDateTime, todayStr } from "./time";
 import { answerCallback, editTelegram, esc, sendTelegram, type InlineButton } from "./telegram";
 import type { BotIdent } from "./botMenu";
-import { cancelRow, can, chunk, fmtQty, itemChoices, itemPrompt, MENU_TEXT, PAGE, pager, parseCount, parseQty, userDivision, type Ctx, type Data, type Prompt, type Session } from "./botKit";
+import { cancelRow, can, chatOfKey, sessionKey, chunk, fmtQty, itemChoices, itemPrompt, MENU_TEXT, PAGE, pager, parseCount, parseQty, userDivision, type Ctx, type Data, type Prompt, type Session } from "./botKit";
 export { parseCount, parseQty } from "./botKit";
 import { T3_FLOWS, t3MenuRows } from "./botFlow3";
 import { dupAnswer, dupButtons, dupPrompt } from "./botDup";
@@ -28,24 +28,25 @@ export const FLOW_KEEP_HOURS = 24;
 
 
 // ---------- Sesi ----------
-export async function getSession(chatId: string): Promise<Session | null> {
-  const s = await prisma.botSession.findUnique({ where: { chatId } });
+export async function getSession(chatId: string, userId: string): Promise<Session | null> {
+  const key = sessionKey(chatId, userId);
+  const s = await prisma.botSession.findUnique({ where: { chatId: key } });
   if (!s) return null;
   const age = Date.now() - s.updatedAt.getTime();
   if (age > FLOW_TTL_MIN * 60_000) {
-    if (age > FLOW_KEEP_HOURS * 3_600_000) await prisma.botSession.delete({ where: { chatId } }).catch(() => {});
+    if (age > FLOW_KEEP_HOURS * 3_600_000) await prisma.botSession.delete({ where: { chatId: key } }).catch(() => {});
     return null;
   }
-  return { ...s, data: (s.data ?? {}) as Data };
+  return { ...s, chatId: chatOfKey(s.chatId), data: (s.data ?? {}) as Data };
 }
 
 /** Isian yang terhenti (lewat FLOW_TTL_MIN, belum 24 jam): ditawarkan untuk dilanjutkan, bukan dibuang diam-diam */
-export async function getStaleSession(chatId: string): Promise<Session | null> {
-  const s = await prisma.botSession.findUnique({ where: { chatId } });
+export async function getStaleSession(chatId: string, userId: string): Promise<Session | null> {
+  const s = await prisma.botSession.findUnique({ where: { chatId: sessionKey(chatId, userId) } });
   if (!s) return null;
   const age = Date.now() - s.updatedAt.getTime();
   if (age <= FLOW_TTL_MIN * 60_000 || age > FLOW_KEEP_HOURS * 3_600_000) return null;
-  return { ...s, data: (s.data ?? {}) as Data };
+  return { ...s, chatId: chatOfKey(s.chatId), data: (s.data ?? {}) as Data };
 }
 
 const FLOW_NAME: Record<string, string> = { prod: "input produksi", absen: "absen", mut: "mutasi stok", req: "permintaan stok", cek: "cek stok", kas: "kasbon", ksb: "kasbon", beli: "pembelian", utang: "bayar hutang/cicilan", sish: "dana sisihan", tlg: "pengembalian talangan", bbay: "bayar upah borongan", jnew: "penjualan", jcil: "cicilan piutang", trx: "transaksi" };
@@ -60,16 +61,18 @@ export const retryRows: InlineButton[][] = [[{ text: "🔁 Coba lagi", callback_
 
 async function save(s: Session) {
   const data = s.data as Prisma.InputJsonValue;
-  await prisma.botSession.upsert({ where: { chatId: s.chatId }, create: { chatId: s.chatId, userId: s.userId, flow: s.flow, step: s.step, data }, update: { userId: s.userId, flow: s.flow, step: s.step, data } });
+  const key = sessionKey(s.chatId, s.userId);
+  await prisma.botSession.upsert({ where: { chatId: key }, create: { chatId: key, userId: s.userId, flow: s.flow, step: s.step, data }, update: { userId: s.userId, flow: s.flow, step: s.step, data } });
 }
 
-export async function clearSession(chatId: string) {
-  await prisma.botSession.delete({ where: { chatId } }).catch(() => {});
+export async function clearSession(chatId: string, userId: string) {
+  await prisma.botSession.delete({ where: { chatId: sessionKey(chatId, userId) } }).catch(() => {});
 }
 
-/** Dipakai webhook: pesan teks/lokasi saat isian aktif selalu ditangani ERP (tidak diteruskan ke Hermes) */
+/** Dipakai webhook (chat pribadi): pesan teks/lokasi saat isian aktif selalu ditangani ERP (tidak diteruskan ke Hermes) */
 export async function hasActiveFlow(chatId: string) {
-  return !!(await getSession(chatId));
+  const s = await prisma.botSession.findUnique({ where: { chatId } });
+  return !!s && Date.now() - s.updatedAt.getTime() <= FLOW_TTL_MIN * 60_000;
 }
 
 async function present(ctx: Ctx, p: Prompt) {
@@ -298,7 +301,7 @@ export type TgLocation = { latitude: number; longitude: number; horizontal_accur
 
 /** Pesan lokasi dari Telegram saat sesi absen aktif */
 export async function handleFlowLocation(i: BotIdent, chatId: string, loc: TgLocation, meta: { forwarded: boolean; venue: boolean; ageSec: number }) {
-  const s = await getSession(chatId);
+  const s = await getSession(chatId, i.userId);
   if (!s || s.flow !== "absen" || s.userId !== i.userId) {
     await sendTelegram(chatId, "Untuk absen, buka 📋 Menu → 📍 Absen dulu, lalu kirim lokasi.");
     return;
@@ -310,11 +313,11 @@ export async function handleFlowLocation(i: BotIdent, chatId: string, loc: TgLoc
   try {
     if (s.step === "in") {
       const r = await selfCheckIn(actor, pos, "TELEGRAM");
-      await clearSession(chatId);
+      await clearSession(chatId, i.userId);
       await restoreKeyboard(chatId, `✅ <b>Absen masuk tercatat</b> (${esc(r.shift)})${r.status === "TERLAMBAT" ? `\n⚠️ Terlambat ${r.lateMinutes} menit` : ""}${r.site ? `\nLokasi: ${esc(r.site)} (${r.distance} m)` : ""}`);
     } else {
       const r = await selfCheckOut(actor, pos, "TELEGRAM");
-      await clearSession(chatId);
+      await clearSession(chatId, i.userId);
       await restoreKeyboard(chatId, `✅ <b>Absen pulang tercatat</b>\nMasuk ${fmtDateTime(r.checkIn)} · Pulang ${fmtDateTime(r.checkOut)}${r.site ? `\nLokasi: ${esc(r.site)} (${r.distance} m)` : ""}`);
     }
   } catch (e) {
@@ -527,7 +530,7 @@ async function promptFor(s: Session, i: BotIdent): Promise<Prompt> {
 }
 
 async function finish(ctx: Ctx, s: Session) {
-  await clearSession(ctx.chatId);
+  await clearSession(ctx.chatId, s.userId);
   if (T3_FLOWS[s.flow]) return present(ctx, await T3_FLOWS[s.flow].finish(ctx, s));
   const d = s.data;
   const again = (flow: string, label: string): InlineButton[][] => [[{ text: label, callback_data: `f:start:${flow}` }, { text: MENU_TEXT, callback_data: "m:home" }]];
@@ -559,7 +562,7 @@ async function answer(ctx: Ctx, s: Session, v: string, fromText: boolean): Promi
     // Kartu transaksi mirip: lanjut (jawaban semula diulang), berhenti tanpa menyimpan, atau lihat transaksi lama
     const c = fromText ? null : dupAnswer(s, v);
     if (c === "stop") {
-      await clearSession(ctx.chatId);
+      await clearSession(ctx.chatId, s.userId);
       return present(ctx, { text: "🛑 Tidak disimpan, transaksi lama tetap dipakai. Tidak ada yang dicatat dua kali.", buttons: [[{ text: MENU_TEXT, callback_data: "m:home" }]] });
     }
     if (c === "detail" || c === "show") return present(ctx, await dupPrompt(s, c === "detail"));
@@ -597,27 +600,30 @@ export async function startPrefilledFlow(ctx: Ctx, s: Session) {
   return present({ ...ctx, messageId: undefined }, await promptFor(s, ctx.i));
 }
 
-/** Tombol isian (callback_data diawali "f:") */
-export async function handleFlowCallback(i: BotIdent, cbId: string, chatId: string, messageId: number, data: string) {
+/**
+ * Tombol isian (callback_data diawali "f:"). `owner` = pengguna pemilik sesi isian (bawaan: penekan tombol); di grup
+ * Owner/Finance boleh menekan kartu isian orang lain, isian yang dipakai tetap milik pembuat kartu.
+ */
+export async function handleFlowCallback(i: BotIdent, cbId: string, chatId: string, messageId: number, data: string, owner: string = i.userId) {
   const [, a, b] = data.split(":");
   const ctx: Ctx = { i, chatId, messageId };
   if (a === "start") {
     await answerCallback(cbId, "");
-    await clearSession(chatId);
+    await clearSession(chatId, i.userId);
     return start(ctx, b);
   }
   if (a === "x") {
-    const s = await getSession(chatId);
-    await clearSession(chatId);
+    const s = await getSession(chatId, owner);
+    await clearSession(chatId, owner);
     await answerCallback(cbId, "Dibatalkan");
     if (s?.flow === "absen") return restoreKeyboard(chatId, "Absen dibatalkan.");
     return present(ctx, { text: "Isian dibatalkan.", buttons: [[{ text: MENU_TEXT, callback_data: "m:home" }]] });
   }
-  let s = await getSession(chatId);
+  let s = await getSession(chatId, owner);
   if (!s) {
     // Isian terhenti lama: tawarkan lanjut (data tidak dibuang diam-diam)
-    const stale = await getStaleSession(chatId);
-    if (stale && stale.userId === i.userId) {
+    const stale = await getStaleSession(chatId, owner);
+    if (stale && stale.userId === owner) {
       await answerCallback(cbId, "");
       if (a !== "resume") return present({ ...ctx, messageId: undefined }, resumePrompt(stale));
       s = stale;
@@ -625,7 +631,7 @@ export async function handleFlowCallback(i: BotIdent, cbId: string, chatId: stri
       return present({ ...ctx, messageId: undefined }, await promptFor(s, ctx.i));
     }
   }
-  if (!s || s.userId !== i.userId) {
+  if (!s || s.userId !== owner) {
     await answerCallback(cbId, "");
     return present({ ...ctx, messageId: undefined }, { text: "Isian ini sudah tidak tersedia (lebih dari 24 jam atau sudah selesai). Mulai lagi dari menu, atau kirim ulang pesan/fotonya.", buttons: [[{ text: MENU_TEXT, callback_data: "m:home" }]] });
   }
@@ -641,14 +647,14 @@ export async function handleFlowCallback(i: BotIdent, cbId: string, chatId: stri
 
 /** Pesan teks saat isian aktif. Mengembalikan true bila teks dipakai oleh isian. */
 export async function handleFlowText(i: BotIdent, chatId: string, text: string): Promise<boolean> {
-  const s = await getSession(chatId);
+  const s = await getSession(chatId, i.userId);
   if (!s) return false;
   if (s.userId !== i.userId) {
-    await clearSession(chatId);
+    await clearSession(chatId, i.userId);
     return false;
   }
   if (text === "/batal") {
-    await clearSession(chatId);
+    await clearSession(chatId, i.userId);
     if (s.flow === "absen") await restoreKeyboard(chatId, "Isian dibatalkan.");
     else await sendTelegram(chatId, "Isian dibatalkan.", { buttons: [[{ text: MENU_TEXT, callback_data: "m:home" }]] });
     return true;
