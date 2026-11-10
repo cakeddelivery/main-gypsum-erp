@@ -42,7 +42,7 @@ export default async function CekSaldoPage({ searchParams }: { searchParams: Pro
           {user.can("settings.manage") && (
             <Modal trigger="Atur penerima" triggerClass="btn-secondary" title="Penerima cek saldo pagi">
               <ModalForm action={setRecipients} className="space-y-3">
-                <p className="text-sm text-slate-600">Pilih pengguna yang menerima cek saldo di Telegram. Kosongkan semua = bawaan (Jojo, atau Owner bila Jojo belum tertaut).</p>
+                <p className="text-sm text-slate-600">Pilih pengguna yang menerima cek saldo di Telegram. Kosongkan semua = bawaan (Jojo). Owner selalu ikut menerima daftar saldo.</p>
                 <div className="space-y-1">
                   {linked.map((i) => (
                     <label key={i.id} className="flex items-center gap-2 text-sm">

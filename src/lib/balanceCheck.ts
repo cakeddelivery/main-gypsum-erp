@@ -10,8 +10,8 @@ import { appUrl } from "./botDup";
 
 /**
  * Konfirmasi saldo pagi (05.00 WIB): bot mengirim saldo akhir setiap rekening aktif yang bukan Saldo Penjual per
- * kemarin 23.59 WIB + saldo saat ini ke pengecek (setting cek_saldo_penerima; bawaan Jojo, atau Owner bila Jojo
- * belum tertaut Telegram). Per rekening: ✅ Sesuai / ❌ Tidak sesuai. Tidak sesuai → ketik saldo di aplikasi bank,
+ * kemarin 23.59 WIB + saldo saat ini ke pengecek (setting cek_saldo_penerima; bawaan Jojo) dan selalu ke semua Owner.
+ * Per rekening: ✅ Sesuai / ❌ Tidak sesuai. Tidak sesuai → ketik saldo di aplikasi bank,
  * kirim mutasi (foto/screenshot/PDF, boleh beberapa) → Selesai. Owner diberi tahu. Pengingat sekali pukul 12.00.
  *
  * callback_data (≤ 64 byte): cs:ok:<id>, cs:no:<id>, cs:done:<id>, cs:all:<yyyymmdd>
@@ -24,16 +24,23 @@ type CsIdent = { userId: string; chatId?: string | null; user: { name: string; r
 type Attachment = { path: string; mime: string };
 type Row = BalanceCheck & { bankAccount: BankAccount };
 
-/** Identitas Telegram penerima cek saldo */
+/**
+ * Identitas Telegram penerima cek saldo: pengecek (setting; bawaan Jojo) DITAMBAH semua Owner.
+ * Owner selalu menerima daftar saldo. Satu chat Telegram hanya dikirimi sekali.
+ */
 export async function balanceCheckRecipients() {
   const idents = await prisma.telegramIdentity.findMany({ where: { active: true, chatId: { not: null }, user: { active: true } }, include: { user: true } });
   const s = (await prisma.setting.findUnique({ where: { key: RECIPIENT_SETTING } }))?.value?.trim();
+  let checkers: typeof idents;
   if (s) {
     const keys = s.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean);
-    return idents.filter((i) => keys.includes(i.user.username.toLowerCase()) || keys.includes(i.user.id.toLowerCase()) || keys.includes(i.user.name.toLowerCase()));
+    checkers = idents.filter((i) => keys.includes(i.user.username.toLowerCase()) || keys.includes(i.user.id.toLowerCase()) || keys.includes(i.user.name.toLowerCase()));
+  } else {
+    checkers = idents.filter((i) => /\bjojo\b/i.test(`${i.user.name} ${i.user.username}`));
   }
-  const jojo = idents.filter((i) => /\bjojo\b/i.test(`${i.user.name} ${i.user.username}`));
-  return jojo.length ? jojo : idents.filter((i) => i.user.role === "OWNER");
+  const owners = idents.filter((i) => i.user.role === "OWNER");
+  const seen = new Set<string>();
+  return [...checkers, ...owners].filter((i) => (seen.has(i.chatId!) ? false : (seen.add(i.chatId!), true)));
 }
 
 /** Boleh menjawab: penerima cek saldo, atau Owner/Finance */
