@@ -317,6 +317,19 @@ export async function ledger(accountId: string, r: Range) {
 
 // ---------------- TUTUP BUKU ----------------
 
+/** Bulan yang sudah punya jurnal, s/d (termasuk) `upTo`, yang belum ditutup. Urut dari yang paling lama. */
+export async function openPastPeriods(upTo: { year: number; month: number }) {
+  const first = await prisma.journal.findFirst({ orderBy: { date: "asc" }, select: { date: true } });
+  if (!first) return [];
+  const f = jakartaParts(first.date);
+  const closed = new Set((await prisma.accountingPeriod.findMany({ where: { status: "CLOSED" } })).map((p) => `${p.year}-${p.month}`));
+  const out: { year: number; month: number }[] = [];
+  for (let y = f.year, m = f.month; y < upTo.year || (y === upTo.year && m <= upTo.month); m === 12 ? ((m = 1), y++) : m++) {
+    if (!closed.has(`${y}-${m}`)) out.push({ year: y, month: m });
+  }
+  return out;
+}
+
 /** Penyusutan garis lurus bulanan untuk satu aset */
 export function monthlyDepreciation(cost: number, residual: number, lifeMonths: number) {
   if (lifeMonths <= 0) return 0;

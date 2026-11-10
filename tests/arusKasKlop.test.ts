@@ -40,3 +40,21 @@ describe("Arus kas selalu klop", () => {
     expect((await cashMovements(start, end)).reduce((s, x) => s + x.amount, 0)).toBe(1_000_000);
   });
 });
+
+describe("Tutup buku otomatis bulan-bulan lama", () => {
+  it("menutup bulan lalu + bulan lama yang masih terbuka, transaksi belum final dilaporkan", async () => {
+    const { closeDueMonths } = await import("@/lib/jobs");
+    const { openPastPeriods } = await import("@/lib/accounting");
+    const existing = new Set((await prisma.accountingPeriod.findMany()).map((p) => p.id));
+    const before = await openPastPeriods({ year: 2028, month: 3 });
+    expect(before.length).toBeGreaterThan(1);
+    const r = await closeDueMonths({ year: 2028, month: 3 }, d("2028-04-10"));
+    expect(r.closed.map((c) => c.period)).toEqual(before.map((p) => `${p.year}-${p.month}`));
+    expect(await openPastPeriods({ year: 2028, month: 3 })).toEqual([]);
+    // Bulan berjalan (April 2028) tetap terbuka
+    expect((await prisma.accountingPeriod.findUnique({ where: { year_month: { year: 2028, month: 4 } } }))?.status ?? "OPEN").toBe("OPEN");
+    // Bersihkan: tes lain masih membukukan di bulan-bulan ini
+    await prisma.accountingPeriod.deleteMany({ where: { id: { notIn: [...existing] } } });
+    await prisma.accountingPeriod.updateMany({ where: { id: { in: [...existing] }, closedBy: "Sistem (terjadwal)" }, data: { status: "OPEN" } });
+  });
+});
