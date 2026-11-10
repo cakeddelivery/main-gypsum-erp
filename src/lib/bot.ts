@@ -4,7 +4,7 @@ import { DEFAULT_MANAGER_NAMES, detectManagerLoan, extractDate, extractTransacti
 import { readReceipt, type ReceiptRead } from "./receipt";
 import { ocrReceipt } from "./ocrReceipt";
 import { type SplitInput, splitIssues, createTransaction, FinanceError, rejectTransaction, STATUS_LABEL, submitForConfirmation, updateTransaction, missingFields } from "./finance";
-import { answerCallback, chatAction, downloadTelegramFile, editTelegram, esc, sendTelegram, type InlineButton } from "./telegram";
+import { answerCallback, chatAction, downloadTelegramFile, editTelegram, esc, sendTelegram, withReplyTo, type InlineButton } from "./telegram";
 import { saveProof } from "./storage";
 import { idr } from "./money";
 import { addDays, fmtDate, fmtDateTime, jakartaDateTime, todayStr, txTime } from "./time";
@@ -28,6 +28,8 @@ import type { Session } from "./botKit";
 import { confirmTransaction, isTiktokWithdraw } from "./wdProcess";
 import { wdCallback, wdProofMessageHook } from "./botWd";
 import { balanceCheckCallback, balanceCheckMessageHook } from "./balanceCheck";
+import { groupRelevant, isAllowedGroup, toggleGroupRecap, toggleGroupReminders, normalizeCommand, registerGroup, unregisterGroup } from "./botGroup";
+import { isGroupChat } from "./botKit";
 
 type TgUser = { id: number; first_name?: string; username?: string };
 type TgUpdate = {
@@ -45,8 +47,9 @@ type TgUpdate = {
     venue?: unknown;
     forward_origin?: unknown;
     forward_date?: number;
+    reply_to_message?: { message_id: number; from?: TgUser & { is_bot?: boolean } };
   };
-  callback_query?: { id: string; from: TgUser; data?: string; message?: { message_id: number; chat: { id: number } } };
+  callback_query?: { id: string; from: TgUser; data?: string; message?: { message_id: number; chat: { id: number }; reply_to_message?: { message_id: number; from?: TgUser & { is_bot?: boolean } } } };
 };
 
 async function identityOf(tgId: number) {
@@ -64,16 +67,69 @@ function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
 
 /** Proses update dari Telegram Bot API (webhook). Tidak pernah membukukan tanpa tombol konfirmasi manusia berwenang. */
 export async function handleTelegramUpdate(u: TgUpdate) {
-  if (u.callback_query) return handleCallback(u.callback_query);
+  const chatId = String(u.callback_query?.message?.chat.id ?? u.message?.chat.id ?? "");
+  // Di grup, pesan baru bot menjadi balasan ke pesan/kartu pemicunya (jelas milik siapa)
+  const replyTo = u.callback_query ? u.callback_query.message?.message_id : u.message?.message_id;
+  return withReplyTo(chatId, replyTo, () => (u.callback_query ? groupCallback(u.callback_query) : handleMessage(u)));
+}
+
+/** Tombol di grup: grup terdaftar saja; kartu milik orang lain hanya boleh dipakai Owner/Finance */
+async function groupCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
+  const chatId = cb.message ? String(cb.message.chat.id) : "";
+  if (!isGroupChat(chatId)) return handleCallback(cb);
+  if (!(await isAllowedGroup(chatId))) return answerCallback(cb.id, "Grup ini belum didaftarkan Owner (/daftargrup)");
+  const owner = cb.message?.reply_to_message?.from;
+  if (!owner || owner.is_bot || owner.id === cb.from.id) return handleCallback(cb);
+  const ident = await identityOf(cb.from.id);
+  if (!ident) return answerCallback(cb.id, "ID Telegram Anda belum terdaftar");
+  if (!canApproveCategory(ident.user.role)) return answerCallback(cb.id, `Kartu ini milik ${owner.first_name ?? "pengguna lain"}`);
+  // Owner/Finance menekan kartu isian orang lain: isian yang dipakai tetap milik pembuat kartu
+  const ownerIdent = await identityOf(owner.id);
+  return handleCallback(cb, ownerIdent?.userId);
+}
+
+async function handleMessage(u: TgUpdate) {
   const msg = u.message;
   if (!msg?.from) return;
   const chatId = String(msg.chat.id);
-  const text = (msg.text ?? msg.caption ?? "").trim();
+  const group = isGroupChat(chatId);
+  const text = normalizeCommand((msg.text ?? msg.caption ?? "").trim());
   const ident = await identityOf(msg.from.id);
+
+  if (group) {
+    if (text === "/daftargrup" || text === "/hapusgrup") {
+      if (ident?.user.role !== "OWNER") return void (ident ? await sendTelegram(chatId, "Hanya Owner yang dapat mendaftarkan grup.") : undefined);
+      const actor = { id: ident.userId, name: ident.user.name };
+      const ok = text === "/daftargrup" ? await registerGroup(chatId, actor) : await unregisterGroup(chatId, actor);
+      await sendTelegram(chatId, text === "/daftargrup" ? (ok ? "✅ Grup ini terdaftar. Anggota yang ID Telegram-nya sudah ditautkan bisa mencatat transaksi di sini (kirim foto bukti / pesan bernominal, atau /menu)." : "Grup ini sudah terdaftar.") : ok ? "Grup ini dihapus dari daftar. Bot tidak akan melayani grup ini lagi." : "Grup ini belum terdaftar.");
+      return;
+    }
+    if (text === "/pengingatgrup" && ident?.user.role === "OWNER" && (await isAllowedGroup(chatId))) {
+      const on = await toggleGroupReminders(chatId);
+      await sendTelegram(chatId, on ? "🔔 Pengingat di grup ini NYALA: cek saldo pagi & 12.00, dan withdraw TikTok dalam proses. Kirim /pengingatgrup lagi untuk mematikan." : "🔕 Pengingat di grup ini dimatikan (tetap dikirim ke chat pribadi). Kirim /pengingatgrup lagi untuk menyalakan.");
+      return;
+    }
+    if (text === "/rekapgrup" && ident?.user.role === "OWNER" && (await isAllowedGroup(chatId))) {
+      const on = await toggleGroupRecap();
+      await sendTelegram(chatId, on ? "✅ Rekap harian juga dikirim ke grup terdaftar. Kirim /rekapgrup lagi untuk mematikan." : "Rekap harian tidak lagi dikirim ke grup (tetap ke chat pribadi).");
+      return;
+    }
+    // Grup yang belum didaftarkan Owner: diam (hanya /id dijawab agar bisa didaftarkan)
+    if (!(await isAllowedGroup(chatId))) {
+      if (text === "/id" || text === "/start") await sendTelegram(chatId, `ID grup: <code>${chatId}</code>\nGrup ini belum didaftarkan. Owner: kirim /daftargrup di grup ini.`);
+      return;
+    }
+    // Pengirim belum terdaftar: diam, kecuali /start atau /id
+    if (!ident && text !== "/start" && text !== "/id") return;
+    const replyToBot = !!msg.reply_to_message?.from?.is_bot;
+    const hasSession = !!ident && !!(await getSession(chatId, ident.userId));
+    if (!groupRelevant({ text, photo: msg.photo, document: msg.document, location: msg.location, replyToBot, hasSession, menuText: MENU_TEXT })) return;
+  }
 
   if (text === "/start" || text === "/id") {
     await sendTelegram(chatId, `Halo! ID Telegram Anda: <code>${msg.from.id}</code>\n${ident ? `Terhubung sebagai <b>${esc(ident.user.name)}</b>.` : "Belum terdaftar. Minta Owner menautkan ID ini di menu Pengaturan → Telegram & Hermes."}`);
-    if (ident && !ident.chatId) await prisma.telegramIdentity.update({ where: { id: ident.id }, data: { chatId } });
+    // Chat pribadi saja yang disimpan sebagai tujuan notifikasi pribadi (cek saldo, pengingat, dll.)
+    if (ident && !ident.chatId && !group) await prisma.telegramIdentity.update({ where: { id: ident.id }, data: { chatId } });
     if (ident && text === "/start") await handleMenuCommand(ident, chatId, "/menu");
     return;
   }
@@ -81,7 +137,7 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     await sendTelegram(chatId, "Akun Telegram Anda belum diizinkan. Kirim /id lalu minta Owner mendaftarkan ID Anda.");
     return;
   }
-  if (!ident.chatId) await prisma.telegramIdentity.update({ where: { id: ident.id }, data: { chatId } });
+  if (!ident.chatId && !group) await prisma.telegramIdentity.update({ where: { id: ident.id }, data: { chatId } });
   // Cek saldo pagi "Tidak sesuai": saldo bank yang diketik + lampiran mutasi (foto/PDF)
   if (await balanceCheckMessageHook(ident, chatId, msg)) return;
   // "Uang diterima" withdraw TikTok: screenshot bukti uang masuk (foto/PDF)
@@ -93,7 +149,7 @@ export async function handleTelegramUpdate(u: TgUpdate) {
   }
   // Isian pengembalian dana talangan menunggu foto bukti transfer
   if (msg.photo?.length) {
-    const s = await getSession(chatId);
+    const s = await getSession(chatId, ident.userId);
     if (s?.flow === "tlg" && s.step === "proof" && s.userId === ident.userId) {
       const photo = await downloadTelegramFile(msg.photo[msg.photo.length - 1].file_id);
       if (!photo) {
@@ -113,7 +169,7 @@ export async function handleTelegramUpdate(u: TgUpdate) {
       return startPrefilledFlow({ i: ident, chatId }, await salePaymentPhoto(s, photo));
     }
   }
-  if (text === MENU_TEXT || (text.startsWith("/") && text !== "/batal")) await clearSession(chatId);
+  if (text === MENU_TEXT || (text.startsWith("/") && text !== "/batal")) await clearSession(chatId, ident.userId);
   else if (text && !msg.photo && (await handleFlowText(ident, chatId, text))) return;
   if (await handleMenuCommand(ident, chatId, text)) return;
   if (text === "/rekap") {
@@ -298,7 +354,7 @@ async function matchSupplier(text: string) {
   return hit ? { id: hit.x.id, name: hit.x.name } : null;
 }
 
-async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
+async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>, flowOwner?: string) {
   const [action, txId, value] = (cb.data ?? "").split(":");
   const chatId = cb.message ? String(cb.message.chat.id) : null;
   const ident = await identityOf(cb.from.id);
@@ -307,15 +363,15 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
     if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan sudah tidak tersedia, kirim /menu");
     if (cb.data === "f:plain") {
       // Isian pembelian dari pesan → dibatalkan, pesan dicatat sebagai draft transaksi biasa
-      const s = await getSession(chatId);
+      const s = await getSession(chatId, ident.userId);
       if (!s?.data.tx || s.userId !== ident.userId) return answerCallback(cb.id, "Isian sudah kedaluwarsa, kirim ulang pesannya");
-      await clearSession(chatId);
+      await clearSession(chatId, ident.userId);
       await answerCallback(cb.id, "");
       await editTelegram(chatId, cb.message.message_id, "Dicatat sebagai transaksi biasa.", []).catch(() => {});
       return startDraft({ i: ident, chatId }, JSON.parse(String(s.data.tx)) as DraftInput);
     }
     try {
-      return await handleFlowCallback(ident, cb.id, chatId, cb.message.message_id, cb.data!);
+      return await handleFlowCallback(ident, cb.id, chatId, cb.message.message_id, cb.data!, flowOwner ?? ident.userId);
     } catch (e) {
       await prisma.notificationLog.create({ data: { channel: "TELEGRAM", type: "ISIAN", target: chatId, status: "GAGAL", payload: cb.data ?? "", error: (e as Error).message.slice(0, 500) } });
       // Jangan hanya notifikasi kecil: kirim pesan dengan tombol ulang/batal, isian tetap tersimpan
