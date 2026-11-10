@@ -17,9 +17,17 @@ export default async function CoaPage() {
     <ModalForm action={saveCoa} className="grid grid-cols-2 gap-3">
       {a && <input type="hidden" name="id" value={a.id} />}
       <AutoCode value={a?.code} example="6-2000" hint="Digit awal = tipe (1 Aset, 2 Kewajiban, 3 Ekuitas, 4 Pendapatan, 5 HPP, 6 Beban)" />
-      <Field label="Tipe"><select name="type" defaultValue={a?.type} className="input">{TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select></Field>
+      {a && a._count.lines > 0 ? (
+        <Field label="Tipe" hint="Terkunci: sudah dipakai jurnal"><input type="hidden" name="type" value={a.type} /><input value={a.type} className="input" disabled /></Field>
+      ) : (
+        <Field label="Tipe"><select name="type" defaultValue={a?.type} className="input">{TYPES.map((t) => <option key={t} value={t}>{t}</option>)}</select></Field>
+      )}
       <Field label="Nama" className="col-span-2"><input name="name" defaultValue={a?.name} className="input" required /></Field>
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="isCash" defaultChecked={a?.isCash} /> Akun kas/bank</label>
+      {a && a._count.lines > 0 ? (
+        <label className="flex items-center gap-2 text-sm text-slate-500">{a.isCash && <input type="hidden" name="isCash" value="on" />}<input type="checkbox" checked={a.isCash} disabled readOnly /> Akun kas/bank (terkunci)</label>
+      ) : (
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="isCash" defaultChecked={a?.isCash} /> Akun kas/bank</label>
+      )}
       {a && <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="active" defaultChecked={a.active} /> Aktif</label>}
       <div className="col-span-2"><Submit>Simpan</Submit></div>
     </ModalForm>

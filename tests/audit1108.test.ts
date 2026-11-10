@@ -16,7 +16,7 @@ import { prisma } from "@/lib/db";
 import { handleTelegramUpdate } from "@/lib/bot";
 import { approvePeriod, computePeriod } from "@/lib/payroll";
 import { autoCloseDay, runDueJobs } from "@/lib/jobs";
-import { dateOnly, jakartaDateTime } from "@/lib/time";
+import { dateOnly, jakartaDateTime, jakartaParts } from "@/lib/time";
 
 const TG = 77001108;
 const chat = { id: TG };
@@ -78,7 +78,13 @@ describe("Audit 8 Nov: gaji & jadwal", () => {
     const r10 = await runDueJobs(jakartaDateTime("2027-02-10", "09:30"));
     expect(r10.monthClose).toBeDefined();
     expect((await prisma.accountingPeriod.findUniqueOrThrow({ where: { year_month: { year: 2027, month: 1 } } })).status).toBe("CLOSED");
-    // Dibuka lagi: tes lain (gaji/tunjangan Jan 2027) masih membukukan di periode ini
-    await prisma.accountingPeriod.update({ where: { year_month: { year: 2027, month: 1 } }, data: { status: "OPEN" } });
+    // Bulan-bulan lama yang masih terbuka ikut ditutup (dari bulan jurnal pertama)
+    const first = await prisma.journal.findFirst({ orderBy: { date: "asc" } });
+    if (first && first.date < jakartaDateTime("2027-01-01", "00:00")) {
+      const p = jakartaParts(first.date);
+      expect((await prisma.accountingPeriod.findUnique({ where: { year_month: { year: p.year, month: p.month } } }))?.status).toBe("CLOSED");
+    }
+    // Dibuka lagi: tes lain (gaji/tunjangan Jan 2027, transaksi 2026) masih membukukan di periode ini
+    await prisma.accountingPeriod.updateMany({ where: { closedBy: "Sistem (terjadwal)" }, data: { status: "OPEN" } });
   });
 });

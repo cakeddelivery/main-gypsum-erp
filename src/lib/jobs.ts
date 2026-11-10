@@ -1,8 +1,8 @@
 import { prisma } from "./db";
 import { idr } from "./money";
-import { addDays, dayRange, jakartaParts, todayStr, fmtDay, dateOnly } from "./time";
+import { addDays, dayRange, jakartaParts, monthRange, todayStr, fmtDay, dateOnly } from "./time";
 import { bankBalances } from "./finance";
-import { cashMovements, closePeriod } from "./accounting";
+import { cashMovements, closePeriod, openPastPeriods } from "./accounting";
 import { sendTelegram, telegramConfigured } from "./telegram";
 import { lowStockItems } from "./stock";
 import { generateAllowancePayroll, generateMonthlyPayroll } from "./payroll";
@@ -220,14 +220,36 @@ export async function runDueJobs(now: Date = new Date()) {
     if ((auto?.value ?? "true") === "true") {
       const y = p.month === 1 ? p.year - 1 : p.year;
       const m = p.month === 1 ? 12 : p.month - 1;
-      results.monthClose = await logFailure("TUTUP_BUKU", `${y}-${m}`, async () => {
-        const r = await closePeriod(y, m, SYSTEM_ACTOR);
-        await prisma.notificationLog.create({ data: { channel: "SISTEM", type: "TUTUP_BUKU", target: `${y}-${m}`, status: "SELESAI", payload: JSON.stringify(r) } });
-        return r;
-      });
+      results.monthClose = await logFailure("TUTUP_BUKU", `${y}-${m}`, () => closeDueMonths({ year: y, month: m }, now));
     }
   }
   return results;
+}
+
+/**
+ * Tutup buku otomatis: bulan lalu + semua bulan lebih lama yang masih terbuka (yang punya jurnal), dari yang paling lama.
+ * Transaksi yang belum final (draft/perlu ditinjau/menunggu konfirmasi) bertanggal di bulan itu tidak menghalangi
+ * penutupan, tetapi dilaporkan ke Owner (Telegram) dan log notifikasi; saat dibukukan nanti tanggalnya harus di periode terbuka.
+ */
+export async function closeDueMonths(upTo: { year: number; month: number }, now: Date = new Date()) {
+  const months = await openPastPeriods(upTo);
+  const closed: { period: string; depreciation: number; pending: number }[] = [];
+  for (const { year, month } of months) {
+    const { start, end } = monthRange(year, month);
+    const pending = await prisma.financeTransaction.count({ where: { status: { in: ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"] }, date: { gte: start, lt: end } } });
+    const r = await closePeriod(year, month, SYSTEM_ACTOR);
+    const period = `${year}-${month}`;
+    closed.push({ period, depreciation: r.depreciation, pending });
+    await prisma.notificationLog.create({ data: { channel: "SISTEM", type: "TUTUP_BUKU", target: period, status: "SELESAI", payload: JSON.stringify({ ...r, pending }) } });
+  }
+  const warn = closed.filter((c) => c.pending > 0);
+  if (warn.length) {
+    const text = `⚠️ Tutup buku otomatis: ${warn.map((c) => `${c.pending} transaksi belum final bertanggal ${c.period}`).join(", ")}. Periode sudah dikunci; saat membukukan, ubah tanggalnya ke periode yang masih terbuka (atau Owner membuka kembali periode).`;
+    await prisma.notificationLog.create({ data: { channel: "SISTEM", type: "TUTUP_BUKU", target: todayStr(now), status: "PERINGATAN", payload: text } });
+    const recipients = await prisma.telegramIdentity.findMany({ where: { active: true, chatId: { not: null }, user: { active: true, role: "OWNER" } } });
+    if (telegramConfigured()) for (const r of recipients) await sendTelegram(r.chatId!, text, { type: "TUTUP_BUKU" });
+  }
+  return { closed };
 }
 
 /** Tanggal tutup buku otomatis bulan sebelumnya (Pengaturan, 1–28, default 10) */

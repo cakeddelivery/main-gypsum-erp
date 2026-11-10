@@ -18,7 +18,8 @@ export default async function BukuBesar({ searchParams }: { searchParams: Promis
   await requirePerm("accounting.view");
   const sp = await searchParams;
   const r = parseRange(sp);
-  const accounts = await prisma.coaAccount.findMany({ where: { active: true }, orderBy: { code: "asc" } });
+  // Akun nonaktif yang masih punya baris jurnal tetap bisa dilihat buku besarnya
+  const accounts = await prisma.coaAccount.findMany({ where: { OR: [{ active: true }, { lines: { some: {} } }] }, orderBy: { code: "asc" } });
   const accountId = sp.account && accounts.some((a) => a.id === sp.account) ? sp.account : (accounts.find((a) => a.isCash && a.code !== "1-1100") ?? accounts[0]).id;
   const [l, lh, store] = await Promise.all([ledger(accountId, { start: r.start, end: r.end, storeId: r.storeId }), letterhead(), storeLabel(r.storeId)]);
   const period = fmtRange(r.from, r.to);
@@ -27,7 +28,7 @@ export default async function BukuBesar({ searchParams }: { searchParams: Promis
   return (
     <div>
       <PageHeader title="Buku besar" subtitle={`${l.account.code} ${l.account.name}`} actions={<><DownloadCsv filename={`buku-besar-${l.account.code}-${r.from}-${r.to}`} rows={[[`Buku besar ${l.account.code} ${l.account.name}`, `${r.from} s/d ${r.to}`], [], ["Tanggal", "No. jurnal", "Keterangan", "Memo", "Debit", "Kredit", "Saldo"], ["", "", "Saldo awal", "", "", "", l.opening], ...l.rows.map((x) => [todayStr(x.date), x.number, x.description, x.memo ?? "", x.debit, x.credit, x.balance]), ["", "", "Saldo akhir", "", debit, credit, l.closing]]} /><DownloadJpg targetId="bb" filename={`buku-besar-${l.account.code}`} /></>} />
-      <ReportFilter sp={sp} extra={<Field label="Akun"><select name="account" defaultValue={accountId} className="input">{accounts.map((a) => <option key={a.id} value={a.id}>{a.code} {a.name}</option>)}</select></Field>} />
+      <ReportFilter sp={sp} extra={<Field label="Akun"><select name="account" defaultValue={accountId} className="input">{accounts.map((a) => <option key={a.id} value={a.id}>{a.code} {a.name}{a.active ? "" : " (nonaktif)"}</option>)}</select></Field>} />
       <div className="table-wrap">
         <Paged><table className="tbl">
           <thead><tr><th>Tanggal</th><th>No. jurnal</th><th>Keterangan</th><th className="num">Debit</th><th className="num">Kredit</th><th className="num">Saldo</th></tr></thead>

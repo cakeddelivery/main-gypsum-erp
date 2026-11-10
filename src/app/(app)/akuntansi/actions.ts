@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { autoCode } from "@/lib/codes";
 import { action, str, optStr, int } from "@/lib/action";
 import { audit } from "@/lib/audit";
-import { closePeriod, postJournal, reverseJournal, COA, type LineInput } from "@/lib/accounting";
+import { AccountingError, closePeriod, postJournal, COA, type LineInput } from "@/lib/accounting";
 import { nextNumber } from "@/lib/numbering";
 import { jakartaDateTime, todayStr } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
@@ -13,6 +13,7 @@ import { createLoanRecord } from "@/lib/payables";
 import { resolveSupplier } from "@/lib/suppliers";
 import { saveProof } from "@/lib/storage";
 import { paySale } from "@/lib/sales";
+import { reverseFromJournalMenu } from "@/lib/journalSource";
 
 /** Foto/PDF nota atau bukti transfer dari form (opsional) */
 async function proofOf(fd: FormData): Promise<{ path: string; mime: string } | null> {
@@ -44,7 +45,7 @@ export const manualJournal = action(
 export const reverse = action(
   "accounting.post",
   async (fd, user) => {
-    const j = await prisma.$transaction((tx) => reverseJournal(tx, str(fd, "id"), d(fd), user, str(fd, "reason") || "Koreksi"));
+    const j = await prisma.$transaction((tx) => reverseFromJournalMenu(tx, str(fd, "id"), d(fd), user, str(fd, "reason") || "Koreksi"));
     return `Jurnal pembalik ${j.number} dibuat`;
   },
   ["/akuntansi"],
@@ -56,6 +57,13 @@ export const saveCoa = action(
     const id = optStr(fd, "id");
     const data = { name: z.string().min(3).parse(str(fd, "name")), type: str(fd, "type") as AccountType, isCash: fd.get("isCash") === "on", active: id ? fd.get("active") === "on" : true };
     // Kode akun otomatis: digit tipe + kelompok berikutnya (6-2000); kode lama tidak diubah karena dipakai jurnal sistem
+    if (id) {
+      // Tipe & akun kas menentukan saldo normal, letak di laporan, dan arus kas seluruh riwayat: dikunci bila sudah dipakai jurnal
+      const cur = await prisma.coaAccount.findUniqueOrThrow({ where: { id }, include: { _count: { select: { lines: true } } } });
+      if (cur._count.lines > 0 && (cur.type !== data.type || cur.isCash !== data.isCash)) {
+        throw new AccountingError(`Akun ${cur.code} sudah dipakai ${cur._count.lines} baris jurnal: tipe dan centang akun kas/bank tidak bisa diubah. Buat akun baru lalu pindahkan saldonya dengan jurnal manual.`);
+      }
+    }
     const a = id ? await prisma.coaAccount.update({ where: { id }, data }) : await prisma.coaAccount.create({ data: { ...data, code: await autoCode.coa(prisma, data.type) } });
     await audit(user, id ? "AKUN_COA_DIUBAH" : "AKUN_COA_DIBUAT", "CoaAccount", a.id, data);
     return "Akun tersimpan";
@@ -198,6 +206,17 @@ export const createAsset = action(
     const life = int(fd, "usefulLifeMonths");
     if (cost <= 0 || life <= 0) throw new Error("Harga & umur manfaat harus > 0");
     const funding = str(fd, "funding");
+    const dateStr = str(fd, "date") || todayStr();
+    if (funding !== "SALDO_AWAL" && funding !== "UTANG") {
+      // Aset lama (sebelum go-live) tidak boleh mengurangi saldo rekening: uangnya keluar sebelum memakai aplikasi
+      const set = (await prisma.setting.findUnique({ where: { key: "go_live_date" } }))?.value;
+      const goLive = set && /^\d{4}-\d{2}-\d{2}$/.test(set) ? set : "2026-10-29";
+      if (dateStr < goLive) throw new AccountingError(`Aset dibeli sebelum go-live (${goLive}). Pilih sumber dana "Saldo awal (aset lama)", bukan rekening.`);
+      const bank = (await bankBalancesAt(dateStr)).find((b) => b.id === funding);
+      if (bank && bank.balance - cost < 0 && fd.get("allowMinus") !== "on") {
+        throw new AccountingError(`Saldo ${bank.name} per ${dateStr} hanya Rp ${bank.balance.toLocaleString("id-ID")}; membayar Rp ${cost.toLocaleString("id-ID")} membuatnya minus. Periksa sumber dana, atau centang "Lanjutkan walau saldo rekening jadi minus".`);
+      }
+    }
     await prisma.$transaction(async (tx) => {
       let credit: LineInput;
       if (funding === "SALDO_AWAL") credit = { accountCode: COA.EKUITAS_SALDO_AWAL, credit: cost };
