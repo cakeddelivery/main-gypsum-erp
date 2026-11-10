@@ -58,11 +58,14 @@ export async function sendDailyRecap(now: Date = new Date()) {
     return { sent: 0, failed: recipients.length };
   }
   let sent = 0;
-  for (const r of recipients) {
-    const res = await sendTelegram(r.chatId!, text, { type: "REKAP_HARIAN" });
+  // Rekap juga ke grup terdaftar bila diaktifkan (setting telegram_grup_rekap = 1); bawaan hanya chat pribadi
+  const { groupRecapTargets } = await import("./botGroup");
+  const targets = [...recipients.map((r) => r.chatId!), ...(await groupRecapTargets())];
+  for (const t of targets) {
+    const res = await sendTelegram(t, text, { type: "REKAP_HARIAN" });
     if (res.ok) sent++;
   }
-  return { sent, failed: recipients.length - sent };
+  return { sent, failed: targets.length - sent };
 }
 
 /** Pengingat harian dana talangan ke Owner & Finance (yang tertaut Telegram), dengan tombol kirim bukti pengembalian */

@@ -1,5 +1,6 @@
 import type { BalanceCheck, BankAccount } from "@prisma/client";
 import { prisma } from "./db";
+import { sessionKey } from "./botKit";
 import { bankBalances, bankBalancesAt } from "./finance";
 import { answerCallback, downloadTelegramFile, editTelegram, esc, sendTelegram, telegramConfigured, type InlineButton } from "./telegram";
 import { saveProof } from "./storage";
@@ -168,7 +169,7 @@ export async function balanceCheckCallback(i: CsIdent, cbId: string, chatId: str
   if (act === "no") {
     if (row.done) return answerCallback(cbId, "Rekening ini sudah dicek");
     await answerCheck(row, "TIDAK_SESUAI", i);
-    await prisma.botSession.upsert({ where: { chatId }, create: { chatId, userId: i.userId, flow: FLOW, step: "amt", data: { id: row.id, msg: messageId } }, update: { userId: i.userId, flow: FLOW, step: "amt", data: { id: row.id, msg: messageId } } });
+    await prisma.botSession.upsert({ where: { chatId: sessionKey(chatId, i.userId) }, create: { chatId: sessionKey(chatId, i.userId), userId: i.userId, flow: FLOW, step: "amt", data: { id: row.id, msg: messageId } }, update: { userId: i.userId, flow: FLOW, step: "amt", data: { id: row.id, msg: messageId } } });
     const m = checkMessage(date, await rowsOf(date));
     await editTelegram(chatId, messageId, m.text, m.buttons);
     await sendTelegram(chatId, `❌ <b>${esc(row.bankAccount.name)}</b> tidak sesuai.\nSaldo buku saat ini: ${idr((await bankBalances()).find((b) => b.id === row.bankAccountId)?.balance ?? 0)}\n\n✍️ Ketik <b>saldo di aplikasi bank</b> sekarang, contoh <code>1.234.567</code>`, { type: "CEK_SALDO" });
@@ -179,14 +180,14 @@ export async function balanceCheckCallback(i: CsIdent, cbId: string, chatId: str
 }
 
 async function finish(i: CsIdent, chatId: string, row: Row, cbId?: string) {
-  const s = await getSession(chatId);
+  const s = await getSession(chatId, i.userId);
   if (row.bankBalance == null) {
     if (cbId) await answerCallback(cbId, "Ketik saldo di aplikasi bank dulu");
     return;
   }
   const att = (row.attachments as Attachment[] | null) ?? [];
   await prisma.balanceCheck.update({ where: { id: row.id }, data: { done: true } });
-  if (s?.flow === FLOW) await clearSession(chatId);
+  if (s?.flow === FLOW) await clearSession(chatId, i.userId);
   const diff = Number(row.diff ?? 0);
   await sendTelegram(chatId, `✅ Tercatat: <b>${esc(row.bankAccount.name)}</b> tidak sesuai, selisih ${signed(diff)} (bank ${idr(row.bankBalance)} vs buku ${idr(row.currentBalance)}), ${att.length} lampiran mutasi. Owner sudah diberi tahu.`, { type: "CEK_SALDO" });
   // Beri tahu Owner (selain yang mengecek)
@@ -209,13 +210,13 @@ type TgMsg = { message_id: number; text?: string; caption?: string; photo?: { fi
  * Perintah (/…) dan tombol menu tidak ditangani di sini (sesi dibatalkan oleh alur biasa).
  */
 export async function balanceCheckMessageHook(i: CsIdent, chatId: string, msg: TgMsg): Promise<boolean> {
-  const s = await getSession(chatId);
+  const s = await getSession(chatId, i.userId);
   if (s?.flow !== FLOW || s.userId !== i.userId) return false;
   const text = (msg.text ?? msg.caption ?? "").trim();
   if (text.startsWith("/") || text === "📋 Menu") return false;
   const row = await prisma.balanceCheck.findUnique({ where: { id: String(s.data.id) }, include: { bankAccount: true } });
   if (!row) {
-    await clearSession(chatId);
+    await clearSession(chatId, i.userId);
     return false;
   }
   const doneBtn: InlineButton[][] = [[{ text: "✅ Selesai", callback_data: `cs:done:${row.id}` }]];
@@ -227,7 +228,7 @@ export async function balanceCheckMessageHook(i: CsIdent, chatId: string, msg: T
     }
     const book = (await bankBalances()).find((b) => b.id === row.bankAccountId)?.balance ?? Number(row.currentBalance);
     await prisma.balanceCheck.update({ where: { id: row.id }, data: { bankBalance: BigInt(n), currentBalance: BigInt(book), diff: BigInt(n - book) } });
-    await prisma.botSession.update({ where: { chatId }, data: { step: "file" } });
+    await prisma.botSession.update({ where: { chatId: sessionKey(chatId, i.userId) }, data: { step: "file" } });
     await sendTelegram(chatId, `Saldo bank ${idr(n)} · saldo buku ${idr(book)} · selisih <b>${signed(n - book)}</b>.\n\n📎 Sekarang kirim <b>mutasi rekening ${esc(row.bankAccount.name)}</b> (foto, screenshot, atau PDF), boleh beberapa. Tekan <b>Selesai</b> bila sudah.`, { buttons: doneBtn, type: "CEK_SALDO" });
     return true;
   }
