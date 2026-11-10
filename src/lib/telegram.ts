@@ -1,4 +1,29 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { prisma } from "./db";
+
+/**
+ * Konteks balasan grup: selama memproses satu pesan/tombol di grup, pesan baru bot ke grup itu otomatis menjadi
+ * balasan (reply) ke pesan pengirim, supaya jelas kartu milik siapa. Chat pribadi tidak terpengaruh.
+ */
+const replyCtx = new AsyncLocalStorage<{ chatId: string; messageId: number }>();
+export function withReplyTo<T>(chatId: string, messageId: number | null | undefined, fn: () => Promise<T>): Promise<T> {
+  if (!messageId || !chatId.startsWith("-")) return fn();
+  return replyCtx.run({ chatId, messageId }, fn);
+}
+
+/** Isi permintaan sendMessage (dipisah agar bisa dites tanpa memanggil Telegram) */
+export function messageBody(chatId: string, text: string, opts: { buttons?: InlineButton[][]; keyboard?: string[][]; replyMarkup?: unknown } = {}) {
+  const r = replyCtx.getStore();
+  return {
+    chat_id: chatId,
+    text,
+    parse_mode: "HTML",
+    ...(r && r.chatId === chatId ? { reply_parameters: { message_id: r.messageId, allow_sending_without_reply: true } } : {}),
+    ...(opts.buttons ? { reply_markup: { inline_keyboard: opts.buttons } } : {}),
+    ...(opts.keyboard ? { reply_markup: { keyboard: opts.keyboard.map((row) => row.map((t) => ({ text: t }))), resize_keyboard: true, is_persistent: true, selective: true } } : {}),
+    ...(opts.replyMarkup ? { reply_markup: opts.replyMarkup } : {}),
+  };
+}
 
 export type InlineButton = { text: string; callback_data: string };
 
@@ -28,14 +53,7 @@ async function call(method: string, body: unknown): Promise<{ ok: boolean; resul
 
 /** Kirim pesan + catat log pengiriman/kesalahan */
 export async function sendTelegram(chatId: string, text: string, opts: { buttons?: InlineButton[][]; keyboard?: string[][]; replyMarkup?: unknown; type?: string } = {}) {
-  const r = await call("sendMessage", {
-    chat_id: chatId,
-    text,
-    parse_mode: "HTML",
-    ...(opts.buttons ? { reply_markup: { inline_keyboard: opts.buttons } } : {}),
-    ...(opts.keyboard ? { reply_markup: { keyboard: opts.keyboard.map((row) => row.map((t) => ({ text: t }))), resize_keyboard: true, is_persistent: true } } : {}),
-    ...(opts.replyMarkup ? { reply_markup: opts.replyMarkup } : {}),
-  });
+  const r = await call("sendMessage", messageBody(chatId, text, opts));
   await prisma.notificationLog.create({
     data: { channel: "TELEGRAM", type: opts.type ?? "PESAN", target: chatId, status: r.ok ? "TERKIRIM" : "GAGAL", payload: text.slice(0, 2000), error: r.error ?? null },
   });
@@ -65,6 +83,8 @@ export async function sendTelegramDocument(chatId: string, file: Buffer, filenam
       fd.set("chat_id", chatId);
       fd.set("caption", caption);
       fd.set("parse_mode", "HTML");
+      const rc = replyCtx.getStore();
+      if (rc && rc.chatId === chatId) fd.set("reply_parameters", JSON.stringify({ message_id: rc.messageId, allow_sending_without_reply: true }));
       if (opts.buttons) fd.set("reply_markup", JSON.stringify({ inline_keyboard: opts.buttons }));
       fd.set("document", new Blob([new Uint8Array(file)], { type: filename.endsWith(".jpg") ? "image/jpeg" : "application/octet-stream" }), filename);
       const res = await fetch(`https://api.telegram.org/bot${token()}/sendDocument`, { method: "POST", body: fd, signal: AbortSignal.timeout(60000) });

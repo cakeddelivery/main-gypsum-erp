@@ -5,6 +5,15 @@ const nextConfig = {
   experimental: { serverActions: { bodySizeLimit: "16mb" } },
   async headers() {
     return [
+      // Service worker selalu dicek ulang agar versi baru langsung terpakai setelah deploy
+      {
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Service-Worker-Allowed", value: "/" },
+          { key: "Content-Type", value: "application/javascript; charset=utf-8" },
+        ],
+      },
       {
         source: "/(.*)",
         headers: [

@@ -1,14 +1,17 @@
 import { prisma } from "./db";
+import { sessionKey } from "./botKit";
 import { FinanceError, submitForConfirmation } from "./finance";
 import { answerCallback, chatAction, downloadTelegramFile, editTelegram, esc, sendTelegram, type InlineButton } from "./telegram";
 import { clearSession, getSession } from "./botFlow";
 import { saveProof } from "./storage";
-import { checkWdProof, SELLER_NOTE, type WdProofRead } from "./wdProof";
+import { checkWdProof, sellerProofRead, SELLER_NOTE, type SellerWithdrawal, type WdProofRead } from "./wdProof";
 import { readWdProofFile } from "./wdProofServer";
 import { addDays, fmtDate, fmtDateTime, jakartaDateTime, nowTimeStr, todayStr } from "./time";
 import { idr } from "./money";
-import { draftMessage, chunk } from "./botDraft";
-import { canReceive, inProcessReminderText, inProcessWithdrawals, isTiktokWithdraw, markInProcess, receiveWithdraw, type InProcessRow } from "./wdProcess";
+import { draftMessage, chunk, createDraft, type DraftInput } from "./botDraft";
+import { matchStore } from "./extract";
+import { STATUS_LABEL } from "./finance";
+import { findInProcessFor, isTiktokSeller, tiktokDestination, canReceive, inProcessReminderText, inProcessWithdrawals, isTiktokWithdraw, markInProcess, receiveWithdraw, type InProcessRow } from "./wdProcess";
 
 /**
  * Tombol bot withdraw TikTok "Dalam Proses":
@@ -76,11 +79,11 @@ export async function wdCallback(ident: WdIdent, cbId: string, chatId: string, m
   if (action === "wr") {
     // Bukti wajib: tunggu screenshot (foto/PDF) di chat ini
     const data = { id: t.id, r: fromReminder ? 1 : 0, msg: messageId };
-    await prisma.botSession.upsert({ where: { chatId }, create: { chatId, userId: ident.userId, flow: FLOW, step: "proof", data }, update: { userId: ident.userId, flow: FLOW, step: "proof", data } });
+    await prisma.botSession.upsert({ where: { chatId: sessionKey(chatId, ident.userId) }, create: { chatId: sessionKey(chatId, ident.userId), userId: ident.userId, flow: FLOW, step: "proof", data }, update: { userId: ident.userId, flow: FLOW, step: "proof", data } });
     await editTelegram(chatId, messageId, proofAsk(t), [back]);
     return answerCallback(cbId, "Kirim screenshot bukti");
   }
-  const s = await getSession(chatId);
+  const s = await getSession(chatId, ident.userId);
   const sess = s?.flow === FLOW && s.userId === ident.userId && s.data.id === t.id && s.data.path ? s : null;
   if (action === "wp") {
     // Tanggal manual (bukti tidak terbaca): 7 hari terakhir, hanya penyetuju
@@ -106,7 +109,7 @@ export async function wdCallback(ident: WdIdent, cbId: string, chatId: string, m
       await markInProcess(t.id, actor, "Dikonfirmasi via Telegram");
     }
     const r = await receiveWithdraw(t.id, actor, { receivedAt, canApprove: isApprover(ident), proof, manual });
-    await clearSession(chatId);
+    await clearSession(chatId, ident.userId);
     const done = `✅ ${esc(t.number)} ${idr(t.amount)} diterima ${fmtDateTime(r.transaction.receivedAt)}${manual ? " (dicek manual)" : ""} & dibukukan (${esc(r.journal.number)}).`;
     await editTelegram(chatId, messageId, done, []);
     const orig = Number(sess.data.msg);
@@ -129,13 +132,13 @@ type TgMsg = { message_id: number; text?: string; caption?: string; photo?: { fi
 
 /** Pesan saat menunggu bukti "Uang diterima": foto/PDF dibaca (OCR, AI cadangan) lalu divalidasi. true = ditangani. */
 export async function wdProofMessageHook(ident: WdIdent, chatId: string, msg: TgMsg): Promise<boolean> {
-  const s = await getSession(chatId);
+  const s = await getSession(chatId, ident.userId);
   if (s?.flow !== FLOW || s.userId !== ident.userId) return false;
   const text = (msg.text ?? msg.caption ?? "").trim();
   if (text.startsWith("/") || text === "📋 Menu") return false;
   const t = await prisma.financeTransaction.findUnique({ where: { id: String(s.data.id) } });
   if (!t || !["DALAM_PROSES", "DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"].includes(t.status)) {
-    await clearSession(chatId);
+    await clearSession(chatId, ident.userId);
     return false;
   }
   const sfx = Number(s.data.r) ? ":r" : "";
@@ -158,7 +161,7 @@ export async function wdProofMessageHook(ident: WdIdent, chatId: string, msg: Tg
   await chatAction(chatId, "typing").catch(() => {});
   const read = await readWdProofFile(buf, mime, Number(t.amount));
   const c = checkWdProof(read, Number(t.amount));
-  await prisma.botSession.update({ where: { chatId }, data: { step: "confirm", data: { ...s.data, path, mime, read: JSON.stringify(read) } } });
+  await prisma.botSession.update({ where: { chatId: sessionKey(chatId, ident.userId) }, data: { step: "confirm", data: { ...s.data, path, mime, read: JSON.stringify(read) } } });
   if (c.ok && read!.source === "seller") {
     // Seller Center: tanggal = ditransfer; pilih tanggal uang masuk bank (tanggal transfer s/d hari ini)
     const days = Array.from({ length: 8 }, (_, k) => addDays(todayStr(), -k)).filter((d) => d >= read!.date!);
@@ -172,4 +175,72 @@ export async function wdProofMessageHook(ident: WdIdent, chatId: string, msg: Tg
     await sendTelegram(chatId, `⚠️ <b>Bukti belum valid</b> · ${esc(t.number)} ${idr(t.amount)}\n${esc(c.issues.join("; "))}.\n\n📷 Kirim screenshot lain yang menampilkan nominal, tanggal & jam${approver ? ", atau bila sudah dicek manual tekan tombol di bawah (tercatat di riwayat)" : ""}.`, { type: "WD_BUKTI", buttons });
   }
   return true;
+}
+
+export type SellerShotCtx = { i: WdIdent & { canSubmit: boolean }; chatId: string };
+
+/**
+ * Foto bebas berisi "Detail penarikan dana" Seller Center TikTok (dibaca OCR):
+ * - No. Referensi sudah tercatat → WD Dalam Proses + "Berhasil ditransfer" = uang diterima otomatis; selain itu duplikat pasti.
+ * - Cocok dengan WD Dalam Proses (nominal + tanggal pengajuan) → uang diterima otomatis bila sudah "Berhasil ditransfer".
+ * - Selain itu: draft WD baru (Saldo Penjual TikTok → Seabank 5984, toko MG/DL dari keterangan), konfirmasi sekali "Simpan".
+ */
+export async function handleSellerScreenshot(ctx: SellerShotCtx, w: SellerWithdrawal, o: { caption: string; proofPath: string | null; messageId: string; ocrText: string }) {
+  const { chatId, i } = ctx;
+  const actor = { id: i.userId, name: i.user.name, telegramId: i.telegramUserId };
+  const ref = w.ref ? ` (No. Ref ${esc(w.ref)})` : "";
+  const existing = await findInProcessFor(w);
+  if (existing) {
+    if (existing.status === "DALAM_PROSES" && w.transferred && o.proofPath) {
+      if (!(await canReceive(existing.id, { id: i.userId, canApprove: isApprover(i) }))) {
+        await sendTelegram(chatId, `${esc(existing.number)} masih Dalam Proses. Hanya Owner/Finance atau pembuatnya yang dapat menandai uang diterima.`);
+        return;
+      }
+      try {
+        const r = await receiveWithdraw(existing.id, actor, { canApprove: isApprover(i), proof: { path: o.proofPath, mime: "image/jpeg", read: sellerProofRead(w) } });
+        const m = await draftMessage(existing.id);
+        await sendTelegram(chatId, `✅ <b>Uang diterima otomatis</b>${ref}\n${esc(existing.number)} ${idr(existing.amount)} berhasil ditransfer ${fmtDateTime(r.transaction.receivedAt)} · jurnal ${esc(r.journal.number)}\n\n${m.text}`, { buttons: m.buttons, type: "WD_BUKTI" });
+      } catch (e) {
+        await sendTelegram(chatId, `⚠️ ${esc(e instanceof FinanceError ? e.message : "Gagal menandai uang diterima")}`);
+      }
+      return;
+    }
+    const m = await draftMessage(existing.id);
+    await sendTelegram(chatId, `⚠️ <b>Duplikat</b>: withdraw ini${ref} sudah tercatat sebagai ${esc(existing.number)} · ${STATUS_LABEL[existing.status]}. Tidak dicatat lagi.${existing.status === "DALAM_PROSES" ? "\nKirim screenshot setelah tahap \"Berhasil ditransfer\" muncul untuk menyelesaikannya." : ""}\n\n${m.text}`, { buttons: m.buttons, type: "WD_BUKTI" });
+    return;
+  }
+  if (!w.amount || !(w.submitted || w.transferred)) {
+    await sendTelegram(chatId, "Nominal/tanggal di detail penarikan belum terbaca. Kirim ulang screenshot yang lebih jelas (jumlah penarikan, rekening, No. Referensi & progres).");
+    return;
+  }
+  const banks = await prisma.bankAccount.findMany({ where: { active: true }, orderBy: { code: "asc" } });
+  const sellers = banks.filter((b) => isTiktokSeller(b));
+  const cap = o.caption.toLowerCase();
+  const seller = sellers.find((b) => b.aliases.split(",").map((x) => x.trim().toLowerCase()).some((a) => a.length >= 4 && cap.includes(a))) ?? sellers[0];
+  if (!seller) {
+    await sendTelegram(chatId, "Rekening Saldo Penjual TikTok belum ada di Pengaturan → Rekening.");
+    return;
+  }
+  const dest = await tiktokDestination();
+  const stores = await prisma.store.findMany({ where: { active: true } });
+  const storeId = matchStore(o.caption, stores);
+  const at = w.submitted ?? w.transferred!;
+  const draft: DraftInput = {
+    direction: "TRANSFER",
+    amount: w.amount,
+    date: jakartaDateTime(at.date, at.time ?? "12:00").toISOString(),
+    accountId: seller.id,
+    toAccountId: dest.bank?.id ?? null,
+    categoryId: null,
+    note: `WD TikTok${w.ref ? ` ref ${w.ref}` : ""}${o.caption ? ` · ${o.caption}` : ""}`.slice(0, 500),
+    rawText: o.caption,
+    proofPath: o.proofPath,
+    aiExtraction: { seller: w, ocrText: o.ocrText.slice(0, 3000) },
+    messageId: o.messageId,
+    storeId,
+    askStore: !storeId,
+    withdrawRef: w.ref,
+  };
+  await createDraft(chatId, i, draft);
+  if (w.last4 && w.last4 !== dest.last4) await sendTelegram(chatId, `⚠️ Rekening di bukti ****${esc(w.last4)}, padahal WD TikTok seharusnya masuk ****${esc(dest.last4)}${dest.bank ? ` (${esc(dest.bank.name)})` : ""}. Periksa sebelum menyimpan.`);
 }

@@ -1093,8 +1093,11 @@ model FinanceTransaction {
   receivedProofMime   String?
   /// Hasil baca bukti {amounts, amount, date, time, manual}
   receivedProofRead   Json?
+  /// Withdraw TikTok: No. Referensi di "Detail penarikan dana" Seller Center (sama = duplikat pasti)
+  withdrawRef         String?
 
   @@index([fingerprint])
+  @@index([withdrawRef])
   @@index([origin])
   @@index([status])
   @@index([deletedAt])

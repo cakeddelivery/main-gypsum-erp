@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 /** Parameter yang bukan filter (membuka popup, pesan sekali tampil, dll.) tidak ikut diingat */
-const IGNORED = new Set(["baru", "reset", "ok", "err", "msg"]);
+const IGNORED = new Set(["baru", "reset", "ok", "err", "msg", "n"]);
 const keyOf = (path: string) => `filter:${path}`;
 
 function filterQuery(sp: URLSearchParams) {

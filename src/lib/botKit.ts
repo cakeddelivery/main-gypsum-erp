@@ -12,6 +12,17 @@ export type Session = { chatId: string; userId: string; flow: string; step: stri
 export type Prompt = { text: string; buttons?: InlineButton[][]; replyKeyboard?: { text: string; request_location?: boolean }[][] };
 export type Ctx = { i: BotIdent; chatId: string; messageId?: number };
 
+/** Chat grup/supergroup Telegram punya id negatif; chat pribadi positif */
+export const isGroupChat = (chatId: string | number) => String(chatId).startsWith("-");
+
+/**
+ * Kunci sesi isian (BotSession.chatId): chat pribadi = id chat; grup = id chat + pengguna ERP, sehingga dua orang
+ * di grup yang sama mengisi sendiri-sendiri tanpa saling menimpa.
+ */
+export const sessionKey = (chatId: string, userId: string) => (isGroupChat(chatId) ? `${chatId}:${userId}` : chatId);
+/** Id chat asli dari kunci sesi */
+export const chatOfKey = (key: string) => key.split(":")[0];
+
 export const can = (i: BotIdent, ...p: Permission[]) => p.some((x) => i.perms.has(x));
 export const chunk = <T,>(arr: T[], n: number) => Array.from({ length: Math.ceil(arr.length / n) }, (_, k) => arr.slice(k * n, k * n + n));
 export const cancelRow: InlineButton[] = [{ text: "❌ Batal", callback_data: "f:x" }];

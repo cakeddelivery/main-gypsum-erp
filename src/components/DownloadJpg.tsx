@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { toJpeg } from "html-to-image";
 import { CLOSE_MS } from "./Modal";
+import { isIosStandalone } from "./Pwa";
 
 /**
  * Tombol "Unduh JPG": membuat gambar dari dokumen ber-kop surat (DocSheet di dalam DocExport) lalu menampilkan
@@ -60,6 +61,8 @@ export function DownloadJpg({ targetId, filename }: { targetId: string; filename
 
   const save = () => {
     if (!url) return;
+    // Aplikasi terpasang di iPhone: simpan lewat menu Bagikan ("Simpan Gambar") agar tidak terjebak di layar gambar
+    if (canShare && isIosStandalone()) return void share();
     const a = document.createElement("a");
     a.href = url;
     a.download = name;
