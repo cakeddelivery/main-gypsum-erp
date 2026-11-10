@@ -144,8 +144,11 @@ export async function sendWdProcessReminder(now: Date = new Date()) {
     return { sent: 0, failed: recipients.length };
   }
   let sent = 0;
-  for (const r of recipients) if ((await sendTelegram(r.chatId!, m.text, { buttons: m.buttons, type: "WD_PROSES" })).ok) sent++;
-  return { sent, failed: recipients.length - sent, withdrawals: m.rows.length };
+  // Juga ke grup terdaftar yang pengingatnya nyala (/pengingatgrup); tombol "Uang diterima" tetap dicek izinnya per penekan
+  const { reminderGroups } = await import("./botGroup");
+  const targets = [...recipients.map((r) => r.chatId!), ...(await reminderGroups())];
+  for (const t of targets) if ((await sendTelegram(t, m.text, { buttons: m.buttons, type: "WD_PROSES" })).ok) sent++;
+  return { sent, failed: targets.length - sent, withdrawals: m.rows.length };
 }
 
 async function ranToday(key: string, date: string) {

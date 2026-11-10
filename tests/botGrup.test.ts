@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /** Bot ERP di grup Telegram: Owner & tim mencatat di grup yang sama tanpa saling menimpa isian */
 const sent: { chat: string; text: string; buttons?: { text: string; callback_data: string }[][] }[] = [];
@@ -7,9 +7,10 @@ vi.mock("@/lib/telegram", async (orig) => {
   const real = await orig<typeof import("@/lib/telegram")>();
   return {
     ...real,
-    sendTelegram: vi.fn(async (c: string, text: string, o: { buttons?: { text: string; callback_data: string }[][] } = {}) => (sent.push({ chat: c, text, buttons: o.buttons }), { ok: true })),
+    sendTelegram: vi.fn(async (c: string, text: string, o: { buttons?: { text: string; callback_data: string }[][] } = {}) => (sent.push({ chat: c, text, buttons: o.buttons }), { ok: true, result: { message_id: 9000 + sent.length } })),
     editTelegram: vi.fn(async (c: string, _m: number, text: string, buttons?: { text: string; callback_data: string }[][]) => (sent.push({ chat: c, text, buttons }), { ok: true })),
     answerCallback: vi.fn(async (_id: string, text: string) => (answers.push(text), { ok: true })),
+    telegramConfigured: () => true,
     chatAction: vi.fn(async () => ({ ok: true })),
   };
 });
@@ -17,7 +18,9 @@ vi.mock("@/lib/telegram", async (orig) => {
 import { prisma } from "@/lib/db";
 import { handleTelegramUpdate } from "@/lib/bot";
 import { messageBody, withReplyTo } from "@/lib/telegram";
-import { GROUP_SETTING, normalizeCommand } from "@/lib/botGroup";
+import { GROUP_RECAP_SETTING, GROUP_REMINDER_OFF, GROUP_SETTING, normalizeCommand, reminderGroups } from "@/lib/botGroup";
+import { sendBalanceCheck } from "@/lib/balanceCheck";
+import { jakartaDateTime } from "@/lib/time";
 
 const G = -1001234567890;
 const OTHER_G = -1009999999999;
@@ -43,6 +46,11 @@ beforeAll(async () => {
   await prisma.setting.deleteMany({ where: { key: GROUP_SETTING } });
   const sup = await prisma.supplier.upsert({ where: { code: "SUP_UJI_GRUP" }, create: { code: "SUP_UJI_GRUP", name: "Toko Uji Grup" }, update: {} });
   await prisma.item.upsert({ where: { sku: "BB-UJI-GRUP" }, create: { sku: "BB-UJI-GRUP", name: "Lem Uji Grup", type: "BAHAN_BAKU", unit: "pcs", supplierId: sup.id }, update: { active: true } });
+});
+// Grup uji dihapus lagi agar pengingat/rekap di tes lain tidak ikut terkirim ke grup
+afterAll(async () => {
+  await prisma.setting.deleteMany({ where: { key: { in: [GROUP_SETTING, GROUP_RECAP_SETTING, GROUP_REMINDER_OFF] } } });
+  await prisma.telegramIdentity.update({ where: { telegramUserId: String(A.id) }, data: { chatId: null } });
 });
 beforeEach(() => {
   sent.length = 0;
@@ -122,5 +130,31 @@ describe("Bot di grup Telegram", () => {
     expect(inGroup).toMatchObject({ reply_parameters: { message_id: 42 } });
     const priv = await withReplyTo(String(A.id), 42, async () => messageBody(String(A.id), "hai"));
     expect(priv).not.toHaveProperty("reply_parameters");
+  });
+
+  it("cek saldo pagi juga ke grup; dijawab di grup → kartu di chat pribadi ikut diperbarui; /pengingatgrup", async () => {
+    // Edy punya chat pribadi (penerima cek saldo sebagai Owner)
+    await prisma.telegramIdentity.update({ where: { telegramUserId: String(A.id) }, data: { chatId: String(A.id) } });
+    await sendBalanceCheck(jakartaDateTime("2033-04-02", "05:01"));
+    const groupCard = sent.find((m) => m.chat === String(G) && m.text.includes("Cek saldo pagi"));
+    expect(groupCard).toBeTruthy();
+    expect(sent.some((m) => m.chat === String(A.id) && m.text.includes("Cek saldo pagi"))).toBe(true);
+    const row = await prisma.balanceCheck.findFirstOrThrow({ where: { date: new Date("2033-04-01T00:00:00Z") }, include: { bankAccount: true } });
+    sent.length = 0;
+    // Finance menjawab di grup (kartu sistem, bukan balasan ke orang) → status sama, kartu pribadi Edy ikut diedit
+    await tap(C, `cs:ok:${row.id}`);
+    expect((await prisma.balanceCheck.findUniqueOrThrow({ where: { id: row.id } })).status).toBe("SESUAI");
+    const priv = sent.filter((m) => m.chat === String(A.id));
+    expect(priv.length).toBeGreaterThan(0);
+    expect(priv.at(-1)!.text).toContain("oleh Staf Finance");
+
+    expect(await reminderGroups()).toContain(String(G));
+    await say(B, "/pengingatgrup");
+    expect(await reminderGroups()).toContain(String(G));
+    await say(A, "/pengingatgrup");
+    expect(sent.at(-1)!.text).toContain("dimatikan");
+    expect(await reminderGroups()).not.toContain(String(G));
+    await say(A, "/pengingatgrup");
+    expect(await reminderGroups()).toContain(String(G));
   });
 });

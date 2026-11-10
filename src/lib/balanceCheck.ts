@@ -71,7 +71,8 @@ const open = (r: Pick<BalanceCheck, "status" | "done">) => r.status === "MENUNGG
 /** Pesan daftar saldo + tombol (rekening yang belum dijawab) */
 export function checkMessage(date: string, rows: Row[], head?: string): { text: string; buttons: InlineButton[][] } {
   const mark = (r: Row) =>
-    r.status === "SESUAI" ? "✅ sesuai" : r.status === "TIDAK_SESUAI" ? (r.done ? `❌ tidak sesuai${r.diff != null ? ` (selisih ${signed(Number(r.diff))})` : ""}` : "❌ tidak sesuai — menunggu saldo bank & mutasi") : "⏳ belum dicek";
+    (r.status === "SESUAI" ? "✅ sesuai" : r.status === "TIDAK_SESUAI" ? (r.done ? `❌ tidak sesuai${r.diff != null ? ` (selisih ${signed(Number(r.diff))})` : ""}` : "❌ tidak sesuai — menunggu saldo bank & mutasi") : "⏳ belum dicek") +
+    (r.status !== "MENUNGGU" && r.checkedByName ? ` · oleh ${esc(r.checkedByName)}` : "");
   const lines = [
     head ?? "🏦 <b>Cek saldo pagi</b>",
     `Saldo buku per ${fmtDay(dateOnly(date))} pukul 23.59 WIB, dibanding saldo di aplikasi bank:`,
@@ -95,19 +96,61 @@ export function checkMessage(date: string, rows: Row[], head?: string): { text: 
 
 const signed = (n: number) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${idr(Math.abs(n))}`;
 
+/**
+ * Kartu cek saldo yang terkirim (chat pribadi & grup) per tanggal, disimpan di Setting agar semua kartu ikut
+ * diperbarui setelah dijawab di salah satu tempat (tanpa migrasi).
+ */
+const cardsKey = (date: string) => `cek_saldo_kartu:${date}`;
+type Card = { chat: string; msg: number };
+
+async function rememberCard(date: string, chat: string, r: { ok: boolean; result?: unknown }) {
+  const msg = (r.result as { message_id?: number } | undefined)?.message_id;
+  if (!r.ok || !msg) return;
+  const key = cardsKey(date);
+  const cur = await prisma.setting.findUnique({ where: { key } });
+  const list: Card[] = cur ? JSON.parse(cur.value) : [];
+  list.push({ chat, msg });
+  const value = JSON.stringify(list.slice(-40));
+  await prisma.setting.upsert({ where: { key }, create: { key, value }, update: { value } });
+}
+
+/** Perbarui semua kartu cek saldo tanggal tsb (kecuali yang baru saja diedit) */
+export async function syncCards(date: string, except?: { chat: string; msg: number }) {
+  const cur = await prisma.setting.findUnique({ where: { key: cardsKey(date) } });
+  if (!cur) return 0;
+  const list: Card[] = JSON.parse(cur.value);
+  const m = checkMessage(date, await rowsOf(date));
+  let n = 0;
+  for (const c of list) {
+    if (except && c.chat === except.chat && c.msg === except.msg) continue;
+    if ((await editTelegram(c.chat, c.msg, m.text, m.buttons).catch(() => ({ ok: false }))).ok) n++;
+  }
+  return n;
+}
+
+/** Tujuan kartu cek saldo: chat pribadi penerima + grup terdaftar yang pengingatnya nyala */
+async function checkTargets() {
+  const { reminderGroups } = await import("./botGroup");
+  return [...(await balanceCheckRecipients()).map((r) => r.chatId!), ...(await reminderGroups())];
+}
+
 /** Job 05.00: siapkan & kirim cek saldo kemarin ke penerima */
 export async function sendBalanceCheck(now: Date = new Date()) {
   const date = checkDate(now);
   const rows = await prepareChecks(date);
   if (!rows.length) return { sent: 0, skipped: "tidak ada rekening" };
   const m = checkMessage(date, rows);
-  const recipients = await balanceCheckRecipients();
+  const recipients = await checkTargets();
   if (!telegramConfigured() || !recipients.length) {
     await prisma.notificationLog.create({ data: { channel: "TELEGRAM", type: "CEK_SALDO", target: date, status: "GAGAL", payload: m.text.slice(0, 2000), error: !telegramConfigured() ? "TELEGRAM_BOT_TOKEN belum diatur" : "Penerima cek saldo belum tertaut Telegram" } });
     return { sent: 0, failed: recipients.length };
   }
   let sent = 0;
-  for (const r of recipients) if ((await sendTelegram(r.chatId!, m.text, { buttons: m.buttons, type: "CEK_SALDO" })).ok) sent++;
+  for (const c of recipients) {
+    const r = await sendTelegram(c, m.text, { buttons: m.buttons, type: "CEK_SALDO" });
+    if (r.ok) sent++;
+    await rememberCard(date, c, r);
+  }
   return { sent, failed: recipients.length - sent };
 }
 
@@ -119,9 +162,13 @@ export async function sendBalanceCheckReminder(now: Date = new Date()) {
   if (!pending.length) return { sent: 0, skipped: "semua sudah dicek" };
   if (pending.every((r) => r.remindedAt)) return { sent: 0, skipped: "sudah diingatkan" };
   const m = checkMessage(date, rows, `⏰ <b>Pengingat cek saldo</b> — ${pending.length} rekening belum dicek`);
-  const recipients = await balanceCheckRecipients();
+  const recipients = await checkTargets();
   let sent = 0;
-  for (const r of recipients) if ((await sendTelegram(r.chatId!, m.text, { buttons: m.buttons, type: "CEK_SALDO_INGAT" })).ok) sent++;
+  for (const c of recipients) {
+    const r = await sendTelegram(c, m.text, { buttons: m.buttons, type: "CEK_SALDO_INGAT" });
+    if (r.ok) sent++;
+    await rememberCard(date, c, r);
+  }
   // Ditandai walau gagal kirim agar tidak diulang (kegagalan tercatat di log notifikasi)
   await prisma.balanceCheck.updateMany({ where: { id: { in: pending.map((r) => r.id) } }, data: { remindedAt: now } });
   return { sent, failed: recipients.length - sent };
@@ -154,6 +201,7 @@ export async function balanceCheckCallback(i: CsIdent, cbId: string, chatId: str
     for (const r of waiting) await answerCheck(r, "SESUAI", i);
     const m = checkMessage(date, await rowsOf(date));
     await editTelegram(chatId, messageId, m.text, m.buttons);
+    await syncCards(date, { chat: chatId, msg: messageId });
     return answerCallback(cbId, waiting.length ? "Semua ditandai sesuai ✅" : "Sudah dicek semua");
   }
   const row = arg ? await prisma.balanceCheck.findUnique({ where: { id: arg }, include: { bankAccount: true } }) : null;
@@ -164,6 +212,7 @@ export async function balanceCheckCallback(i: CsIdent, cbId: string, chatId: str
     await answerCheck(row, "SESUAI", i);
     const m = checkMessage(date, await rowsOf(date));
     await editTelegram(chatId, messageId, m.text, m.buttons);
+    await syncCards(date, { chat: chatId, msg: messageId });
     return answerCallback(cbId, "Sesuai ✅");
   }
   if (act === "no") {
@@ -172,6 +221,7 @@ export async function balanceCheckCallback(i: CsIdent, cbId: string, chatId: str
     await prisma.botSession.upsert({ where: { chatId: sessionKey(chatId, i.userId) }, create: { chatId: sessionKey(chatId, i.userId), userId: i.userId, flow: FLOW, step: "amt", data: { id: row.id, msg: messageId } }, update: { userId: i.userId, flow: FLOW, step: "amt", data: { id: row.id, msg: messageId } } });
     const m = checkMessage(date, await rowsOf(date));
     await editTelegram(chatId, messageId, m.text, m.buttons);
+    await syncCards(date, { chat: chatId, msg: messageId });
     await sendTelegram(chatId, `❌ <b>${esc(row.bankAccount.name)}</b> tidak sesuai.\nSaldo buku saat ini: ${idr((await bankBalances()).find((b) => b.id === row.bankAccountId)?.balance ?? 0)}\n\n✍️ Ketik <b>saldo di aplikasi bank</b> sekarang, contoh <code>1.234.567</code>`, { type: "CEK_SALDO" });
     return answerCallback(cbId, "");
   }
@@ -200,6 +250,7 @@ async function finish(i: CsIdent, chatId: string, row: Row, cbId?: string) {
     const m = checkMessage(date, await rowsOf(date));
     await editTelegram(chatId, msg, m.text, m.buttons).catch(() => {});
   }
+  await syncCards(date, msg ? { chat: chatId, msg } : undefined);
   if (cbId) await answerCallback(cbId, "Tersimpan ✅");
 }
 

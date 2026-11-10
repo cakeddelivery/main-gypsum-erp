@@ -73,3 +73,26 @@ export async function toggleGroupRecap() {
   await prisma.setting.upsert({ where: { key: GROUP_RECAP_SETTING }, create: { key: GROUP_RECAP_SETTING, value }, update: { value } });
   return value === "1";
 }
+
+/** Grup terdaftar yang pengingatnya dimatikan Owner (/pengingatgrup); bawaan semua grup terdaftar NYALA */
+export const GROUP_REMINDER_OFF = "telegram_grup_pengingat_mati";
+
+async function remindersOff(): Promise<string[]> {
+  const s = await prisma.setting.findUnique({ where: { key: GROUP_REMINDER_OFF } });
+  return (s?.value ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+}
+
+/** Grup tujuan pengingat (cek saldo pagi & 12.00, withdraw TikTok dalam proses): terdaftar dan tidak dimatikan */
+export async function reminderGroups(): Promise<string[]> {
+  const off = new Set(await remindersOff());
+  return (await allowedGroups()).filter((g) => !off.has(g));
+}
+
+/** Owner: nyalakan/matikan pengingat di grup ini. Mengembalikan true bila sekarang NYALA */
+export async function toggleGroupReminders(chatId: string) {
+  const off = await remindersOff();
+  const next = off.includes(chatId) ? off.filter((x) => x !== chatId) : [...off, chatId];
+  const value = next.join(",");
+  await prisma.setting.upsert({ where: { key: GROUP_REMINDER_OFF }, create: { key: GROUP_REMINDER_OFF, value }, update: { value } });
+  return !next.includes(chatId);
+}

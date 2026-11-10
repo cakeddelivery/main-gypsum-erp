@@ -28,7 +28,7 @@ import type { Session } from "./botKit";
 import { confirmTransaction, isTiktokWithdraw } from "./wdProcess";
 import { wdCallback, wdProofMessageHook } from "./botWd";
 import { balanceCheckCallback, balanceCheckMessageHook } from "./balanceCheck";
-import { groupRelevant, isAllowedGroup, toggleGroupRecap, normalizeCommand, registerGroup, unregisterGroup } from "./botGroup";
+import { groupRelevant, isAllowedGroup, toggleGroupRecap, toggleGroupReminders, normalizeCommand, registerGroup, unregisterGroup } from "./botGroup";
 import { isGroupChat } from "./botKit";
 
 type TgUser = { id: number; first_name?: string; username?: string };
@@ -102,6 +102,11 @@ async function handleMessage(u: TgUpdate) {
       const actor = { id: ident.userId, name: ident.user.name };
       const ok = text === "/daftargrup" ? await registerGroup(chatId, actor) : await unregisterGroup(chatId, actor);
       await sendTelegram(chatId, text === "/daftargrup" ? (ok ? "✅ Grup ini terdaftar. Anggota yang ID Telegram-nya sudah ditautkan bisa mencatat transaksi di sini (kirim foto bukti / pesan bernominal, atau /menu)." : "Grup ini sudah terdaftar.") : ok ? "Grup ini dihapus dari daftar. Bot tidak akan melayani grup ini lagi." : "Grup ini belum terdaftar.");
+      return;
+    }
+    if (text === "/pengingatgrup" && ident?.user.role === "OWNER" && (await isAllowedGroup(chatId))) {
+      const on = await toggleGroupReminders(chatId);
+      await sendTelegram(chatId, on ? "🔔 Pengingat di grup ini NYALA: cek saldo pagi & 12.00, dan withdraw TikTok dalam proses. Kirim /pengingatgrup lagi untuk mematikan." : "🔕 Pengingat di grup ini dimatikan (tetap dikirim ke chat pribadi). Kirim /pengingatgrup lagi untuk menyalakan.");
       return;
     }
     if (text === "/rekapgrup" && ident?.user.role === "OWNER" && (await isAllowedGroup(chatId))) {
