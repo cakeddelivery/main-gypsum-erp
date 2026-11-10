@@ -1,6 +1,8 @@
 # Serah-terima proyek Main Gypsum ERP
 
-Dokumen ini merangkum semua yang perlu diketahui untuk melanjutkan pengembangan ERP Main Gypsum di akun Claude lain. Posisi per **8 November 2026**, kode di `main` sampai PR #44 (commit `1be5585`). PR #38 (skrip audit saldo, baca-saja) dan PR #44 (dropdown cari melebar) sudah di-merge.
+Prompt pembuka untuk akun/sesi Claude baru ada di [PROMPT-PEMBUKA.md](PROMPT-PEMBUKA.md).
+
+Dokumen ini merangkum semua yang perlu diketahui untuk melanjutkan pengembangan ERP Main Gypsum di akun atau sesi Claude lain. Posisi per **10 November 2026**, kode di `main` sampai **PR #73** (commit `25fed0a`). Tidak ada PR terbuka.
 
 > Tidak ada rahasia di dokumen ini. Token bot, API key, password, isi `.env` tidak pernah ditulis di repo atau di chat. Semua rahasia hanya ada di `.env` VPS.
 
@@ -73,7 +75,19 @@ Role (`enum Role`): OWNER, FINANCE, ADMIN, ADMIN_PRODUKSI, ADMIN_MARKETPLACE, KA
 - **Akuntansi**: COA, jurnal umum, neraca, laba rugi, arus kas, tutup buku (otomatis tgl 10 pukul 09.00 WIB), Atur saldo rekening, piutang/hutang/pinjaman + cicilan pokok & bunga, aset tetap.
 - **Analitik & AI Advisor**, unduh Excel/CSV, unduh JPG dengan kop surat seragam (`DocSheet`).
 - **Supplier** (detail + riwayat hutang, gabung supplier dobel) & **Pelanggan** (pembeli offline).
-- **Bot Telegram ERP** (lihat bagian 7).
+- **Penjualan offline** (`/penjualan`, #50): nota JUAL-…, banyak barang, diskon per nota, ongkir (4-1300), lunas/sebagian/tempo → piutang + cicilan berbukti, stok barang jadi keluar + HPP langsung (avgCost; bila 0 pakai bahan+kemasan resep, #72), nota JPG.
+- **Anggaran beban** per akun COA (`/akuntansi/anggaran`, #48), peringatan 80%/100% di Beranda + bot Owner 08.00.
+- **Piutang Pengelola** (#55): pinjaman pengelola dari ShopeePay/0006 (akun 1-1320) + pengembaliannya, ikut Dana talangan & pengingat 08.00.
+- **WD TikTok "Dalam Proses"** (#63, #69): pendapatan diakui di tanggal pengajuan ke akun **Dana dalam Perjalanan**, uang masuk Seabank 5984 saat "Uang diterima" (wajib bukti). Screenshot TikTok Seller Center "Detail penarikan dana" dibaca otomatis: bila sudah "Berhasil ditransfer" langsung Dibukukan; No. Referensi = cek duplikat. Tab Dalam Proses, kartu + popup di Beranda.
+- **Cek saldo pagi** (#63, #65, #67): 05.00 WIB bot kirim saldo tiap rekening ke Jojo + semua Owner (+ grup terdaftar), tombol Sesuai/Tidak sesuai → saldo bank + mutasi; pengingat 12.00; riwayat di Transaksi → Cek saldo harian.
+- **Semua uang rekening tampil di Transaksi** (#60): pembelian, gaji, kasbon, borongan, sisihan, penjualan, pinjaman, aset = baris tertaut (hanya-baca, "Buka menu …"), jurnal tetap satu.
+- **Daftar Transaksi ringan** (#68): satu tabel 10 baris/halaman, 50 transaksi terbaru + "Tampilkan lebih lama", Unduh Excel dari server (`/finance/export`). Filter diingat per halaman saat kembali dari halaman lain + tombol Reset filter (#62, #64). Tab Ditolak/Dibatalkan bisa "Tampilkan yang disembunyikan" (#52).
+- **Login** (#47, #58): batas percobaan per IP, kunci bertahap, sesi dicabut saat ganti password, ikon mata, lupa password via Gmail SMTP, Masuk dengan Google (hanya akun yang emailnya terdaftar).
+- **PWA** (#70): bisa dipasang di Android/iPhone (Profil → Pasang aplikasi), layar penuh, pintasan, halaman offline; data keuangan tidak disimpan di HP. Staging bernama "MG ERP (Tes)".
+- **Foto bukti dikompres** saat diunggah (#71, sharp; maks 1600/2000 px, EXIF/GPS dibuang, PDF tetap); batas unggah 15 MB.
+- **Akuntansi** (#72): tombol Balik hanya untuk jurnal MANUAL/PENYESUAIAN/SALDO_AWAL (jurnal lain → "Buka sumber"), arus kas selalu klop (kelompok ke-4 "Penyesuaian saldo & saldo awal rekening" + tanda ✓), Jurnal umum ringkas (Akun | Debit | Kredit), pemakaian bahan laporan shift → akun HPP "Pemakaian Bahan Baku", tutup buku otomatis juga menutup bulan lama, tipe akun COA dikunci bila sudah ada jurnal, form Aset: tanggal < go-live otomatis "Saldo awal (aset lama)".
+- **Kategori**: Bahan Pesanan Custom (5-1100), Langganan Software & AI (6-1550), Retur & Refund Penjualan (4-1200), Bunga Bank (4-9100), Pajak Bunga Bank (6-1960).
+- **Bot Telegram ERP** (lihat bagian 7), termasuk **grup Telegram** terdaftar.
 - **Backup** harian + salinan terenkripsi ke Telegram.
 
 ## 4. Aturan bisnis (wajib dijaga)
@@ -88,6 +102,12 @@ Role (`enum Role`): OWNER, FINANCE, ADMIN, ADMIN_PRODUKSI, ADMIN_MARKETPLACE, KA
 - **Toko** (Main Gypsum = MG, Dunia Lukis = DL) hanya membedakan **withdraw** dari saldo penjual marketplace. Beban & bahan baku dipakai bersama, laporan selalu gabungan. Withdraw dari Saldo Penjual otomatis mencatat pemasukan penjualan.
 - **Biaya marketplace**: Shopee admin 8,25% + Gratis Ongkir Xtra 6%; TikTok komisi 9,5% + dinamis 8%; keduanya Rp1.250 per pesanan.
 - Pinjaman lama yang sudah dicatat: Mas Rizal, SPinjam, Mbak Henny (PJM-202611-0001..0003).
+- **WD TikTok** selalu masuk ke **Seabank 5984** (setting `wd_tiktok_rekening`). Tahap "Berhasil ditransfer" di Seller Center = uang sudah masuk SeaBank (jam itu = jam terima).
+- **Sisihan berbukti dari bot**: caption "OPS <tgl>" = transfer Kompensasi Pengelola 5984 → ShopeePay; "Nabung SPinjam <tgl>" = transfer Nabung Bayar Hutang 5984 → 0006. Sisihan otomatis tanggal itu diserap (Dibatalkan) agar tidak dobel.
+- **Pinjaman pengelola** (mis. "Edy pinjam dana OPS") = Piutang Pengelola, bukan beban dan bukan bayar hutang.
+- **Aset/kejadian sebelum go-live (29 Okt 2026)** dicatat dengan lawan **3-9000 Ekuitas Saldo Awal**, BUKAN dari rekening (saldo rekening awal sudah diatur 1–4 Nov). Contoh: Mesin Oven (Mei, Rp18,5jt, 48 bln) & Sewa Rumah Produksi (Juni, Rp14jt, kontrak 12 bln) — sudah dikoreksi dengan `koreksi:aset-sumber-dana`.
+- **Barang diterima tapi belum dibayar** dicatat lewat Stok → Pembelian dengan Nominal bayar 0 (Hutang), bukan sebagai uang keluar di Transaksi.
+- **Bunga tabungan** = pemasukan kategori Bunga Bank; potongan pajak bunga = Pajak Bunga Bank.
 - Transaksi yang sudah dibukukan **tidak pernah dihapus**: dibatalkan + jurnal balik.
 
 ## 5. Aturan tampilan & kode (preferensi user)
@@ -109,6 +129,10 @@ Role (`enum Role`): OWNER, FINANCE, ADMIN, ADMIN_PRODUKSI, ADMIN_MARKETPLACE, KA
 - Live di **https://erp.maingypsum.shop**, VPS milik user (Ubuntu 24.04, user `ubuntu`), Cloudflare proxied, SSL Full (strict), Nginx + certbot.
 - Aplikasi di `~/main-gypsum-erp`, PM2: `maingypsum` (next start, 127.0.0.1:3000) dan `maingypsum-jadwal` (scheduler). DB PostgreSQL `maingypsum`. Backup cron harian 02.30 (14 hari + salinan terenkripsi ke Telegram).
 - **Claude tidak bisa SSH ke VPS.** User sendiri yang menjalankan perintah lalu menempel hasilnya. Jangan pernah minta user menempel isi `.env`, password, atau token.
+- User punya 2 server di aplikasi terminal: **"VPS magy" (`VM-18-187`) = ERP + Hermes**, dan "Server Cak Ed" (`VM-14-243`, bukan ERP). Bila perintah gagal "No such file or directory", cek tab server-nya.
+- **Firewall (ufw) aktif**: 22/tcp terbuka, 80/443 hanya dari IP Cloudflare. Rate limit Cloudflare untuk `/login` disarankan (belum dipastikan terpasang).
+- Log systemd dibatasi 300 MB (`/etc/systemd/journald.conf.d/batas.conf`). Disk ±59 GB (sisa ±31 GB per 10 Nov). RAM 3,6 GB (Hermes ±350 MB); staging sebaiknya dimatikan saat tidak dites: `pm2 stop maingypsum-staging && pm2 save` (otomatis hidup lagi saat `deploy.sh`).
+- `.env` production juga berisi `SMTP_*`, `MAIL_FROM`, `GOOGLE_CLIENT_ID/SECRET`, `APP_URL` (lupa password & login Google). Google OAuth app berstatus Testing → Gmail pengguna harus didaftarkan di Google Cloud → Audience → Test users.
 
 Perintah update production (setelah merge ke `main`):
 
@@ -137,6 +161,9 @@ cd ~/main-gypsum-erp && git pull origin main && npm run backup && npm ci && npx 
 - **Magy Bot (@Maingypsum_bot) milik Hermes AI Agent** (berjalan di VPS yang sama). **Jangan pernah memakai token Magy Bot di ERP**: pernah terjadi, `setWebhook` merusak polling Hermes. Cek identitas bot dengan `getMe`, bukan dari nama file.
 - Hermes memakai skill `maingypsum-finance` yang memanggil `/api/v1` dengan API key ber-scope draft. Status: gateway Hermes sendiri belum membalas (belum terselesaikan, di luar repo).
 - Fitur bot: `/menu` tombol per role, ringkasan, unduh laporan JPG, catat transaksi dari teks/foto (AI → OCR cadangan, batas 35 dtk/20 dtk), kenali pembelian bahan baku, angsuran hutang/cicilan pinjaman, transfer sisihan + bukti, withdraw MG/DL, rincian multi-kategori, deteksi duplikat, absen lokasi, input produksi, stok, kasbon, pembelian, borongan, dana talangan, ganti rekening/kategori/toko di kartu draft. `/rekap` dibatasi izin.
+- Tambahan sejak 9 Nov: penjualan + cicilan piutang + pengingat jatuh tempo (#53); tombol draft "❌ Tolak" (draft dibuang = status Ditolak, #51); cek transaksi mirip di semua alur dengan kartu "Berbeda, tetap simpan / Sama, jangan simpan / Lihat transaksi lama", saran kategori 1–3 tombol + usul kategori baru (disetujui Owner/Finance), isian kedaluwarsa bisa "Lanjutkan", setiap error ada Coba lagi/Batal (#60); konfirmasi tanggal WD (#56); WD TikTok dari screenshot Seller Center (#69); OPS/Nabung SPinjam (#66); bunga bank (#73); pinjaman pengelola (#55).
+- **Grup Telegram** (#67): grup harus didaftarkan Owner dengan `/daftargrup` (cabut `/hapusgrup`); privacy mode bot di BotFather harus **Disable**. Isian per orang (kunci sesi `chatId:userId`), bot membalas ke pesan pengirim, tombol kartu orang lain ditolak (kecuali Owner/Finance), obrolan tanpa nominal/foto diabaikan, pesan grup tidak diteruskan ke Hermes. Pengingat (cek saldo 05.00/12.00, WD 08.00) juga ke grup — `/pengingatgrup` untuk mematikan; `/rekapgrup` untuk rekap harian. Grup production: "Laporan Magy" (pastikan sudah `/daftargrup` dan akun Telegram yang dipakai Owner di grup sudah ditautkan di Pengaturan → Telegram & Hermes).
+- Jadwal bot: 05.00 cek saldo, 08.00 pengingat talangan/WD dalam proses/piutang jatuh tempo/anggaran, 12.00 pengingat cek saldo.
 - Error bot tersimpan di `NotificationLog` (type WEBHOOK, status GAGAL), bukan di log pm2.
 - Untuk tes bot di staging perlu bot tes terpisah dari BotFather.
 
@@ -159,6 +186,12 @@ cd ~/main-gypsum-erp && git pull origin main && npm run backup && npm ci && npx 
 | `npm run satukan:supplier -- --gabung="Supplier BG Klip Label" --ke="Afdhol Grafika"` | gabung supplier dobel | sudah |
 | `npm run sinkron:sisihan` (`--pilih=TRX:k`, `--lewati=TRX`) | sinkron transfer lama ↔ dana sisihan | sudah |
 | `npm run tautkan:transaksi` | tautkan uang rekening lama dari menu lain (pembelian, gaji, kasbon, borongan, sisihan, penjualan, pinjaman, piutang, aset) ke menu Transaksi sebagai baris tertaut; tanpa jurnal baru, saldo tidak berubah, aman diulang | dijalankan user setelah PR #60 |
+| `npm run koreksi:wd-0061` | koreksi tanggal TRX-202611-0061 | sudah (oleh skrip #38) |
+| `npm run koreksi:saldo-0006-balik` | balik koreksi lama 0006 + penyesuaian Rp9.878 | sudah (9 Nov) |
+| `npm run koreksi:tanggal-wd` / `koreksi:saldo-5984` | tanggal 8 WD sesuai jam masuk SeaBank; bunga, dobel, Shopee 2 Nov | sudah (9 Nov) |
+| `npm run kompres:file` (`-- --dir=…`) | kompres foto lama di STORAGE_DIR (path tetap) | sudah (10 Nov; 118 file 5,7 MB, sudah kecil) |
+| `npm run koreksi:aset-sumber-dana -- --jurnal=JU-202605-0002,JU-202606-0001` | aset lama: kredit bank → Ekuitas Saldo Awal, Sewa 12 bulan, penyusutan susulan | dijalankan user setelah #72 (cek!) |
+| `npm run audit:saldo -- --asli=5984:ANGKA` | audit saldo rekening vs bank (baca-saja) | alat rutin |
 | `npm run backup` / `restore` / `backup:buka` | backup & pulihkan | rutin |
 
 Skrip dari PR #38 (sudah merge): `audit:saldo`, `scripts/koreksi-saldo-nov.ts`, `scripts/koreksi-transaksi-nov.ts`, `scripts/catat-bunga.ts`.
@@ -187,22 +220,42 @@ Skrip dari PR #38 (sudah merge): `audit:saldo`, `scripts/koreksi-saldo-nov.ts`, 
 | #39, #40 | perbaikan audit 8 Nov paket 1, 2, 3 |
 | #41 | tombol Kategori bot, kategori Konsumsi & Perawatan |
 | #42 | gabung supplier, sinkron transfer ↔ sisihan, dana talangan |
+| #43 | (ditutup tanpa merge: dokumen serah-terima versi akun lama) |
+| #44 | dropdown cari melebar |
+| #45 | perbarui zod/postcss/deepmerge-ts, rahasia tidak di argumen perintah |
+| #46 | akun Retur & Refund 4-1200, koreksi TRX-0061 |
+| #47 | keamanan login (batas per IP, kunci bertahap, cabut sesi) |
+| #48 | anggaran beban bulanan |
+| #49 | stok & produksi atomik (avgCost, kunci baris) |
+| #50, #53 | modul Penjualan (web) + Penjualan lewat bot |
+| #51, #52 | bot "Tolak", tampilkan transaksi yang disembunyikan |
+| #54, #56 | koreksi saldo Seabank 0006 & 5984, tanggal WD |
+| #55 | Piutang Pengelola, tandai pengembalian talangan, ShopeePay ≠ Saldo Penjual |
+| #57 | kategori Bahan Pesanan Custom & Langganan Software & AI |
+| #58 | login: ikon mata, lupa password Gmail, login Google |
+| #59 | audit:saldo tanpa alarm palsu |
+| #60, #61 | cek transaksi mirip, saran kategori, baris tertaut di Transaksi, skrip tautkan:transaksi |
+| #62, #64 | dropdown HP, filter diingat + Reset filter |
+| #63, #65 | WD TikTok Dalam Proses (Dana dalam Perjalanan), cek saldo pagi (Jojo + Owner) |
+| #66 | bot OPS/Nabung SPinjam → transfer sisihan |
+| #67 | bot di grup Telegram + pengingat ke grup |
+| #68 | daftar Transaksi ringan (50 baris, export server) |
+| #69 | WD TikTok otomatis dari screenshot Seller Center |
+| #70 | PWA |
+| #71 | kompres foto bukti |
+| #72 | audit Akuntansi (Balik dikunci, arus kas klop, Jurnal ringkas, HPP pemakaian bahan, tutup bulan lama, koreksi aset) |
+| #73 | kategori Bunga Bank & Pajak Bunga Bank, bot mengenali resi bunga |
 
-## 11. Pekerjaan terbuka
+## 11. Pekerjaan terbuka (per 10 Nov 2026)
 
-1. **Audit saldo November** (PR #38 sudah di-merge). Sisa: Seabank 0006 diperkirakan ~290rb lebih tinggi dari saldo asli, menunggu mutasi 0006 tanggal 1–5 Nov dari user; TRX-202611-0061 (WD TikTok MG 684.934) perlu dibatalkan & dicatat ulang tgl 5 Nov; perlu akun COA "Retur & Refund Penjualan". Laporan: `/mnt/project-files/audit-saldo/rekonsiliasi-2026-11-05.md` (folder proyek lama). Putuskan bersama user: merge, atau tutup.
-2. ~~Setelah PR #42~~: `satukan:supplier` dan `sinkron:sisihan` sudah dijalankan user di production.
-3. **Temuan audit 8 Nov yang belum dikerjakan**:
-   - **S9** keamanan login: kunci akun 5x gagal bisa dipakai orang lain untuk mengunci akun (DoS), belum ada batas per IP, sesi lama tidak dicabut saat ganti password. Saran: rate limit per IP (+ Cloudflare rate limit `/login`), versi sesi di User untuk mencabut sesi.
-   - **S10** lokasi GPS dipercaya dari browser/Telegram; staging publik berisi salinan data production (saran: lindungi staging dengan Cloudflare Access/basic auth).
-   - **R3** hapus produksi tidak mengembalikan harga pokok rata-rata (avgCost); `addResults` tidak atomik.
-   - **R4** cek stok rawan race condition, beberapa query scan penuh.
-   - **R5** `npm audit`: postcss, zod, deepmerge-ts perlu diperbarui.
-   - **R6** token bot terlihat di argumen `curl` dalam `scripts/backup.sh` (pakai file config / stdin).
-   - Laporan audit lengkap ada di akun Claude lama (artifact, tidak bisa dibuka dari akun lain).
-4. **Belum ada modul Penjualan** (order offline per toko, piutang pelanggan, stok barang jadi keluar per penjualan). Saat ini HPP lewat opname barang jadi akhir bulan. Kandidat fitur besar berikutnya bila user mau.
-5. Usulan lama yang belum dipilih: anggaran beban bulanan per kategori dengan peringatan; rotasi API key KelontongAI.
-6. Di luar repo: gateway Hermes belum membalas.
+1. **Pastikan langkah production terakhir sudah dijalankan user**: update ke `main` (#72, #73) → `koreksi:aset-sumber-dana` (pratinjau lalu `--jalankan`) → tutup lagi bulan Mei/Juni (dan Oktober bila dibuka). Lalu cek saldo Seabank 5984 di ERP = saldo aplikasi SeaBank (setelah bunga 10 Nov dan 2 WD TikTok 10 Nov ditandai "Uang diterima").
+2. **Grup Telegram "Laporan Magy"**: tautkan akun Telegram yang dipakai Owner di grup, BotFather `/setprivacy` → Disable, keluarkan-masukkan bot, `/daftargrup`.
+3. **Sisa audit Akuntansi (#72)**: S4 rekonsiliasi piutang/hutang vs akun + aset dibeli dengan hutang belum membuat dokumen Payable; S5 pembelian peralatan lewat Transaksi tidak jadi FixedAsset (tidak disusutkan); R2 Atur saldo diposting 12.00 (sebaiknya 23.59); R3 daftar akun pinjaman terlalu luas. Penyusutan Oktober aset lama dibukukan sebagai "(susulan)" di November bila Oktober tidak dibuka saat skrip dijalankan.
+4. **HPP**: opname barang jadi akhir bulan masih menjadi sumber HPP penjualan marketplace; pastikan user melakukannya tiap akhir bulan. Harga pokok barang jadi masih banyak 0 → isi resep di Produk & HPP / input produksi tahap Barang Jadi.
+5. **Keamanan**: Cloudflare rate limit `/login` (langkah klik demi klik sudah pernah diberikan); S10 staging publik berisi salinan data production (saran Cloudflare Access/basic auth); `npm audit` sisa vitest (dev only).
+6. **Tampilan** (pratinjau 10 Nov, user hanya memilih Jurnal ringkas): menu Akuntansi ringkas berkelompok & tabel laporan rapat (kode di bawah nama akun) belum diterapkan.
+7. Folder lama di VPS yang dibiarkan atas permintaan user: `~/main-gypsum-v101` (ekspor kode lama), `~/ruang` (proyek lain), `~/main-gypsum-migration-20261008`.
+8. Usulan lama: rotasi API key KelontongAI; gateway Hermes belum membalas (di luar repo).
 
 ## 12. Preferensi user
 
@@ -219,3 +272,14 @@ Skrip dari PR #38 (sudah merge): `audit:saldo`, `scripts/koreksi-saldo-nov.ts`, 
 - Bila butuh keputusan/data dari user, utas bertanya ke koordinator (koordinator yang meneruskan ke user dengan pilihan tombol).
 - Staging hanya satu (tes.maingypsum.shop), jadi user menguji branch satu per satu. Koordinator yang mengatur urutannya.
 - Hindari mengubah file yang sama dengan utas lain; bila tidak bisa, beri tahu koordinator.
+- Koordinator memverifikasi setiap PR sendiri sebelum merge (typecheck + `npm test` minimal 2x dengan Postgres lokal; gabungan dengan `main` terbaru), lalu merge (squash) setelah user bilang "staging OK" atau "merge #N", dan memberi perintah production. Utas tidak boleh merge.
+- Fitur bot tidak bisa dites di staging (Telegram mati); biasanya langsung merge atas izin user lalu dicoba di production.
+- Saat staging hanya satu dan ada banyak PR, tes bergantian; setiap ganti PR yang bermigrasi, jalankan `refresh-data.sh` dulu.
+- Utas yang pernah dibuka (sesi Claude Code Remote, tag `main-gypsum-erp:utas`): A keamanan login, B stok & produksi, C paket & backup, D audit saldo + piutang pengelola + kategori, E Penjualan, F Anggaran, G bot penjualan, H login Google/reset, I bot (duplikat, kategori, grup, OPS, bunga), J WD Dalam Proses + cek saldo, K PWA, L kompres foto, M audit Akuntansi. Semua PR-nya sudah di-merge.
+
+## 14. Kondisi data per 10–11 Nov 2026
+
+- Saldo Seabank 0006 dan ShopeePay sudah dicocokkan dengan aplikasi (selisih 0 per 9 Nov); Seabank 5984 dicocokkan ulang 10–11 Nov (lihat bagian 11 no. 1). Angka persis selalu diambil dari VPS/aplikasi bank saat itu, tidak dicatat di repo.
+- Masih ada talangan terbuka (plastik klip dari Seabank 0006) dan pinjaman pengelola dari ShopeePay; lihat Transaksi → Dana talangan.
+- Ada hutang usaha baru dari pembelian tempo 10 Nov; lihat Akuntansi → Piutang & hutang.
+- Periode: Oktober ditutup otomatis 10 Nov 09.00; Mei/Juni pernah dibuka user untuk aset lama (tutup lagi). Tutup otomatis berikutnya 10 Des (ikut menutup bulan lama yang masih terbuka).
