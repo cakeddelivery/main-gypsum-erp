@@ -38,7 +38,7 @@ export default async function ArusKas({ searchParams }: { searchParams: Promise<
         <Stat label="Kenaikan (penurunan) kas" value={idr(net)} tone={net < 0 ? "red" : "green"} />
         <Stat label="Saldo kas akhir" value={idr(cf.closing)} hint={fmtLong(r.to)} tone={cf.closing < 0 ? "red" : "slate"} />
       </div>
-      <p className={`mb-4 rounded-lg px-3 py-2 text-xs ${cf.reconciled ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300" : "bg-rose-50 text-rose-800 dark:bg-rose-500/10 dark:text-rose-300"}`}>{cf.reconciled ? "✓ " : "✗ Tidak klop: "}{recon}{cf.reconciled ? " (sama dengan saldo kas akhir)" : ` ≠ saldo kas akhir ${idr(cf.closing)}. Kabari admin.`} Saldo kas = semua akun kas/bank, termasuk Saldo Penjual dan Dana dalam Perjalanan.</p>
+      <p className={`mb-4 rounded-lg px-3 py-2 text-xs ${cf.reconciled ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300" : "bg-rose-50 text-rose-800 dark:bg-rose-500/10 dark:text-rose-300"}`}>{cf.reconciled ? "✓ " : "✗ Tidak klop: "}{recon}{cf.reconciled ? " (sama dengan saldo kas akhir)" : ` ≠ saldo kas akhir ${idr(cf.closing)}. Kabari admin.`}{" "}Saldo kas = semua akun kas/bank, termasuk Saldo Penjual dan Dana dalam Perjalanan.</p>
       <div className="space-y-4">
         {SECTIONS.map((s) => (
           <Card key={s.key} title={`${s.no}. ${s.title}`}>
