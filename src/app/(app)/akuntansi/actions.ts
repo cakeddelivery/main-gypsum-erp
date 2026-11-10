@@ -206,6 +206,17 @@ export const createAsset = action(
     const life = int(fd, "usefulLifeMonths");
     if (cost <= 0 || life <= 0) throw new Error("Harga & umur manfaat harus > 0");
     const funding = str(fd, "funding");
+    const dateStr = str(fd, "date") || todayStr();
+    if (funding !== "SALDO_AWAL" && funding !== "UTANG") {
+      // Aset lama (sebelum go-live) tidak boleh mengurangi saldo rekening: uangnya keluar sebelum memakai aplikasi
+      const set = (await prisma.setting.findUnique({ where: { key: "go_live_date" } }))?.value;
+      const goLive = set && /^\d{4}-\d{2}-\d{2}$/.test(set) ? set : "2026-10-29";
+      if (dateStr < goLive) throw new AccountingError(`Aset dibeli sebelum go-live (${goLive}). Pilih sumber dana "Saldo awal (aset lama)", bukan rekening.`);
+      const bank = (await bankBalancesAt(dateStr)).find((b) => b.id === funding);
+      if (bank && bank.balance - cost < 0 && fd.get("allowMinus") !== "on") {
+        throw new AccountingError(`Saldo ${bank.name} per ${dateStr} hanya Rp ${bank.balance.toLocaleString("id-ID")}; membayar Rp ${cost.toLocaleString("id-ID")} membuatnya minus. Periksa sumber dana, atau centang "Lanjutkan walau saldo rekening jadi minus".`);
+      }
+    }
     await prisma.$transaction(async (tx) => {
       let credit: LineInput;
       if (funding === "SALDO_AWAL") credit = { accountCode: COA.EKUITAS_SALDO_AWAL, credit: cost };
