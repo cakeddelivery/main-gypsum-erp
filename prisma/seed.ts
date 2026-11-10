@@ -35,6 +35,7 @@ const COA: [string, string, AccountType, boolean?][] = [
   ["4-1200", "Retur & Refund Penjualan", "PENDAPATAN"],
   ["4-1300", "Pendapatan Ongkir", "PENDAPATAN"],
   ["4-9000", "Pendapatan Lain-lain", "PENDAPATAN"],
+  ["4-9100", "Pendapatan Bunga Bank", "PENDAPATAN"],
   ["5-1000", "Harga Pokok Penjualan", "HPP"],
   ["5-1100", "HPP Pesanan Custom (tanpa stok)", "HPP"],
   ["6-1100", "Beban Gaji & Upah Produksi", "BEBAN"],
@@ -53,6 +54,7 @@ const COA: [string, string, AccountType, boolean?][] = [
   ["6-1650", "Beban Pelatihan & Pengembangan SDM", "BEBAN"],
   ["6-1250", "Beban Konsumsi", "BEBAN"],
   ["6-1450", "Beban Pemeliharaan & Perbaikan", "BEBAN"],
+  ["6-1960", "Beban Pajak Bunga Bank", "BEBAN"],
   ["6-9000", "Beban Lain-lain", "BEBAN"],
 ];
 
@@ -82,7 +84,9 @@ async function main() {
     ["Penjualan Produk", "MASUK", "4-1000", "penjualan,jual,order,pencairan,cair,omzet"],
     ["Penjualan Custom/Giftbox", "MASUK", "4-1100", "custom,giftbox,souvenir,pesanan khusus"],
     ["Setoran Modal", "MASUK", "3-1000", "modal,setoran modal,suntik dana"],
-    ["Pendapatan Lain", "MASUK", "4-9000", "bunga,cashback,lain"],
+    ["Pendapatan Lain", "MASUK", "4-9000", "cashback,lain"],
+    ["Bunga Bank", "MASUK", "4-9100", "bunga bank,bunga tabungan,bunga seabank,bunga,interest"],
+    ["Pajak Bunga Bank", "KELUAR", "6-1960", "pajak bunga,pph bunga,pajak bunga bank,pajak tabungan"],
     ["Retur & Refund Penjualan", "KELUAR", "4-1200", "refund,retur,return,pengembalian dana pembeli,uang kembali pembeli,komplain pembeli"],
     ["Pembelian Bahan Baku", "KELUAR", "1-1401", "gypsum,tepung,cat,kuas,bahan,lem,plastik,dus,box,kardus"],
     ["Gaji & Upah", "KELUAR", "6-1100", "gaji,upah,borongan,lembur"],
