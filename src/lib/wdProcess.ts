@@ -3,7 +3,7 @@ import { approveAndBook, FinanceError, missingFields, postWdReceived, postWdSent
 import { audit } from "./audit";
 import { idr } from "./money";
 import { fmtDateTime, jakartaDateTime, nowTimeStr } from "./time";
-import { checkWdProof, type WdProofRead } from "./wdProof";
+import { checkWdProof, sellerProofRead, type SellerWithdrawal, type WdProofRead } from "./wdProof";
 
 /**
  * Withdraw TikTok "Dalam Proses" (pelajaran audit 9 Nov: dana WD TikTok baru masuk SeaBank 1–3 hari setelah
@@ -52,9 +52,48 @@ export async function markInProcess(id: string, actor: Actor & { id: string }, n
  */
 export async function confirmTransaction(id: string, actor: Actor & { id: string }, note?: string) {
   const cur = await prisma.financeTransaction.findUniqueOrThrow({ where: { id } });
-  if (await isTiktokWithdraw(cur)) return { inProcess: true as const, ...(await markInProcess(id, actor, note)) };
+  if (await isTiktokWithdraw(cur)) {
+    const r = await markInProcess(id, actor, note);
+    // Screenshot "Detail penarikan dana" yang sudah "Berhasil ditransfer" = uang sudah masuk bank:
+    // langsung dibukukan lengkap (jurnal 1 + jurnal 2), tanpa tombol "Uang diterima"
+    const w = sellerOf(cur);
+    if (w?.transferred && cur.proofPath) {
+      const done = await receiveWithdraw(id, actor, { canApprove: true, proof: { path: cur.proofPath, mime: cur.proofMime ?? "image/jpeg", read: sellerProofRead(w) } });
+      return { inProcess: false as const, transaction: done.transaction, journal: done.journal };
+    }
+    return { inProcess: true as const, ...r };
+  }
   const r = await approveAndBook(id, actor, note);
   return { inProcess: false as const, ...r };
+}
+
+/** Hasil baca "Detail penarikan dana" Seller Center yang disimpan di transaksi (bot) */
+export function sellerOf(t: { aiExtraction: unknown }): SellerWithdrawal | null {
+  return ((t.aiExtraction as { seller?: SellerWithdrawal } | null)?.seller as SellerWithdrawal | undefined) ?? null;
+}
+
+/** Setting: 4 digit terakhir rekening tujuan WD TikTok (bawaan 5984 = Seabank operasional) */
+export const WD_TIKTOK_BANK_SETTING = "wd_tiktok_rekening";
+
+/** Rekening tujuan WD TikTok: SELALU Seabank 5984 (4 digit di nama/alias/kode rekening). Null bila belum ada. */
+export async function tiktokDestination() {
+  const last4 = (await prisma.setting.findUnique({ where: { key: WD_TIKTOK_BANK_SETTING } }))?.value?.trim() || "5984";
+  const banks = await prisma.bankAccount.findMany({ where: { active: true, marketplace: false }, orderBy: { code: "asc" } });
+  return { last4, bank: banks.find((b) => `${b.name} ${b.aliases} ${b.code}`.includes(last4)) ?? null };
+}
+
+/**
+ * WD Dalam Proses yang cocok dengan screenshot detail penarikan: No. Referensi sama, atau (tanpa referensi tercatat)
+ * nominal sama + tanggal pengajuan = tanggal transfer tercatat.
+ */
+export async function findInProcessFor(w: SellerWithdrawal) {
+  if (w.ref) {
+    const byRef = await prisma.financeTransaction.findFirst({ where: { withdrawRef: w.ref, status: { notIn: ["DITOLAK", "DIBATALKAN"] }, deletedAt: null } });
+    if (byRef) return byRef;
+  }
+  if (!w.amount || !w.submitted) return null;
+  const rows = await prisma.financeTransaction.findMany({ where: { status: "DALAM_PROSES", deletedAt: null, amount: BigInt(w.amount), withdrawRef: null } });
+  return rows.find((r) => (r.sentAt ?? r.date).toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" }) === w.submitted!.date) ?? null;
 }
 
 /** Yang boleh menekan "Uang diterima": penyetuju keuangan, atau pembuat transaksi itu sendiri */
@@ -102,13 +141,14 @@ export async function receiveWithdraw(id: string, actor: Actor & { id: string },
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
     if (cur.status === "DIBUKUKAN") throw new FinanceError(`${cur.number} sudah dibukukan (uang sudah diterima)`);
     if (cur.status !== "DALAM_PROSES") throw new FinanceError(`${cur.number} tidak berstatus Dalam Proses`);
+    if (cur.withdrawRef && proof.read?.ref && proof.read.ref !== cur.withdrawRef) throw new FinanceError(`No. Referensi di bukti (${proof.read.ref}) berbeda dengan ${cur.number} (${cur.withdrawRef})`);
     const toAccountId = opts.toAccountId || cur.toAccountId;
     if (!toAccountId || toAccountId === cur.accountId) throw new FinanceError("Rekening tujuan tidak valid");
     const to = await tx.bankAccount.findUnique({ where: { id: toAccountId } });
     if (!to?.active || to.marketplace) throw new FinanceError("Rekening tujuan harus rekening bank/dompet aktif, bukan saldo penjual");
     const journal = await postWdReceived(tx, cur, toAccountId, receivedAt, actor);
     const read = { ...(proof.read ?? { amounts: [], amount: null, date: null, time: null }), manual };
-    const t = await tx.financeTransaction.update({ where: { id }, data: { status: "DIBUKUKAN", receivedAt, toAccountId, receivedProofPath: proof.path, receivedProofMime: proof.mime, receivedProofRead: read } });
+    const t = await tx.financeTransaction.update({ where: { id }, data: { status: "DIBUKUKAN", receivedAt, toAccountId, withdrawRef: cur.withdrawRef ?? proof.read?.ref ?? null, receivedProofPath: proof.path, receivedProofMime: proof.mime, receivedProofRead: read } });
     const how = manual ? `bukti dicek manual oleh ${actor.name} (${check.issues.join("; ")})` : `bukti terbaca ${proof.read?.date ?? ""} ${proof.read?.time ?? ""}`.trim();
     await tx.approvalLog.create({ data: { transactionId: id, action: "UANG_DITERIMA", fromStatus: "DALAM_PROSES", toStatus: "DIBUKUKAN", actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: `Uang diterima ${fmtDateTime(receivedAt)} di ${to.name} · ${how} · jurnal ${journal.number}`.slice(0, 300) } });
     await audit({ actorId: actor.id, actorName: actor.name }, "WD_UANG_DITERIMA", "FinanceTransaction", id, { journal: journal.number, receivedAt, proof: read }, tx);

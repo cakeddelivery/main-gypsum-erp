@@ -1,6 +1,6 @@
 import { getUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { readProof } from "@/lib/storage";
+import { proofContentType, readProof } from "@/lib/storage";
 import { toEntries } from "@/lib/shiftReport";
 
 const MIME: Record<string, string> = { jpg: "image/jpeg", png: "image/png", webp: "image/webp" };
@@ -16,5 +16,5 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const path = toEntries(r.checklist)[Number(index)]?.photoPath;
   if (!path) return new Response("Not found", { status: 404 });
   const buf = await readProof(path);
-  return new Response(new Uint8Array(buf), { headers: { "content-type": MIME[path.split(".").pop() ?? ""] ?? "application/octet-stream", "cache-control": "private, max-age=86400" } });
+  return new Response(new Uint8Array(buf), { headers: { "content-type": proofContentType(buf, MIME[path.split(".").pop() ?? ""]), "cache-control": "private, max-age=86400" } });
 }

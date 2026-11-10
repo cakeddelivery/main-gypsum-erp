@@ -1,4 +1,5 @@
 import { requirePerm } from "@/lib/auth";
+import { prisma } from "@/lib/db";
 import { profitLoss } from "@/lib/accounting";
 import { idr } from "@/lib/money";
 import { letterhead } from "@/lib/letterhead";
@@ -14,12 +15,25 @@ export default async function LabaRugi({ searchParams }: { searchParams: Promise
   await requirePerm("accounting.view");
   const sp = await searchParams;
   const r = parseRange(sp);
-  const [pl, lh, store] = await Promise.all([profitLoss({ start: r.start, end: r.end, storeId: r.storeId }), letterhead(), storeLabel(r.storeId)]);
+  const [pl0, lh, store, opnameHpp, zeroHpp] = await Promise.all([
+    profitLoss({ start: r.start, end: r.end, storeId: r.storeId }),
+    letterhead(),
+    storeLabel(r.storeId),
+    prisma.journal.count({ where: { date: { gte: r.start, lt: r.end }, source: "STOK", description: { startsWith: "Barang terjual (opname)" } } }),
+    prisma.saleLine.count({ where: { unitCost: 0, sale: { date: { gte: r.start, lt: r.end }, cancelledAt: null } } }),
+  ]);
+  // Akun pendapatan bersaldo debit (mis. Retur & Refund Penjualan) = pengurang pendapatan
+  const pl = { ...pl0, revenue: pl0.revenue.map((a) => (a.amount < 0 ? { ...a, name: `${a.name} (pengurang)` } : a)) };
   const period = fmtRange(r.from, r.to);
+  const notes = [
+    ...(opnameHpp ? [] : ["HPP penjualan marketplace dibukukan saat opname barang jadi akhir bulan. Belum ada opname di periode ini, jadi laba kotor belum final (terlalu tinggi)."]),
+    ...(zeroHpp ? [`${zeroHpp} baris penjualan offline tercatat dengan HPP Rp0 (harga pokok barang jadi & resep belum ada). Lengkapi resep di Produk & HPP.`] : []),
+  ];
   return (
     <div>
       <PageHeader title="Laporan laba rugi" actions={<><DownloadCsv filename={`laba-rugi-${r.from}-${r.to}`} rows={accountCsv(`Laba rugi ${period}`, [["Pendapatan", pl.revenue, pl.totalRevenue], ["Harga pokok penjualan", pl.cogs, pl.totalCogs], ["Beban operasional", pl.expenses, pl.totalExpenses]], [["Laba kotor", pl.grossProfit], ["Laba (rugi) bersih", pl.netProfit]])} /><DownloadJpg targetId="lr" filename={`laba-rugi-${r.from}-${r.to}`} /></>} />
       <ReportFilter sp={sp} />
+      {notes.map((n) => <p key={n} className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">{n}</p>)}
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Pendapatan" value={idr(pl.totalRevenue)} />
         <Stat label="Laba kotor" value={idr(pl.grossProfit)} tone={pl.grossProfit < 0 ? "red" : "slate"} />
@@ -35,7 +49,7 @@ export default async function LabaRugi({ searchParams }: { searchParams: Promise
         <DocSheet
           id="lr" lh={lh} eyebrow="Laporan keuangan" title="Laporan Laba Rugi" subtitle={store}
           meta={{ label: "Periode Laporan", value: period }} signerOrg={signerOf(store)} signDate={r.to}
-          notes={[`Laporan ini merupakan laporan laba rugi ${store.charAt(0).toLowerCase() + store.slice(1)}.`, `Periode laporan: ${period}.`, "Laporan ini dihasilkan secara otomatis dari sistem dan dapat digunakan sebagai referensi internal."]}
+          notes={[`Laporan ini merupakan laporan laba rugi ${store.charAt(0).toLowerCase() + store.slice(1)}.`, `Periode laporan: ${period}.`, ...notes, "Laporan ini dihasilkan secara otomatis dari sistem dan dapat digunakan sebagai referensi internal."]}
         >
           <Section no={1} tone="blue" title="Pendapatan" hint="Penjualan dan pendapatan usaha lainnya" rows={pl.revenue} total={pl.totalRevenue} totalLabel="Total pendapatan" />
           <Section no={2} tone="amber" title="Harga pokok penjualan" hint="Biaya bahan dan produksi dari barang yang terjual" rows={pl.cogs} total={pl.totalCogs} totalLabel="Total HPP" />

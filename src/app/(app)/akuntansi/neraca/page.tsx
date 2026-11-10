@@ -18,7 +18,7 @@ export default async function Neraca({ searchParams }: { searchParams: Promise<S
   const per = fmtLong(r.to);
   return (
     <div>
-      <PageHeader title="Neraca" actions={<><DownloadCsv filename={`neraca-${r.to}`} rows={accountCsv(`Neraca per ${per}`, [["Aset", bs.assets, bs.totalAssets], ["Kewajiban", bs.liabilities, bs.totalLiabilities], ["Ekuitas", [...bs.equity, { code: "", name: "Laba (rugi) berjalan", amount: bs.currentEarnings }], bs.totalEquity]])} /><DownloadJpg targetId="nr" filename={`neraca-${r.to}`} /></>} />
+      <PageHeader title="Neraca" actions={<><DownloadCsv filename={`neraca-${r.to}`} rows={accountCsv(`Neraca per ${per}`, [["Aset", bs.assets, bs.totalAssets], ["Kewajiban", bs.liabilities, bs.totalLiabilities], ["Ekuitas", [...bs.equity, { code: "", name: "Laba (rugi) s/d tanggal ini", amount: bs.currentEarnings }], bs.totalEquity]])} /><DownloadJpg targetId="nr" filename={`neraca-${r.to}`} /></>} />
       <ReportFilter sp={sp} showFrom={false} />
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Total aset" value={idr(bs.totalAssets)} />
@@ -30,7 +30,7 @@ export default async function Neraca({ searchParams }: { searchParams: Promise<S
         <AccountTable title="Aset" rows={bs.assets} total={bs.totalAssets} totalLabel="Total aset" />
         <div className="space-y-4">
           <AccountTable title="Kewajiban" rows={bs.liabilities} total={bs.totalLiabilities} totalLabel="Total kewajiban" />
-          <AccountTable title="Ekuitas" rows={[...bs.equity, { code: "—", name: "Laba (rugi) berjalan", amount: bs.currentEarnings }]} total={bs.totalEquity} totalLabel="Total ekuitas" />
+          <AccountTable title="Ekuitas" rows={[...bs.equity, { code: "—", name: "Laba (rugi) s/d tanggal ini", amount: bs.currentEarnings }]} total={bs.totalEquity} totalLabel="Total ekuitas" />
         </div>
       </div>
       <DocExport>
@@ -41,7 +41,7 @@ export default async function Neraca({ searchParams }: { searchParams: Promise<S
         >
           <Section no={1} tone="blue" title="Aset" hint="Kas, bank, persediaan, piutang, dan aset tetap" rows={bs.assets} total={bs.totalAssets} totalLabel="Total aset" />
           <Section no={2} tone="red" title="Kewajiban" hint="Hutang usaha, pinjaman, dan kewajiban lainnya" rows={bs.liabilities} total={bs.totalLiabilities} totalLabel="Total kewajiban" />
-          <Section no={3} tone="green" title="Ekuitas" hint="Modal pemilik dan laba ditahan" rows={[...bs.equity, { code: "—", name: "Laba (rugi) berjalan", amount: bs.currentEarnings }]} total={bs.totalEquity} totalLabel="Total ekuitas" />
+          <Section no={3} tone="green" title="Ekuitas" hint="Modal pemilik dan laba ditahan" rows={[...bs.equity, { code: "—", name: "Laba (rugi) s/d tanggal ini", amount: bs.currentEarnings }]} total={bs.totalEquity} totalLabel="Total ekuitas" />
           <DocSummary
             rows={[
               { label: "Total aset", value: idr(bs.totalAssets), negative: bs.totalAssets < 0 },

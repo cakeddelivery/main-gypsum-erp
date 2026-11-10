@@ -5,6 +5,7 @@ import { nextNumber } from "./numbering";
 import { autoCode } from "./codes";
 import { audit } from "./audit";
 import { locationSettings, qtyAt, recordMovement, StockError } from "./stock";
+import { recipeMaterialCost } from "./hpp";
 
 type Tx = Prisma.TransactionClient;
 type Actor = { id: string; name: string };
@@ -123,7 +124,9 @@ export async function createSale(input: SaleInput, actor: Actor) {
     const warnings: string[] = [];
     for (const l of t.rows) {
       const it = items.find((i) => i.id === l.itemId)!;
-      const mv = await recordMovement(tx, { type: "PENGELUARAN", itemId: l.itemId, qty: l.qty, fromLocationId: finished, ref: number, note: `Penjualan ${customerName}`, date: input.date, allowNegative: true }, actor);
+      // Harga pokok rata-rata masih 0 (produksi belum diinput): cadangan dari resep produk, agar HPP tidak Rp0
+      const fallbackUnitCost = Number(it.avgCost) > 0 ? null : { value: await recipeMaterialCost(l.itemId), note: "harga pokok dari resep" };
+      const mv = await recordMovement(tx, { type: "PENGELUARAN", itemId: l.itemId, qty: l.qty, fromLocationId: finished, ref: number, note: `Penjualan ${customerName}`, date: input.date, allowNegative: true, fallbackUnitCost }, actor);
       const unitCost = Number(mv.unitCost);
       hpp += Math.round(l.qty * unitCost);
       await tx.saleLine.create({ data: { saleId: sale.id, itemId: l.itemId, qty: l.qty, price: BigInt(Math.round(l.price)), amount: BigInt(l.amount), unitCost: BigInt(unitCost) } });

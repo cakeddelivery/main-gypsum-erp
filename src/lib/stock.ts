@@ -111,6 +111,14 @@ async function defaultStore(db: DB) {
   return s.value;
 }
 
+/** Kode akun HPP "Pemakaian Bahan Baku" (migrasi 20261113100000); cadangan Beban Selisih bila belum ada */
+export async function usageAccountCode(db: DB): Promise<string> {
+  const s = await db.setting.findUnique({ where: { key: "coa_pemakaian_bahan" } });
+  if (s?.value) return s.value;
+  const a = await db.coaAccount.findFirst({ where: { name: "Pemakaian Bahan Baku" } });
+  return a?.code ?? COA.BEBAN_SELISIH_PERSEDIAAN;
+}
+
 export type MoveInput = {
   type: MovementType;
   itemId: string;
@@ -128,6 +136,10 @@ export type MoveInput = {
   noJournal?: boolean;
   /** Opname barang jadi: selisih kurang = barang terjual → HPP (bukan beban selisih) */
   hpp?: boolean;
+  /** Stock opname laporan shift: selisih bahan = pemakaian bahan → akun HPP "Pemakaian Bahan Baku" */
+  usage?: boolean;
+  /** Barang keluar dengan harga pokok rata-rata 0: pakai nilai ini (mis. HPP resep), dicatat di keterangan jurnal */
+  fallbackUnitCost?: { value: number; note: string } | null;
 };
 
 /**
@@ -171,6 +183,11 @@ export async function recordMovement(tx: Tx, m: MoveInput, actor: Actor) {
     if (avail < m.qty) throw new StockError(`Stok ${item.name} di lokasi asal tidak cukup (tersedia ${avail})`);
   }
   let unitCost = Number(item.avgCost);
+  let costNote = "";
+  if (unitCost <= 0 && m.fallbackUnitCost && m.fallbackUnitCost.value > 0 && m.type !== "PENERIMAAN" && m.type !== "HASIL_PRODUKSI") {
+    unitCost = Math.round(m.fallbackUnitCost.value);
+    costNote = ` (${m.fallbackUnitCost.note})`;
+  }
   if (m.type === "PENERIMAAN" || m.type === "HASIL_PRODUKSI") {
     unitCost = m.unitCost ?? unitCost;
     // Harga rata-rata bergerak (moving average)
@@ -198,11 +215,11 @@ export async function recordMovement(tx: Tx, m: MoveInput, actor: Actor) {
     const inv = INVENTORY_COA[item.type];
     const inc = m.type === "PENYESUAIAN" && m.increase;
     const toHpp = item.type === "BARANG_JADI" && !inc && (m.type === "PENGELUARAN" || m.hpp);
-    const other = toHpp ? COA.HPP : COA.BEBAN_SELISIH_PERSEDIAAN;
+    const other = toHpp ? COA.HPP : m.usage && m.type === "PENYESUAIAN" ? await usageAccountCode(tx) : COA.BEBAN_SELISIH_PERSEDIAAN;
     const j = await postJournal(tx, {
       date: mv.date,
       storeId: await defaultStore(tx),
-      description: `${m.hpp && !inc ? "Barang terjual (opname)" : MOVEMENT_LABEL[m.type]} ${item.sku} ${item.name} × ${m.qty}`,
+      description: `${m.hpp && !inc ? "Barang terjual (opname)" : m.usage ? "Pemakaian bahan (laporan shift)" : MOVEMENT_LABEL[m.type]} ${item.sku} ${item.name} × ${m.qty}${costNote}`,
       source: "STOK",
       sourceId: mv.id,
       actor,
@@ -303,9 +320,16 @@ export async function postProductionStock(tx: Tx, entryId: string, actor: Actor)
     await postJournal(tx, { date, storeId, description: `${desc}: reject ${e.qtyReject}`, source: "PRODUKSI", sourceId: e.id, actor, lines: [{ accountCode: COA.BEBAN_SELISIH_PERSEDIAAN, debit: v }, { accountCode: COA.PERSEDIAAN_BDP, credit: v }] });
   }
   if (e.stage === "BARANG_JADI" && e.qtyGood > 0 && e.product.finishedItemId && locs.finished) {
-    await recordMovement(tx, { type: "HASIL_PRODUKSI", itemId: e.product.finishedItemId, qty: e.qtyGood, toLocationId: locs.finished, unitCost: unitMat, ref: `PRD:${e.id}`, date }, actor);
-    const v = unitMat * e.qtyGood;
-    if (v > 0) await postJournal(tx, { date, storeId, description: `${desc}: barang jadi`, source: "PRODUKSI", sourceId: e.id, actor, lines: [{ accountCode: COA.PERSEDIAAN_JADI, debit: v }, { accountCode: COA.PERSEDIAAN_BDP, credit: v }] });
+    // Bahan belum bernilai di BDP (resep tanpa harga rata-rata): nilai barang jadi dari resep produk, diambil dari
+    // akun HPP "Pemakaian Bahan Baku" (bahan sudah dibebankan lewat stock opname laporan shift)
+    const fromRecipe = unitMat > 0 ? 0 : await (await import("./hpp")).recipeMaterialCost(e.product.finishedItemId);
+    const unit = unitMat > 0 ? unitMat : fromRecipe;
+    await recordMovement(tx, { type: "HASIL_PRODUKSI", itemId: e.product.finishedItemId, qty: e.qtyGood, toLocationId: locs.finished, unitCost: unit, ref: `PRD:${e.id}`, date }, actor);
+    const v = unit * e.qtyGood;
+    if (v > 0) {
+      const credit = unitMat > 0 ? COA.PERSEDIAAN_BDP : await usageAccountCode(tx);
+      await postJournal(tx, { date, storeId, description: `${desc}: barang jadi${unitMat > 0 ? "" : " (nilai dari resep)"}`, source: "PRODUKSI", sourceId: e.id, actor, lines: [{ accountCode: COA.PERSEDIAAN_JADI, debit: v }, { accountCode: credit, credit: v }] });
+    }
   }
   await tx.productionEntry.update({ where: { id: e.id }, data: { stockPosted: true } });
 }

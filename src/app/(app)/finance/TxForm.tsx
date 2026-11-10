@@ -132,7 +132,7 @@ export function TxForm(p: {
           </>
         )}
         <label><span className="label">Pihak terkait (opsional)</span><input name="counterparty" value={v.counterparty ?? ""} onChange={set("counterparty")} className="input" placeholder="Nama toko / supplier / pembeli" /><span className="mt-0.5 block text-xs text-slate-500">Siapa penerima/pengirim uang. Untuk pencarian & cek duplikat.</span></label>
-        <label className="col-span-2 md:col-span-1"><span className="label">Bukti (JPG/PNG/PDF, maks 5 MB)</span><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></label>
+        <label className="col-span-2 md:col-span-1"><span className="label">Bukti (JPG/PNG/PDF, maks 15 MB)</span><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></label>
         <label className="col-span-2 md:col-span-3"><span className="label">Catatan</span><textarea name="note" value={v.note ?? ""} onChange={set("note")} rows={2} className="input" /></label>
       </div>
       {!isTransfer && (

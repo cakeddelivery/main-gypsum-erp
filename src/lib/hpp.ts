@@ -199,3 +199,15 @@ export async function draftRecipeCost(r: RecipeInput, db: DB = prisma) {
   }
   return Math.round(total);
 }
+
+/**
+ * Nilai bahan + kemasan per unit dari resep produk yang terhubung ke barang jadi `itemId` (0 bila tidak ada resep).
+ * Dipakai sebagai cadangan harga pokok saat harga rata-rata barang jadi masih 0. Tenaga kerja & overhead tidak
+ * ikut karena sudah dibebankan lewat gaji/beban, agar tidak dihitung ganda.
+ */
+export async function recipeMaterialCost(itemId: string): Promise<number> {
+  const p = await prisma.product.findFirst({ where: { finishedItemId: itemId }, select: { id: true } });
+  if (!p) return 0;
+  const c = await productCosting(p.id);
+  return Math.max(0, Math.round(c.material + c.packaging));
+}

@@ -2,7 +2,7 @@
 import { action, str, optStr, int } from "@/lib/action";
 import { cancelSale, cancelSalePayment, createSale, paySale } from "@/lib/sales";
 import { StockError } from "@/lib/stock";
-import { MAX_PROOF_BYTES, saveProof } from "@/lib/storage";
+import { MAX_PROOF_BYTES, MAX_PROOF_TEXT, saveProof } from "@/lib/storage";
 import { jakartaDateTime, todayStr } from "@/lib/time";
 
 const num = (x: FormDataEntryValue) => Number(String(x).replace(/\./g, "").replace(",", ".")) || 0;
@@ -13,7 +13,7 @@ async function proofOf(fd: FormData) {
   const file = fd.get("proof");
   if (!(file instanceof File) || file.size === 0) return { proofPath: null, proofMime: null };
   if (!["image/jpeg", "image/png", "image/webp", "application/pdf"].includes(file.type)) throw new StockError("Bukti harus JPG, PNG, WEBP, atau PDF");
-  if (file.size > MAX_PROOF_BYTES) throw new StockError("Ukuran bukti maksimal 5 MB");
+  if (file.size > MAX_PROOF_BYTES) throw new StockError(MAX_PROOF_TEXT);
   return { proofPath: await saveProof(Buffer.from(await file.arrayBuffer()), file.type), proofMime: file.type };
 }
 

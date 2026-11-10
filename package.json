@@ -23,6 +23,7 @@
     "catat:bunga": "tsx scripts/catat-bunga.ts",
     "koreksi:transaksi-nov": "tsx scripts/koreksi-transaksi-nov.ts",
     "koreksi:wd-0061": "tsx scripts/koreksi-wd-0061.ts",
+    "koreksi:aset-sumber-dana": "tsx scripts/koreksi-aset-sumber-dana.ts",
     "rapikan:kode": "tsx scripts/rapikan-kode.ts",
     "pisahkan:rekening": "tsx scripts/pisahkan-coa-rekening.ts",
     "withdraw:pemasukan": "tsx scripts/withdraw-pemasukan.ts",
@@ -30,6 +31,7 @@
     "satukan:supplier": "tsx scripts/satukan-supplier.ts",
     "sinkron:sisihan": "tsx scripts/sinkron-sisihan.ts",
     "tautkan:transaksi": "tsx scripts/tautkan-transaksi.ts",
+    "kompres:file": "tsx scripts/kompres-file.ts",
     "backup": "bash scripts/backup.sh",
     "restore": "bash scripts/restore.sh",
     "backup:buka": "bash scripts/decrypt-backup.sh"
@@ -50,6 +52,7 @@
     "react-dom": "^19.1.1",
     "recharts": "^3.2.1",
     "server-only": "^0.0.1",
+    "sharp": "^0.35.5",
     "tesseract.js": "^7.0.0",
     "zod": "^4.6.7"
   },

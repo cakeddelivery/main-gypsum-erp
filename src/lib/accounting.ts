@@ -197,58 +197,91 @@ export async function balanceSheet(asOf: Date, storeId?: string | null) {
   return { assets, liabilities, equity, currentEarnings: pl.netProfit, totalAssets, totalLiabilities, totalEquity, balanced: totalAssets === totalLiabilities + totalEquity };
 }
 
-type CashJournal = { date: Date; number: string; description: string; source: string | null; lines: { debit: bigint; credit: bigint; account: { isCash: boolean; type: AccountType; code: string } }[] };
-export type CashGroups = Record<"OPERASI" | "INVESTASI" | "PENDANAAN", { date: Date; number: string; memo: string; description: string; amount: number }[]>;
+type CashJournal = {
+  id?: string;
+  date: Date;
+  number: string;
+  description: string;
+  source: string | null;
+  reversalOfId?: string | null;
+  /** Sumber jurnal asli bila jurnal ini pembalik (PEMBALIK) */
+  origSource?: string | null;
+  lines: { debit: bigint; credit: bigint; account: { isCash: boolean; type: AccountType; code: string } }[];
+};
+export type CashGroupKey = "OPERASI" | "INVESTASI" | "PENDANAAN" | "PENYESUAIAN";
+export type CashGroups = Record<CashGroupKey, { date: Date; number: string; memo: string; description: string; amount: number }[]>;
 
-/** Kelompokkan jurnal yang menyentuh kas ke operasi/investasi/pendanaan. Transfer antar rekening saling meniadakan. */
+/** Saldo awal rekening, Atur saldo, jurnal penyesuaian (dan pembaliknya): bukan uang masuk/keluar nyata */
+const ADJUSTMENT_SOURCES = new Set(["SALDO_AWAL", "PENYESUAIAN"]);
+
+/**
+ * Kelompokkan jurnal yang menyentuh kas ke operasi/investasi/pendanaan, ditambah kelompok PENYESUAIAN
+ * (saldo awal & penyesuaian saldo rekening) agar saldo awal + semua kelompok = saldo akhir.
+ * Transfer antar rekening saling meniadakan. Pembalik ikut kelompok jurnal aslinya.
+ */
 export function classifyCashJournals(journals: CashJournal[]): CashGroups {
-  const groups: CashGroups = { OPERASI: [], INVESTASI: [], PENDANAAN: [] };
+  const groups: CashGroups = { OPERASI: [], INVESTASI: [], PENDANAAN: [], PENYESUAIAN: [] };
   for (const j of journals) {
     const cashLines = j.lines.filter((l) => l.account.isCash);
     if (!cashLines.length) continue;
     const net = cashLines.reduce((s, l) => s + Number(l.debit) - Number(l.credit), 0);
     if (net === 0) continue; // transfer internal
-    const other = j.lines.filter((l) => !l.account.isCash).sort((a, b) => Number(b.debit) + Number(b.credit) - (Number(a.debit) + Number(a.credit)))[0];
-    let g: keyof CashGroups = "OPERASI";
-    if (other) {
-      if (other.account.type === "ASET" && other.account.code.startsWith("1-2")) g = "INVESTASI";
-      else if (other.account.type === "EKUITAS" && other.account.code !== COA.EKUITAS_SALDO_AWAL) g = "PENDANAAN";
-      else if (other.account.code === COA.UTANG_PINJAMAN) g = "PENDANAAN";
+    const source = j.source === "PEMBALIK" && j.origSource ? j.origSource : j.source;
+    let g: CashGroupKey = "OPERASI";
+    if (source && ADJUSTMENT_SOURCES.has(source)) g = "PENYESUAIAN";
+    else {
+      const other = j.lines.filter((l) => !l.account.isCash).sort((a, b) => Number(b.debit) + Number(b.credit) - (Number(a.debit) + Number(a.credit)))[0];
+      if (other) {
+        if (other.account.type === "ASET" && other.account.code.startsWith("1-2")) g = "INVESTASI";
+        else if (other.account.type === "EKUITAS" && other.account.code !== COA.EKUITAS_SALDO_AWAL) g = "PENDANAAN";
+        else if (other.account.type === "KEWAJIBAN" && other.account.code.startsWith("2-14")) g = "PENDANAAN";
+        else if (other.account.code === COA.EKUITAS_SALDO_AWAL) g = "PENYESUAIAN";
+      }
     }
-    if (j.source === "SALDO_AWAL") continue;
     groups[g].push({ date: j.date, number: j.number, memo: j.description, description: `${j.number} · ${j.description}`, amount: net });
   }
   return groups;
 }
 
-/** Arus kas metode langsung dari akun kas/bank. Transfer antar rekening saling meniadakan. */
-export async function cashFlow(r: Range) {
+/**
+ * Jurnal kas dalam rentang, siap dikelompokkan: pasangan jurnal asli + pembaliknya yang sama-sama di rentang
+ * (transaksi dibatalkan) saling dihapus; pembalik yang aslinya di luar rentang diberi sumber jurnal aslinya.
+ */
+async function cashJournalsIn(start: Date | undefined, end: Date | undefined, storeId?: string | null) {
   const journals = await prisma.journal.findMany({
-    where: { date: { ...(r.start ? { gte: r.start } : {}), ...(r.end ? { lt: r.end } : {}) }, ...(r.storeId ? { storeId: r.storeId } : {}) },
+    where: { date: { ...(start ? { gte: start } : {}), ...(end ? { lt: end } : {}) }, ...(storeId ? { storeId } : {}), lines: { some: { account: { isCash: true } } } },
     include: { lines: { include: { account: true } } },
-    orderBy: { date: "asc" },
+    orderBy: [{ date: "asc" }, { number: "asc" }],
   });
-  const groups = classifyCashJournals(journals);
-  const total = (k: keyof typeof groups) => groups[k].reduce((s, x) => s + x.amount, 0);
+  const ids = new Set(journals.map((j) => j.id));
+  const reversed = new Set(journals.map((j) => j.reversalOfId).filter((x): x is string => !!x && ids.has(x)));
+  const kept = journals.filter((j) => !reversed.has(j.id) && !(j.reversalOfId && ids.has(j.reversalOfId)));
+  const origIds = kept.map((j) => j.reversalOfId).filter((x): x is string => !!x);
+  const origs = origIds.length ? await prisma.journal.findMany({ where: { id: { in: origIds } }, select: { id: true, source: true } }) : [];
+  const src = new Map(origs.map((o) => [o.id, o.source]));
+  return kept.map((j) => ({ ...j, origSource: j.reversalOfId ? src.get(j.reversalOfId) ?? null : null }));
+}
+
+/** Arus kas metode langsung dari akun kas/bank. Selalu klop: saldo awal + 4 kelompok = saldo akhir. */
+export async function cashFlow(r: Range) {
+  const groups = classifyCashJournals(await cashJournalsIn(r.start, r.end, r.storeId));
+  const total = (k: CashGroupKey) => groups[k].reduce((s, x) => s + x.amount, 0);
   const opening = r.start ? await cashBalance(r.start, r.storeId) : 0;
   const closing = r.end ? await cashBalance(r.end, r.storeId) : await cashBalance(new Date(8.64e15), r.storeId);
-  return { groups, operating: total("OPERASI"), investing: total("INVESTASI"), financing: total("PENDANAAN"), opening, closing };
+  const operating = total("OPERASI");
+  const investing = total("INVESTASI");
+  const financing = total("PENDANAAN");
+  const adjustments = total("PENYESUAIAN");
+  return { groups, operating, investing, financing, adjustments, opening, closing, reconciled: opening + operating + investing + financing + adjustments === closing };
 }
 
 /**
  * Uang masuk & keluar nyata dari semua jurnal yang menyentuh kas/bank (menu Transaksi, pembelian, gaji, kasbon,
- * borongan, pengambilan owner, pinjaman, dst.). Transfer antar rekening & saldo awal tidak dihitung, dan
- * pasangan transaksi yang dibatalkan (jurnal asli + pembaliknya dalam rentang yang sama) saling dihapus.
+ * borongan, pengambilan owner, pinjaman, dst.). Transfer antar rekening, saldo awal & penyesuaian saldo tidak dihitung,
+ * dan pasangan transaksi yang dibatalkan (jurnal asli + pembaliknya dalam rentang yang sama) saling dihapus.
  */
 export async function cashMovements(start: Date, end: Date, storeId?: string | null) {
-  const journals = await prisma.journal.findMany({
-    where: { date: { gte: start, lt: end }, ...(storeId ? { storeId } : {}) },
-    include: { lines: { include: { account: true } } },
-    orderBy: { date: "asc" },
-  });
-  const reversed = new Set(journals.map((j) => j.reversalOfId).filter(Boolean) as string[]);
-  const kept = journals.filter((j) => !reversed.has(j.id) && !(j.reversalOfId && journals.some((o) => o.id === j.reversalOfId)));
-  const g = classifyCashJournals(kept);
+  const g = classifyCashJournals(await cashJournalsIn(start, end, storeId));
   return [...g.OPERASI, ...g.INVESTASI, ...g.PENDANAAN];
 }
 
@@ -283,6 +316,19 @@ export async function ledger(accountId: string, r: Range) {
 }
 
 // ---------------- TUTUP BUKU ----------------
+
+/** Bulan yang sudah punya jurnal, s/d (termasuk) `upTo`, yang belum ditutup. Urut dari yang paling lama. */
+export async function openPastPeriods(upTo: { year: number; month: number }) {
+  const first = await prisma.journal.findFirst({ orderBy: { date: "asc" }, select: { date: true } });
+  if (!first) return [];
+  const f = jakartaParts(first.date);
+  const closed = new Set((await prisma.accountingPeriod.findMany({ where: { status: "CLOSED" } })).map((p) => `${p.year}-${p.month}`));
+  const out: { year: number; month: number }[] = [];
+  for (let y = f.year, m = f.month; y < upTo.year || (y === upTo.year && m <= upTo.month); m === 12 ? ((m = 1), y++) : m++) {
+    if (!closed.has(`${y}-${m}`)) out.push({ year: y, month: m });
+  }
+  return out;
+}
 
 /** Penyusutan garis lurus bulanan untuk satu aset */
 export function monthlyDepreciation(cost: number, residual: number, lifeMonths: number) {

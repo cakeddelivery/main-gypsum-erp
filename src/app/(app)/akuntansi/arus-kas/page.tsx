@@ -16,6 +16,7 @@ const SECTIONS = [
   { key: "OPERASI", no: 1, tone: "blue", title: "Aktivitas operasi", hint: "Penerimaan dan pengeluaran dari aktivitas utama bisnis" },
   { key: "INVESTASI", no: 2, tone: "green", title: "Aktivitas investasi", hint: "Penerimaan dan pengeluaran dari aktivitas investasi" },
   { key: "PENDANAAN", no: 3, tone: "amber", title: "Aktivitas pendanaan", hint: "Penerimaan dan pengeluaran dari aktivitas pendanaan" },
+  { key: "PENYESUAIAN", no: 4, tone: "red", title: "Penyesuaian saldo & saldo awal rekening", hint: "Atur saldo rekening, saldo awal, dan jurnal penyesuaian (bukan uang masuk/keluar nyata)" },
 ] as const;
 const num = (v: number) => (v ? Math.abs(v).toLocaleString("id-ID") : "-");
 const signed = (v: number) => (v < 0 ? "-" : "") + Math.abs(v).toLocaleString("id-ID");
@@ -25,17 +26,19 @@ export default async function ArusKas({ searchParams }: { searchParams: Promise<
   const sp = await searchParams;
   const r = parseRange(sp);
   const [cf, lh, store] = await Promise.all([cashFlow({ start: r.start, end: r.end, storeId: r.storeId }), letterhead(), storeLabel(r.storeId)]);
-  const net = cf.operating + cf.investing + cf.financing;
-  const totals = { OPERASI: cf.operating, INVESTASI: cf.investing, PENDANAAN: cf.financing };
+  const net = cf.operating + cf.investing + cf.financing + cf.adjustments;
+  const totals = { OPERASI: cf.operating, INVESTASI: cf.investing, PENDANAAN: cf.financing, PENYESUAIAN: cf.adjustments };
+  const recon = `Saldo awal ${idr(cf.opening)} + perubahan ${idr(net)} = ${idr(cf.opening + net)}`;
   return (
     <div>
-      <PageHeader title="Laporan arus kas" subtitle="Metode langsung; transfer antar rekening tidak dihitung" actions={<><DownloadCsv filename={`arus-kas-${r.from}-${r.to}`} rows={[[`Arus kas ${r.from} s/d ${r.to}`], [], ["Saldo kas awal", "", "", "", cf.opening], ["Aktivitas", "Tanggal", "No. jurnal", "Keterangan", "Jumlah (Rp)"], ...SECTIONS.flatMap((s) => [...cf.groups[s.key].map((x) => [s.title, todayStr(x.date), x.number, x.memo, x.amount]), [s.title, "", "", `Total ${s.title.toLowerCase()}`, totals[s.key]]]), ["Kenaikan (penurunan) kas", "", "", "", net], ["Saldo kas akhir", "", "", "", cf.closing]]} /><DownloadJpg targetId="ak" filename={`arus-kas-${r.from}-${r.to}`} /></>} />
+      <PageHeader title="Laporan arus kas" subtitle="Metode langsung; transfer antar rekening & transaksi yang dibatalkan dalam periode yang sama tidak dihitung" actions={<><DownloadCsv filename={`arus-kas-${r.from}-${r.to}`} rows={[[`Arus kas ${r.from} s/d ${r.to}`], [], ["Saldo kas awal", "", "", "", cf.opening], ["Aktivitas", "Tanggal", "No. jurnal", "Keterangan", "Jumlah (Rp)"], ...SECTIONS.flatMap((s) => [...cf.groups[s.key].map((x) => [s.title, todayStr(x.date), x.number, x.memo, x.amount]), [s.title, "", "", `Total ${s.title.toLowerCase()}`, totals[s.key]]]), ["Kenaikan (penurunan) kas", "", "", "", net], ["Saldo kas akhir", "", "", "", cf.closing], [cf.reconciled ? "Cek: saldo awal + perubahan = saldo akhir" : "PERINGATAN: saldo awal + perubahan ≠ saldo akhir", "", "", "", cf.opening + net]]} /><DownloadJpg targetId="ak" filename={`arus-kas-${r.from}-${r.to}`} /></>} />
       <ReportFilter sp={sp} />
       <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
         <Stat label="Saldo kas awal" value={idr(cf.opening)} hint={fmtLong(r.from)} />
         <Stat label="Kenaikan (penurunan) kas" value={idr(net)} tone={net < 0 ? "red" : "green"} />
         <Stat label="Saldo kas akhir" value={idr(cf.closing)} hint={fmtLong(r.to)} tone={cf.closing < 0 ? "red" : "slate"} />
       </div>
+      <p className={`mb-4 rounded-lg px-3 py-2 text-xs ${cf.reconciled ? "bg-emerald-50 text-emerald-800 dark:bg-emerald-500/10 dark:text-emerald-300" : "bg-rose-50 text-rose-800 dark:bg-rose-500/10 dark:text-rose-300"}`}>{cf.reconciled ? "✓ " : "✗ Tidak klop: "}{recon}{cf.reconciled ? " (sama dengan saldo kas akhir)" : ` ≠ saldo kas akhir ${idr(cf.closing)}. Kabari admin.`}{" "}Saldo kas = semua akun kas/bank, termasuk Saldo Penjual dan Dana dalam Perjalanan.</p>
       <div className="space-y-4">
         {SECTIONS.map((s) => (
           <Card key={s.key} title={`${s.no}. ${s.title}`}>
@@ -96,8 +99,8 @@ export default async function ArusKas({ searchParams }: { searchParams: Promise<
           })}
           <DocSummary
             rows={[
-              { label: "Kenaikan (penurunan) kas", hint: "Total perubahan kas selama periode laporan", value: idr(net), negative: net < 0 },
-              { label: "Saldo kas akhir", hint: `Saldo kas per ${fmtLong(r.to)}`, value: idr(cf.closing), negative: cf.closing < 0, strong: true },
+              { label: "Kenaikan (penurunan) kas", hint: "Total keempat kelompok selama periode laporan", value: idr(net), negative: net < 0 },
+              { label: "Saldo kas akhir", hint: `Saldo kas per ${fmtLong(r.to)}${cf.reconciled ? " · ✓ saldo awal + perubahan" : " · ✗ tidak klop"}`, value: idr(cf.closing), negative: cf.closing < 0, strong: true },
             ]}
           />
         </DocSheet>

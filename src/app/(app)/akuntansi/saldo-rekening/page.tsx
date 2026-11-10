@@ -19,7 +19,7 @@ export default async function SaldoRekening({ searchParams }: { searchParams: Pr
   const banks = await bankBalancesAt(date);
   return (
     <div className="space-y-5">
-      <PageHeader title="Atur saldo rekening" subtitle="Samakan saldo di aplikasi dengan saldo asli di bank / e-wallet. Selisihnya dibukukan otomatis sebagai penyesuaian saldo awal (tidak masuk laba rugi maupun arus kas)." />
+      <PageHeader title="Atur saldo rekening" subtitle="Samakan saldo di aplikasi dengan saldo asli di bank / e-wallet. Selisihnya dibukukan otomatis sebagai penyesuaian saldo awal: tidak masuk laba rugi, dan di arus kas tampil terpisah sebagai penyesuaian saldo." />
       <Card>
         <form className="flex flex-wrap items-end gap-3" method="get">
           <Field label="Saldo per tanggal (akhir hari)"><input type="date" name="date" defaultValue={date} className="input" /></Field>
@@ -44,7 +44,7 @@ export default async function SaldoRekening({ searchParams }: { searchParams: Pr
               </tbody>
             </table>
           </div>
-          <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">Isi saldo asli pada <b>akhir hari {date}</b>, yaitu sesudah semua transaksi s/d tanggal itu. Transaksi bertanggal s/d {date} yang sudah tercatat akan ikut &quot;tertutup&quot; oleh penyesuaian ini, dan yang baru dicatat sesudahnya akan menggeser saldo lagi. Untuk saldo awal 1 November, pilih tanggal 31 Oktober.</p>
+          <p className="rounded-lg bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-500/10 dark:text-amber-300">Isi saldo asli pada <b>akhir hari {date}</b>, yaitu sesudah semua transaksi s/d tanggal itu. Transaksi bertanggal s/d {date} yang sudah tercatat akan ikut &quot;tertutup&quot; oleh penyesuaian ini, dan yang baru dicatat sesudahnya akan menggeser saldo lagi. Tanggal di bulan yang sudah ditutup (lihat Tutup buku) tidak bisa dipakai: pilih tanggal di bulan yang masih terbuka; selisihnya tampil di Arus kas pada kelompok &quot;Penyesuaian saldo &amp; saldo awal rekening&quot;.</p>
           <p className="text-xs text-slate-500">Isi saldo asli hanya untuk rekening yang ingin disesuaikan. Bisa diulang kapan saja; yang dibukukan hanya selisihnya.</p>
           <Submit>Simpan saldo</Submit>
         </ModalForm>
