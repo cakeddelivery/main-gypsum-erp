@@ -40,12 +40,15 @@ beforeAll(async () => {
 });
 
 describe("Bot: WD tanpa tanggal wajib dipastikan tanggalnya", () => {
-  it("draft WD TikTok tanpa tanggal: tombol bukukan disembunyikan sampai tanggal dipilih", async () => {
+  // WD TikTok kini lewat status Dalam Proses (tanggal terima ditanya saat "Uang diterima", lihat wdProsesCekSaldo.test.ts);
+  // pemastian tanggal di kartu draft tetap berlaku untuk withdraw saldo penjual lain (Shopee)
+  it("draft WD Shopee tanpa tanggal: tombol bukukan disembunyikan sampai tanggal dipilih", async () => {
     const amt = 450_000 + (Date.now() % 997);
+    const shopee = (await prisma.bankAccount.findUniqueOrThrow({ where: { code: "SALDO_SHOPEE" } })).id;
     sent.length = 0;
-    await say(`WD tiktok MG ${amt} ke seabank`);
+    await say(`WD saldo penjual shopee MG ${amt} ke seabank`);
     const t = await prisma.financeTransaction.findFirstOrThrow({ where: { telegramChatId: String(TG) }, orderBy: { createdAt: "desc" } });
-    expect(t).toMatchObject({ direction: "TRANSFER", accountId: tiktok });
+    expect(t).toMatchObject({ direction: "TRANSFER", accountId: shopee });
     expect(sent.at(-1)?.text).toContain("tidak mencantumkan tanggal");
     expect(btns().some((b) => b.callback_data.startsWith("ok:"))).toBe(false);
     await tap(`ok:${t.id}`);

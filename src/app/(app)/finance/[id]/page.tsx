@@ -3,11 +3,11 @@ import { notFound } from "next/navigation";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
-import { dateStr, fmtDate, fmtDateTime, jakartaParts, todayStr } from "@/lib/time";
+import { dateStr, fmtDate, fmtDateTime, jakartaParts, nowTimeStr, todayStr } from "@/lib/time";
 import { describeParts, parseLink, reserveOptions } from "@/lib/reserveSync";
 import { walletForMarketplace } from "@/lib/extract";
 import Link from "next/link";
-import { STATUS_LABEL, missingFields, splitIssues } from "@/lib/finance";
+import { STATUS_LABEL, WD_RECEIVED_SOURCE, missingFields, splitIssues } from "@/lib/finance";
 import { MIRROR_SOURCES, originHref, originLabel } from "@/lib/txMirror";
 import { Badge, Card, ErrorBox, Field, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
@@ -15,7 +15,9 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ProofPreview } from "@/components/ProofPreview";
 import { TxForm } from "../TxForm";
-import { attachProofTx, linkReserveTx, setReserveTx, approveTx, cancelTx, changeAccountTx, changeStoreTx, deleteTx, reclassifyTx, rejectTx, restoreTx, submitTx, updateTx } from "../actions";
+import { isTiktokSeller, canReceive } from "@/lib/wdProcess";
+import { WdReceiveFields } from "@/components/WdReceive";
+import { attachProofTx, receiveWdTx, linkReserveTx, setReserveTx, approveTx, cancelTx, changeAccountTx, changeStoreTx, deleteTx, reclassifyTx, rejectTx, restoreTx, submitTx, updateTx } from "../actions";
 
 export const metadata = { title: "Detail Transaksi" };
 
@@ -33,6 +35,8 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
     t.journalId ? prisma.journal.findUnique({ where: { id: t.journalId }, include: { lines: { include: { account: true } } } }) : null,
     prisma.setting.findUnique({ where: { key: "default_store_id" } }),
   ]);
+  // WD TikTok: jurnal ke-2 "uang diterima" (Dana dalam Perjalanan → rekening bank)
+  const receivedJournals = t.sentAt ? await prisma.journal.findMany({ where: { source: WD_RECEIVED_SOURCE, sourceId: t.id }, include: { lines: { include: { account: true } } }, orderBy: { date: "asc" } }) : [];
   const payable = t.payableId ? await prisma.payable.findUnique({ where: { id: t.payableId } }) : null;
   const own = !t.origin;
   const reclassable = own && t.status === "DIBUKUKAN" && t.direction !== "TRANSFER" && !t.splits.length && user.can("finance.approve");
@@ -53,11 +57,14 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
   const canLink = own && isTransfer && !linked.length && (editable || (t.status === "DIBUKUKAN" && user.can("finance.approve")));
   const rsv = canLink ? await reserveOptions(prisma, { amount: Number(t.amount), fromBankId: t.accountId, toBankId: fixTo?.id ?? t.toAccountId, date: todayStr(t.date), text: [t.note, t.rawText, t.counterparty].filter(Boolean).join(" "), excludeTxId: t.id }) : null;
   const chosen = link && "parts" in link ? await describeParts(prisma, link.parts) : [];
+  // Withdraw TikTok: dikonfirmasi → Dalam Proses (tanpa jurnal) sampai uangnya diterima di rekening
+  const tiktokWd = t.direction === "TRANSFER" && isTiktokSeller(fromBank);
+  const mayReceive = t.status === "DALAM_PROSES" && (user.can("finance.approve") || user.can("finance.create")) && (await canReceive(t.id, { id: user.id, canApprove: user.can("finance.approve") }));
   return (
     <div className="space-y-5">
       <PageHeader title={`Transaksi ${t.number}`} subtitle={`${idr(t.amount)} · ${fmtDateTime(t.date)} · dibuat ${t.createdBy}`} />
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone={t.status === "DIBUKUKAN" ? "green" : t.status === "DITOLAK" || t.status === "DIBATALKAN" ? "red" : t.status === "MENUNGGU_KONFIRMASI" ? "blue" : "amber"}>{STATUS_LABEL[t.status]}</Badge>
+        <Badge tone={t.status === "DIBUKUKAN" ? "green" : t.status === "DITOLAK" || t.status === "DIBATALKAN" ? "red" : t.status === "MENUNGGU_KONFIRMASI" || t.status === "DALAM_PROSES" ? "blue" : "amber"}>{STATUS_LABEL[t.status]}</Badge>
         <Badge>{t.source}</Badge>
         {t.store && t.direction === "TRANSFER" && <Badge tone="purple">{t.store.name}</Badge>}
         {suggested && <span className="text-xs text-slate-500">Rekomendasi kategori: <b>{suggested.name}</b></span>}
@@ -100,13 +107,13 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
               )}
           </Card>
           {t.rawText && <Card title="Pesan asli"><p className="whitespace-pre-wrap text-sm text-slate-600">{t.rawText}</p></Card>}
-          {journal && (
-            <Card title={`Jurnal ${journal.number}`}>
+          {[journal, ...receivedJournals].filter((j): j is NonNullable<typeof journal> => !!j).map((j, k) => (
+            <Card key={j.id} title={`Jurnal ${j.number}${t.sentAt ? (k === 0 ? " · ditransfer" : ` · uang diterima ${fmtDateTime(j.date)}`) : ""}`}>
               <table className="w-full text-sm"><thead><tr className="text-left text-xs text-slate-500"><th>Akun</th><th className="text-right">Debit</th><th className="text-right">Kredit</th></tr></thead>
-                <tbody>{journal.lines.map((l) => <tr key={l.id}><td>{l.account.code} {l.account.name}</td><td className="text-right tabular-nums">{Number(l.debit) ? idr(l.debit) : ""}</td><td className="text-right tabular-nums">{Number(l.credit) ? idr(l.credit) : ""}</td></tr>)}</tbody>
+                <tbody>{j.lines.map((l) => <tr key={l.id}><td>{l.account.code} {l.account.name}</td><td className="text-right tabular-nums">{Number(l.debit) ? idr(l.debit) : ""}</td><td className="text-right tabular-nums">{Number(l.credit) ? idr(l.credit) : ""}</td></tr>)}</tbody>
               </table>
             </Card>
-          )}
+          ))}
         </div>
         <div className="space-y-5">
           {(t.proofPath || user.can("finance.create")) && (
@@ -169,9 +176,14 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
                 {(t.status === "DRAFT" || t.status === "PERLU_DITINJAU") && (user.can("finance.create") || user.can("finance.review")) && (
                   <ActionForm action={submitTx}><input type="hidden" name="id" value={t.id} /><Submit className="btn-primary w-full">{t.status === "DRAFT" ? "Ajukan konfirmasi" : "Selesai ditinjau → ajukan"}</Submit></ActionForm>
                 )}
-                {t.status === "MENUNGGU_KONFIRMASI" && user.can("finance.approve") && (
+                {t.status === "MENUNGGU_KONFIRMASI" && user.can("finance.approve") && (tiktokWd ? (
+                  <>
+                    <p className="text-xs text-slate-500">Withdraw TikTok baru masuk bank 1–3 hari setelah ditransfer. Setelah dikonfirmasi statusnya <b>Dalam Proses</b>: penjualan diakui dan uangnya dicatat di Dana dalam Perjalanan (saldo bank belum bertambah) sampai Anda menekan <b>Uang diterima</b>.</p>
+                    <ActionForm action={approveTx} confirm={`Konfirmasi withdraw ${idr(t.amount)}? Statusnya menjadi Dalam Proses sampai uangnya diterima.`}><input type="hidden" name="id" value={t.id} /><Submit className="btn-success w-full" pendingText="Menyimpan…">✓ Konfirmasi (dalam proses)</Submit></ActionForm>
+                  </>
+                ) : (
                   <ActionForm action={approveTx} confirm={`Setujui & bukukan ${idr(t.amount)}? Jurnal tidak dapat diubah setelah dibukukan.`}><input type="hidden" name="id" value={t.id} /><Submit className="btn-success w-full" pendingText="Membukukan…">✓ Setujui & bukukan</Submit></ActionForm>
-                )}
+                ))}
                 {t.status === "MENUNGGU_KONFIRMASI" && !user.can("finance.approve") && <p className="text-sm text-slate-500">Menunggu persetujuan pihak berwenang (Owner/Finance).</p>}
                 {(user.can("finance.review") || user.can("finance.approve")) && (
                   <Modal trigger="Tolak" triggerClass="btn-danger w-full" title="Tolak transaksi">
@@ -181,7 +193,37 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
               </div>
             </Card>
           )}
-          {own && t.status === "DIBUKUKAN" && t.direction === "TRANSFER" && user.can("finance.approve") && stores.length > 1 && (
+          {t.receivedProofPath && (
+            <Card title="💰 Bukti uang diterima">
+              {(() => {
+                const r = t.receivedProofRead as { amount?: number | null; date?: string | null; time?: string | null; manual?: boolean } | null;
+                return (
+                  <div className="space-y-2 text-sm">
+                    <p>Diterima <b>{fmtDateTime(t.receivedAt)}</b> di {toBank?.name ?? "rekening"}.</p>
+                    <p className="text-xs text-slate-500">{r?.manual ? "⚠️ Bukti tidak terbaca otomatis, dicek manual oleh penyetuju (lihat riwayat)." : `Terbaca dari bukti: ${r?.amount ? idr(r.amount) : "—"} · ${r?.date ?? "—"}${r?.time ? ` ${r.time}` : ""}`}</p>
+                    <a className="link" href={`/api/files/wd-proof/${t.id}`} target="_blank" rel="noreferrer">📎 Lihat bukti</a>
+                  </div>
+                );
+              })()}
+            </Card>
+          )}
+          {t.status === "DALAM_PROSES" && (
+            <Card title="⏳ Dalam proses">
+              <div className="space-y-3">
+                <p className="text-sm text-slate-600">Withdraw sudah ditransfer{t.sentAt ? ` (${fmtDateTime(t.sentAt)})` : ""} tetapi uangnya belum masuk {toBank?.name ?? "rekening"}. Penjualan sudah diakui; uangnya dicatat di akun <b>Dana dalam Perjalanan</b>, jadi saldo {toBank?.name ?? "rekening"} belum bertambah.</p>
+                {mayReceive ? (
+                  <Modal trigger="💰 Uang diterima" triggerClass="btn-success w-full" title={`Uang diterima · ${t.number}`}>
+                    <ModalForm action={receiveWdTx} className="space-y-3">
+                      <p className="text-sm text-slate-600">{idr(t.amount)} dibukukan dengan tanggal & jam uang masuk dari bukti. Lampirkan screenshot uang masuk di aplikasi bank, atau Seller Center TikTok yang menunjukkan dana sudah ditransfer.</p>
+                      <WdReceiveFields id={t.id} amount={Number(t.amount)} canApprove={user.can("finance.approve")} toAccountId={t.toAccountId} banks={banks.filter((b) => !b.marketplace).map((b) => ({ id: b.id, name: b.name }))} date={todayStr()} time={nowTimeStr()} />
+                      <Submit className="btn-success" pendingText="Membukukan…">Simpan: uang diterima</Submit>
+                    </ModalForm>
+                  </Modal>
+                ) : <p className="text-sm text-slate-500">Hanya Owner/Finance atau pembuat transaksi yang dapat menandai uang diterima.</p>}
+              </div>
+            </Card>
+          )}
+          {own && (t.status === "DIBUKUKAN" || t.status === "DALAM_PROSES") && t.direction === "TRANSFER" && user.can("finance.approve") && stores.length > 1 && (
             <Card title="Toko withdraw">
               <p className="mb-3 text-sm">Toko: <b>{t.store?.name ?? "—"}</b></p>
               <Modal trigger="Ganti toko" triggerClass="btn-secondary w-full" title="Ganti toko withdraw">
@@ -227,9 +269,9 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
               </Modal>
             </Card>
           )}
-          {own && t.status === "DIBUKUKAN" && user.can("finance.approve") && (
+          {own && (t.status === "DIBUKUKAN" || t.status === "DALAM_PROSES") && user.can("finance.approve") && (
             <Card title="Batalkan transaksi">
-              <p className="mb-3 text-xs text-slate-500">Salah catat atau transaksi uji coba? Pembatalan membuat jurnal pembalik sehingga saldo rekening & laba rugi kembali seperti semula. Riwayatnya tetap tersimpan.</p>
+              <p className="mb-3 text-xs text-slate-500">Salah catat atau transaksi uji coba? Pembatalan membuat jurnal pembalik sehingga saldo rekening & laba rugi kembali seperti semula{t.sentAt ? " (withdraw TikTok: jurnal transfer & jurnal uang diterima, bila ada, ikut dibalik)" : ""}. Riwayatnya tetap tersimpan.</p>
               <Modal trigger="Batalkan transaksi" triggerClass="btn-danger w-full" title="Batalkan transaksi dibukukan">
                 <ModalForm action={cancelTx} className="space-y-3">
                   <input type="hidden" name="id" value={t.id} />

@@ -6,6 +6,7 @@ import type { CatSuggestion } from "./categorySuggest";
 import { esc, sendTelegram, type InlineButton } from "./telegram";
 import { idr } from "./money";
 import { addDays, fmtDate, fmtDateTime, todayStr } from "./time";
+import { isTiktokSeller } from "./wdProcess";
 
 /**
  * Draft transaksi dari pesan/foto bot: membuat draft (setelah cek transaksi mirip) dan kartu draft bertombol.
@@ -37,7 +38,9 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
   const isWd = t.direction === "TRANSFER" && !!bank?.marketplace;
   const counterparty = (t.aiExtraction as { receipt?: { counterparty?: string } } | null)?.receipt?.counterparty;
   const storeClear = !!store && matchStore([t.rawText, counterparty].filter(Boolean).join(" "), stores) === store.id;
-  const dateNeeded = dateUnconfirmed(t);
+  // WD TikTok: dana baru masuk bank 1–3 hari kemudian → konfirmasi = Dalam Proses, tanggal terima ditanyakan saat "Uang diterima"
+  const tiktok = t.direction === "TRANSFER" && isTiktokSeller(bank);
+  const dateNeeded = dateUnconfirmed(t) && !tiktok;
   const dirOf = (d: string) => (d === "MASUK" ? "Pemasukan" : d === "KELUAR" ? "Pengeluaran" : "Transfer internal");
   const lines = [
     `<b>${esc(t.number)}</b> · ${STATUS_LABEL[t.status]}`,
@@ -58,7 +61,9 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
       : []),
     (isWd && stores.length > 1) || !store ? `Toko: ${store ? esc(store.name) : "— (belum dipilih)"}` : "",
     t.note ? `Catatan: ${esc(t.note.slice(0, 200))}` : "",
-    t.direction === "TRANSFER" && bank?.marketplace ? `💰 Withdraw saldo penjual: otomatis dicatat juga sebagai pemasukan penjualan ${idr(t.amount)}` : "",
+    t.direction === "TRANSFER" && bank?.marketplace ? `💰 Withdraw saldo penjual: otomatis dicatat juga sebagai pemasukan penjualan ${idr(t.amount)}${tiktok ? " saat uangnya diterima" : ""}` : "",
+    tiktok && t.status === "DALAM_PROSES" ? `⏳ <b>Dalam proses</b>: uang belum masuk ${to ? esc(to.name) : "rekening"}${t.sentAt ? ` (ditransfer ${fmtDateTime(t.sentAt)})` : ""}. Saldo belum berubah.` : "",
+    tiktok && ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"].includes(t.status) ? "⏳ Dana WD TikTok baru masuk bank 1–3 hari setelah ditransfer. Bila belum masuk, konfirmasi dulu (Dalam Proses), lalu tekan 💰 Uang diterima saat sudah masuk." : "",
     dateNeeded ? "📅 <b>Bukti withdraw tidak mencantumkan tanggal.</b> Pastikan tanggal dana masuk ke rekening sebelum dibukukan." : "",
   ].filter(Boolean);
   if (dup) {
@@ -75,6 +80,7 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
   const buttons: InlineButton[][] = [];
   if (t.status === "DITOLAK") lines.push("<i>Draft ditolak (dibuang, tanpa jurnal). Lihat di web: Transaksi → tab Ditolak.</i>");
   if (t.status === "DIBUKUKAN" || t.status === "DITOLAK" || t.status === "DIBATALKAN") return { text: lines.join("\n"), buttons };
+  if (t.status === "DALAM_PROSES") return { text: lines.join("\n"), buttons: [[{ text: "💰 Uang diterima", callback_data: `wr:${t.id}` }]] };
   const issues = splitIssues(t.amount, t.direction, t.splits);
   const missing = [...missingFields(t), ...issues];
   const splitSum = t.splits.reduce((a, x) => a + Number(x.amount), 0);
@@ -143,7 +149,8 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
   if (edit.length) buttons.push(...chunk(edit, 3));
   if (t.splits.length && splitSum !== Number(t.amount)) buttons.push([{ text: `Pakai total rincian (${idr(splitSum)})`, callback_data: `sa:${t.id}` }]);
   if (t.splits.length) buttons.push([{ text: "🔗 Gabung jadi 1 kategori", callback_data: `sx:${t.id}` }]);
-  if (missing.length === 0 && !t.duplicateOfId && !dateNeeded) buttons.push([{ text: "✅ Konfirmasi & bukukan", callback_data: `ok:${t.id}` }, { text: "❌ Tolak", callback_data: `no:${t.id}` }]);
+  if (missing.length === 0 && !t.duplicateOfId && tiktok) buttons.push([{ text: "⏳ Konfirmasi (uang belum masuk)", callback_data: `ok:${t.id}` }], [{ text: "💰 Uang sudah diterima", callback_data: `wr:${t.id}` }, { text: "❌ Tolak", callback_data: `no:${t.id}` }]);
+  else if (missing.length === 0 && !t.duplicateOfId && !dateNeeded) buttons.push([{ text: "✅ Konfirmasi & bukukan", callback_data: `ok:${t.id}` }, { text: "❌ Tolak", callback_data: `no:${t.id}` }]);
   else if (!t.duplicateOfId) buttons.push([{ text: "❌ Tolak", callback_data: `no:${t.id}` }]);
   return { text: lines.join("\n"), buttons };
 }

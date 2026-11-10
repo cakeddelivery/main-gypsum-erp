@@ -37,7 +37,7 @@ export default async function JurnalPage({ searchParams }: { searchParams: Promi
           </ModalForm>
         </Modal>
       )}</>} />
-      <ReportFilter sp={sp} extra={<Field label="Sumber"><select name="source" defaultValue={sp.source ?? ""} className="input"><option value="">Semua</option>{["FINANCE", "MANUAL", "PENYESUAIAN", "SALDO_AWAL", "PRODUKSI", "STOK", "PAYROLL", "PAYROLL_AKRUAL", "PEMBELIAN", "KASBON", "BORONGAN", "SISIHAN", "PIUTANG", "UTANG", "ASET", "PENYUSUTAN", "PEMBALIK"].map((s) => <option key={s} value={s}>{s}</option>)}</select></Field>} />
+      <ReportFilter sp={sp} extra={<Field label="Sumber"><select name="source" defaultValue={sp.source ?? ""} className="input"><option value="">Semua</option>{["FINANCE", "MANUAL", "PENYESUAIAN", "SALDO_AWAL", "PRODUKSI", "STOK", "PAYROLL", "PAYROLL_AKRUAL", "PEMBELIAN", "KASBON", "BORONGAN", "SISIHAN", "PIUTANG", "UTANG", "ASET", "PENYUSUTAN", "WD_DITERIMA", "PEMBALIK"].map((s) => <option key={s} value={s}>{s}</option>)}</select></Field>} />
       {journals.length === 0 && <Card><p className="text-center text-sm text-slate-400">Tidak ada jurnal pada periode ini</p></Card>}
       {journals.map((j) => (
         <Card key={j.id} title={`${j.number} · ${j.description}`} actions={<div className="flex items-center gap-2"><Badge>{j.source}</Badge><Badge tone="purple">{j.store.name}</Badge>{user.can("accounting.post") && !j.reversalOfId && !reversed.has(j.id) && (
