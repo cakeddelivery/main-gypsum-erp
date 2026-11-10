@@ -66,7 +66,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
           <TxForm mode="create" action={createTx} extract={extractAction} banks={banks.filter((b) => b.active)} categories={cats.filter((c) => c.active)} stores={stores.filter((x) => x.active)} defaultStoreId={def?.value} payables={user.can("finance.create") ? await payableOptions() : []} init={{ direction: "KELUAR", date: todayStr(), storeId: def?.value ?? stores[0]?.id }} />
         </Modal>
       )}</>} />
-      <Tabs current={status ?? "ALL"} tabs={[{ key: "ALL", label: "Semua", href: qs(undefined), count: counts.reduce((s, c) => s + c._count, 0) }, ...STATUSES.map((s) => ({ key: s, label: STATUS_LABEL[s], href: qs(s), count: counts.find((c) => c.status === s)?._count ?? 0 }))]} />
+      <Tabs current={status ?? "ALL"} tabs={[{ key: "ALL", label: "Semua", href: qs("ALL"), count: counts.reduce((s, c) => s + c._count, 0) }, ...STATUSES.map((s) => ({ key: s, label: STATUS_LABEL[s], href: qs(s), count: counts.find((c) => c.status === s)?._count ?? 0 }))]} />
       {(status === "DIBATALKAN" || status === "DITOLAK") && (hidden || hiddenCount > 0) && (
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
           <span>{hidden ? `Menampilkan ${hiddenCount} transaksi ${STATUS_LABEL[status].toLowerCase()} yang disembunyikan dari daftar.` : `${hiddenCount} transaksi ${STATUS_LABEL[status].toLowerCase()} disembunyikan dari daftar.`}</span>
