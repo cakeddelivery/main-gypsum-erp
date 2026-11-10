@@ -1,4 +1,4 @@
-import { extractDate, extractTime, type ExtractAccount } from "./extract";
+import { extractDate, extractTime, interestKind, type ExtractAccount } from "./extract";
 import { amountFromOcrText } from "./ocrAmount";
 
 /** Hasil baca foto bukti dari teks OCR (bentuknya sama dengan hasil AI di receipt.ts) */
@@ -77,7 +77,9 @@ export function receiptFromOcrText(text: string, accounts: ExtractAccount[], now
   const account = (senderBlock && accountIn(senderBlock, accounts)) || accountIn(text, accounts);
 
   // Arah: kebanyakan foto yang dikirim adalah bukti bayar; MASUK hanya bila jelas tertulis
-  const direction = INCOMING.test(text) ? "MASUK" : OUTGOING.test(text) || senderIdx >= 0 ? "KELUAR" : null;
+  // Resi bunga tabungan ("Bunga Rp 218") = uang masuk; pajak bunga = keluar
+  const ik = interestKind(text);
+  const direction = ik === "BUNGA" ? "MASUK" : ik === "PAJAK" ? "KELUAR" : INCOMING.test(text) ? "MASUK" : OUTGOING.test(text) || senderIdx >= 0 ? "KELUAR" : null;
 
   return { amount, date, time, direction, account, toAccount: null, counterparty };
 }

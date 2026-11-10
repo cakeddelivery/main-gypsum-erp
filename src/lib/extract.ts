@@ -208,6 +208,18 @@ export function keywordHit(text: string, k: string) {
   return re.test(text);
 }
 
+/**
+ * Bunga bank: "bunga", "bunga tabungan", "bunga bank", "interest" → BUNGA (pemasukan); "pajak bunga"/"pph bunga" →
+ * PAJAK (pengeluaran). Bunga pinjaman/cicilan/hutang BUKAN bunga bank (itu beban bunga pinjaman).
+ */
+export function interestKind(text: string): "BUNGA" | "PAJAK" | null {
+  const t = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+  if (/ (pajak|pph|tax) (atas )?(bunga|interest) /.test(t)) return "PAJAK";
+  if (!/ (bunga|interest) /.test(t)) return null;
+  if (/ (pinjaman|cicilan|angsuran|angsur|spinjam|hutang|utang|kredit|denda) /.test(t)) return null;
+  return "BUNGA";
+}
+
 export function suggestCategory(text: string, direction: string | null, categories: ExtractCategory[]): string | null {
   const t = text.toLowerCase().replace(BUSINESS_NAMES, " ");
   let best: { id: string; score: number } | null = null;
@@ -237,6 +249,10 @@ export function extractTransaction(text: string, accounts: ExtractAccount[], cat
     if (a && b && a !== b && (direction === null || /\b(transfer|tf|pindah|sisih|sisihkan|nabung|menabung|tabungan|setor)\b/.test(t))) direction = "TRANSFER";
   }
 
+  // Bunga tabungan dari bank = uang masuk; pajak bunga = uang keluar (resi SeaBank "Bunga Rp …" ke rekening sendiri)
+  const interest = interestKind(t);
+  if (interest === "BUNGA" && direction !== "TRANSFER") direction = "MASUK";
+  if (interest === "PAJAK") direction = "KELUAR";
   let accountId: string | null = null;
   let toAccountId: string | null = null;
   if (direction === "TRANSFER") {
@@ -275,7 +291,8 @@ export type ReceiptHint = { amount: number | null; date: string | null; time?: s
  */
 export function mergeReceipt(ex: Extraction, text: string, rx: ReceiptHint | null, accounts: ExtractAccount[], categories: ExtractCategory[], now: Date = new Date()): Extraction {
   if (!rx) return ex;
-  const direction = ex.direction ?? rx.direction;
+  const ik = interestKind(text) ?? interestKind(rx.counterparty ?? "");
+  const direction = ik === "BUNGA" ? "MASUK" : ik === "PAJAK" ? "KELUAR" : ex.direction ?? rx.direction;
   // Foto bukti transfer: nominal di bukti dipakai, kecuali caption menulis nominal dengan jelas (Rp/rb/jt)
   const amount = hasExplicitAmount(text) ? ex.amount ?? rx.amount : rx.amount ?? ex.amount;
   const captionDate = extractDate(text, now);
@@ -296,6 +313,8 @@ export function mergeReceipt(ex: Extraction, text: string, rx: ReceiptHint | nul
   if (!accountId) missing.push("rekening");
   if (direction === "TRANSFER" && !toAccountId) missing.push("rekening tujuan");
   if (direction !== "TRANSFER" && !categoryId) missing.push("kategori");
-  const note = [text.trim(), rx.counterparty && !text.toLowerCase().includes(rx.counterparty.toLowerCase()) ? `(${rx.counterparty})` : ""].filter(Boolean).join(" ").slice(0, 500);
+  // Bunga bank: "pihak" di resi = pemilik rekening sendiri, bukan pengirim; tidak ditambahkan ke catatan
+  const ownName = !!interestKind([text, rx.counterparty].filter(Boolean).join(" ")) || !!interestKind(text);
+  const note = [text.trim(), rx.counterparty && !ownName && !text.toLowerCase().includes(rx.counterparty.toLowerCase()) ? `(${rx.counterparty})` : ""].filter(Boolean).join(" ").slice(0, 500);
   return { ...ex, amount, date, time, direction, accountId, toAccountId, categoryId, note, confidence: Math.round(((5 - missing.length) / 5) * 100) / 100, missing };
 }
