@@ -3,8 +3,9 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int } from "@/lib/action";
-import { attachTransactionProof, linkBookedTransfer, setReserveLink, changeBookedStore, reclassifyBooked, cancelBookedTransaction, deleteClosedTransactions, restoreClosedTransactions, approveAndBook, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
+import { attachTransactionProof, linkBookedTransfer, setReserveLink, changeBookedStore, reclassifyBooked, cancelBookedTransaction, deleteClosedTransactions, restoreClosedTransactions, createTransaction, rejectTransaction, submitForConfirmation, updateTransaction, type TxInput } from "@/lib/finance";
 import { saveProof } from "@/lib/storage";
+import { confirmTransaction, receiveWithdraw } from "@/lib/wdProcess";
 import { reserveOptions } from "@/lib/reserveSync";
 import { todayStr } from "@/lib/time";
 import { extractTransaction } from "@/lib/extract";
@@ -87,8 +88,17 @@ export const submitTx = action(["finance.create", "finance.review"], async (fd, 
 }, ["/finance", "/"]);
 
 export const approveTx = action("finance.approve", async (fd, user) => {
-  const { journal } = await approveAndBook(str(fd, "id"), { id: user.id, name: user.name }, optStr(fd, "note") ?? undefined);
-  return `Disetujui & dibukukan (${journal.number})`;
+  const r = await confirmTransaction(str(fd, "id"), { id: user.id, name: user.name }, optStr(fd, "note") ?? undefined);
+  return r.inProcess ? "Dikonfirmasi: withdraw TikTok Dalam Proses. Tekan \"Uang diterima\" setelah uangnya masuk rekening." : `Disetujui & dibukukan (${r.journal.number})`;
+}, ["/finance", "/", "/akuntansi"]);
+
+/** WD TikTok Dalam Proses: uang sudah masuk rekening → dibukukan dengan tanggal/jam terima */
+export const receiveWdTx = action(["finance.create", "finance.approve"], async (fd, user) => {
+  const date = str(fd, "date");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Tanggal terima wajib diisi");
+  const time = /^\d{2}:\d{2}$/.test(str(fd, "time")) ? str(fd, "time") : "12:00";
+  const { journal } = await receiveWithdraw(str(fd, "id"), { id: user.id, name: user.name }, { receivedAt: jakartaDateTime(date, time), toAccountId: optStr(fd, "toAccountId"), canApprove: user.can("finance.approve") });
+  return `Uang diterima, dibukukan (${journal.number})`;
 }, ["/finance", "/", "/akuntansi"]);
 
 export const rejectTx = action(["finance.review", "finance.approve"], async (fd, user) => {

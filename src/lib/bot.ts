@@ -3,7 +3,7 @@ import { effectivePermissions } from "./rbac";
 import { DEFAULT_MANAGER_NAMES, detectManagerLoan, extractDate, extractTransaction, hasExplicitAmount, matchStore, mergeReceipt } from "./extract";
 import { readReceipt, type ReceiptRead } from "./receipt";
 import { ocrReceipt } from "./ocrReceipt";
-import { type SplitInput, splitIssues, approveAndBook, createTransaction, FinanceError, rejectTransaction, STATUS_LABEL, submitForConfirmation, updateTransaction, missingFields } from "./finance";
+import { type SplitInput, splitIssues, createTransaction, FinanceError, rejectTransaction, STATUS_LABEL, submitForConfirmation, updateTransaction, missingFields } from "./finance";
 import { answerCallback, chatAction, downloadTelegramFile, editTelegram, esc, sendTelegram, type InlineButton } from "./telegram";
 import { saveProof } from "./storage";
 import { idr } from "./money";
@@ -24,6 +24,9 @@ export { draftMessage } from "./botDraft";
 import { appUrl, guardDup } from "./botDup";
 import { approveCategoryProposal, canApproveCategory, proposeCategory, rejectCategoryProposal, suggestCategories, type CatSuggestion } from "./categorySuggest";
 import type { Session } from "./botKit";
+import { confirmTransaction, isTiktokWithdraw } from "./wdProcess";
+import { wdCallback } from "./botWd";
+import { balanceCheckCallback, balanceCheckMessageHook } from "./balanceCheck";
 
 type TgUser = { id: number; first_name?: string; username?: string };
 type TgUpdate = {
@@ -36,6 +39,7 @@ type TgUpdate = {
     text?: string;
     caption?: string;
     photo?: { file_id: string; file_size?: number }[];
+    document?: { file_id: string; mime_type?: string; file_name?: string; file_size?: number };
     location?: TgLocation;
     venue?: unknown;
     forward_origin?: unknown;
@@ -77,6 +81,8 @@ export async function handleTelegramUpdate(u: TgUpdate) {
     return;
   }
   if (!ident.chatId) await prisma.telegramIdentity.update({ where: { id: ident.id }, data: { chatId } });
+  // Cek saldo pagi "Tidak sesuai": saldo bank yang diketik + lampiran mutasi (foto/PDF)
+  if (await balanceCheckMessageHook(ident, chatId, msg)) return;
   // Isian bertahap (produksi, absen, stok): lokasi & jawaban teks
   if (msg.location) {
     await handleFlowLocation(ident, chatId, msg.location, { forwarded: !!(msg.forward_origin || msg.forward_date), venue: !!msg.venue, ageSec: msg.date ? Math.floor(Date.now() / 1000) - msg.date : 0 });
@@ -322,6 +328,16 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
       return answerCallback(cb.id, e instanceof FinanceError ? e.message : "Terjadi kesalahan");
     }
   }
+  if (action === "wr" || action === "wp" || action === "wd" || action === "wl") {
+    // Withdraw TikTok Dalam Proses: uang diterima (konfirmasi tanggal terima)
+    if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan sudah tidak tersedia");
+    return wdCallback(ident, cb.id, chatId, cb.message.message_id, cb.data!);
+  }
+  if (action === "cs") {
+    // Konfirmasi saldo pagi
+    if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan sudah tidak tersedia");
+    return balanceCheckCallback(ident, cb.id, chatId, cb.message.message_id, cb.data!);
+  }
   if (action === "dv") {
     // Lihat transaksi lama yang mirip, lalu kembali ke kartu draft
     if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan sudah tidak tersedia");
@@ -341,6 +357,7 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
     }
     return answerCallback(cb.id, "");
   }
+  let okInProcess = false;
   if (action === "no" && !canReview) {
     const own = await prisma.approvalLog.findFirst({ where: { transactionId: txId, action: "DIBUAT", actorUserId: ident.userId } });
     if (!own) return answerCallback(cb.id, "Hanya pembuat draft atau peninjau keuangan yang dapat menolak");
@@ -390,9 +407,9 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
       // Konfirmasi wajib dari identitas Telegram terpetakan yang memiliki izin
       if (!ident.canConfirm || !ident.perms.has("finance.approve")) return answerCallback(cb.id, "Anda tidak berwenang mengonfirmasi pembukuan");
       const t = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: txId } });
-      if (dateUnconfirmed(t)) return answerCallback(cb.id, "Pilih tanggal dana masuk dulu");
+      if (dateUnconfirmed(t) && !(await isTiktokWithdraw(t))) return answerCallback(cb.id, "Pilih tanggal dana masuk dulu");
       if (t.status === "PERLU_DITINJAU" || t.status === "DRAFT") await submitForConfirmation(txId, actor, "Dikonfirmasi via Telegram");
-      await approveAndBook(txId, actor, "Dikonfirmasi via Telegram");
+      okInProcess = (await confirmTransaction(txId, actor, "Dikonfirmasi via Telegram")).inProcess;
     } else return answerCallback(cb.id, "Aksi tidak dikenal");
     // Setelah data dilengkapi, kembalikan ke Menunggu Konfirmasi bila sudah lengkap
     if (["acc", "to", "cat", "st", "dt", "rev", "sc", "sa", "sx"].includes(action)) {
@@ -402,7 +419,7 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>) {
     }
     const m = await draftMessage(txId);
     if (chatId && cb.message) await editTelegram(chatId, cb.message.message_id, m.text, m.buttons);
-    return answerCallback(cb.id, action === "ok" ? "Dibukukan ✅" : action === "no" ? "Ditolak (dibuang)" : "Tersimpan");
+    return answerCallback(cb.id, action === "ok" ? (okInProcess ? "Dalam proses ⏳ — tekan Uang diterima saat uang masuk" : "Dibukukan ✅") : action === "no" ? "Ditolak (dibuang)" : "Tersimpan");
   } catch (e) {
     return answerCallback(cb.id, e instanceof FinanceError ? e.message : "Terjadi kesalahan");
   }

@@ -6,12 +6,15 @@ import { alertsFor } from "@/lib/alerts";
 import { productionSummary, productionTrend, productivity, financeMonth, financeTrend, salesByStore } from "@/lib/dashboard";
 import { bankBalances } from "@/lib/finance";
 import { idr } from "@/lib/money";
-import { dateOnly, fmtDay, MONTHS, todayStr } from "@/lib/time";
+import { dateOnly, fmtDateTime, fmtDay, MONTHS, nowTimeStr, todayStr } from "@/lib/time";
 import { ROLE_LABEL } from "@/lib/rbac";
 import { STAGE_LABEL } from "@/lib/stock";
 import { ATT_LABEL } from "@/lib/attendance";
 import { Badge, Card, PageHeader, Stat, Tabs } from "@/components/ui";
 import { BarsChart, TrendChart } from "@/components/Charts";
+import { WdProcessPopup } from "@/components/WdReceive";
+import { inProcessSummary, inProcessWithdrawals } from "@/lib/wdProcess";
+import { receiveWdTx } from "./finance/actions";
 
 export const metadata = { title: "Dashboard" };
 
@@ -42,11 +45,35 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     user.employeeId ? prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(today) } }, include: { shift: true } }) : null,
   ]);
 
+  // Withdraw TikTok Dalam Proses: kartu pengingat + popup sekali sehari (penyetuju, atau pembuat WD-nya)
+  const canApprove = user.can("finance.approve");
+  const wdAll = user.can("finance.view") && (canApprove || user.can("finance.create")) ? await inProcessWithdrawals() : [];
+  const wdRows = canApprove ? wdAll : wdAll.filter((r) => r.createdById === user.id);
+  const wdSum = inProcessSummary(wdRows);
+  const wdBanks = wdRows.length ? (await prisma.bankAccount.findMany({ where: { active: true, marketplace: false }, orderBy: { code: "asc" } })).map((b) => ({ id: b.id, name: b.name })) : [];
+
   const greeting = role === "OWNER" ? "Ringkasan analitik bisnis" : isOperator ? "Pekerjaan Anda hari ini" : "Tindakan & ringkasan hari ini";
 
   return (
     <div className="space-y-5">
       <PageHeader title={`Halo, ${user.name.split(" ")[0]}`} subtitle={`${ROLE_LABEL[role]} · ${greeting} · ${fmtDay(dateOnly(today))}`} />
+
+      {wdSum.count > 0 && (
+        <>
+          <Link href="/finance?status=DALAM_PROSES" className="flex items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800 hover:bg-sky-100">
+            <span>⏳ Ada <b>{wdSum.count}</b> withdraw TikTok dalam proses (total <b>{idr(wdSum.total)}</b>). Uangnya belum masuk rekening.</span>
+            <span className="shrink-0 font-semibold">Lihat →</span>
+          </Link>
+          <WdProcessPopup
+            rows={wdRows.map((r) => ({ id: r.id, number: r.number, amount: idr(r.amount), label: `${r.store ? `${r.store} · ` : ""}${r.from} → ${r.to} · ditransfer ${fmtDateTime(r.sentAt ?? r.date)}`, toAccountId: r.toAccountId }))}
+            banks={wdBanks}
+            action={receiveWdTx}
+            userKey={user.id}
+            date={today}
+            time={nowTimeStr()}
+          />
+        </>
+      )}
 
       {/* Admin & role lapangan: fokus tindakan — notifikasi di atas */}
       {role !== "OWNER" && <AlertList alerts={alerts} />}

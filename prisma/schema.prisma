@@ -951,16 +951,53 @@ model PriceHistory {
 // ============ FINANCE ============
 
 model BankAccount {
-  id           String        @id @default(cuid())
-  code         String        @unique
-  name         String
-  coaAccountId String
-  coaAccount   CoaAccount    @relation(fields: [coaAccountId], references: [id])
-  aliases      String        @default("")
-  active       Boolean       @default(true)
+  id            String         @id @default(cuid())
+  code          String         @unique
+  name          String
+  coaAccountId  String
+  coaAccount    CoaAccount     @relation(fields: [coaAccountId], references: [id])
+  aliases       String         @default("")
+  active        Boolean        @default(true)
   /// Saldo penjual marketplace (Shopee/TikTok): withdraw dari rekening ini sekaligus dicatat sebagai pemasukan penjualan
-  marketplace  Boolean       @default(false)
-  salePayments SalePayment[]
+  marketplace   Boolean        @default(false)
+  salePayments  SalePayment[]
+  balanceChecks BalanceCheck[]
+}
+
+enum BalanceCheckStatus {
+  MENUNGGU
+  SESUAI
+  TIDAK_SESUAI
+}
+
+/// Konfirmasi saldo pagi: saldo buku per rekening (kemarin 23.59 WIB) dicek pengelola dengan aplikasi bank
+model BalanceCheck {
+  id             String             @id @default(cuid())
+  /// Tanggal saldo yang dicek (kemarin, WIB)
+  date           DateTime           @db.Date
+  bankAccountId  String
+  bankAccount    BankAccount        @relation(fields: [bankAccountId], references: [id])
+  /// Saldo buku per tanggal tsb pukul 23.59 WIB
+  bookBalance    BigInt
+  /// Saldo buku saat pesan dikirim / saat saldo bank diketik
+  currentBalance BigInt
+  /// Saldo di aplikasi bank yang diketik pengecek (bila tidak sesuai)
+  bankBalance    BigInt?
+  /// bankBalance − currentBalance
+  diff           BigInt?
+  status         BalanceCheckStatus @default(MENUNGGU)
+  /// Mutasi rekening: [{path, mime}] di penyimpanan privat
+  attachments    Json               @default("[]")
+  /// true = pengecek sudah menekan Selesai (lampiran lengkap)
+  done           Boolean            @default(false)
+  checkedById    String?
+  checkedByName  String?
+  checkedAt      DateTime?
+  remindedAt     DateTime?
+  createdAt      DateTime           @default(now())
+
+  @@unique([date, bankAccountId])
+  @@index([status])
 }
 
 enum TxDirection {
@@ -983,6 +1020,8 @@ enum TxStatus {
   DRAFT
   PERLU_DITINJAU
   MENUNGGU_KONFIRMASI
+  /// Withdraw TikTok sudah dikonfirmasi tetapi uangnya belum masuk rekening bank (belum ada jurnal)
+  DALAM_PROSES
   DIBUKUKAN
   DITOLAK
   DIBATALKAN
@@ -1045,6 +1084,10 @@ model FinanceTransaction {
   originRef           String?
   /// Transaksi lain yang sudah dinyatakan "berbeda, bukan duplikat" (tidak ditanyakan lagi)
   dupAckIds           String[]         @default([])
+  /// Withdraw TikTok: jam dikonfirmasi "Ditransfer ke bank" (masuk status Dalam Proses)
+  sentAt              DateTime?
+  /// Withdraw TikTok: jam uang diterima di rekening bank (= tanggal pembukuan)
+  receivedAt          DateTime?
 
   @@index([fingerprint])
   @@index([origin])
