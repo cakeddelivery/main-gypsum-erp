@@ -23,7 +23,7 @@ const schema = z.object({
   note: z.string().max(1000).optional(),
   raw_text: z.string().max(4000).optional(),
   telegram_chat_id: z.string().optional(),
-  proof_base64: z.string().max(7_500_000).optional(),
+  proof_base64: z.string().max(21_000_000).optional(), // ±15 MB setelah base64 (lihat MAX_PROOF_BYTES)
   proof_mime: z.enum(["image/jpeg", "image/png", "image/webp", "application/pdf"]).optional(),
   ai_extraction: z.record(z.string(), z.unknown()).optional(),
   notify: z.boolean().optional(),

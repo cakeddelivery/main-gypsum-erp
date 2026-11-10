@@ -6,7 +6,7 @@ import { cancelPurchase, createPurchase, termFor, lineAmounts } from "@/lib/purc
 import { matchAccount } from "@/lib/extract";
 import { readReceipt, receiptReaderConfigured } from "@/lib/receipt";
 import { isModelUnavailable } from "@/lib/ai";
-import { MAX_PROOF_BYTES, saveProof } from "@/lib/storage";
+import { MAX_PROOF_BYTES, MAX_PROOF_TEXT, saveProof } from "@/lib/storage";
 import { jakartaDateTime, todayStr } from "@/lib/time";
 
 const num = (x: FormDataEntryValue) => Number(String(x).replace(/\./g, "").replace(",", ".")) || 0;
@@ -60,7 +60,7 @@ export async function readPaymentProof(fd: FormData): Promise<ProofRead> {
   const file = fd.get("proof");
   if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Pilih foto bukti transfer dulu" };
   if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) return { ok: false, error: "Foto harus JPG, PNG, atau WEBP" };
-  if (file.size > MAX_PROOF_BYTES) return { ok: false, error: "Ukuran foto maksimal 5 MB" };
+  if (file.size > MAX_PROOF_BYTES) return { ok: false, error: MAX_PROOF_TEXT };
   if (!receiptReaderConfigured()) return { ok: false, error: "Pembaca foto (AI) belum diatur di server. Isi nominal manual." };
   const banks = await prisma.bankAccount.findMany({ where: { active: true } });
   let quota = false;
