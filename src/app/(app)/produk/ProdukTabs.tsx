@@ -2,6 +2,7 @@ import { Tabs } from "@/components/ui";
 
 const TABS = [
   { key: "produk", label: "Produk Jadi", href: "/produk" },
+  { key: "induk", label: "Produk Induk & Varian", href: "/produk/induk" },
   { key: "bsj", label: "Barang Setengah Jadi", href: "/produk/setengah-jadi" },
   { key: "overhead", label: "Overhead", href: "/produk/overhead" },
   { key: "biaya", label: "Biaya Marketplace", href: "/produk/biaya" },

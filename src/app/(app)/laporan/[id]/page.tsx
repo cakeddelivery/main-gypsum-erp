@@ -18,6 +18,7 @@ import { DownloadJpg } from "@/components/DownloadJpg";
 import { sendReport } from "../actions";
 import { ReportForm } from "./ReportForm";
 import { ReportSheet } from "./ReportSheet";
+import { reportCatalogs } from "@/lib/productFamily";
 import { letterhead } from "@/lib/letterhead";
 
 export const metadata = { title: "Laporan Penutup Shift" };
@@ -35,6 +36,7 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
     prisma.employee.findMany({ where: { divisionId: r.divisionId, status: "AKTIF" }, orderBy: { name: "asc" }, select: { name: true } }),
   ]);
   const checklist = toEntries(r.checklist);
+  const catalogs = await reportCatalogs(template);
   const saved = r.stockCount as StockCountRow[];
   // Saat diisi: daftar bahan mengikuti master bahan baku divisi terkini (hitungan yang sudah ada dipertahankan)
   const items = await prisma.item.findMany({ where: { divisionId: r.divisionId, active: true, type: "BAHAN_BAKU" }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] });
@@ -120,6 +122,7 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
               banks={banks}
               applied={r.stockApplied}
               resultTitle={resultDef?.title ?? null}
+              catalogs={catalogs}
               resultCount={resultDef ? VARIANTS.map((v) => ({ key: v, label: `${resultDef.label} ${v}`, unit: resultDef.unit, qty: rv[v] ?? null })) : []}
             />
           </div>

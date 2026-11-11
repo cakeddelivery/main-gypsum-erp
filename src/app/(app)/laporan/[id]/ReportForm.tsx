@@ -13,7 +13,11 @@ import {
   needsOrder,
   rowTotal,
   sectionFieldValues,
+  sectionFilled,
   sectionTotal,
+  catalogLines,
+  type CatalogLine,
+  type ReportCatalogs,
   type ChecklistEntry,
   type GridRow,
   type GridSection,
@@ -50,6 +54,8 @@ type Props = {
   /** Stok akhir hasil (patung kering / produk jadi per karakter) */
   resultTitle: string | null;
   resultCount: ResultCountRow[];
+  /** SKU katalog untuk bagian isian katalog (Giftbox, Paket & Satuan Single Pack) */
+  catalogs: ReportCatalogs;
 };
 
 const fmt = (v: number) => v.toLocaleString("id-ID");
@@ -149,6 +155,60 @@ export function ReportForm(p: Props) {
                 </div>
               );
             }
+            if (s.kind === "catalog") {
+              const g = p.catalogs[s.key];
+              const lines = catalogLines(work, s.key);
+              const qtyOf = (id: string) => lines.find((l) => l.productId === id)?.qty ?? null;
+              if (!g || !g.rows.length) {
+                return <p key={s.key} className="rounded-lg bg-amber-50 p-2 text-xs text-amber-700"><b>{s.title}:</b> katalog produk induk &quot;{s.family}&quot; belum ada. Isi bagian lama di atas, atau minta admin mengisi Produk &amp; HPP → Produk Induk.</p>;
+              }
+              const setQty = (cell: NonNullable<(typeof g.rows)[number]["cells"][number]>, label: string, col: string, raw: string) => {
+                const qty = toNum(raw);
+                setWork((w) => {
+                  const rest = catalogLines(w, s.key).filter((l) => l.productId !== cell.productId);
+                  const next: CatalogLine[] = qty ? [...rest, { productId: cell.productId, sku: cell.sku, label, col, variant: cell.variant, patung: cell.patung, qty }] : rest;
+                  return { ...w, [s.key]: next };
+                });
+              };
+              const total = sectionTotal(t, work, s.key);
+              const one = g.rows.length === 1;
+              return (
+                <div key={s.key}>
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-slate-700">{s.title} <span className="text-xs font-normal text-slate-500">(isi jumlah {s.qtyLabel})</span></span>
+                    <span className="text-xs text-slate-500">{s.totalLabel}: <b className="text-slate-800">{fmt(total)} {s.unit}</b></span>
+                  </div>
+                  <div className="table-wrap">
+                    <table className="tbl keep-cols text-sm">
+                      <thead><tr>{!one && <th />}{g.cols.map((c) => <th key={c} className="text-center">{c}</th>)}</tr></thead>
+                      <tbody>
+                        {g.rows.map((r) => (
+                          <tr key={r.label}>
+                            {!one && <td className="whitespace-nowrap text-xs font-medium">{r.label}</td>}
+                            {r.cells.map((c, ci) => (
+                              <td key={ci} className="p-1">
+                                {c ? (
+                                  <input
+                                    name={`w.${s.key}.${c.productId}`}
+                                    inputMode="numeric"
+                                    value={qtyOf(c.productId) ?? ""}
+                                    onChange={(e) => setQty(c, [r.label, g.cols[ci]].filter(Boolean).join(" · "), g.cols[ci], e.target.value)}
+                                    placeholder="—"
+                                    aria-label={`${r.label} ${g.cols[ci]}`}
+                                    className="input min-w-14 py-1.5 text-center"
+                                  />
+                                ) : null}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            }
+            if (s.kind === "count" && s.replacedBy && p.catalogs[s.replacedBy]?.rows.length && !sectionFilled(t, p.work, s.key)) return null;
             if (s.kind === "count") {
               const v = countValues(work, s.key);
               return (
@@ -191,7 +251,7 @@ export function ReportForm(p: Props) {
             }
             return (
               <div key={s.key} className="rounded-lg bg-slate-50 p-2 text-xs text-slate-600">
-                <b>{s.title} (otomatis ×{s.factor}):</b> {sectionFieldValues(t, work, s).map((f) => `${f.label} ${f.value ?? "—"}`).join(" · ")} · <b>{s.totalLabel} {fmt(sectionTotal(t, work, s.key))}</b>
+                <b>{s.title} (otomatis{Array.isArray(s.from) ? ", dari jumlah patung per SKU" : ` ×${s.factor}`}):</b> {sectionFieldValues(t, work, s).map((f) => `${f.label} ${f.value ?? "—"}`).join(" · ") || "—"} · <b>{s.totalLabel} {fmt(sectionTotal(t, work, s.key))}</b>
               </div>
             );
           })}

@@ -17,6 +17,7 @@ import { boronganLines } from "@/lib/shiftReportBorongan";
 import { saveProof } from "@/lib/storage";
 import { addShiftReceipt, removeShiftReceipt } from "@/lib/shiftReceipt";
 import { RESULT_KEY, applyResultCount, parseResultCount, resultCountStatus, resultLines } from "@/lib/shiftResultCount";
+import { reportCatalogs } from "@/lib/productFamily";
 import { isDone, isTemplate, needsOrder, parseWork, summaryOf, targetLine, targetOf, toEntries, workLines, type ChecklistEntry, type StockCountRow } from "@/lib/shiftReport";
 
 const DEFAULT_CHECKLIST = ["Area kerja bersih & rapi", "Peralatan/cetakan dicek", "Bahan cukup untuk shift berikutnya", "Hasil sudah dihitung ulang", "Reject dipisahkan & dicatat"];
@@ -90,7 +91,7 @@ export const saveReport = action(
     const checklist = toEntries(r.checklist).map((c, i) => ({ ...c, done: c.photo ? !!c.photoPath : fd.get(`check_${i}`) === "on" }));
     const template = r.division.reportTemplate;
     const get = (k: string) => (typeof fd.get(k) === "string" ? (fd.get(k) as string) : null);
-    const work: Record<string, unknown> = isTemplate(template) ? parseWork(template, get) : {};
+    const work: Record<string, unknown> = isTemplate(template) ? parseWork(template, get, await reportCatalogs(template)) : {};
     const rc = parseResultCount(isTemplate(template) ? template : null, get);
     if (rc) work[RESULT_KEY] = rc;
     const stock = (await stockRows(r.divisionId, r.stockCount as StockCountRow[])).map((row) => (fd.has(`s.${row.itemId}`) ? { ...row, qty: num(str(fd, `s.${row.itemId}`)) } : row));

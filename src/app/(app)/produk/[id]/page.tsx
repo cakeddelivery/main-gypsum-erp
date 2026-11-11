@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -24,7 +25,7 @@ export const metadata = { title: "Detail Produk" };
 export default async function ProductDetail({ params }: { params: Promise<{ id: string }> }) {
   const user = await requirePerm("product.view");
   const { id } = await params;
-  const p = await prisma.product.findUnique({ where: { id }, include: { store: true, finishedItem: true } });
+  const p = await prisma.product.findUnique({ where: { id }, include: { store: true, finishedItem: true, family: true, variantValues: { include: { option: { include: { axis: true } } } } } });
   if (!p) notFound();
   const costs = await itemCosts();
   const [cost, prices, stores, finItems, fees, opts, catMap, types] = await Promise.all([
@@ -54,7 +55,7 @@ export default async function ProductDetail({ params }: { params: Promise<{ id: 
   const manage = user.can("product.manage");
   return (
     <div className="space-y-5">
-      <PageHeader title={p.name} subtitle={`${p.sku} · ${typeLabel(types, p.type)} · ${p.variant} · ${p.store.name} · isi ${p.packQty} pcs`} actions={<>{manage && <Modal trigger="Ubah produk" triggerClass="btn-secondary" title="Ubah Master Produk Jadi"><ProductForm p={p} stores={stores} items={finItems} hpp={cost.hpp} minStock={p.finishedItem ? Number(p.finishedItem.minStock) : undefined} categories={catMap.BARANG_JADI.map((c) => c.name)} types={types} /></Modal>}</>} />
+      <PageHeader title={p.name} subtitle={<>{p.sku} · {typeLabel(types, p.type)} · {p.variant} · {p.store.name} · {p.packQty} patung{p.family && <> · induk <Link href={`/produk/induk/${p.family.id}`} className="text-brand-600 underline">{p.family.name}</Link> ({[...p.variantValues].sort((a, b) => a.option.axis.sortOrder - b.option.axis.sortOrder).map((v) => `${v.option.axis.name}: ${v.option.name}`).join(", ")})</>}</>} actions={<>{manage && <Modal trigger="Ubah produk" triggerClass="btn-secondary" title="Ubah Master Produk Jadi"><ProductForm p={p} stores={stores} items={finItems} hpp={cost.hpp} minStock={p.finishedItem ? Number(p.finishedItem.minStock) : undefined} categories={catMap.BARANG_JADI.map((c) => c.name)} types={types} /></Modal>}</>} />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Bahan & setengah jadi" value={idr(cost.material)} hint={cost.bookMaterial !== cost.material + cost.packaging - Number(p.extraPackaging) ? `Nilai buku (harga rata-rata): ${idr(cost.bookMaterial)}` : undefined} />
         <Stat label="Packaging & kemasan" value={idr(cost.packaging)} />

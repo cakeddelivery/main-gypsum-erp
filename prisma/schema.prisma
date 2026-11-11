@@ -907,35 +907,100 @@ enum ProductVariant {
 }
 
 model Product {
-  id             String            @id @default(cuid())
-  sku            String            @unique
+  id             String                @id @default(cuid())
+  sku            String                @unique
   name           String
   /// Kode ProductTypeOption (dulu enum ProductType)
   type           String
   variant        ProductVariant
   storeId        String
-  store          Store             @relation(fields: [storeId], references: [id])
-  packQty        Int               @default(1)
-  laborCost      BigInt            @default(0)
-  overheadCost   BigInt            @default(0)
+  store          Store                 @relation(fields: [storeId], references: [id])
+  packQty        Int                   @default(1)
+  laborCost      BigInt                @default(0)
+  overheadCost   BigInt                @default(0)
   /// Target margin (% dari harga jual), affiliate & iklan (% harga) untuk saran harga
-  targetMargin   Decimal           @default(30) @db.Decimal(5, 2)
-  affiliatePct   Decimal           @default(0) @db.Decimal(5, 2)
-  adsPct         Decimal           @default(0) @db.Decimal(5, 2)
+  targetMargin   Decimal               @default(30) @db.Decimal(5, 2)
+  affiliatePct   Decimal               @default(0) @db.Decimal(5, 2)
+  adsPct         Decimal               @default(0) @db.Decimal(5, 2)
   /// Rata-rata jumlah produk per pesanan marketplace (biaya pesanan flat dibagi ke tiap produk)
-  itemsPerOrder  Decimal           @default(1) @db.Decimal(6, 2)
+  itemsPerOrder  Decimal               @default(1) @db.Decimal(6, 2)
   /// Tambahan biaya kemasan lain per produk (opsional)
-  extraPackaging BigInt            @default(0)
+  extraPackaging BigInt                @default(0)
   category       String?
   note           String?
   recipeLabor    RecipeLabor[]
   recipeOverhead RecipeOverhead[]
-  active         Boolean           @default(true)
-  finishedItemId String?           @unique
-  finishedItem   Item?             @relation("ProductFinishedItem", fields: [finishedItemId], references: [id])
+  active         Boolean               @default(true)
+  finishedItemId String?               @unique
+  finishedItem   Item?                 @relation("ProductFinishedItem", fields: [finishedItemId], references: [id])
   bom            BomLine[]
   prices         PriceHistory[]
   production     ProductionEntry[]
+  /// Produk induk (katalog varian), mis. Giftbox; null = produk lepas
+  familyId       String?
+  family         ProductFamily?        @relation(fields: [familyId], references: [id])
+  /// Pilihan varian SKU ini (satu per kategori varian induk)
+  variantValues  ProductVariantValue[]
+
+  @@index([familyId])
+}
+
+/// Produk induk: satu nama produk dengan beberapa kategori varian (mis. Giftbox: Tipe × Paket × Series); tiap kombinasi = satu Product (SKU)
+model ProductFamily {
+  id        String        @id @default(cuid())
+  /// Kode otomatis IND-001
+  code      String        @unique
+  name      String
+  /// Kode ProductTypeOption bawaan SKU (bisa ditimpa pilihan varian, mis. Jumlah 12 → PAKET_12)
+  type      String
+  /// Jumlah patung per SKU bila tidak ditentukan pilihan varian (Giftbox = 5)
+  patungQty Int           @default(1)
+  active    Boolean       @default(true)
+  sortOrder Int           @default(0)
+  note      String?
+  axes      VariantAxis[]
+  products  Product[]
+}
+
+/// Kategori varian produk induk (Tipe, Paket, Series, Jumlah)
+model VariantAxis {
+  id        String          @id @default(cuid())
+  familyId  String
+  family    ProductFamily   @relation(fields: [familyId], references: [id], onDelete: Cascade)
+  name      String
+  sortOrder Int             @default(0)
+  options   VariantOption[]
+
+  @@unique([familyId, name])
+}
+
+/// Pilihan dalam kategori varian (mis. Series: Cowok)
+model VariantOption {
+  id          String                @id @default(cuid())
+  axisId      String
+  axis        VariantAxis           @relation(fields: [axisId], references: [id], onDelete: Cascade)
+  name        String
+  sortOrder   Int                   @default(0)
+  active      Boolean               @default(true)
+  /// Jumlah patung per SKU yang memakai pilihan ini (mis. Jumlah 24 = 24)
+  patungQty   Int?
+  /// Karakter patung (Series) → varian produk & patung kering yang dipakai
+  variant     ProductVariant?
+  /// Tipe produk SKU yang memakai pilihan ini (mis. Jumlah 12 → PAKET_12)
+  productType String?
+  values      ProductVariantValue[]
+
+  @@unique([axisId, name])
+}
+
+model ProductVariantValue {
+  productId String
+  product   Product       @relation(fields: [productId], references: [id], onDelete: Cascade)
+  optionId  String
+  option    VariantOption @relation(fields: [optionId], references: [id])
+
+  @@id([productId, optionId])
+  @@index([optionId])
 }
 
 /// Komponen resep barang setengah jadi (bahan baku atau setengah jadi lain), qty dalam satuan resep komponen
