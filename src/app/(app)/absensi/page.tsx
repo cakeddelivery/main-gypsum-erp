@@ -2,6 +2,7 @@ import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { addDays, dateOnly, fmtDateTime, fmtDay, todayStr } from "@/lib/time";
 import { ATT_LABEL } from "@/lib/attendance";
+import { fmtMinutes, lateOf, lateRecap } from "@/lib/lateRecap";
 import { Badge, Card, Empty, FilterBar, Field, PageHeader, Tabs } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
@@ -13,7 +14,7 @@ import { Paged } from "@/components/Paged";
 export const metadata = { title: "Absensi" };
 const TONE = { HADIR: "green", TERLAMBAT: "amber", IZIN: "blue", SAKIT: "purple", ALPA: "red", LIBUR: "gray" } as const;
 
-export default async function AbsensiPage({ searchParams }: { searchParams: Promise<{ tab?: string; date?: string }> }) {
+export default async function AbsensiPage({ searchParams }: { searchParams: Promise<{ tab?: string; date?: string; month?: string }> }) {
   const user = await requirePerm("attendance.view", "attendance.self");
   const sp = await searchParams;
   const today = todayStr();
@@ -22,7 +23,7 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
   const canLocation = user.can("attendance.location");
   const tabs = [
     ...(canManage
-      ? [{ key: "harian", label: "Harian", href: `/absensi?tab=harian&date=${date}` }, { key: "jadwal", label: "Jadwal shift", href: `/absensi?tab=jadwal&date=${date}` }, { key: "validasi", label: "Validasi", href: "/absensi?tab=validasi" }]
+      ? [{ key: "harian", label: "Harian", href: `/absensi?tab=harian&date=${date}` }, { key: "jadwal", label: "Jadwal shift", href: `/absensi?tab=jadwal&date=${date}` }, { key: "validasi", label: "Validasi", href: "/absensi?tab=validasi" }, { key: "telat", label: "Rekap telat", href: `/absensi?tab=telat&date=${date}` }]
       : []),
     ...(canLocation ? [{ key: "lokasi", label: "Lokasi kerja", href: "/absensi?tab=lokasi" }] : []),
   ];
@@ -38,8 +39,10 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
     ? await Promise.all([
         prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(today) } }, include: { shift: true } }),
         prisma.attendance.findMany({ where: { employeeId: user.employeeId }, include: { shift: true }, orderBy: { date: "desc" }, take: 14 }),
+        prisma.attendance.findMany({ where: { employeeId: user.employeeId, date: { gte: dateOnly(`${today.slice(0, 7)}-01`), lte: dateOnly(today) } }, select: { status: true, lateMinutes: true } }),
       ])
     : null;
+  const myLate = self ? lateOf(self[2]) : null;
 
   return (
     <div className="space-y-5">
@@ -63,6 +66,7 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
               <div className="w-full">{siteNote}</div>
             </ActionForm>
           )}
+          {myLate && <p className="mt-3 text-xs text-slate-500">Telat bulan ini: {myLate.count ? <b className="text-amber-700">{myLate.count}× · total {fmtMinutes(myLate.minutes)}</b> : "tidak pernah"} (hanya rekap, tidak memotong gaji)</p>}
           {self[1].length > 0 && (
             <ul className="mt-4 divide-y divide-slate-100 text-sm">
               {self[1].map((a) => (
@@ -78,6 +82,7 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
           {canManage && tab === "harian" && <Daily date={date} divFilter={divFilter} shifts={shifts} />}
           {canManage && tab === "jadwal" && <Schedule date={date} divFilter={divFilter} shifts={shifts} />}
           {canManage && tab === "validasi" && <Validation divFilter={divFilter} />}
+          {canManage && tab === "telat" && <LateTab date={date} month={sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : date.slice(0, 7)} divisionId={user.role === "KAPTEN_DIVISI" ? user.divisionId : null} />}
           {canLocation && tab === "lokasi" && <WorkSites />}
         </>
       )}
@@ -108,7 +113,7 @@ async function Daily({ date, divFilter, shifts }: { date: string; divFilter: obj
                   <td>{e.name}</td><td>{e.division.name}</td><td>{s?.shift.name ?? <span className="text-slate-400">—</span>}</td>
                   <td>{a ? <Badge tone={TONE[a.status]}>{ATT_LABEL[a.status]}{a.lateMinutes > 0 && ` ${a.lateMinutes}m`}</Badge> : <span className="text-slate-400">Belum ada</span>}</td>
                   <td>{a?.checkIn ? fmtDateTime(a.checkIn).slice(-9) : "-"}{a && <GeoLink lat={a.checkInLat} lng={a.checkInLng} distance={a.checkInDistance} />}</td>
-                  <td>{a?.checkOut ? fmtDateTime(a.checkOut).slice(-9) : "-"}{a && <GeoLink lat={a.checkOutLat} lng={a.checkOutLng} distance={a.checkOutDistance} />}</td>
+                  <td>{a?.checkOut ? fmtDateTime(a.checkOut).slice(-9) : "-"}{a && <GeoLink lat={a.checkOutLat} lng={a.checkOutLng} distance={a.checkOutDistance} />}{a?.reportMissing && <div><Badge tone="red">Pulang sebelum laporan shift terkirim</Badge></div>}</td>
                   <td>{a ? (a.validated ? <Badge tone="green">✓ {a.validatedBy}</Badge> : <Badge tone="amber">Belum</Badge>) : "-"}</td>
                   <td>
                     <Modal trigger="Atur" triggerClass="btn-secondary btn-sm" title={`Absensi ${e.name}`}>
@@ -272,6 +277,40 @@ async function WorkSites() {
           </table></Paged>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Rekap telat harian (tanggal dipilih) & bulanan per orang. Hanya rekap: tidak memotong gaji. */
+async function LateTab({ date, month, divisionId }: { date: string; month: string; divisionId: string | null }) {
+  const [y, m] = month.split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  const [daily, monthly] = await Promise.all([lateRecap(date, date, divisionId), lateRecap(`${month}-01`, `${month}-${String(last).padStart(2, "0")}`, divisionId)]);
+  const total = monthly.reduce((a, r) => ({ count: a.count + r.count, minutes: a.minutes + r.minutes }), { count: 0, minutes: 0 });
+  return (
+    <div className="space-y-5">
+      <p className="text-sm text-slate-500">Telat = absen masuk lewat toleransi shift. Hanya direkap (juga tampil di slip gaji), <b>tidak memotong gaji</b>.</p>
+      <Card title={`Telat hari ini · ${fmtDay(dateOnly(date))}`}>
+        <FilterBar><input type="hidden" name="tab" value="telat" /><input type="hidden" name="month" value={month} /><Field label="Tanggal"><input type="date" name="date" defaultValue={date} className="input" /></Field></FilterBar>
+        {daily.length === 0 ? <p className="text-sm text-slate-400">Tidak ada yang telat</p> : (
+          <div className="table-wrap"><table className="tbl">
+            <thead><tr><th>Karyawan</th><th>Divisi</th><th className="num">Telat</th></tr></thead>
+            <tbody>{daily.map((r) => <tr key={r.employeeId}><td>{r.name}</td><td>{r.division}</td><td className="num">{fmtMinutes(r.minutes)}</td></tr>)}</tbody>
+          </table></div>
+        )}
+      </Card>
+      <Card title={`Rekap telat bulan ${month} · ${total.count}× · ${fmtMinutes(total.minutes)}`}>
+        <FilterBar><input type="hidden" name="tab" value="telat" /><input type="hidden" name="date" value={date} /><Field label="Bulan"><input type="month" name="month" defaultValue={month} className="input" /></Field></FilterBar>
+        {monthly.length === 0 ? <p className="text-sm text-slate-400">Tidak ada yang telat bulan ini</p> : (
+          <div className="table-wrap"><Paged><table className="tbl">
+            <thead><tr><th>Karyawan</th><th>Divisi</th><th className="num">Berapa kali</th><th className="num">Total menit</th><th>Tanggal</th></tr></thead>
+            <tbody>{monthly.map((r) => (
+              <tr key={r.employeeId}><td>{r.name}</td><td>{r.division}</td><td className="num">{r.count}×</td><td className="num">{fmtMinutes(r.minutes)}</td>
+                <td className="text-xs text-slate-500">{r.days.map((d) => `${d.date.toISOString().slice(8, 10)} (${d.minutes}m)`).join(", ")}</td></tr>
+            ))}</tbody>
+          </table></Paged></div>
+        )}
+      </Card>
     </div>
   );
 }

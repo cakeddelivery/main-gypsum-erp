@@ -266,6 +266,8 @@ model Attendance {
   checkOutLng      Float?
   checkOutAccuracy Float?
   checkOutDistance Int?
+  /// Absen pulang saat laporan shift divisinya belum terkirim (hanya peringatan, tanda untuk Owner)
+  reportMissing    Boolean          @default(false)
 
   @@unique([employeeId, date])
 }
@@ -562,6 +564,9 @@ model Payslip {
   /// Tunjangan (periode TUNJANGAN, dibayar tiap tanggal 15); rincian [{name, amount}]
   allowance        BigInt        @default(0)
   allowanceDetail  Json          @default("[]")
+  /// Rekap telat periode ini (hanya rekap, tidak memotong gaji): berapa kali & total menit di atas toleransi
+  lateCount        Int           @default(0)
+  lateMinutes      Int           @default(0)
   total            BigInt
 
   @@unique([periodId, employeeId])
@@ -625,35 +630,64 @@ enum ReportStatus {
 }
 
 model ShiftReport {
-  id                String       @id @default(cuid())
-  date              DateTime     @db.Date
+  id                String         @id @default(cuid())
+  date              DateTime       @db.Date
   shiftId           String
-  shift             Shift        @relation(fields: [shiftId], references: [id])
+  shift             Shift          @relation(fields: [shiftId], references: [id])
   divisionId        String
-  division          Division     @relation(fields: [divisionId], references: [id])
-  status            ReportStatus @default(DRAFT)
+  division          Division       @relation(fields: [divisionId], references: [id])
+  status            ReportStatus   @default(DRAFT)
   /// [{label, photo, done, photoPath?}]
-  checklist         Json         @default("[]")
+  checklist         Json           @default("[]")
   /// PIC divisi yang melaporkan shift ini
   picName           String?
   /// Detail hasil kerja sesuai format divisi (lihat src/lib/shiftReport.ts)
-  work              Json         @default("{}")
+  work              Json           @default("{}")
   /// Stok akhir shift (hitung fisik): [{itemId, name, unit, limit, qty}]
-  stockCount        Json         @default("[]")
+  stockCount        Json           @default("[]")
   /// Hitungan stok sudah diterapkan ke kartu stok (penyesuaian stock opname)
-  stockApplied      Boolean      @default(false)
+  stockApplied      Boolean        @default(false)
   /// Hitungan stok yang terakhir diterapkan; revisi laporan hanya menerapkan selisihnya
   stockAppliedCount Json?
   /// Versi posting hasil kerja ke stok setengah jadi / barang jadi (0 = belum); revisi = balik versi lama lalu posting versi baru
-  workPostedVersion Int          @default(0)
+  workPostedVersion Int            @default(0)
+  /// Stok akhir hasil (patung kering / produk jadi per karakter) yang terakhir diterapkan ke stok: [{itemId, qty}]
+  resultApplied     Json?
+  receipts          ShiftReceipt[]
   complaints        String?
   followUp          String?
-  followUpStatus    String       @default("BELUM")
+  followUpStatus    String         @default("BELUM")
   createdBy         String
-  createdAt         DateTime     @default(now())
+  createdAt         DateTime       @default(now())
   sends             ReportSend[]
 
   @@unique([date, shiftId, divisionId])
+}
+
+/// Barang masuk dari supplier/toko yang dilaporkan divisi di laporan shift (sebelum stok akhir dihitung).
+/// Belum ditautkan = sudah ada fisik di gudang tapi belum dicatat di Pembelian: stock opname menganggapnya sudah ada
+/// (tidak jadi pemakaian/HPP). Saat ditautkan ke Pembelian, stok masuk bertanggal waktu barang masuk (tidak dobel).
+model ShiftReceipt {
+  id           String      @id @default(cuid())
+  number       String      @unique
+  reportId     String
+  report       ShiftReport @relation(fields: [reportId], references: [id])
+  divisionId   String
+  itemId       String
+  item         Item        @relation(fields: [itemId], references: [id])
+  qty          Decimal     @db.Decimal(14, 3)
+  /// Nama supplier/toko yang tertulis di nota (bebas)
+  supplierName String?
+  photoPath    String?
+  photoMime    String?
+  /// Waktu barang dicatat masuk (tidak melewati jam selesai shift laporan)
+  receivedAt   DateTime
+  purchaseId   String?
+  purchase     Purchase?   @relation(fields: [purchaseId], references: [id])
+  createdBy    String
+  createdAt    DateTime    @default(now())
+
+  @@index([itemId, purchaseId])
 }
 
 model ReportSend {
@@ -769,6 +803,7 @@ model Item {
   recipeLabor       RecipeLabor[]
   recipeOverhead    RecipeOverhead[]
   saleLines         SaleLine[]
+  shiftReceipts     ShiftReceipt[]
 }
 
 enum MovementType {
@@ -1404,6 +1439,7 @@ model Purchase {
   createdBy     String
   createdAt     DateTime       @default(now())
   lines         PurchaseLine[]
+  receipts      ShiftReceipt[]
   /// Dibatalkan: jurnal dibalik, dokumen tetap tersimpan
   cancelledAt   DateTime?
   cancelReason  String?

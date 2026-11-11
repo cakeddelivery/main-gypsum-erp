@@ -13,6 +13,7 @@ import { cancelPurchaseAction, savePurchase } from "./actions";
 import { Field } from "@/components/ui";
 import { Paged } from "@/components/Paged";
 import { ProofPreview } from "@/components/ProofPreview";
+import { unlinkedReceiptGroups } from "@/lib/shiftReceipt";
 
 export const metadata = { title: "Pembelian Bahan Baku" };
 
@@ -25,16 +26,57 @@ export default async function PembelianPage() {
     prisma.purchase.findMany({ include: { lines: { include: { item: true } } }, orderBy: { date: "desc" }, take: 50 }),
   ]);
   const payables = await prisma.payable.findMany({ where: { id: { in: purchases.map((p) => p.payableId).filter((x): x is string => !!x) } } });
+  const receiptGroups = await unlinkedReceiptGroups();
+  const formItems = items.map((i) => ({ id: i.id, sku: i.sku, name: i.name, unit: i.unit, lastCost: latestCost(i) }));
+  const defaultBank = banks.find((b) => b.code === "SEABANK")?.id;
   return (
     <div className="space-y-5">
       <PageHeader title="Pembelian bahan baku" subtitle="Satu supplier, banyak item. Nominal kurang dari tagihan otomatis jadi hutang. Stok, jurnal, dan hutang tercatat sekaligus." actions={user.can("finance.approve") && (
         <Modal trigger="+ Pembelian" title="Pembelian baru" wide>
           <ModalForm action={savePurchase}>
-            <PurchaseFields items={items.map((i) => ({ id: i.id, sku: i.sku, name: i.name, unit: i.unit, lastCost: latestCost(i) }))} suppliers={suppliers} banks={banks} today={todayStr()} defaultBank={banks.find((b) => b.code === "SEABANK")?.id} />
+            <PurchaseFields items={formItems} suppliers={suppliers} banks={banks} today={todayStr()} defaultBank={defaultBank} />
             <div className="mt-4"><Submit>Simpan pembelian</Submit></div>
           </ModalForm>
         </Modal>
       )} />
+      {receiptGroups.length > 0 && (
+        <Card title={`Barang masuk dari laporan shift · belum dicatat pembeliannya (${receiptGroups.reduce((a, g) => a + g.rows.length, 0)})`}>
+          <p className="mb-3 text-sm text-slate-500">Barang ini sudah ada di gudang dan sudah ikut dihitung di stok akhir shift. Catat pembeliannya (harga & cara bayar) lewat tombol di bawah agar stok & hutang tercatat tanpa dobel.</p>
+          <ul className="divide-y divide-slate-100 text-sm">
+            {receiptGroups.map((g) => (
+              <li key={g.key} className="flex flex-wrap items-start justify-between gap-2 py-2">
+                <div className="min-w-0">
+                  <p><b>{g.report.division.name}</b> · {fmtDate(g.report.date)} · {g.report.shift.name}{g.supplierName && <> · toko <b>{g.supplierName}</b></>}</p>
+                  <ul className="mt-1 text-xs text-slate-600">
+                    {g.rows.map((x) => (
+                      <li key={x.id} className="flex items-center gap-2">
+                        <span className="font-mono">{x.number}</span> {x.item.name}: {Number(x.qty).toLocaleString("id-ID")} {x.item.unit}
+                        {x.photoPath && <ProofPreview src={`/api/files/receipt/${x.id}`} mime={x.photoMime} title={`Nota ${x.number}`} />}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                {user.can("finance.approve") && (
+                  <Modal trigger="Catat pembelian" triggerClass="btn-primary btn-sm" title="Pembelian dari barang masuk" wide>
+                    <ModalForm action={savePurchase}>
+                      <PurchaseFields
+                        items={formItems}
+                        suppliers={suppliers}
+                        banks={banks}
+                        today={g.report.date.toISOString().slice(0, 10)}
+                        defaultBank={defaultBank}
+                        supplierHint={g.supplierName}
+                        receipts={g.rows.map((x) => ({ receiptId: x.id, itemId: x.itemId, qty: Number(x.qty), label: `Barang masuk ${x.number} (${g.report.division.name})` }))}
+                      />
+                      <div className="mt-4"><Submit>Simpan pembelian</Submit></div>
+                    </ModalForm>
+                  </Modal>
+                )}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
       {purchases.length === 0 ? <Empty title="Belum ada pembelian" /> : (
         <Card title="Riwayat pembelian">
           <div className="overflow-x-auto">

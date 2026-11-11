@@ -19,6 +19,8 @@ type Props = {
   legacyLines?: string[];
   /** Hasil borongan di tanggal ini (dari setoran, hanya ditampilkan) */
   extraLines?: string[];
+  /** Barang masuk dari supplier/toko di shift ini */
+  receiptLines?: string[];
   /** Target hasil per shift divisi */
   target?: number | null;
   lh: Letterhead;
@@ -66,6 +68,13 @@ export function ReportSheet(p: Props) {
             );
           })}
         </ul>
+
+        {(p.receiptLines?.length ?? 0) > 0 && (
+          <>
+            <Heading tone="amber">Barang masuk</Heading>
+            <ul className="space-y-0.5 px-2 text-[13px] text-[#374151]">{p.receiptLines!.map((l, i) => <li key={i}>• {l}</li>)}</ul>
+          </>
+        )}
 
         {p.stock.length > 0 && (
           <>

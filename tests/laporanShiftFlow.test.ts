@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { COA } from "@/lib/accounting";
-import { locationSettings, qtyAt, usageAccountCode } from "@/lib/stock";
+import { locationSettings, qtyAt, recordMovement } from "@/lib/stock";
 import { flowLines, parseWork, plannedFlow, splitEven, summaryOf, targetLine, targetOf, workLines, type WorkData } from "@/lib/shiftReport";
 import { FLOW_SETTING, flowItem, postShiftWork } from "@/lib/shiftReportFlow";
 import { recordProductionEntry } from "@/lib/productionEntry";
@@ -17,9 +17,8 @@ describe("Rencana stok dari hasil kerja (murni)", () => {
       { kind: "kering", key: "Cewek", qty: 1000, dir: "in" },
     ]);
   });
-  it("Assembling: patung kering keluar, produk jadi masuk", () => {
-    const steps = plannedFlow("ASSEMBLING", { jadi: [{ name: "Eva", v: [10, null, 5, null] }, { name: "Sonna", v: [2, 3, null, null] }] });
-    expect(flowLines(steps)).toEqual(["+ Produk jadi Hewan 12", "+ Produk jadi Cowok 3", "+ Produk jadi Transportasi 5", "− Patung kering Hewan 12", "− Patung kering Cowok 3", "− Patung kering Transportasi 5"]);
+  it("Assembling dikerjakan borongan: laporan tidak mengubah stok (dari setoran Borongan)", () => {
+    expect(flowLines(plannedFlow("ASSEMBLING", { jadi: [{ name: "Eva", v: [10, null, 5, null] }] }))).toEqual([]);
   });
   it("Giftbox: 5 patung kering per box (MIX dibagi rata), giftbox masuk lalu keluar", () => {
     const steps = plannedFlow("GIFTBOX", { giftbox: { MIX: 2, CEW: 1, "HWN-PLT": 1 } });
@@ -74,7 +73,7 @@ describe("Posting hasil kerja laporan shift ke stok", () => {
     expect(await postShiftWork(r.id, actor)).toEqual({ posted: 0, skipped: "nonaktif" });
   });
 
-  it("aktif: panen → patung kering; assembling → produk jadi bernilai resep; packing → HPP; revisi membalik versi lama", async () => {
+  it("aktif: panen → patung kering; packing → HPP; revisi membalik versi lama", async () => {
     await prisma.setting.upsert({ where: { key: FLOW_SETTING }, create: { key: FLOW_SETTING, value: "true" }, update: { value: "true" } });
     const kering = await prisma.$transaction((tx) => flowItem(tx, { kind: "kering", key: "Hewan" }));
     const jadi = await prisma.$transaction((tx) => flowItem(tx, { kind: "jadi", key: "Hewan" }));
@@ -87,26 +86,14 @@ describe("Posting hasil kerja laporan shift ke stok", () => {
     const mv = await prisma.stockMovement.findFirstOrThrow({ where: { ref: `LPH:${panen.id}:1` } });
     expect(mv.date.toISOString()).toBe(jakartaDateTime("2027-10-02", "15:00").toISOString());
 
-    const asm = await report("ASSEMBLING", "2027-10-02", { jadi: [{ name: "Eva", v: [100, null, null, null] }] });
-    await postShiftWork(asm.id, actor, jakartaDateTime("2027-10-03", "08:00"));
-    expect(await qtyAt(prisma, kering, wip)).toBe(k0 + 300);
-    expect(await qtyAt(prisma, jadi, finished)).toBe(j0 + 100);
-    // Nilai bahan resep pindah dari HPP Pemakaian Bahan Baku ke persediaan barang jadi
-    const j = await prisma.journal.findFirst({ where: { source: "LAPORAN_SHIFT", sourceId: `${asm.id}:1` }, include: { lines: { include: { account: true } } } });
-    expect(j).toBeTruthy();
-    if (j) {
-      expect(j.lines.find((l) => l.account.code === COA.PERSEDIAAN_JADI)?.debit).toBeGreaterThan(0n);
-      expect(j.lines.find((l) => Number(l.credit) > 0)?.account.code).toBe(await usageAccountCode(prisma));
-    }
+    // Revisi: 400 → 350; versi lama dibalik (stok & jurnal), versi baru diposting
+    await prisma.shiftReport.update({ where: { id: panen.id }, data: { work: { panen: [{ name: "Oven Besar", v: [350, null, null, null] }] } } });
+    await postShiftWork(panen.id, actor, jakartaDateTime("2027-10-03", "09:00"));
+    expect(await qtyAt(prisma, kering, wip)).toBe(k0 + 350);
+    expect((await prisma.shiftReport.findUniqueOrThrow({ where: { id: panen.id } })).workPostedVersion).toBe(2);
 
-    // Revisi: 100 → 80; versi lama dibalik (stok & jurnal), versi baru diposting
-    await prisma.shiftReport.update({ where: { id: asm.id }, data: { work: { jadi: [{ name: "Eva", v: [80, null, null, null] }] } } });
-    await postShiftWork(asm.id, actor, jakartaDateTime("2027-10-03", "09:00"));
-    expect(await qtyAt(prisma, jadi, finished)).toBe(j0 + 80);
-    expect(await qtyAt(prisma, kering, wip)).toBe(k0 + 320);
-    expect((await prisma.shiftReport.findUniqueOrThrow({ where: { id: asm.id } })).workPostedVersion).toBe(2);
-    if (j) expect(await prisma.journal.count({ where: { reversalOfId: j.id } })).toBe(1);
-
+    // Barang jadi masuk (mis. dari borongan) lalu Packing mengeluarkannya → HPP
+    await prisma.$transaction((tx) => recordMovement(tx, { type: "HASIL_PRODUKSI", itemId: jadi, qty: 80, toLocationId: finished, unitCost: 500, date: jakartaDateTime("2027-10-02", "10:00") }, actor));
     // Packing: produk jadi keluar → HPP (Dr HPP / Cr Persediaan Barang Jadi)
     const pck = await report("PACKING", "2027-10-02", { satuan: { hewan: 30 } });
     await postShiftWork(pck.id, actor, jakartaDateTime("2027-10-03", "10:00"));

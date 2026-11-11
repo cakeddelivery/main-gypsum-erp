@@ -4,6 +4,7 @@ import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDay, todayStr } from "@/lib/time";
+import { fmtMinutes } from "@/lib/lateRecap";
 import { letterhead } from "@/lib/letterhead";
 import { DocExport, DocBar, DocSection, DocSheet, DocSummary, DocTable, fmtLong, fmtRange } from "@/components/DocSheet";
 import { STAGE_LABEL } from "@/lib/stock";
@@ -40,10 +41,12 @@ export default async function SlipPage({ params }: { params: Promise<{ id: strin
   const sum = (x: { v: number }[]) => x.reduce((t, r) => t + r.v, 0);
   const tunj = s.period.kind === "TUNJANGAN";
   const lh = await letterhead();
+  // Rekap telat: hanya informasi, tidak memotong gaji
+  const lateText = s.lateCount ? `${s.lateCount}× · total ${fmtMinutes(s.lateMinutes)}` : "tidak pernah";
   const info: [string, React.ReactNode][] = [
     ["Nama", s.employee.name], ["Kode", s.employee.code], ["Divisi", s.employee.division.name],
     ...(!tunj ? [["Hari hadir", `${s.daysPresent} hari`] as [string, string]] : []),
-    ...(s.period.kind === "BULANAN" ? [["Libur (jatah)", `${s.offDays} hari`], ["Bolos", `${s.absentDays} hari`]] as [string, string][] : []),
+    ...(s.period.kind === "BULANAN" ? [["Libur (jatah)", `${s.offDays} hari`], ["Bolos", `${s.absentDays} hari`], ["Terlambat", lateText]] as [string, string][] : []),
     ...(s.period.payDate ? [[tunj ? "Tanggal bayar" : "Tanggal gajian", fmtLong(s.period.payDate)] as [string, string]] : []),
     ["Status", `${s.period.status}${s.period.paidAt ? ` · dibayar ${fmtDay(s.period.paidAt)}` : ""}`],
   ];
@@ -61,7 +64,7 @@ export default async function SlipPage({ params }: { params: Promise<{ id: strin
           <span className="text-slate-500">Kode</span><span>{s.employee.code}</span>
           <span className="text-slate-500">Divisi</span><span>{s.employee.division.name}</span>
           {s.period.kind !== "TUNJANGAN" && <><span className="text-slate-500">Hari hadir</span><span>{s.daysPresent} hari</span></>}
-          {s.period.kind === "BULANAN" && <><span className="text-slate-500">Libur (jatah)</span><span>{s.offDays} hari</span><span className="text-slate-500">Bolos</span><span>{s.absentDays} hari</span></>}
+          {s.period.kind === "BULANAN" && <><span className="text-slate-500">Libur (jatah)</span><span>{s.offDays} hari</span><span className="text-slate-500">Bolos</span><span>{s.absentDays} hari</span><span className="text-slate-500">Terlambat</span><span>{lateText}</span></>}
           {s.period.payDate && <><span className="text-slate-500">{s.period.kind === "TUNJANGAN" ? "Tanggal bayar" : "Tanggal gajian"}</span><span>{fmtDay(s.period.payDate)}</span></>}
         </div>
         <div className="border-b py-3">

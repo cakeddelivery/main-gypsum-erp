@@ -17,7 +17,8 @@ export const savePurchase = action(
     const items = fd.getAll("itemId").map(String);
     const qty = fd.getAll("qty").map(num);
     const totals = fd.getAll("lineTotal").map(num);
-    const lines = items.map((itemId, i) => ({ itemId, qty: qty[i], amount: totals[i] }));
+    const receipts = fd.getAll("receiptId").map(String);
+    const lines = items.map((itemId, i) => ({ itemId, qty: qty[i], amount: totals[i], receiptId: receipts[i] || null }));
     // Tagihan = total semua baris; status bayar ditentukan dari nominal yang dibayar
     const bill = lineAmounts(lines.filter((l) => l.itemId && l.qty > 0)).reduce((s, l) => s + l.amount, 0);
     const paid = int(fd, "paidAmount");

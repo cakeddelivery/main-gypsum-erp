@@ -13,6 +13,8 @@ import { applyShiftStockCount } from "@/lib/shiftReportStock";
 import { postShiftWork } from "@/lib/shiftReportFlow";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { saveProof } from "@/lib/storage";
+import { addShiftReceipt, removeShiftReceipt } from "@/lib/shiftReceipt";
+import { RESULT_KEY, applyResultCount, parseResultCount, resultCountStatus, resultLines } from "@/lib/shiftResultCount";
 import { isDone, isTemplate, needsOrder, parseWork, summaryOf, targetLine, targetOf, toEntries, workLines, type ChecklistEntry, type StockCountRow } from "@/lib/shiftReport";
 
 const DEFAULT_CHECKLIST = ["Area kerja bersih & rapi", "Peralatan/cetakan dicek", "Bahan cukup untuk shift berikutnya", "Hasil sudah dihitung ulang", "Reject dipisahkan & dicatat"];
@@ -85,7 +87,10 @@ export const saveReport = action(
     const r = await guardReport(id, user);
     const checklist = toEntries(r.checklist).map((c, i) => ({ ...c, done: c.photo ? !!c.photoPath : fd.get(`check_${i}`) === "on" }));
     const template = r.division.reportTemplate;
-    const work = isTemplate(template) ? parseWork(template, (k) => (typeof fd.get(k) === "string" ? (fd.get(k) as string) : null)) : {};
+    const get = (k: string) => (typeof fd.get(k) === "string" ? (fd.get(k) as string) : null);
+    const work: Record<string, unknown> = isTemplate(template) ? parseWork(template, get) : {};
+    const rc = parseResultCount(isTemplate(template) ? template : null, get);
+    if (rc) work[RESULT_KEY] = rc;
     const stock = (await stockRows(r.divisionId, r.stockCount as StockCountRow[])).map((row) => (fd.has(`s.${row.itemId}`) ? { ...row, qty: num(str(fd, `s.${row.itemId}`)) } : row));
     await prisma.shiftReport.update({
       where: { id },
@@ -162,6 +167,10 @@ export const sendReport = action(
     const stockRes = await applyShiftStockCount(id, user);
     // Hasil kerja → stok setengah jadi / barang jadi (bila diaktifkan Owner)
     const flowRes = await postShiftWork(id, user);
+    // Stok akhir hasil (patung kering / produk jadi per karakter): selisih ditandai; disamakan bila sakelar menyala
+    const resultRes = await applyResultCount(id, user);
+    const resultStatus = await resultCountStatus(id);
+    const receipts = await prisma.shiftReceipt.findMany({ where: { reportId: id }, include: { item: true }, orderBy: { number: "asc" } });
     const template = r.division.reportTemplate;
     const checklist = toEntries(r.checklist) as ChecklistEntry[];
     const stock = r.stockCount as StockCountRow[];
@@ -176,6 +185,8 @@ export const sendReport = action(
         "",
         ...workLines(template, work).map(esc),
         ...(await boronganLines(template, r.date)).map(esc),
+        ...(resultStatus ? resultLines(resultStatus).map((l) => (l.includes("⚠") ? `<b>${esc(l)}</b>` : esc(l))) : []),
+        ...(receipts.length ? ["", `<b>Barang masuk (${receipts.length})</b>`, ...receipts.map((x) => `• ${esc(x.item.name)}: ${Number(x.qty).toLocaleString("id-ID")} ${esc(x.item.unit)}${x.supplierName ? ` · ${esc(x.supplierName)}` : ""}${x.purchaseId ? "" : " (belum dicatat di Pembelian)"}`)] : []),
         "",
         `<b>Checklist penutupan ${checklist.filter(isDone).length}/${checklist.length}</b>`,
         ...checklist.filter((c) => !isDone(c)).map((c) => `✗ ${esc(c.label)}${c.photo ? " (foto belum ada)" : ""}`),
@@ -213,10 +224,60 @@ export const sendReport = action(
       prisma.reportSend.create({ data: { reportId: id, sentBy: user.name, channel, status, error } }),
       prisma.shiftReport.update({ where: { id }, data: { status: status === "GAGAL" ? r.status : "TERKIRIM" } }),
     ]);
-    await audit(user, "LAPORAN_DIKIRIM", "ShiftReport", id, { status, channel, stockAdjusted: stockRes.adjusted, stockSkipped: stockRes.skipped ?? null, workPosted: flowRes.posted });
+    await audit(user, "LAPORAN_DIKIRIM", "ShiftReport", id, { status, channel, stockAdjusted: stockRes.adjusted, stockSkipped: stockRes.skipped ?? null, workPosted: flowRes.posted, resultAdjusted: resultRes.adjusted });
     if (status === "GAGAL") throw new Error(`Pengiriman gagal: ${error}${stockRes.adjusted ? " (stok akhir shift sudah tercatat)" : ""}`);
     const msg = status === "SEBAGIAN" ? "Terkirim sebagian, cek riwayat" : "Laporan terkirim";
     return stockRes.skipped ? `${msg}. ${stockRes.skipped}` : msg;
   },
   ["/laporan", "/", "/stok"],
+);
+
+/** Barang masuk hari ini (dari supplier/toko), dicatat sebelum stok akhir; foto nota opsional */
+export async function addReceipt(fd: FormData): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const user = await assertPerm("report.create");
+    const id = str(fd, "id");
+    await guardReport(id, user);
+    const qty = num(str(fd, "qty"));
+    if (qty == null || qty <= 0) throw new Error("Isi jumlah barang masuk");
+    let photoPath: string | null = null;
+    let photoMime: string | null = null;
+    const file = fd.get("photo");
+    if (file instanceof File && file.size > 0) {
+      photoMime = file.type || "image/jpeg";
+      photoPath = await saveProof(Buffer.from(await file.arrayBuffer()), photoMime);
+    }
+    await addShiftReceipt(id, { itemId: str(fd, "itemId"), qty, supplierName: optStr(fd, "supplierName"), photoPath, photoMime }, user);
+    revalidatePath(`/laporan/${id}`);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Gagal menyimpan barang masuk" };
+  }
+}
+
+export async function removeReceipt(fd: FormData): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const user = await assertPerm("report.create");
+    const id = str(fd, "id");
+    await guardReport(id, user);
+    const x = await prisma.shiftReceipt.findUniqueOrThrow({ where: { id: str(fd, "receiptId") } });
+    if (x.reportId !== id) throw new ForbiddenError();
+    await removeShiftReceipt(x.id, user);
+    revalidatePath(`/laporan/${id}`);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Gagal menghapus barang masuk" };
+  }
+}
+
+/** Terima kiriman hasil borongan dari halaman laporan shift (kapten divisi pemilik barang, mis. pot cat giftbox) */
+export const confirmReturnForReport = action(
+  "report.create",
+  async (fd, user) => {
+    const r = await guardReport(str(fd, "reportId"), user);
+    const { boronganScope, receiveHandover } = await import("@/lib/borongan");
+    await receiveHandover(str(fd, "id"), user, await boronganScope(prisma, user), { divisionId: r.divisionId });
+    return "Kiriman diterima, stok sudah masuk gudang";
+  },
+  ["/laporan", "/borongan", "/stok"],
 );

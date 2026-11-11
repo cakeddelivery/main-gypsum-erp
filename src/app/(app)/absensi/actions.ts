@@ -20,8 +20,8 @@ export const checkIn = action(
 export const checkOut = action(
   "attendance.self",
   async (fd, user) => {
-    await selfCheckOut(user, readGeo(fd));
-    return "Absen pulang tercatat";
+    const r = await selfCheckOut(user, readGeo(fd));
+    return r.warning ? `Absen pulang tercatat. ⚠ ${r.warning}` : "Absen pulang tercatat";
   },
   ["/absensi"],
 );

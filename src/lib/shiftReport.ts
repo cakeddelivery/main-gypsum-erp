@@ -18,6 +18,8 @@ export type GridSection = {
   totalLabel: string;
   /** Tampilkan baris TOTAL per kolom (mis. assembling) */
   colTotals?: boolean;
+  /** Bagian lama: hanya tampil di laporan lama yang sudah terisi (tidak diisi lagi di form) */
+  legacy?: boolean;
 };
 /** Daftar hitungan; mult = pengali ke pcs (mis. paket isi 12) */
 export type CountSection = {
@@ -89,11 +91,13 @@ export const TEMPLATES: Record<ReportTemplate, TemplateDef> = {
     summary: [{ label: "Total resi", sections: ["resi"], unit: "" }, { label: "Total patung", sections: ["mix", "satuan"] }],
     target: { label: "patung", sections: ["mix", "satuan"], unit: "pcs" },
   },
+  // Assembling tidak berproduksi di workshop (dikerjakan borongan BMR/Mastrip): laporannya = setoran borongan (dari menu
+  // Borongan) + stok akhir bahan baku + stok akhir produk jadi per karakter. "Produk jadi per orang" hanya untuk laporan lama.
   ASSEMBLING: {
     label: "Assembling",
-    heading: "Hasil produk jadi assembling",
-    sections: [{ kind: "grid", key: "jadi", title: "Produk jadi per orang", rows: "people", cols: VARIANTS, totalLabel: "Total produk jadi", colTotals: true }],
-    summary: [{ label: "Total produk jadi", sections: ["jadi"] }],
+    heading: "",
+    sections: [{ kind: "grid", key: "jadi", title: "Produk jadi per orang (format lama)", rows: "people", cols: VARIANTS, totalLabel: "Total produk jadi", colTotals: true, legacy: true }],
+    summary: [{ label: "Total produk jadi", sections: ["jadi"], ifFilled: true }],
     target: { label: "produk jadi", sections: ["jadi"], unit: "pcs" },
   },
 };
@@ -204,8 +208,8 @@ export function workLines(template: ReportTemplate, work: WorkData): string[] {
       continue;
     }
     if (s.kind === "grid") {
-      // Bagian opsional (mis. reject) yang tidak diisi tidak ditampilkan
-      if (s.key === "reject" && !sectionFilled(t, work, s.key)) continue;
+      // Bagian opsional (mis. reject) / format lama yang tidak diisi tidak ditampilkan
+      if ((s.key === "reject" || s.legacy) && !sectionFilled(t, work, s.key)) continue;
       if (!t.heading) out.push(s.title.toUpperCase());
       const rows = gridRows(work, s);
       for (const r of rows) {
@@ -286,7 +290,8 @@ export function expectedReportCount(divisions: { shiftCount: number }[], activeS
 
 export type ChecklistTask = { label: string; photo: boolean };
 export type ChecklistEntry = ChecklistTask & { done: boolean; photoPath?: string | null };
-export type StockCountRow = { itemId: string; name: string; unit: string; limit: number; qty: number | null };
+/** rcpt = id barang masuk yang sudah diperhitungkan saat hitungan ini diterapkan (hanya di snapshot stockAppliedCount) */
+export type StockCountRow = { itemId: string; name: string; unit: string; limit: number; qty: number | null; rcpt?: string[] };
 
 /** Bahan perlu diorder bila stok akhir ≤ limit */
 export function needsOrder(r: { qty: number | null; limit: number }) {
@@ -439,11 +444,6 @@ export function plannedFlow(template: ReportTemplate, work: WorkData): FlowStep[
   };
   if (template === "PRODUKSI") {
     grid("panen").forEach((q, i) => add("kering", VARIANTS[i], q, "in"));
-  } else if (template === "ASSEMBLING") {
-    grid("jadi").forEach((q, i) => {
-      add("kering", VARIANTS[i], q, "out");
-      add("jadi", VARIANTS[i], q, "in");
-    });
   } else if (template === "GIFTBOX") {
     const v = countValues(work, "giftbox");
     for (const code of GIFTBOX_CODES) {

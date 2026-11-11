@@ -5,7 +5,7 @@ import { idr } from "@/lib/money";
 import { fmtDay, todayStr } from "@/lib/time";
 import { stockBalances } from "@/lib/stock";
 import { recipeUnit } from "@/lib/unitcost";
-import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, payLines, resultShares } from "@/lib/borongan";
+import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, canWarehouse, payLines, resultShares } from "@/lib/borongan";
 import { Badge, Card, Empty, Field, PageHeader, Tabs } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
@@ -65,7 +65,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
     <Field label="Driver"><select name="driverId" className="input" defaultValue={drivers[0].id}>{drivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
   );
 
-  const sendMaterial = manage && (
+  const sendMaterial = canWarehouse(scope) && (
     <Modal trigger="+ Kirim Bahan" title="Kirim bahan ke titik lewat driver" wide>
       <ModalForm action={sendHandover} className="space-y-3">
         <input type="hidden" name="kind" value="KIRIM" />
@@ -114,7 +114,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
     <div className="space-y-5">
       <PageHeader
         title="Borongan"
-        subtitle={manage ? "Bahan dikirim lewat driver ke titik BMR & Mastrip, hasil disetor per pekerja, upah dibagi pekerja, koordinator, dan driver" : `Titik ${points.map((p) => p.name).join(", ")}`}
+        subtitle={canWarehouse(scope) ? "Bahan dikirim lewat driver ke titik borongan, hasil disetor per pekerja, upah dibagi pekerja, koordinator, dan driver" : `Titik ${points.map((p) => p.name).join(", ")}`}
         actions={<div className="flex flex-wrap gap-2">{sendMaterial}{resultForm}{sendBack}</div>}
       />
       <Tabs current={tab} tabs={tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: x.key === "serah" ? pending.length || undefined : undefined }))} />
@@ -148,8 +148,8 @@ function PendingList({ pending, scope }: { pending: Pending; scope: Scope }) {
     <Card title="Menunggu konfirmasi terima">
       <ul className="divide-y divide-slate-100 text-sm">
         {pending.map((h) => {
-          const canReceive = h.kind === "KIRIM" ? canPoint(scope, h.pointId) : scope.all;
-          const canCancel = h.kind === "KIRIM" ? scope.all : canPoint(scope, h.pointId);
+          const canReceive = h.kind === "KIRIM" ? canPoint(scope, h.pointId) : canWarehouse(scope);
+          const canCancel = h.kind === "KIRIM" ? canWarehouse(scope) : canPoint(scope, h.pointId);
           return (
             <li key={h.id} className="flex flex-wrap items-start justify-between gap-2 py-2">
               <div className="min-w-0">

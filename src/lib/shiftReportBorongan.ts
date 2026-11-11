@@ -2,7 +2,7 @@ import { prisma } from "./db";
 import type { ReportTemplate } from "./shiftReport";
 
 /** Pekerjaan borongan yang ditampilkan di laporan divisi (berdasarkan nama pekerjaan) */
-const TASK_MATCH: Partial<Record<ReportTemplate, RegExp>> = { ASSEMBLING: /assembl/i, GIFTBOX: /giftbox/i };
+const TASK_MATCH: Partial<Record<ReportTemplate, RegExp>> = { ASSEMBLING: /assembl|cat plastik/i, GIFTBOX: /giftbox/i };
 
 /**
  * Hasil borongan (BMR/Mastrip) di tanggal laporan, diambil dari setoran hasil Borongan (hanya ditampilkan).
@@ -19,5 +19,6 @@ export async function boronganLines(template: ReportTemplate | null, date: Date)
     sum.set(k, (sum.get(k) ?? 0) + r.qty);
   }
   if (!sum.size) return [];
-  return ["HASIL BORONGAN (dari setoran, stok sudah tercatat)", ...[...sum].map(([k, q]) => `${k}: ${q.toLocaleString("id-ID")} pcs`)];
+  const total = [...sum.values()].reduce((a, q) => a + q, 0);
+  return ["SETORAN BORONGAN (dari menu Borongan, stok sudah tercatat)", ...[...sum].map(([k, q]) => `${k}: ${q.toLocaleString("id-ID")} pcs`), `TOTAL SETORAN: ${total.toLocaleString("id-ID")} pcs`];
 }

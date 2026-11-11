@@ -48,9 +48,17 @@ const rp = (n: number) => `Rp ${Math.round(n).toLocaleString("id-ID")}`;
  * Form pembelian: satu supplier di atas, banyak item di bawahnya (isi jumlah & total harga per item,
  * harga per satuan dihitung otomatis). Tagihan vs nominal dibayar menentukan status Lunas / Hutang.
  */
-export function PurchaseFields({ items, suppliers, banks, today, defaultBank }: { items: Item[]; suppliers: Opt[]; banks: Opt[]; today: string; defaultBank?: string }) {
-  const [rows, setRows] = useState([{ k: 0, itemId: "", qty: "", total: "" }]);
-  const [newSupplier, setNewSupplier] = useState(false);
+/** Baris dari barang masuk laporan shift: barang & jumlah dikunci (sudah dihitung di stok akhir shift) */
+export type ReceiptRow = { receiptId: string; itemId: string; qty: number; label: string };
+
+export function PurchaseFields({ items, suppliers, banks, today, defaultBank, receipts, supplierHint }: { items: Item[]; suppliers: Opt[]; banks: Opt[]; today: string; defaultBank?: string; receipts?: ReceiptRow[]; supplierHint?: string | null }) {
+  const [rows, setRows] = useState(() =>
+    receipts?.length
+      ? receipts.map((r, i) => ({ k: i, itemId: r.itemId, qty: String(r.qty).replace(".", ","), total: "", receiptId: r.receiptId, label: r.label }))
+      : [{ k: 0, itemId: "", qty: "", total: "", receiptId: "", label: "" }],
+  );
+  const hintSupplier = supplierHint ? suppliers.find((x) => x.name.toLowerCase() === supplierHint.toLowerCase()) : undefined;
+  const [newSupplier, setNewSupplier] = useState(!!supplierHint && !hintSupplier);
   const [paid, setPaid] = useState("");
   const [bank, setBank] = useState(defaultBank ?? banks[0]?.id ?? "");
   const [reading, setReading] = useState(false);
@@ -108,12 +116,12 @@ export function PurchaseFields({ items, suppliers, banks, today, defaultBank }: 
           <span className="label">Supplier / toko</span>
           {newSupplier ? (
             <div className="flex gap-2">
-              <input name="newSupplierName" className="input" placeholder="Nama supplier baru (otomatis masuk menu Supplier)" required autoFocus />
+              <input name="newSupplierName" defaultValue={hintSupplier ? "" : supplierHint ?? ""} className="input" placeholder="Nama supplier baru (otomatis masuk menu Supplier)" required autoFocus />
               <button type="button" className="btn-secondary btn-sm shrink-0" onClick={() => setNewSupplier(false)}>Batal</button>
             </div>
           ) : (
             <div className="flex gap-2">
-              <div className="min-w-0 flex-1"><select name="supplierId" className="input" required defaultValue=""><option value="" disabled>— pilih supplier —</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
+              <div className="min-w-0 flex-1"><select name="supplierId" className="input" required defaultValue={hintSupplier?.id ?? ""}><option value="" disabled>— pilih supplier —</option>{suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></div>
               <button type="button" className="btn-secondary btn-sm shrink-0" onClick={() => setNewSupplier(true)}>+ Baru</button>
             </div>
           )}
@@ -128,13 +136,22 @@ export function PurchaseFields({ items, suppliers, banks, today, defaultBank }: 
           return (
             <div key={r.k} className="grid grid-cols-12 items-start gap-2 border-b border-slate-100 pb-2 last:border-0 [&>*]:min-w-0">
               <div className="col-span-12 sm:col-span-5">
-                <select name="itemId" value={r.itemId} className="input" required onChange={(e) => set(i, { itemId: e.target.value })}>
-                  <option value="" disabled>— pilih bahan baku —</option>
-                  {items.map((x) => <option key={x.id} value={x.id}>{x.name} ({x.unit})</option>)}
-                </select>
+                <input type="hidden" name="receiptId" value={r.receiptId} />
+                {r.receiptId ? (
+                  <>
+                    <input type="hidden" name="itemId" value={r.itemId} />
+                    <div className="input bg-slate-50">{it?.name ?? "?"} ({it?.unit})</div>
+                    <p className="mt-1 text-xs text-sky-700">{r.label}</p>
+                  </>
+                ) : (
+                  <select name="itemId" value={r.itemId} className="input" required onChange={(e) => set(i, { itemId: e.target.value })}>
+                    <option value="" disabled>— pilih bahan baku —</option>
+                    {items.map((x) => <option key={x.id} value={x.id}>{x.name} ({x.unit})</option>)}
+                  </select>
+                )}
                 {it && it.lastCost > 0 && <p className="mt-1 text-xs text-slate-500">Harga terakhir {rp(it.lastCost)}/{it.unit}</p>}
               </div>
-              <label className="col-span-5 sm:col-span-2"><span className="sr-only">Jumlah</span><input name="qty" inputMode="decimal" placeholder={`Jumlah${it ? ` (${it.unit})` : ""}`} value={r.qty} onChange={(e) => set(i, { qty: e.target.value })} className="input" required /></label>
+              <label className="col-span-5 sm:col-span-2"><span className="sr-only">Jumlah</span><input name="qty" inputMode="decimal" placeholder={`Jumlah${it ? ` (${it.unit})` : ""}`} value={r.qty} readOnly={!!r.receiptId} onChange={(e) => set(i, { qty: e.target.value })} className={`input ${r.receiptId ? "bg-slate-50" : ""}`} required /></label>
               <label className="col-span-7 sm:col-span-4"><span className="sr-only">Total harga</span><input name="lineTotal" inputMode="numeric" placeholder="Total harga (Rp)" value={r.total} onChange={(e) => set(i, { total: e.target.value })} className="input" required />
                 <span className="mt-1 block text-xs text-emerald-700">{per > 0 ? `${rp(per)} / ${it?.unit ?? "satuan"}` : "harga per satuan otomatis"}</span>
               </label>
@@ -142,7 +159,7 @@ export function PurchaseFields({ items, suppliers, banks, today, defaultBank }: 
             </div>
           );
         })}
-        <button type="button" className="btn-secondary btn-sm" onClick={() => setRows((x) => [...x, { k: Date.now(), itemId: "", qty: "", total: "" }])}>+ Tambah item</button>
+        <button type="button" className="btn-secondary btn-sm" onClick={() => setRows((x) => [...x, { k: Date.now(), itemId: "", qty: "", total: "", receiptId: "", label: "" }])}>+ Tambah item</button>
       </div>
 
       <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">

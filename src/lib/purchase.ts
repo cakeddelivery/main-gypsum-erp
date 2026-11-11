@@ -1,4 +1,4 @@
-import type { PaymentTerm } from "@prisma/client";
+import { Prisma, type PaymentTerm } from "@prisma/client";
 import { prisma } from "./db";
 import { resolveSupplier } from "./suppliers";
 import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } from "./accounting";
@@ -17,7 +17,7 @@ export type PurchaseInput = {
   date: Date;
   term: PaymentTerm;
   /** `amount` = total harga baris; bila diisi, harga per satuan = amount ÷ qty */
-  lines: { itemId: string; qty: number; unitCost?: number; amount?: number }[];
+  lines: { itemId: string; qty: number; unitCost?: number; amount?: number; receiptId?: string | null }[];
   /** Dibayar sekarang (LUNAS = total, BERTAHAP = DP, TEMPO = 0) */
   paidNow: number;
   bankAccountId?: string | null;
@@ -79,12 +79,26 @@ export async function createPurchase(input: PurchaseInput, actor: Actor) {
     if (!raw) throw new StockError("Lokasi gudang bahan baku belum diatur di Pengaturan");
     const number = await nextNumber(tx, "PBL", input.date);
     const bank = paid > 0 ? await tx.bankAccount.findUniqueOrThrow({ where: { id: input.bankAccountId! } }) : null;
+    // Barang masuk dari laporan shift: fisiknya sudah dihitung di stok akhir shift, jadi stok masuk bertanggal waktu barang masuk
+    const receiptIds = lines.map((l) => l.receiptId).filter((x): x is string => !!x);
+    if (new Set(receiptIds).size !== receiptIds.length) throw new StockError("Satu barang masuk hanya bisa ditautkan sekali");
+    if (receiptIds.length) await tx.$queryRaw`SELECT id FROM "ShiftReceipt" WHERE id IN (${Prisma.join(receiptIds)}) FOR UPDATE`;
+    const receipts = receiptIds.length ? await tx.shiftReceipt.findMany({ where: { id: { in: receiptIds } }, include: { item: true } }) : [];
+    for (const l of lines) {
+      if (!l.receiptId) continue;
+      const x = receipts.find((r) => r.id === l.receiptId);
+      if (!x) throw new StockError("Barang masuk tidak ditemukan");
+      if (x.purchaseId) throw new StockError(`${x.number} sudah ditautkan ke pembelian lain`);
+      if (x.itemId !== l.itemId) throw new StockError(`${x.number}: barang harus sama dengan barang masuk (${x.item.name})`);
+      if (Math.abs(Number(x.qty) - l.qty) > 0.0005) throw new StockError(`${x.number}: jumlah harus sama dengan barang masuk (${Number(x.qty).toLocaleString("id-ID")} ${x.item.unit}). Selisih nota dicatat di baris terpisah.`);
+    }
     const jl: LineInput[] = [{ accountCode: COA.PERSEDIAAN_BAHAN, debit: total }];
     if (bank) jl.push({ accountId: bank.coaAccountId, credit: paid, memo: input.term === "LUNAS" ? "Lunas" : "DP" });
     if (debt > 0) jl.push({ accountCode: COA.UTANG_USAHA, credit: debt, memo: "Sisa pembelian" });
     const j = await postJournal(tx, { date: input.date, storeId: input.storeId, description: `Pembelian ${number} ${vendor}`, source: "PEMBELIAN", sourceId: number, actor, lines: jl });
     for (const l of lines) {
-      await recordMovement(tx, { type: "PENERIMAAN", itemId: l.itemId, qty: l.qty, toLocationId: raw, unitCost: l.unitCost, ref: number, note: `Pembelian ${vendor}`, date: input.date }, actor);
+      const rc = l.receiptId ? receipts.find((r) => r.id === l.receiptId) : null;
+      await recordMovement(tx, { type: "PENERIMAAN", itemId: l.itemId, qty: l.qty, toLocationId: raw, unitCost: l.unitCost, ref: number, note: rc ? `Pembelian ${vendor} (barang masuk ${rc.number})` : `Pembelian ${vendor}`, date: rc ? rc.receivedAt : input.date }, actor);
       // Harga beli terbaru untuk HPP realtime; harga sebelumnya disimpan untuk indikator naik/turun
       const it = await tx.item.findUniqueOrThrow({ where: { id: l.itemId } });
       if (!it.lastCostAt || input.date >= it.lastCostAt) await tx.item.update({ where: { id: l.itemId }, data: { prevCost: it.lastCost > BigInt(0) ? it.lastCost : BigInt(l.unitCost), lastCost: BigInt(l.unitCost), lastCostAt: input.date } });
@@ -99,7 +113,8 @@ export async function createPurchase(input: PurchaseInput, actor: Actor) {
         lines: { create: lines.map((l, i) => ({ itemId: l.itemId, qty: l.qty, unitCost: BigInt(l.unitCost), amount: BigInt(amounts[i]) })) },
       },
     });
-    await audit(actor, "PEMBELIAN_DIBUAT", "Purchase", p.id, { number, total, paid, debt, term: input.term }, tx);
+    if (receiptIds.length) await tx.shiftReceipt.updateMany({ where: { id: { in: receiptIds } }, data: { purchaseId: p.id } });
+    await audit(actor, "PEMBELIAN_DIBUAT", "Purchase", p.id, { number, total, paid, debt, term: input.term, receipts: receipts.map((r) => r.number) }, tx);
     return p;
   });
 }
@@ -130,6 +145,8 @@ export async function cancelPurchase(id: string, reason: string, actor: Actor, n
       await tx.purchase.update({ where: { id }, data: { payableId: null } });
       await tx.payable.delete({ where: { id: payable.id } });
     }
+    // Barang masuk laporan shift yang tertaut kembali "belum ditautkan" (fisiknya tetap ada, perlu pembelian pengganti)
+    await tx.shiftReceipt.updateMany({ where: { purchaseId: id }, data: { purchaseId: null } });
     const out = await tx.purchase.update({ where: { id }, data: { cancelledAt: now, cancelReason: reason.trim().slice(0, 300) } });
     await audit(actor, "PEMBELIAN_DIBATALKAN", "Purchase", id, { number: p.number, reason }, tx);
     return out;

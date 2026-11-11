@@ -77,6 +77,9 @@ export async function loadUser(userId: string, sv = 0) {
   if (!user || !user.active || user.sessionVersion !== sv) return null;
   const overrides = await prisma.rolePermission.findMany({ where: { role: user.role } });
   const perms = effectivePermissions(user.role, overrides);
+  // Kapten divisi Assembling ikut mengurus borongan (kirim bahan, setoran, terima hasil) tanpa mengatur tarif/upah
+  const division = user.division ?? user.employee?.division ?? null;
+  if (user.role === "KAPTEN_DIVISI" && division?.reportTemplate === "ASSEMBLING") for (const p of ["borongan.view", "borongan.point"] as const) perms.add(p);
   return {
     id: user.id,
     name: user.name,

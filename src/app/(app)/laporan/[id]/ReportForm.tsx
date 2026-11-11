@@ -21,7 +21,10 @@ import {
   type StockCountRow,
   type WorkData,
 } from "@/lib/shiftReport";
-import { removeChecklistPhoto, saveReport, uploadChecklistPhoto } from "../actions";
+import { addReceipt, removeChecklistPhoto, removeReceipt, saveReport, uploadChecklistPhoto } from "../actions";
+
+export type ReceiptView = { id: string; number: string; itemName: string; unit: string; qty: number; supplierName: string | null; hasPhoto: boolean; linked: boolean };
+export type ResultCountRow = { key: string; label: string; unit: string; qty: number | null };
 
 type Props = {
   id: string;
@@ -34,6 +37,14 @@ type Props = {
   complaints: string;
   followUp: string;
   followUpStatus: string;
+  /** Barang masuk hari ini (supplier/toko) + bahan divisi yang bisa dipilih */
+  receipts: ReceiptView[];
+  materials: { id: string; name: string; unit: string }[];
+  /** Laporan sudah dikirim (stok akhir tercatat): barang masuk lama tidak bisa dihapus */
+  applied: boolean;
+  /** Stok akhir hasil (patung kering / produk jadi per karakter) */
+  resultTitle: string | null;
+  resultCount: ResultCountRow[];
 };
 
 const fmt = (v: number) => v.toLocaleString("id-ID");
@@ -58,7 +69,7 @@ export function ReportForm(p: Props) {
     if (!t) return {};
     const w: WorkData = { ...p.work };
     // Baris nama orang diisi otomatis dari karyawan divisi bila laporan masih kosong
-    for (const s of t.sections) if (s.kind === "grid" && s.rows === "people" && !gridRows(w, s).length) w[s.key] = (p.people.length ? p.people : [""]).map((name) => ({ name, v: [] }));
+    for (const s of t.sections) if (s.kind === "grid" && !s.legacy && s.rows === "people" && !gridRows(w, s).length) w[s.key] = (p.people.length ? p.people : [""]).map((name) => ({ name, v: [] }));
     return w;
   });
   const [stock, setStock] = useState(p.stock);
@@ -78,10 +89,11 @@ export function ReportForm(p: Props) {
         </label>
       </section>
 
-      {t && (
+      {t && t.sections.some((s) => !(s.kind === "grid" && s.legacy) || gridRows(p.work, s as GridSection).length > 0) && (
         <section className="card space-y-4 p-4">
           <h3 className="font-semibold text-slate-800">Detail hasil kerja</h3>
           {t.sections.map((s) => {
+            if (s.kind === "grid" && s.legacy && !gridRows(p.work, s).some((r) => r.v.some((v) => v != null))) return null;
             if (s.kind === "grid") {
               const people = s.rows === "people";
               const rows = people ? ((work[s.key] as GridRow[] | undefined) ?? []) : gridRows(work, s);
@@ -199,6 +211,23 @@ export function ReportForm(p: Props) {
         </ul>
       </section>
 
+      {p.materials.length > 0 && <ReceiptSection id={p.id} receipts={p.receipts} materials={p.materials} applied={p.applied} />}
+
+      {p.resultTitle && p.resultCount.length > 0 && (
+        <section className="card p-4">
+          <h3 className="mb-1 font-semibold text-slate-800">{p.resultTitle}</h3>
+          <p className="mb-3 text-xs text-slate-500">Hitung fisik sisa di gudang setelah hasil kerja dihitung. Kosongkan bila tidak dihitung.</p>
+          <div className="keep-cols grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {p.resultCount.map((r) => (
+              <label key={r.key} className="block">
+                <span className="text-xs text-slate-500">{r.label} ({r.unit})</span>
+                <input name={`rc.${r.key}`} inputMode="numeric" defaultValue={r.qty ?? ""} placeholder="—" className="input py-1.5" />
+              </label>
+            ))}
+          </div>
+        </section>
+      )}
+
       {stock.length > 0 && (
         <section className="card p-4">
           <h3 className="mb-1 font-semibold text-slate-800">Stok akhir shift</h3>
@@ -247,6 +276,91 @@ export function ReportForm(p: Props) {
         <Submit className="btn-primary w-full shadow-lg">Simpan laporan</Submit>
       </div>
     </ActionForm>
+  );
+}
+
+function ReceiptSection({ id, receipts, materials, applied }: { id: string; receipts: ReceiptView[]; materials: { id: string; name: string; unit: string }[]; applied: boolean }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const [itemId, setItemId] = useState("");
+  const [qty, setQty] = useState("");
+  const [shop, setShop] = useState("");
+  const photo = useRef<HTMLInputElement>(null);
+  const unit = materials.find((m) => m.id === itemId)?.unit;
+  const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, ok: string) => {
+    setBusy(true);
+    try {
+      const r = await fn();
+      if (!r.ok) throw new Error(r.error);
+      toast(ok);
+      router.refresh();
+      return true;
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Gagal", false);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const add = () =>
+    run(async () => {
+      if (!itemId) throw new Error("Pilih barang dulu");
+      const fd = new FormData();
+      fd.set("id", id);
+      fd.set("itemId", itemId);
+      fd.set("qty", qty);
+      fd.set("supplierName", shop);
+      const f = photo.current?.files?.[0];
+      if (f) {
+        const blob = await shrink(f);
+        fd.set("photo", new File([blob], "nota.jpg", { type: blob.type || "image/jpeg" }));
+      }
+      return addReceipt(fd);
+    }, "Barang masuk tercatat").then((ok) => {
+      if (!ok) return;
+      setItemId("");
+      setQty("");
+      if (photo.current) photo.current.value = "";
+    });
+  return (
+    <section className="card p-4">
+      <h3 className="mb-1 font-semibold text-slate-800">Barang masuk hari ini</h3>
+      <p className="mb-3 text-xs text-slate-500">Isi DULU sebelum menghitung stok akhir: barang dari supplier/toko yang datang di shift ini. Barang ini tidak dihitung sebagai pemakaian. Owner/Admin nanti mencatat harga & pembayarannya di Stok → Pembelian.</p>
+      {receipts.length > 0 && (
+        <ul className="mb-3 divide-y divide-slate-100 text-sm">
+          {receipts.map((x) => (
+            <li key={x.id} className="flex items-center gap-2 py-1.5">
+              {x.hasPhoto ? <ProofPreview thumb src={`/api/files/receipt/${x.id}`} title={`Nota ${x.number}`} thumbClass="h-10 w-10 object-cover" /> : <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-dashed border-slate-300 text-xs text-slate-400">nota</span>}
+              <div className="min-w-0 flex-1">
+                <div>{x.itemName}: <b>{fmt(x.qty)}</b> {x.unit}</div>
+                <div className="text-xs text-slate-500">{x.number}{x.supplierName ? ` · ${x.supplierName}` : ""} · {x.linked ? "✓ sudah dicatat di Pembelian" : "menunggu dicatat di Pembelian"}</div>
+              </div>
+              {!x.linked && !applied && (
+                <button type="button" className="btn-secondary btn-sm shrink-0" disabled={busy} onClick={() => {
+                  if (!window.confirm("Hapus barang masuk ini?")) return;
+                  const fd = new FormData();
+                  fd.set("id", id);
+                  fd.set("receiptId", x.id);
+                  run(() => removeReceipt(fd), "Barang masuk dihapus");
+                }}>Hapus</button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="grid grid-cols-12 gap-2 rounded-lg border border-slate-200 p-2 [&>*]:min-w-0">
+        <label className="col-span-12 sm:col-span-5"><span className="text-xs text-slate-500">Barang</span>
+          <select value={itemId} onChange={(e) => setItemId(e.target.value)} className="input py-1.5">
+            <option value="">— pilih bahan —</option>
+            {materials.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>)}
+          </select>
+        </label>
+        <label className="col-span-5 sm:col-span-2"><span className="text-xs text-slate-500">Jumlah{unit ? ` (${unit})` : ""}</span><input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" className="input py-1.5" placeholder="0" /></label>
+        <label className="col-span-7 sm:col-span-5"><span className="text-xs text-slate-500">Toko / supplier (opsional)</span><input value={shop} onChange={(e) => setShop(e.target.value)} className="input py-1.5" /></label>
+        <label className="col-span-12 sm:col-span-8"><span className="text-xs text-slate-500">Foto nota (opsional)</span><input ref={photo} type="file" accept="image/*" capture="environment" className="block w-full text-sm" /></label>
+        <div className="col-span-12 flex items-end sm:col-span-4"><button type="button" className="btn-primary btn-sm w-full" disabled={busy} onClick={add}>{busy ? "Menyimpan…" : "+ Catat barang masuk"}</button></div>
+      </div>
+    </section>
   );
 }
 

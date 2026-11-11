@@ -6,6 +6,11 @@ import { STAGE_LABEL } from "@/lib/stock";
 import { flowLines, isTemplate, plannedFlow, toEntries, type StockCountRow, type WorkData } from "@/lib/shiftReport";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { flowEnabled } from "@/lib/shiftReportFlow";
+import { RESULT_COUNT, resultCountStatus, resultLines, resultValues } from "@/lib/shiftResultCount";
+import { VARIANTS } from "@/lib/shiftReport";
+import { divisionPendingReturns } from "@/lib/borongan";
+import { confirmReturnForReport } from "../actions";
+import Link from "next/link";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { DownloadJpg } from "@/components/DownloadJpg";
@@ -38,7 +43,17 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
   const canEdit = user.can("report.create") && !(ownOnly && user.divisionId !== r.divisionId);
   const day = r.date.toISOString().slice(0, 10);
   const lh = await letterhead();
-  const [extraLines, flowOn] = await Promise.all([boronganLines(template, r.date), flowEnabled()]);
+  const [bLines, flowOn, resultStatus, receipts, pendingReturns] = await Promise.all([
+    boronganLines(template, r.date),
+    flowEnabled(),
+    resultCountStatus(r.id),
+    prisma.shiftReceipt.findMany({ where: { reportId: r.id }, include: { item: true }, orderBy: { number: "asc" } }),
+    divisionPendingReturns(r.divisionId),
+  ]);
+  const extraLines = [...bLines, ...(resultStatus ? resultLines(resultStatus) : [])];
+  const resultDef = template ? RESULT_COUNT[template] : undefined;
+  const rv = resultValues(work);
+  const receiptLines = receipts.map((x) => `${x.item.name}: ${Number(x.qty).toLocaleString("id-ID")} ${x.item.unit}${x.supplierName ? ` · ${x.supplierName}` : ""}${x.purchaseId ? "" : " (belum dicatat di Pembelian)"}`);
   const flow = flowOn && template ? flowLines(plannedFlow(template, work)) : [];
   const fname = `laporan-${r.division.code}-${r.shift.code}-${day}`;
 
@@ -55,7 +70,30 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
       />
       <div className="grid gap-5 lg:grid-cols-5">
         {canEdit && (
-          <div className="lg:order-1 lg:col-span-3">
+          <div className="space-y-4 lg:order-1 lg:col-span-3">
+                <>
+                  {template === "ASSEMBLING" && (
+                    <div className="card p-4 text-sm">
+                      <h3 className="mb-1 font-semibold text-slate-800">Setoran borongan hari ini</h3>
+                      {bLines.length ? <ul className="text-slate-600">{bLines.slice(1).map((l) => <li key={l}>{l}</li>)}</ul> : <p className="text-slate-500">Belum ada setoran tercatat untuk tanggal ini.</p>}
+                      {user.can("borongan.view") && <Link href="/borongan" className="btn-secondary btn-sm mt-2">Catat setoran / kirim bahan di menu Borongan</Link>}
+                    </div>
+                  )}
+                  {pendingReturns.length > 0 && (
+                    <div className="card p-4 text-sm">
+                      <h3 className="mb-1 font-semibold text-slate-800">Kiriman hasil borongan menunggu diterima</h3>
+                      <p className="mb-2 text-xs text-slate-500">Hitung barangnya, lalu tekan Terima SEBELUM menghitung stok akhir agar tidak dobel.</p>
+                      <ul className="divide-y divide-slate-100">
+                        {pendingReturns.map((h) => (
+                          <li key={h.id} className="flex flex-wrap items-start justify-between gap-2 py-2">
+                            <div><b>{h.point.name}</b> · {fmtDay(h.date)}{h.driver && ` · driver ${h.driver.name}`}<ul className="text-xs text-slate-600">{h.lines.map((l) => <li key={l.id}>{l.item.name}: {Number(l.qty).toLocaleString("id-ID")} {l.item.unit}</li>)}</ul></div>
+                            <ActionForm action={confirmReturnForReport} confirm="Barang sudah diterima lengkap?"><input type="hidden" name="id" value={h.id} /><input type="hidden" name="reportId" value={r.id} /><Submit className="btn-success btn-sm" pendingText="…">Terima</Submit></ActionForm>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </>
             <ReportForm
               id={r.id}
               template={template}
@@ -67,6 +105,11 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
               complaints={r.complaints ?? ""}
               followUp={r.followUp ?? ""}
               followUpStatus={r.followUpStatus}
+              receipts={receipts.map((x) => ({ id: x.id, number: x.number, itemName: x.item.name, unit: x.item.unit, qty: Number(x.qty), supplierName: x.supplierName, hasPhoto: !!x.photoPath, linked: !!x.purchaseId }))}
+              materials={items.map((i) => ({ id: i.id, name: i.name, unit: i.unit }))}
+              applied={r.stockApplied}
+              resultTitle={resultDef?.title ?? null}
+              resultCount={resultDef ? VARIANTS.map((v) => ({ key: v, label: `${resultDef.label} ${v}`, unit: resultDef.unit, qty: rv[v] ?? null })) : []}
             />
           </div>
         )}
@@ -86,6 +129,7 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
             followUp={r.followUp}
             followUpStatus={r.followUpStatus}
             extraLines={extraLines}
+            receiptLines={receiptLines}
             target={r.division.targetPerShift}
             legacyLines={entries.map((e) => `${STAGE_LABEL[e.stage]}: ${e._sum.qtyGood ?? 0} pcs (reject ${e._sum.qtyReject ?? 0})`)}
           />

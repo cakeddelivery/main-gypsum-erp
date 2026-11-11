@@ -3,6 +3,7 @@ import { prisma } from "./db";
 import { dateOnly, fmtDay, todayStr } from "./time";
 import { locationSettings, qtyAt, recordMovement } from "./stock";
 import { expectedReportCount, needsOrder, shiftEndAt, type StockCountRow } from "./shiftReport";
+import { pendingReceipts, receiptsUntil } from "./shiftReceipt";
 
 type Actor = { id: string; name: string };
 
@@ -18,6 +19,9 @@ export type StockApplyResult = { adjusted: number; skipped?: string };
  * - Revisi laporan yang sudah diterapkan hanya menerapkan selisih hitungan baru vs hitungan yang dulu diterapkan.
  * Stok berkurang = pemakaian bahan → akun HPP "Pemakaian Bahan Baku"; revisi ikut akun itu. Stok bertambah di hitungan
  * pertama tetap selisih persediaan.
+ * Barang masuk (ShiftReceipt) yang belum ditautkan ke Pembelian dianggap sudah ada di stok sistem, jadi tidak terhitung
+ * pemakaian dan tidak dobel saat Pembelian dicatat. Barang masuk yang ditambahkan sesudah laporan dikirim ikut diperhitungkan
+ * di revisi (daftar barang masuk yang sudah dihitung disimpan di snapshot `rcpt`).
  */
 export async function applyShiftStockCount(reportId: string, actor: Actor, now: Date = new Date()): Promise<StockApplyResult> {
   const report = await prisma.shiftReport.findUniqueOrThrow({ where: { id: reportId }, include: { shift: true } });
@@ -42,11 +46,26 @@ export async function applyShiftStockCount(reportId: string, actor: Actor, now: 
   const at = shiftEndAt(report.date, report.shift, now);
   let n = 0;
   await prisma.$transaction(async (tx) => {
-    const applied = new Map((prev ?? []).map((p) => [p.itemId, p.qty]));
+    const applied = new Map((prev ?? []).map((p) => [p.itemId, p]));
+    const counted = rows.filter((r) => r.qty != null).map((r) => r.itemId);
+    const pending = await pendingReceipts(tx, counted, at);
+    const allReceipts = await receiptsUntil(tx, counted, at);
+    const rcpt = new Map<string, string[]>();
     for (const row of rows) {
       if (row.qty == null) continue;
       const before = applied.get(row.itemId);
-      const base = before != null ? before : await qtyAt(tx, row.itemId, raw, at);
+      let base: number;
+      if (before?.qty != null) {
+        // Revisi: hanya selisih hitungan + barang masuk yang dicatat sesudah hitungan lama diterapkan
+        const known = new Set(before.rcpt ?? []);
+        const extra = allReceipts.filter((x) => x.itemId === row.itemId && !known.has(x.id));
+        base = before.qty + extra.reduce((a, x) => a + Number(x.qty), 0);
+        rcpt.set(row.itemId, [...known, ...extra.map((x) => x.id)]);
+      } else {
+        const p = pending.filter((x) => x.itemId === row.itemId).reduce((a, x) => a + Number(x.qty), 0);
+        base = (await qtyAt(tx, row.itemId, raw, at)) + p;
+        rcpt.set(row.itemId, allReceipts.filter((x) => x.itemId === row.itemId).map((x) => x.id));
+      }
       const diff = Math.round((row.qty - base) * 1000) / 1000;
       if (diff === 0) continue;
       await recordMovement(
@@ -57,17 +76,20 @@ export async function applyShiftStockCount(reportId: string, actor: Actor, now: 
           qty: Math.abs(diff),
           fromLocationId: raw,
           increase: diff > 0,
-          usage: diff < 0 || before != null,
+          usage: diff < 0 || before?.qty != null,
           allowNegative: true,
           ref: `LAP:${report.id}`,
-          note: before != null ? "Revisi stock opname laporan shift" : "Stock opname laporan shift",
+          note: before?.qty != null ? "Revisi stock opname laporan shift" : "Stock opname laporan shift",
           date: at,
         },
         actor,
       );
       n++;
     }
-    const snapshot = [...(prev ?? []).filter((p) => !rows.some((r) => r.itemId === p.itemId && r.qty != null)), ...rows.filter((r) => r.qty != null)];
+    const snapshot = [
+      ...(prev ?? []).filter((p) => !rows.some((r) => r.itemId === p.itemId && r.qty != null)),
+      ...rows.filter((r) => r.qty != null).map((r) => ({ ...r, rcpt: rcpt.get(r.itemId) ?? [] })),
+    ];
     await tx.shiftReport.update({ where: { id: report.id }, data: { stockApplied: true, stockAppliedCount: snapshot as unknown as Prisma.InputJsonValue } });
   }, { timeout: 30000 });
   return { adjusted: n };

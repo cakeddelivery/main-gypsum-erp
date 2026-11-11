@@ -33,14 +33,42 @@ export function resultShares(qty: number, s: Split) {
 
 // ---------------- AKSES ----------------
 
-export type Scope = { all: boolean; pointIds: string[]; personId: string | null };
-type ScopeUser = { id: string; can: (p: "borongan.manage") => boolean };
+/**
+ * all = pengelola borongan (semua titik, semua aksi).
+ * warehouse = divisi penanggung jawab borongan (Kapten Assembling): semua titik, boleh kirim bahan, catat setoran,
+ * dan terima hasil ke gudang, tapi tidak mengatur tugas/tarif, akun koordinator, atau membayar upah.
+ */
+export type Scope = { all: boolean; pointIds: string[]; personId: string | null; warehouse?: boolean };
+type ScopeUser = { id: string; can: (p: "borongan.manage") => boolean; role?: string; divisionId?: string | null };
 
-/** Pengelola melihat semua titik; koordinator hanya titiknya sendiri */
+/** Kapten divisi Assembling ikut mengurus borongan (Assembling & Cat Plastik: bahan dikirim & setoran masuk) */
+export async function isBoronganDivisionCaptain(db: DB, user: { role?: string; divisionId?: string | null }) {
+  if (user.role !== "KAPTEN_DIVISI" || !user.divisionId) return false;
+  const d = await db.division.findUnique({ where: { id: user.divisionId }, select: { reportTemplate: true } });
+  return d?.reportTemplate === "ASSEMBLING";
+}
+
+/** Pengelola melihat semua titik; Kapten Assembling semua titik (operasional); koordinator hanya titiknya sendiri */
 export async function boronganScope(db: DB, user: ScopeUser): Promise<Scope> {
   if (user.can("borongan.manage")) return { all: true, pointIds: [], personId: null };
+  if (await isBoronganDivisionCaptain(db, user)) {
+    const points = await db.boronganPoint.findMany({ where: { active: true }, select: { id: true } });
+    return { all: false, pointIds: points.map((p) => p.id), personId: null, warehouse: true };
+  }
   const p = await db.boronganPerson.findFirst({ where: { userId: user.id, role: "KOORDINATOR", active: true } });
   return { all: false, pointIds: p?.pointId ? [p.pointId] : [], personId: p?.id ?? null };
+}
+
+/** Boleh mengirim bahan dari gudang / menerima hasil ke gudang */
+export function canWarehouse(scope: Scope) {
+  return scope.all || !!scope.warehouse;
+}
+
+/** Kiriman hasil (KEMBALI) yang menunggu diterima dan memuat barang divisi ini (mis. pot cat giftbox untuk divisi Giftbox) */
+export async function divisionPendingReturns(divisionId: string) {
+  const d = await prisma.division.findUnique({ where: { id: divisionId }, select: { reportTemplate: true } });
+  const list = await prisma.boronganHandover.findMany({ where: { status: "DIKIRIM", kind: "KEMBALI" }, include: { lines: { include: { item: true } }, point: true, driver: true }, orderBy: { date: "asc" } });
+  return list.filter((h) => h.lines.some((l) => l.item.divisionId === divisionId || (d?.reportTemplate === "ASSEMBLING" && l.item.type !== "BAHAN_BAKU")));
 }
 
 export function canPoint(scope: Scope, pointId: string) {
@@ -100,15 +128,21 @@ export async function createHandover(input: HandoverInput, actor: Actor) {
   });
 }
 
-/** Penerima mengonfirmasi: barang pindah dari driver ke titik (KIRIM) atau ke gudang (KEMBALI) */
-export async function receiveHandover(id: string, actor: Actor, scope: Scope) {
+/**
+ * Penerima mengonfirmasi: barang pindah dari driver ke titik (KIRIM) atau ke gudang (KEMBALI).
+ * `divisionId`: kapten divisi boleh menerima kiriman hasil yang semua barangnya milik divisinya (mis. pot cat giftbox).
+ */
+export async function receiveHandover(id: string, actor: Actor, scope: Scope, opts: { divisionId?: string | null } = {}) {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "BoronganHandover" WHERE id = ${id} FOR UPDATE`;
     const h = await tx.boronganHandover.findUniqueOrThrow({ where: { id }, include: { lines: true, point: true } });
     if (h.status !== "DIKIRIM") throw new BoronganError("Serah terima ini sudah diproses");
     // Bahan diterima koordinator titik; hasil diterima pengelola gudang
     if (h.kind === "KIRIM") assertPoint(scope, h.pointId);
-    else if (!scope.all) throw new BoronganError("Hasil borongan diterima oleh pengelola gudang");
+    else if (!canWarehouse(scope)) {
+      const items = opts.divisionId ? await tx.item.findMany({ where: { id: { in: h.lines.map((l) => l.itemId) } }, select: { divisionId: true } }) : [];
+      if (!opts.divisionId || !items.length || items.some((i) => i.divisionId !== opts.divisionId)) throw new BoronganError("Hasil borongan diterima oleh pengelola gudang atau kapten divisi pemilik barang");
+    }
     const drv = await driverLocation(tx);
     for (const l of h.lines) {
       const to = h.kind === "KIRIM" ? h.point.locationId : l.warehouseId;
@@ -125,7 +159,7 @@ export async function cancelHandover(id: string, actor: Actor, scope: Scope) {
     await tx.$queryRaw`SELECT id FROM "BoronganHandover" WHERE id = ${id} FOR UPDATE`;
     const h = await tx.boronganHandover.findUniqueOrThrow({ where: { id }, include: { lines: true, point: true } });
     if (h.status !== "DIKIRIM") throw new BoronganError("Hanya serah terima yang belum diterima yang bisa dibatalkan");
-    if (h.kind === "KIRIM" ? !scope.all : !canPoint(scope, h.pointId)) throw new BoronganError("Hanya pembuat serah terima yang bisa membatalkan");
+    if (h.kind === "KIRIM" ? !canWarehouse(scope) : !canPoint(scope, h.pointId)) throw new BoronganError("Hanya pembuat serah terima yang bisa membatalkan");
     const drv = await driverLocation(tx);
     for (const l of h.lines) {
       const back = h.kind === "KIRIM" ? l.warehouseId : h.point.locationId;
