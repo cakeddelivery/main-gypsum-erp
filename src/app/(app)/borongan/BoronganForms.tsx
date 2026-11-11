@@ -1,13 +1,21 @@
 "use client";
 import { useState } from "react";
+import { ItemLines } from "@/components/ItemLines";
 
 type Worker = { id: string; name: string; pointId: string };
 type Task = { id: string; name: string; workerRate: number; coordinatorRate: number; driverRate: number };
 
 /** Setoran hasil: satu tugas & tanggal, jumlah per pekerja di titik terpilih */
-export function ResultRows({ points, workers, tasks }: { points: { id: string; name: string }[]; workers: Worker[]; tasks: Task[] }) {
-  const [pointId, setPointId] = useState(points[0]?.id ?? "");
+export function ResultRows({ points, workers, tasks: allTasks, pointTasks = {} }: { points: { id: string; name: string }[]; workers: Worker[]; tasks: Task[]; pointTasks?: Record<string, string[]> }) {
+  const [pointId, setPointIdRaw] = useState(points[0]?.id ?? "");
+  const forPoint = (pid: string) => (pointTasks[pid]?.length ? allTasks.filter((t) => pointTasks[pid].includes(t.id)) : allTasks);
+  const tasks = forPoint(pointId);
   const [taskId, setTaskId] = useState(tasks[0]?.id ?? "");
+  const setPointId = (pid: string) => {
+    setPointIdRaw(pid);
+    const ts = forPoint(pid);
+    if (!ts.some((t) => t.id === taskId)) setTaskId(ts[0]?.id ?? "");
+  };
   const [qty, setQty] = useState<Record<string, string>>({});
   const list = workers.filter((w) => w.pointId === pointId);
   const task = tasks.find((t) => t.id === taskId);
@@ -39,5 +47,22 @@ export function ResultRows({ points, workers, tasks }: { points: { id: string; n
         )}
       </div>
     </div>
+  );
+}
+
+type Opt = { id: string; name: string; unit?: string; stock?: number };
+
+/** Kirim bahan ke titik: baris paket bahan titik terisi otomatis (jumlah dikosongkan = tidak dikirim), bisa ditambah baris lain */
+export function KitSend({ points, items, kits }: { points: { id: string; name: string }[]; items: Opt[]; kits: Record<string, string[]> }) {
+  const [pointId, setPointId] = useState(points[0]?.id ?? "");
+  const kit = (kits[pointId] ?? []).filter((id) => items.some((i) => i.id === id));
+  return (
+    <>
+      <label className="block"><span className="label">Titik tujuan</span>
+        <select name="pointId" value={pointId} onChange={(e) => setPointId(e.target.value)} className="input">{points.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select>
+      </label>
+      {kit.length > 0 && <p className="text-xs text-slate-500">Paket bahan titik ini sudah terisi. Isi jumlah yang dikirim saja; baris yang dikosongkan tidak ikut dikirim.</p>}
+      <ItemLines key={pointId} items={items} initial={kit.map((itemId) => ({ itemId, qty: null }))} />
+    </>
   );
 }

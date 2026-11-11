@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { ITEM_TYPE_LABEL, needsReorder, stockBalances } from "@/lib/stock";
+import { ITEM_TYPE_LABEL, needsReorder, stockBalances, valuationByLocation } from "@/lib/stock";
 import { idr } from "@/lib/money";
 import { Badge, Empty, FilterBar, Field, PageHeader, Stat, Tabs } from "@/components/ui";
 import type { ItemType } from "@prisma/client";
@@ -27,6 +27,7 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
   const rows = tab === "reorder" ? all.filter((r) => r.reorder) : tab === "minus" ? negative : tab === "semua" ? all : all.filter((r) => r.type === tab);
   const value = (t: ItemType) => items.filter((i) => i.type === t).reduce((s, i) => s + qty(i.id) * Number(i.avgCost), 0);
   const low = all.filter((r) => r.reorder).length;
+  const byLoc = user.can("stock.view") ? await valuationByLocation() : null;
   const keep = (extra: Record<string, string | undefined>) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries({ q: sp.q, loc: sp.loc, ...extra })) if (v) q.set(k, v);
@@ -45,6 +46,7 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
             {(user.can("finance.approve") || user.can("accounting.view")) && <Link href="/stok/pembelian" className="btn-primary">Pembelian</Link>}
             {user.can("stock.move") && <Link href="/stok/mutasi" className="btn-secondary">Mutasi stok</Link>}
             {user.can("stock.approve") && <Link href="/stok/opname" className="btn-secondary">Opname barang jadi</Link>}
+            {user.can("stock.approve") && <Link href="/stok/awal" className="btn-secondary">Stok awal</Link>}
             {(user.can("stock.request") || user.can("stock.approve")) && <Link href="/stok/permintaan" className="btn-secondary">Permintaan</Link>}
             {user.can("stock.view") && <Link href="/stok/kartu" className="btn-secondary">Kartu persediaan</Link>}
             {user.can("master.manage") && <Link href="/stok/master" className="btn-secondary">Master data</Link>}
@@ -59,6 +61,23 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
           <Stat label="Nilai produk jadi" value={idr(value("BARANG_JADI"))} tone="blue" />
           <Stat label="Perlu reorder" value={low} tone={low ? "red" : "green"} href="/stok?filter=menipis" hint="stok ≤ batas minimum" />
         </div>
+      )}
+      {byLoc && byLoc.rows.length > 0 && (
+        <details className="card mb-4 p-4">
+          <summary className="cursor-pointer font-semibold text-slate-800">Nilai persediaan per lokasi · total {idr(byLoc.total.total)}</summary>
+          <p className="mt-1 text-xs text-slate-500">Nilai = jumlah × harga rata-rata, realtime. Termasuk barang di titik borongan & yang sedang dibawa driver. Total sama dengan persediaan di Neraca.</p>
+          <div className="table-wrap mt-2">
+            <table className="tbl">
+              <thead><tr><th>Lokasi</th><th className="num">Bahan baku</th><th className="num">Setengah jadi</th><th className="num">Produk jadi</th><th className="num">Total</th></tr></thead>
+              <tbody>
+                {byLoc.rows.map((r) => (
+                  <tr key={r.id}><td><Link className="link" href={`/stok?loc=${r.id}`}>{r.name}</Link></td><td className="num">{idr(r.BAHAN_BAKU)}</td><td className="num">{idr(r.BARANG_DALAM_PROSES)}</td><td className="num">{idr(r.BARANG_JADI)}</td><td className="num font-semibold">{idr(r.total)}</td></tr>
+                ))}
+                <tr className="font-semibold"><td>Total</td><td className="num">{idr(byLoc.total.BAHAN_BAKU)}</td><td className="num">{idr(byLoc.total.BARANG_DALAM_PROSES)}</td><td className="num">{idr(byLoc.total.BARANG_JADI)}</td><td className="num">{idr(byLoc.total.total)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </details>
       )}
       <Tabs
         current={tab}

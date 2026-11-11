@@ -4,8 +4,8 @@ import { useState } from "react";
 type Opt = { id: string; name: string; unit?: string; stock?: number };
 
 /** Baris barang + jumlah (kirim bahan, kirim hasil, bahan per pcs tugas) */
-export function ItemLines({ items, initial = [], qtyLabel = "Jumlah", emptyLabel = "— pilih barang —", name = "itemId" }: { items: Opt[]; initial?: { itemId: string; qty: number }[]; qtyLabel?: string; emptyLabel?: string; name?: string }) {
-  const [rows, setRows] = useState(initial.length ? initial.map((r, k) => ({ k, itemId: r.itemId, qty: String(r.qty) })) : [{ k: 0, itemId: "", qty: "" }]);
+export function ItemLines({ items, initial = [], qtyLabel = "Jumlah", emptyLabel = "— pilih barang —", name = "itemId" }: { items: Opt[]; initial?: { itemId: string; qty: number | null }[]; qtyLabel?: string; emptyLabel?: string; name?: string }) {
+  const [rows, setRows] = useState(initial.length ? initial.map((r, k) => ({ k, itemId: r.itemId, qty: r.qty == null ? "" : String(r.qty) })) : [{ k: 0, itemId: "", qty: "" }]);
   const set = (i: number, patch: Partial<(typeof rows)[number]>) => setRows((x) => x.map((y, j) => (j === i ? { ...y, ...patch } : y)));
   return (
     <div className="space-y-2">

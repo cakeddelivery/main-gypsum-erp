@@ -5,6 +5,7 @@ import { COA, assertPeriodOpen, postJournal, reverseJournal } from "./accounting
 import { nextNumber } from "./numbering";
 import { INVENTORY_COA, StockError, locationSettings, qtyAt, recordMovement, reverseMovementsByRef } from "./stock";
 import { bomStockQty } from "./unitcost";
+import { pointConfig } from "./boronganSetup";
 
 type Tx = Prisma.TransactionClient;
 type DB = Tx | typeof prisma;
@@ -212,6 +213,8 @@ async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: S
     if (worker.role !== "PEKERJA" || worker.pointId !== point.id || !worker.active) throw new BoronganError("Pekerja tidak terdaftar aktif di titik ini");
     const task = await tx.pieceTask.findUniqueOrThrow({ where: { id: input.taskId }, include: { inputs: { include: { item: true } }, outputItem: true } });
     if (!task.active) throw new BoronganError("Tugas ini sudah nonaktif");
+    const cfg = (await pointConfig(tx))[point.id];
+    if (cfg?.tasks.length && !cfg.tasks.includes(task.id)) throw new BoronganError(`Tugas ${task.name} tidak dikerjakan di titik ${point.name}`);
     const split = { workerRate: Number(task.workerRate), coordinatorRate: Number(task.coordinatorRate), driverRate: Number(task.driverRate) };
     const coordinator = await tx.boronganPerson.findFirst({ where: { role: "KOORDINATOR", pointId: point.id, active: true }, orderBy: { createdAt: "asc" } });
     const driver = await tx.boronganPerson.findFirst({ where: { role: "DRIVER", active: true }, orderBy: { createdAt: "asc" } });

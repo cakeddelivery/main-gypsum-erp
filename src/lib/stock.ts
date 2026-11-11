@@ -107,6 +107,32 @@ export async function inventoryValuation(db: DB = prisma) {
   return { rows, byType, total: byType.BAHAN_BAKU + byType.BARANG_DALAM_PROSES + byType.BARANG_JADI };
 }
 
+/**
+ * Nilai persediaan (qty × harga rata-rata) per lokasi × jenis: gudang, titik borongan, driver.
+ * Total semua lokasi = nilai persediaan di Neraca (akun Persediaan Bahan Baku / Barang Dalam Proses / Barang Jadi).
+ */
+export async function valuationByLocation(db: DB = prisma) {
+  const [items, locs, balances] = await Promise.all([
+    db.item.findMany({ select: { id: true, type: true, avgCost: true } }),
+    db.location.findMany({ orderBy: { code: "asc" } }),
+    stockBalances(db),
+  ]);
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const rows = locs.map((l) => ({ id: l.id, code: l.code, name: l.name, BAHAN_BAKU: 0, BARANG_DALAM_PROSES: 0, BARANG_JADI: 0, total: 0 }));
+  const rowOf = new Map(rows.map((r) => [r.id, r]));
+  for (const b of balances) {
+    const it = byId.get(b.itemId);
+    const r = rowOf.get(b.locationId);
+    if (!it || !r) continue;
+    const v = Math.round(b.qty * Number(it.avgCost));
+    r[it.type] += v;
+    r.total += v;
+  }
+  const shown = rows.filter((r) => r.BAHAN_BAKU || r.BARANG_DALAM_PROSES || r.BARANG_JADI);
+  const sum = (k: ItemType | "total") => shown.reduce((a, r) => a + r[k], 0);
+  return { rows: shown, total: { BAHAN_BAKU: sum("BAHAN_BAKU"), BARANG_DALAM_PROSES: sum("BARANG_DALAM_PROSES"), BARANG_JADI: sum("BARANG_JADI"), total: sum("total") } };
+}
+
 async function defaultStore(db: DB) {
   const s = await db.setting.findUnique({ where: { key: "default_store_id" } });
   if (!s) throw new StockError("Toko default belum diatur di Pengaturan");
