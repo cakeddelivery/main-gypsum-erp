@@ -330,3 +330,9 @@ Dikerjakan:
 - Migrasi: `Division.targetPerShift`, `ShiftReport.workPostedVersion`.
 
 Catatan/asumsi: patung kering dicatat tanpa nilai (bahan sudah dibebankan lewat stock opname); nilai baru muncul di barang jadi dari resep. Rekap/analitik produksi dari laporan shift belum (masih dari menu Produksi).
+
+## 11. Paket 3 (11 Nov): rekap dari laporan shift + JPG otomatis ke Telegram
+
+- **Rekap produksi** (`/laporan/rekap`, juga JPG/CSV dan menu bot "Rekap produksi"): bagian baru "Dari laporan shift". Isinya jumlah per divisi (laporan terkirim, semua angka ringkasan, capaian target gabungan) dan tabel per hari (mingguan/bulanan). Data dari menu Produksi tetap tampil di bawahnya. Laporan draft tidak dihitung.
+- **Analitik**: grafik "Hasil produksi 30 hari (dari laporan shift)", berisi angka utama per divisi per hari (panen, produk jadi, giftbox, patung packing).
+- **JPG otomatis**: saat "Kirim laporan" berhasil lewat Telegram, JPG laporan (sama dengan "Unduh JPG") dibuat di server lalu dikirim ke penerima rekap **dan semua grup Telegram terdaftar** (`/daftargrup`), dengan keterangan ringkasan. Prosesnya berjalan di latar belakang. Bila gagal, dicatat di log notifikasi (`LAPORAN_SHIFT_JPG`), dan laporan teks tetap terkirim.
