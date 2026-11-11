@@ -32,17 +32,21 @@ type CompRow = { k: number; source: "BB" | "BSJ"; itemId: string; qty: string; u
 type LaborRow = { k: number; taskId: string; name: string; custom: string };
 type OhRow = { k: number; overheadId: string; factor: string };
 
-function Section({ title, tone, add, onAdd, children }: { title: string; tone: string; add: string; onAdd: () => void; children: React.ReactNode }) {
+function Section({ title, tone, add, onAdd, hint, children }: { title: string; tone: string; add: string; onAdd: () => void; hint?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className={`rounded-2xl border p-3 ${tone}`}>
       <div className="mb-2 flex items-center justify-between gap-2">
         <p className="text-sm font-bold">{title}</p>
         <button type="button" className="btn-secondary btn-sm shrink-0" onClick={onAdd}>+ {add}</button>
       </div>
+      {hint && <p className="mb-2 text-xs text-slate-600 dark:text-slate-300">{hint}</p>}
       <div className="overflow-x-auto">{children}</div>
     </section>
   );
 }
+
+/** Air di resep hanya takaran (rasio gypsum:air); biayanya lewat Overhead "Air PDAM" */
+const isWater = (name: string) => name.trim().toLowerCase() === "air";
 
 const Del = ({ onClick }: { onClick: () => void }) => <button type="button" aria-label="Hapus baris" className="btn-secondary btn-sm" onClick={onClick}>×</button>;
 
@@ -97,15 +101,16 @@ export function RecipeEditor({ components, tasks, overheads, initial, product }:
             const units = c ? useUnitOptions(c.unit) : [];
             return (
               <tr key={r.k}>
-                {!packaging && <td className="w-36"><select value={r.source} className="input" onChange={(e) => patch(i, { source: e.target.value as CompRow["source"], itemId: "", useUnit: "" })}><option value="BB">Bahan Baku</option><option value="BSJ">Setengah Jadi</option></select></td>}
+                {!packaging && <td className="w-36"><select value={r.source} className="input" data-dropdown onChange={(e) => patch(i, { source: e.target.value as CompRow["source"], itemId: "", useUnit: "" })}><option value="BB">Bahan Baku</option><option value="BSJ">Setengah Jadi</option></select></td>}
                 <td className="min-w-44">
                   <select name="comp_item" value={r.itemId} className="input" required onChange={(e) => { const n = byId.get(e.target.value); patch(i, { itemId: e.target.value, useUnit: n ? useUnitOptions(n.unit)[0] : "" }); }}>
                     <option value="" disabled>— pilih —</option>
                     {opts.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
                   </select>
+                  {c && isWater(c.name) && <p className="mt-1 text-xs text-slate-500">Hanya takaran (Rp0). Biaya air dihitung lewat Overhead &quot;Air PDAM&quot;.</p>}
                 </td>
                 <td className="num whitespace-nowrap">{c ? `${rp(c.price * toRecipeQty(1, r.useUnit || c.unit, c.unit))}/${r.useUnit || c.unit}` : "Rp 0"}</td>
-                <td className="w-32">{units.length > 1 ? <select name="comp_unit" value={r.useUnit} className="input" onChange={(e) => patch(i, { useUnit: e.target.value })}>{units.map((u) => <option key={u} value={u}>{u}</option>)}</select> : <><input type="hidden" name="comp_unit" value={r.useUnit || c?.unit || ""} /><span className="text-sm">{c?.unit ?? "-"}</span></>}</td>
+                <td className="w-32">{units.length > 1 ? <select name="comp_unit" value={r.useUnit} className="input" data-dropdown onChange={(e) => patch(i, { useUnit: e.target.value })}>{units.map((u) => <option key={u} value={u}>{u}</option>)}</select> : <><input type="hidden" name="comp_unit" value={r.useUnit || c?.unit || ""} /><span className="text-sm">{c?.unit ?? "-"}</span></>}</td>
                 <td className="w-28"><input name="comp_qty" value={r.qty} inputMode="decimal" placeholder="0" className="input text-right" onChange={(e) => patch(i, { qty: e.target.value })} /></td>
                 <td className="num whitespace-nowrap">{rp(lineCost(r))}</td>
                 <td><Del onClick={() => set((x) => x.filter((_, j) => j !== i))} /></td>
@@ -133,7 +138,7 @@ export function RecipeEditor({ components, tasks, overheads, initial, product }:
         <Total label="Total Biaya Bahan:" value={material} />
       </Section>
 
-      <Section title={product ? "Section 2: Biaya Tenaga Kerja Borongan" : "Biaya Tenaga Kerja Borongan (Opsional)"} tone="border-indigo-200 bg-indigo-50/40 dark:border-indigo-900 dark:bg-indigo-950/20" add="Tenaga Kerja" onAdd={() => setLabor((x) => [...x, { k: key(), taskId: "", name: "", custom: "" }])}>
+      <Section title={product ? "Section 2: Biaya Tenaga Kerja Borongan" : "Biaya Tenaga Kerja Borongan (Opsional)"} tone="border-indigo-200 bg-indigo-50/40 dark:border-indigo-900 dark:bg-indigo-950/20" add="Tenaga Kerja" onAdd={() => setLabor((x) => [...x, { k: key(), taskId: "", name: "", custom: "" }])} hint={<>Hanya untuk pekerjaan <b>borongan</b> (dibayar per pcs). Karyawan bergaji bulanan tidak diisi di sini: bila gajinya mau dihitung ke HPP, buat Overhead &quot;Gaji Produksi&quot; (total gaji per bulan ÷ output per bulan) lalu pilih di bagian Overhead.</>}>
         <table className="tbl min-w-[560px]">
           <thead><tr><th>Pekerja / Spesialisasi Borongan</th><th className="num">Tarif Master / Pcs</th><th>Tarif Custom / Pcs</th><th className="num">Subtotal</th><th /></tr></thead>
           <tbody>
