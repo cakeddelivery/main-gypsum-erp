@@ -1,13 +1,13 @@
 import { requirePerm } from "@/lib/auth";
 import { PasswordInput } from "@/components/PasswordInput";
 import { prisma } from "@/lib/db";
-import { ALL_PERMISSIONS, PERMISSIONS, RESTRICTED, ROLE_LABEL, ROLES, effectivePermissions } from "@/lib/rbac";
+import { ALL_PERMISSIONS, MENU_GROUPS, PERMISSIONS, RESTRICTED, ROLE_LABEL, ROLES, effectivePermissions } from "@/lib/rbac";
 import { fmtDateTime } from "@/lib/time";
 import { Badge, Card, Field, PageHeader, Tabs } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ActionForm, Submit } from "@/components/ActionForm";
-import { saveMatrix, saveUser } from "../actions";
+import { saveMatrix, saveMenuAccess, saveUser } from "../actions";
 import type { Role } from "@prisma/client";
 import { Paged } from "@/components/Paged";
 
@@ -16,7 +16,7 @@ export const metadata = { title: "Pengguna & Hak Akses" };
 export default async function PenggunaPage({ searchParams }: { searchParams: Promise<{ tab?: string; role?: string }> }) {
   const me = await requirePerm("users.manage");
   const sp = await searchParams;
-  const tab = sp.tab === "akses" ? "akses" : "pengguna";
+  const tab = sp.tab === "akses" || sp.tab === "menu" ? sp.tab : "pengguna";
   const [users, divisions, overrides] = await Promise.all([
     prisma.user.findMany({ include: { employee: true, division: true }, orderBy: [{ role: "asc" }, { name: "asc" }] }),
     prisma.division.findMany({ where: { active: true } }),
@@ -42,7 +42,7 @@ export default async function PenggunaPage({ searchParams }: { searchParams: Pro
   return (
     <div className="space-y-4">
       <PageHeader title="Pengguna & hak akses" subtitle="RBAC sampai tingkat menu dan tindakan" actions={tab === "pengguna" && <Modal trigger="+ Pengguna" title="Pengguna baru">{form()}</Modal>} />
-      <Tabs current={tab} tabs={[{ key: "pengguna", label: "Pengguna", href: "?tab=pengguna", count: users.length }, { key: "akses", label: "Matriks hak akses", href: "?tab=akses" }]} />
+      <Tabs current={tab} tabs={[{ key: "pengguna", label: "Pengguna", href: "?tab=pengguna", count: users.length }, { key: "menu", label: "Akses menu", href: "?tab=menu" }, { key: "akses", label: "Hak akses detail", href: "?tab=akses" }]} />
       {tab === "pengguna" ? (
         <div className="table-wrap">
           <Paged><table className="tbl">
@@ -50,6 +50,30 @@ export default async function PenggunaPage({ searchParams }: { searchParams: Pro
             <tbody>{users.map((u) => <tr key={u.id}><td className="font-mono text-xs">{u.username}</td><td>{u.name}{u.email && <div className="text-xs text-slate-500">{u.email}</div>}</td><td><Badge tone="blue">{ROLE_LABEL[u.role]}</Badge></td><td className="text-xs">{u.employee?.code}{u.division && ` · ${u.division.name}`}</td><td className="text-xs">{fmtDateTime(u.lastLoginAt)}</td><td>{u.active ? (u.lockedUntil && u.lockedUntil > new Date() ? <Badge tone="red">Terkunci</Badge> : <Badge tone="green">Aktif</Badge>) : <Badge>Nonaktif</Badge>}</td><td>{(u.role !== "OWNER" || me.role === "OWNER") && <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${u.username}`}>{form(u)}</Modal>}</td></tr>)}</tbody>
           </table></Paged>
         </div>
+      ) : tab === "menu" ? (
+        <Card title="Akses menu per role">
+          <p className="mb-3 text-sm text-slate-500">Centang = menu tampil dan bisa dibuka. Menu yang dimatikan juga ditolak di server (tidak bisa dibuka lewat alamat langsung atau bot). Owner selalu punya semua akses. Pengaturan halus per tindakan ada di tab Hak akses detail.</p>
+          <ActionForm action={saveMenuAccess}>
+            <div className="table-wrap">
+              <table className="tbl">
+                <thead><tr><th>Menu</th><th className="text-center">Owner</th>{ROLES.filter((r) => r !== "OWNER").map((r) => <th key={r} className="text-center text-xs">{ROLE_LABEL[r]}</th>)}</tr></thead>
+                <tbody>
+                  {MENU_GROUPS.map((g) => (
+                    <tr key={g.key}>
+                      <td className="font-medium">{g.label}</td>
+                      <td className="text-center"><input type="checkbox" checked disabled aria-label={`${g.label} Owner`} /></td>
+                      {ROLES.filter((r) => r !== "OWNER").map((r) => {
+                        const on = g.perms.some((p) => effectivePermissions(r, overrides).has(p));
+                        return <td key={r} className="text-center"><input type="checkbox" name={`menu.${r}`} value={g.key} defaultChecked={on} aria-label={`${g.label} ${ROLE_LABEL[r]}`} /></td>;
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-4"><Submit>Simpan akses menu</Submit></div>
+          </ActionForm>
+        </Card>
       ) : (
         <>
           <Tabs current={role} tabs={ROLES.map((r) => ({ key: r, label: ROLE_LABEL[r], href: `?tab=akses&role=${r}` }))} />

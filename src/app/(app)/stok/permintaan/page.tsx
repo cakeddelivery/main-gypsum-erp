@@ -5,7 +5,7 @@ import { Badge, Card, Empty, Field, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { createRequest, decideRequest } from "../actions";
+import { decideRequest } from "../actions";
 import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Permintaan Stok" };
@@ -14,25 +14,13 @@ const TONE = { DIAJUKAN: "amber", DISETUJUI: "blue", DITOLAK: "red", DIPENUHI: "
 export default async function PermintaanPage() {
   const user = await requirePerm("stock.request", "stock.approve");
   const own = !user.can("stock.approve") && user.divisionId ? { divisionId: user.divisionId } : {};
-  const [reqs, items, divisions, locations] = await Promise.all([
-    prisma.stockRequest.findMany({ where: own, include: { item: true, division: true }, orderBy: { createdAt: "desc" }, take: 200 }),
-    prisma.item.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
-    prisma.division.findMany({ where: { active: true } }),
+  const [reqs, locations] = await Promise.all([
+    prisma.stockRequest.findMany({ where: own, include: { item: { include: { supplier: true } }, division: true }, orderBy: { createdAt: "desc" }, take: 200 }),
     prisma.location.findMany({ orderBy: { code: "asc" } }),
   ]);
   return (
     <div className="space-y-5">
-      <PageHeader title="Permintaan stok" subtitle="Divisi mengajukan kebutuhan bahan; gudang menyetujui & memenuhi" actions={user.can("stock.request") && (
-        <Modal trigger="+ Permintaan" title="Ajukan permintaan stok">
-          <ModalForm action={createRequest} className="grid grid-cols-2 gap-3">
-            <Field label="Item" className="col-span-2"><select name="itemId" className="input">{items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}</select></Field>
-            <Field label="Divisi"><select name="divisionId" defaultValue={user.divisionId ?? ""} className="input">{divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
-            <Field label="Jumlah"><input name="qty" inputMode="decimal" className="input" required /></Field>
-            <Field label="Catatan" className="col-span-2"><input name="note" className="input" /></Field>
-            <div className="col-span-2"><Submit>Ajukan</Submit></div>
-          </ModalForm>
-        </Modal>
-      )} />
+      <PageHeader title="Permintaan stok" subtitle="Dibuat otomatis saat laporan shift mencatat stok bahan ≤ batas minimum (jumlah = kekurangan + jumlah order biasa). Ditandai Dipenuhi otomatis saat pembelian bahan itu dicatat." />
       {reqs.length === 0 ? <Empty title="Belum ada permintaan" /> : (
         <div className="table-wrap">
           <Paged><table className="tbl">
@@ -40,7 +28,7 @@ export default async function PermintaanPage() {
             <tbody>
               {reqs.map((r) => (
                 <tr key={r.id}>
-                  <td>{fmtDateTime(r.createdAt)}</td><td>{r.division.name}</td><td>{r.item.name}</td><td className="num">{Number(r.qty)} {r.item.unit}</td><td>{r.requestedBy}</td>
+                  <td>{fmtDateTime(r.createdAt)}</td><td>{r.division.name}</td><td>{r.item.name}{r.auto && <span className="ml-1"><Badge tone="blue">Otomatis</Badge></span>}{r.item.buyMode === "ONLINE" && r.item.productUrl ? <div><a href={r.item.productUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-medium underline">🛒 Order online</a></div> : r.item.supplier && <div className="text-xs text-slate-400">{r.item.supplier.name}</div>}</td><td className="num">{Number(r.qty)} {r.item.unit}</td><td>{r.requestedBy}</td>
                   <td><Badge tone={TONE[r.status]}>{r.status}</Badge>{r.decidedBy && <div className="text-xs text-slate-400">{r.decidedBy}</div>}</td><td className="text-xs">{r.note}</td>
                   {user.can("stock.approve") && (
                     <td><div className="flex gap-1">

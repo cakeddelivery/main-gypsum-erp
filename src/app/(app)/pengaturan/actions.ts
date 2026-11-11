@@ -1,12 +1,13 @@
 "use server";
 import { z } from "zod";
+import { nextTypeCode } from "@/lib/productTypes";
 import { normEmail } from "@/lib/email";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int, bool } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { hashPassword, ForbiddenError } from "@/lib/auth";
 import { clearLoginBlocks, passwordChangeData } from "@/lib/loginGuard";
-import { ALL_PERMISSIONS, ROLES, DEFAULT_MATRIX } from "@/lib/rbac";
+import { ALL_PERMISSIONS, ROLES, DEFAULT_MATRIX, MENU_GROUPS, applyMenuChoice, effectivePermissions, overridesFor } from "@/lib/rbac";
 import { generateApiKey, API_SCOPES } from "@/lib/apiAuth";
 import { sendDailyRecap } from "@/lib/jobs";
 import { setBotCommands } from "@/lib/telegram";
@@ -65,6 +66,25 @@ export const saveBank = action("settings.manage", async (fd, user) => {
  * Kategori item & produk jadi. Awalan menentukan kode otomatis item BARU (BU-001, MG-001);
  * kode item lama tidak berubah. Ganti nama kategori ikut memperbarui item & produk yang memakainya.
  */
+/** Tipe produk jadi (Satuan, Paket 12, …): kode otomatis dari nama, nonaktif = tidak muncul di pilihan */
+export const saveProductType = action("settings.manage", async (fd, user) => {
+  const code = optStr(fd, "code");
+  const name = z.string().trim().min(2, "Nama tipe minimal 2 huruf").max(40).parse(str(fd, "name"));
+  const packQty = int(fd, "packQty", 1);
+  if (packQty < 1) throw new Error("Isi per kemasan minimal 1");
+  const clash = await prisma.productTypeOption.findFirst({ where: { name: { equals: name, mode: "insensitive" }, ...(code ? { code: { not: code } } : {}) } });
+  if (clash) throw new Error(`Tipe ${name} sudah ada`);
+  const last = await prisma.productTypeOption.aggregate({ _max: { sortOrder: true } });
+  const sortOrder = str(fd, "sortOrder") === "" ? (last._max.sortOrder ?? 0) + 1 : int(fd, "sortOrder");
+  if (code) {
+    const active = bool(fd, "active");
+    if (!active && (await prisma.productTypeOption.count({ where: { active: true, code: { not: code } } })) === 0) throw new Error("Minimal satu tipe produk aktif");
+    await prisma.productTypeOption.update({ where: { code }, data: { name, packQty, sortOrder, active } });
+  } else await prisma.productTypeOption.create({ data: { code: await nextTypeCode(prisma, name), name, packQty, sortOrder } });
+  await audit(user, "TIPE_PRODUK_DISIMPAN", "ProductTypeOption", code ?? name, { name, packQty, sortOrder });
+  return "Tipe produk tersimpan";
+}, ["/pengaturan", "/produk"]);
+
 export const saveItemCategory = action("settings.manage", async (fd, user) => {
   const id = optStr(fd, "id");
   const type = z.enum(["BAHAN_BAKU", "BARANG_DALAM_PROSES", "BARANG_JADI"]).parse(str(fd, "type")) as ItemType;
@@ -103,7 +123,7 @@ export const saveCategory = action("settings.manage", async (fd, user) => {
   return "Kategori tersimpan";
 }, P);
 
-const PARAM_KEYS = ["default_store_id", "loc_raw", "loc_wip", "loc_finished", "late_deduction_per_minute", "payday_offset_days", "weekly_off_quota", "monthly_workdays", "allowance_payday", "go_live_date", "payroll_require_validated", "auto_close_enabled", "auto_close_day", "report_checklist", "company_address", "company_tagline", "company_phone", "company_city"];
+const PARAM_KEYS = ["default_store_id", "loc_raw", "loc_wip", "loc_finished", "late_deduction_per_minute", "payday_offset_days", "weekly_off_quota", "monthly_workdays", "allowance_payday", "bpjs_tk_amount", "go_live_date", "payroll_require_validated", "auto_close_enabled", "auto_close_day", "report_checklist", "company_address", "company_tagline", "company_phone", "company_city"];
 export const saveParams = action("settings.manage", async (fd, user) => {
   const changes: Record<string, string> = {};
   for (const k of PARAM_KEYS) {
@@ -163,6 +183,28 @@ export const saveMatrix = action("users.manage", async (fd, user) => {
   await audit(user, "HAK_AKSES_DIUBAH", "RolePermission", role, { granted: [...checked] });
   return "Hak akses tersimpan";
 }, ["/pengaturan/pengguna"]);
+
+/** Tabel akses menu: nyala/mati menu per role (semua role sekaligus; Owner selalu penuh & tidak bisa dikunci) */
+export const saveMenuAccess = action("users.manage", async (fd, user) => {
+  const all = await prisma.rolePermission.findMany();
+  const changed: Record<string, string[]> = {};
+  await prisma.$transaction(async (tx) => {
+    for (const role of ROLES) {
+      if (role === "OWNER") continue;
+      const enabled = new Set(fd.getAll(`menu.${role}`).map(String));
+      const cur = effectivePermissions(role, all.filter((o) => o.role === role));
+      const want = applyMenuChoice(role, cur, enabled);
+      if ([...want].length === cur.size && [...want].every((p) => cur.has(p))) continue;
+      // Pertahankan override izin yang tidak disentuh (mis. telegram.manage) dengan menulis ulang selisih terhadap bawaan
+      await tx.rolePermission.deleteMany({ where: { role } });
+      for (const o of overridesFor(role, want)) await tx.rolePermission.create({ data: { role, ...o } });
+      changed[role] = MENU_GROUPS.filter((g) => enabled.has(g.key)).map((g) => g.key);
+    }
+  });
+  if (!Object.keys(changed).length) return "Tidak ada perubahan";
+  await audit(user, "AKSES_MENU_DIUBAH", "RolePermission", null, changed);
+  return `Akses menu tersimpan (${Object.keys(changed).length} role diubah)`;
+}, ["/pengaturan/pengguna", "/"]);
 
 // ---------- Telegram & Hermes (khusus Owner) ----------
 export const saveIdentity = action("telegram.manage", async (fd, user) => {

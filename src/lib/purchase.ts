@@ -1,4 +1,5 @@
 import { Prisma, type PaymentTerm } from "@prisma/client";
+import { onItemPurchased } from "./itemCost";
 import { prisma } from "./db";
 import { resolveSupplier } from "./suppliers";
 import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } from "./accounting";
@@ -25,6 +26,10 @@ export type PurchaseInput = {
   note?: string | null;
   proofPath?: string | null;
   proofMime?: string | null;
+  /** Barang belum datang (checkout marketplace / pesan ke supplier): stok baru masuk saat "Terima barang" */
+  inTransit?: boolean;
+  /** Bayar di tempat saat barang datang (hanya untuk barang dalam pengiriman) */
+  cod?: boolean;
 };
 
 export const TERM_LABEL: Record<PaymentTerm, string> = { LUNAS: "Bayar di depan (lunas)", BERTAHAP: "Bertahap (DP + cicilan)", TEMPO: "Tempo (bayar nanti)" };
@@ -69,7 +74,10 @@ export async function createPurchase(input: PurchaseInput, actor: Actor) {
   const total = amounts.reduce((s, a) => s + a, 0);
   const { paid, debt } = splitPayment(input.term, total, input.paidNow);
   if (paid > 0 && !input.bankAccountId) throw new StockError("Pilih rekening pembayaran");
-  if (debt > 0 && !input.dueDate) throw new StockError("Isi tanggal jatuh tempo untuk sisa pembayaran");
+  if (input.cod && !input.inTransit) throw new StockError("COD hanya untuk barang yang masih dalam pengiriman");
+  if (input.cod && paid > 0) throw new StockError("COD: belum ada pembayaran di muka (dibayar saat barang datang)");
+  if (input.inTransit && input.lines.some((l) => l.receiptId)) throw new StockError("Barang masuk dari laporan shift sudah diterima, pilih status Sudah diterima");
+  if (debt > 0 && !input.dueDate && !input.cod) throw new StockError("Isi tanggal jatuh tempo untuk sisa pembayaran");
   return prisma.$transaction(async (tx) => {
     // Nama supplier yang diketik dicocokkan dengan master (termasuk nama lain) agar tidak dobel dengan menu Hutang
     const supplier = await resolveSupplier(tx, { supplierId: input.supplierId, name: input.newSupplierName || input.vendor }, actor, "pembelian");
@@ -79,6 +87,20 @@ export async function createPurchase(input: PurchaseInput, actor: Actor) {
     if (!raw) throw new StockError("Lokasi gudang bahan baku belum diatur di Pengaturan");
     const number = await nextNumber(tx, "PBL", input.date);
     const bank = paid > 0 ? await tx.bankAccount.findUniqueOrThrow({ where: { id: input.bankAccountId! } }) : null;
+    if (input.inTransit) {
+      // Barang belum datang: uang yang sudah dibayar = uang muka pembelian (bukan persediaan), stok belum bertambah
+      const j = paid > 0 ? await postJournal(tx, { date: input.date, storeId: input.storeId, description: `Pesanan ${number} ${vendor} (barang dalam pengiriman)`, source: "PEMBELIAN", sourceId: number, actor, lines: [{ accountCode: COA.UANG_MUKA_PEMBELIAN, debit: paid }, { accountId: bank!.coaAccountId, credit: paid, memo: input.term === "LUNAS" ? "Lunas di muka" : "DP" }] }) : null;
+      const p = await tx.purchase.create({
+        data: {
+          number, supplierId: supplier?.id ?? null, vendor, storeId: input.storeId, date: input.date, term: input.cod ? "TEMPO" : input.term, total: BigInt(total), paidNow: BigInt(paid),
+          bankAccountId: bank?.id ?? null, journalId: j?.id ?? null, note: input.note ?? null, proofPath: input.proofPath ?? null, proofMime: input.proofMime ?? null, createdBy: actor.name,
+          delivery: "MENUNGGU", cod: !!input.cod, dueDate: input.cod ? null : (input.dueDate ?? null),
+          lines: { create: lines.map((l, i) => ({ itemId: l.itemId, qty: l.qty, unitCost: BigInt(l.unitCost), amount: BigInt(amounts[i]), qtyReceived: 0 })) },
+        },
+      });
+      await audit(actor, "PESANAN_DIBUAT", "Purchase", p.id, { number, total, paid, cod: !!input.cod }, tx);
+      return p;
+    }
     // Barang masuk dari laporan shift: fisiknya sudah dihitung di stok akhir shift, jadi stok masuk bertanggal waktu barang masuk
     const receiptIds = lines.map((l) => l.receiptId).filter((x): x is string => !!x);
     if (new Set(receiptIds).size !== receiptIds.length) throw new StockError("Satu barang masuk hanya bisa ditautkan sekali");
@@ -100,8 +122,7 @@ export async function createPurchase(input: PurchaseInput, actor: Actor) {
       const rc = l.receiptId ? receipts.find((r) => r.id === l.receiptId) : null;
       await recordMovement(tx, { type: "PENERIMAAN", itemId: l.itemId, qty: l.qty, toLocationId: raw, unitCost: l.unitCost, ref: number, note: rc ? `Pembelian ${vendor} (barang masuk ${rc.number})` : `Pembelian ${vendor}`, date: rc ? rc.receivedAt : input.date }, actor);
       // Harga beli terbaru untuk HPP realtime; harga sebelumnya disimpan untuk indikator naik/turun
-      const it = await tx.item.findUniqueOrThrow({ where: { id: l.itemId } });
-      if (!it.lastCostAt || input.date >= it.lastCostAt) await tx.item.update({ where: { id: l.itemId }, data: { prevCost: it.lastCost > BigInt(0) ? it.lastCost : BigInt(l.unitCost), lastCost: BigInt(l.unitCost), lastCostAt: input.date } });
+      await onItemPurchased(tx, l.itemId, { unitCost: l.unitCost, qty: l.qty, total: l.unitCost * l.qty, date: input.date, ref: number, by: actor.name });
     }
     const payable = debt > 0
       ? await tx.payable.create({ data: { number: await nextNumber(tx, "UTG", input.date), vendor, supplierId: supplier?.id ?? null, storeId: input.storeId, date: input.date, dueDate: input.dueDate ?? null, amount: BigInt(debt), note: `Sisa pembelian ${number}`, journalId: j.id } })
@@ -110,7 +131,7 @@ export async function createPurchase(input: PurchaseInput, actor: Actor) {
       data: {
         number, supplierId: supplier?.id ?? null, vendor, storeId: input.storeId, date: input.date, term: input.term, total: BigInt(total), paidNow: BigInt(paid),
         bankAccountId: bank?.id ?? null, payableId: payable?.id ?? null, journalId: j.id, note: input.note ?? null, proofPath: input.proofPath ?? null, proofMime: input.proofMime ?? null, createdBy: actor.name,
-        lines: { create: lines.map((l, i) => ({ itemId: l.itemId, qty: l.qty, unitCost: BigInt(l.unitCost), amount: BigInt(amounts[i]) })) },
+        lines: { create: lines.map((l, i) => ({ itemId: l.itemId, qty: l.qty, unitCost: BigInt(l.unitCost), amount: BigInt(amounts[i]), qtyReceived: l.qty })) },
       },
     });
     if (receiptIds.length) await tx.shiftReceipt.updateMany({ where: { id: { in: receiptIds } }, data: { purchaseId: p.id } });
@@ -130,12 +151,13 @@ export async function cancelPurchase(id: string, reason: string, actor: Actor, n
     await tx.$queryRaw`SELECT id FROM "Purchase" WHERE id = ${id} FOR UPDATE`;
     const p = await tx.purchase.findUniqueOrThrow({ where: { id }, include: { lines: true } });
     if (p.cancelledAt) throw new StockError(`${p.number} sudah dibatalkan`);
+    if (await tx.purchaseReceipt.count({ where: { purchaseId: id } })) throw new StockError(`${p.number} sudah ada barang yang diterima. Pakai "Tutup pesanan" untuk sisa yang tidak datang.`);
     const payable = p.payableId ? await tx.payable.findUnique({ where: { id: p.payableId } }) : null;
     if (payable && payable.paid > BigInt(0)) throw new StockError(`Hutang ${payable.number} sudah dicicil Rp ${Number(payable.paid).toLocaleString("id-ID")}. Batalkan pembayaran hutangnya dulu di menu Transaksi.`);
     const date = await assertPeriodOpen(tx, p.date).then(() => p.date, () => now);
     if (p.journalId) await reverseJournal(tx, p.journalId, date, actor, `batal ${p.number} — ${reason.trim()}`.slice(0, 150));
     const { raw } = await locationSettings(tx);
-    for (const l of p.lines) {
+    for (const l of p.delivery === "DITERIMA" ? p.lines : []) {
       const from = (await tx.stockMovement.findFirst({ where: { ref: p.number, itemId: l.itemId, type: "PENERIMAAN" } }))?.toLocationId ?? raw;
       if (!from) throw new StockError("Lokasi gudang bahan baku belum diatur di Pengaturan");
       await recordMovement(tx, { type: "PENGELUARAN", itemId: l.itemId, qty: Number(l.qty), fromLocationId: from, ref: `BATAL ${p.number}`, note: `Pembatalan ${p.number}`, date, allowNegative: true, noJournal: true }, actor);

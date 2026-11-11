@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { pendingDeliveries } from "@/lib/purchaseReceive";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { fmtDateTime, fmtDay } from "@/lib/time";
@@ -50,6 +51,14 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
     prisma.shiftReceipt.findMany({ where: { reportId: r.id }, include: { item: true }, orderBy: { number: "asc" } }),
     divisionPendingReturns(r.divisionId),
   ]);
+  // Pesanan dalam pengiriman untuk bahan divisi ini (validasi barang datang lewat barang masuk)
+  const canReceive = user.can("stock.receive");
+  const [pend, bankRows] = canReceive ? await Promise.all([pendingDeliveries(prisma, items.map((i) => i.id)), prisma.bankAccount.findMany({ where: { active: true }, orderBy: { code: "asc" } })]) : [[], []];
+  const orders = pend.flatMap((p) => p.lines.filter((l) => items.some((i) => i.id === l.itemId) && Number(l.qty) - Number(l.qtyReceived) > 0.0005).map((l) => {
+    const remaining = Number(l.qty) - Number(l.qtyReceived);
+    return { lineId: l.id, itemId: l.itemId, remaining, cod: p.cod, label: `${p.number} · ${p.vendor} · sisa ${remaining.toLocaleString("id-ID")} ${l.item.unit}${p.cod ? " · COD" : ""}` };
+  }));
+  const banks = [...bankRows].sort((a, b) => (a.code === "KAS" ? -1 : b.code === "KAS" ? 1 : 0)).map((b) => ({ id: b.id, name: b.name }));
   const extraLines = [...bLines, ...(resultStatus ? resultLines(resultStatus) : [])];
   const resultDef = template ? RESULT_COUNT[template] : undefined;
   const rv = resultValues(work);
@@ -107,6 +116,8 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
               followUpStatus={r.followUpStatus}
               receipts={receipts.map((x) => ({ id: x.id, number: x.number, itemName: x.item.name, unit: x.item.unit, qty: Number(x.qty), supplierName: x.supplierName, hasPhoto: !!x.photoPath, linked: !!x.purchaseId }))}
               materials={items.map((i) => ({ id: i.id, name: i.name, unit: i.unit }))}
+              orders={orders}
+              banks={banks}
               applied={r.stockApplied}
               resultTitle={resultDef?.title ?? null}
               resultCount={resultDef ? VARIANTS.map((v) => ({ key: v, label: `${resultDef.label} ${v}`, unit: resultDef.unit, qty: rv[v] ?? null })) : []}

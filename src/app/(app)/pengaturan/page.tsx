@@ -6,7 +6,7 @@ import { AutoCode, Badge, Card, Field, PageHeader, Tabs } from "@/components/ui"
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
-import { saveBank, saveCategory, saveItemCategory, saveDivision, saveOrg, saveParams, saveShift, saveStore } from "./actions";
+import { saveBank, saveCategory, saveItemCategory, saveProductType, saveDivision, saveOrg, saveParams, saveShift, saveStore } from "./actions";
 import { Paged } from "@/components/Paged";
 import { LETTERHEAD_DEFAULT } from "@/lib/letterhead";
 
@@ -30,6 +30,7 @@ export default async function PengaturanPage({ searchParams }: { searchParams: P
     prisma.itemCategory.findMany({ orderBy: [{ type: "asc" }, { sortOrder: "asc" }, { name: "asc" }] }),
     prisma.item.groupBy({ by: ["type", "category"], _count: true }),
   ]);
+  const [ptypes, ptypeUse] = tab === "tipe-produk" ? await Promise.all([prisma.productTypeOption.findMany({ orderBy: [{ sortOrder: "asc" }, { name: "asc" }] }), prisma.product.groupBy({ by: ["type"], _count: true })]) : [[], []];
   const s = (k: string) => settings.find((x) => x.key === k)?.value ?? "";
   const links = (
     <>
@@ -46,6 +47,7 @@ export default async function PengaturanPage({ searchParams }: { searchParams: P
     { key: "rekening", label: "Rekening" },
     { key: "kategori", label: "Kategori transaksi" },
     { key: "kategori-produk", label: "Kategori produk" },
+    { key: "tipe-produk", label: "Tipe produk" },
     { key: "parameter", label: "Parameter operasional" },
   ].map((t) => ({ ...t, href: `?tab=${t.key}` }));
 
@@ -77,8 +79,19 @@ export default async function PengaturanPage({ searchParams }: { searchParams: P
       <div className="col-span-2"><Submit>Simpan</Submit></div>
     </ModalForm>
   );
+  const ptypeForm = (x?: (typeof ptypes)[number]) => (
+    <ModalForm action={saveProductType} className="grid grid-cols-2 gap-3">
+      {x && <input type="hidden" name="code" value={x.code} />}
+      <Field label="Nama tipe" className="col-span-2"><input name="name" defaultValue={x?.name} className="input" required placeholder="cth: Paket 6" /></Field>
+      <Field label="Isi per kemasan (pcs)" hint="Bawaan saat produk baru dibuat"><input name="packQty" defaultValue={x?.packQty ?? 1} inputMode="numeric" className="input" /></Field>
+      <Field label="Urutan" hint="Kecil tampil lebih dulu"><input name="sortOrder" defaultValue={x?.sortOrder ?? ""} placeholder="paling bawah" inputMode="numeric" className="input" /></Field>
+      {x && <label className="col-span-2 flex gap-2 text-sm"><input type="checkbox" name="active" defaultChecked={x.active} /> Aktif (nonaktif = tidak muncul di pilihan, produk lama tetap)</label>}
+      <div className="col-span-2"><Submit>Simpan</Submit></div>
+    </ModalForm>
+  );
   const used = (type: string, name: string) => catUse.find((u) => u.type === type && u.category === name)?._count ?? 0;
   const add: Record<string, React.ReactNode> = {
+    "tipe-produk": <Modal trigger="+ Tipe produk" title="Tipe produk baru">{ptypeForm()}</Modal>,
     "kategori-produk": <Modal trigger="+ Kategori produk" title="Kategori produk baru">{itemCatForm()}</Modal>,
     organisasi: <Modal trigger="+ Toko" title="Toko baru">{storeForm()}</Modal>,
     divisi: <Modal trigger="+ Divisi" title="Divisi baru">{divForm()}</Modal>,
@@ -118,6 +131,14 @@ export default async function PengaturanPage({ searchParams }: { searchParams: P
           ))}
         </div>
       )}
+      {tab === "tipe-produk" && (
+        <div className="space-y-3">
+          <p className="text-sm text-slate-500">Pilihan kolom Tipe di form Master Produk Jadi. Kode dibuat otomatis dari nama.</p>
+          <div className="table-wrap"><Paged><table className="tbl"><thead><tr><th>Nama</th><th className="num">Isi/kemasan</th><th className="num">Dipakai</th><th>Status</th><th /></tr></thead>
+            <tbody>{ptypes.map((x) => <tr key={x.code}><td>{x.name}</td><td className="num">{x.packQty} pcs</td><td className="num">{ptypeUse.find((u) => u.type === x.code)?._count ?? 0} produk</td><td>{active(x.active)}</td><td>{edit(ptypeForm(x), "Ubah tipe produk")}</td></tr>)}</tbody>
+          </table></Paged></div>
+        </div>
+      )}
       {tab === "parameter" && (
         <Card title="Parameter operasional" actions={
           <Modal trigger="Ubah parameter" triggerClass="btn-primary btn-sm" title="Ubah parameter operasional" wide>
@@ -131,6 +152,7 @@ export default async function PengaturanPage({ searchParams }: { searchParams: P
             <Field label="Jatah libur per minggu (hari)" hint="Lebih dari ini dihitung bolos"><input name="weekly_off_quota" defaultValue={s("weekly_off_quota") || "1"} inputMode="numeric" className="input" /></Field>
             <Field label="Hari kerja per bulan (dasar potongan bolos)" hint="Potongan/hari = gaji bulanan ÷ angka ini"><input name="monthly_workdays" defaultValue={s("monthly_workdays") || "26"} inputMode="numeric" className="input" /></Field>
             <Field label="Tanggal bayar tunjangan (tiap bulan)"><input name="allowance_payday" defaultValue={s("allowance_payday") || "15"} inputMode="numeric" className="input" /></Field>
+            <Field label="BPJS Ketenagakerjaan per karyawan / bulan (Rp)" hint="Nominal bawaan; dibayar perusahaan, tampil di slip gaji (tidak memotong gaji)"><input name="bpjs_tk_amount" defaultValue={s("bpjs_tk_amount") || "28400"} inputMode="numeric" className="input" /></Field>
             <Field label="Tanggal go-live aplikasi" hint="Absen sebelum tanggal ini tidak dihitung: gaji siklus pertama dibayar penuh"><input type="date" name="go_live_date" defaultValue={s("go_live_date")} className="input" /></Field>
             <Field label="Gaji hanya dari absensi tervalidasi"><select name="payroll_require_validated" defaultValue={s("payroll_require_validated") || "true"} className="input"><option value="true">Ya</option><option value="false">Tidak</option></select></Field>
             <Field label="Tutup buku otomatis (09.00 WIB)"><select name="auto_close_enabled" defaultValue={s("auto_close_enabled") || "true"} className="input"><option value="true">Aktif</option><option value="false">Nonaktif</option></select></Field>

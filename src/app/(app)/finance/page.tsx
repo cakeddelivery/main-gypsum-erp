@@ -1,4 +1,5 @@
 import { payableOptions } from "@/lib/payables";
+import { BPJS_COA, bpjsEmployeeOptions } from "@/lib/bpjs";
 import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -33,7 +34,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
     prisma.financeTransaction.findMany({ where: { ...where, ...(status ? { status } : {}) }, orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: take + 1, include: { payable: { select: { number: true, kind: true, vendor: true } } } }),
     prisma.financeTransaction.groupBy({ by: ["status"], where, _count: true }),
     prisma.bankAccount.findMany(),
-    prisma.txCategory.findMany(),
+    prisma.txCategory.findMany({ include: { coaAccount: { select: { code: true } } } }),
     prisma.store.findMany({ orderBy: { code: "asc" } }),
     prisma.setting.findUnique({ where: { key: "default_store_id" } }),
     status === "DIBATALKAN" || status === "DITOLAK" ? prisma.financeTransaction.count({ where: { status, deletedAt: { not: null } } }) : 0,
@@ -52,7 +53,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
       <PageHeader title="Transaksi" subtitle="Pemasukan, pengeluaran & transfer dari input manual, Telegram, dan AI · IDR · WIB" actions={<><a href={`/finance/export?${new URLSearchParams(Object.entries({ ...sp, baru: undefined, n: undefined, reset: undefined, status: status ?? undefined }).filter(([, v]) => v) as [string, string][])}`} className="btn-secondary" download>Unduh Excel</a>{user.can("finance.approve") && <Link href="/finance/sisihan" className="btn-secondary">Dana sisihan</Link>}{user.can("finance.approve") && <Link href="/finance/talangan" className="btn-secondary">Dana talangan</Link>}{user.can("finance.approve") && <Link href="/finance/cek-saldo" className="btn-secondary">Cek saldo harian</Link>}{(user.can("finance.approve") || user.can("accounting.view")) && <Link href="/finance/mutasi" className="btn-secondary">Mutasi rekening</Link>}{user.can("accounting.post") && <Link href="/akuntansi/saldo-rekening" className="btn-secondary">Atur saldo rekening</Link>}{user.can("finance.create") && (
         <Modal trigger="+ Transaksi" title="Transaksi baru" wide defaultOpen={sp.baru === "1"}>
           <p className="mb-3 text-xs text-slate-500">Masuk ke daftar Transaksi sebagai draft — baru dibukukan setelah disetujui pihak berwenang.</p>
-          <TxForm mode="create" action={createTx} extract={extractAction} banks={banks.filter((b) => b.active)} categories={cats.filter((c) => c.active)} stores={stores.filter((x) => x.active)} defaultStoreId={def?.value} payables={user.can("finance.create") ? await payableOptions() : []} init={{ direction: "KELUAR", date: todayStr(), storeId: def?.value ?? stores[0]?.id }} />
+          <TxForm mode="create" action={createTx} extract={extractAction} banks={banks.filter((b) => b.active)} categories={cats.filter((c) => c.active).map((c) => ({ ...c, bpjs: c.coaAccount.code === BPJS_COA }))} stores={stores.filter((x) => x.active)} defaultStoreId={def?.value} payables={user.can("finance.create") ? await payableOptions() : []} bpjsEmployees={await bpjsEmployeeOptions()} init={{ direction: "KELUAR", date: todayStr(), storeId: def?.value ?? stores[0]?.id }} />
         </Modal>
       )}</>} />
       <Tabs current={status ?? "ALL"} tabs={[{ key: "ALL", label: "Semua", href: qs("ALL"), count: counts.reduce((s, c) => s + c._count, 0) }, ...STATUSES.map((s) => ({ key: s, label: STATUS_LABEL[s], href: qs(s), count: counts.find((c) => c.status === s)?._count ?? 0 }))]} />

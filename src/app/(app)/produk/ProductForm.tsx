@@ -4,11 +4,10 @@ import { AutoCode, Field } from "@/components/ui";
 import { saveProduct } from "./actions";
 import type { Product } from "@prisma/client";
 
-const TYPES = { SATUAN: "Satuan", PAKET_12: "Paket 12", PAKET_24: "Paket 24", PAKET_48: "Paket 48", GIFTBOX: "Giftbox", CUSTOM: "Custom" };
 const ro = "input bg-slate-100 dark:bg-slate-800";
 
 /** Master produk jadi (susunan mengikuti form referensi owner); resep HPP diatur di halaman detail */
-export function ProductForm({ p, stores, items, hpp, minStock, categories }: { p?: Product; stores: { id: string; name: string }[]; items: { id: string; sku: string; name: string }[]; hpp?: number; minStock?: number; categories: string[] }) {
+export function ProductForm({ p, stores, items, hpp, minStock, categories, types }: { p?: Product; types: { code: string; name: string; active: boolean }[]; stores: { id: string; name: string }[]; items: { id: string; sku: string; name: string }[]; hpp?: number; minStock?: number; categories: string[] }) {
   const cats = p?.category && !categories.includes(p.category) ? [...categories, p.category] : categories;
   return (
     <ModalForm action={saveProduct} className="grid grid-cols-2 gap-3">
@@ -16,7 +15,7 @@ export function ProductForm({ p, stores, items, hpp, minStock, categories }: { p
       <AutoCode label="Kode Produk Jadi" className="col-span-2" value={p?.sku} example="MG-001" hint="Kode dibuat otomatis berdasarkan kategori & nomor urut." />
       <Field label="Nama Produk Mainan" className="col-span-2"><input name="name" defaultValue={p?.name} placeholder="Cth: Patung Gypsum Dinosaurus Set" className="input" required /></Field>
       <Field label="Kategori Produk" className="col-span-2"><select name="category" defaultValue={p?.category ?? cats[0]} className="input">{cats.map((c) => <option key={c} value={c}>{c}</option>)}</select></Field>
-      <Field label="Tipe"><select name="type" defaultValue={p?.type} className="input">{Object.entries(TYPES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+      <Field label="Tipe"><select name="type" defaultValue={p?.type} className="input">{types.filter((t) => t.active || t.code === p?.type).map((t) => <option key={t.code} value={t.code}>{t.name}</option>)}</select></Field>
       <Field label="Varian"><select name="variant" defaultValue={p?.variant} className="input">{["COWOK", "CEWEK", "HEWAN", "TRANSPORTASI", "MIX"].map((v) => <option key={v} value={v}>{v}</option>)}</select></Field>
       {p ? (
         <Field label="Estimasi HPP / Pcs (Rp)" hint="Dari Resep HPP"><input value={hpp ?? 0} className={ro} readOnly /></Field>

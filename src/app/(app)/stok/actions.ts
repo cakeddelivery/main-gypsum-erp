@@ -41,19 +41,6 @@ export const createMovement = action(
   ["/stok"],
 );
 
-export const createRequest = action(
-  "stock.request",
-  async (fd, user) => {
-    const divisionId = str(fd, "divisionId") || user.divisionId;
-    if (!divisionId) throw new Error("Pilih divisi");
-    const qty = dec(fd, "qty");
-    if (!(qty > 0)) throw new Error("Jumlah harus > 0");
-    const r = await prisma.stockRequest.create({ data: { itemId: str(fd, "itemId"), divisionId, qty, note: optStr(fd, "note"), requestedBy: user.name } });
-    await audit(user, "PERMINTAAN_STOK", "StockRequest", r.id);
-    return "Permintaan stok diajukan";
-  },
-  ["/stok/permintaan", "/"],
-);
 
 export const decideRequest = action(
   "stock.approve",
@@ -99,11 +86,16 @@ export const saveItem = action(
         minStock: dec(fd, "minStock"),
         supplierId: optStr(fd, "supplierId"),
         newSupplierName: optStr(fd, "newSupplierName"),
-        gypsumCharacterId: optStr(fd, "gypsumCharacterId"),
         divisionId: optStr(fd, "divisionId"),
         note: optStr(fd, "note"),
         active: id ? bool(fd, "active") : true,
-        price: id ? undefined : int(fd, "price"),
+        buyMode: fd.has("buyMode") ? (str(fd, "buyMode") === "ONLINE" ? "ONLINE" : "OFFLINE") : undefined,
+        productUrl: optStr(fd, "productUrl"),
+        orderQty: fd.has("orderQty") ? dec(fd, "orderQty", 0) : undefined,
+        // Item baru: harga pembelian + quantity; item lama: hanya Owner yang boleh mengisi harga manual
+        buyPrice: id ? undefined : int(fd, "buyPrice"),
+        buyQty: id ? undefined : dec(fd, "buyQty", 1),
+        manualCost: id && user.role === "OWNER" && fd.has("buyPrice") ? { price: int(fd, "buyPrice"), qty: dec(fd, "buyQty", 1) } : null,
         openingQty: id ? undefined : dec(fd, "openingQty"),
       },
       user,
@@ -125,18 +117,6 @@ export const saveLocation = action(
   ["/stok/master"],
 );
 
-export const saveGypsum = action(
-  "master.manage",
-  async (fd, user) => {
-    const id = optStr(fd, "id");
-    const minutes = str(fd, "settingMinutes");
-    const data = { name: z.string().min(2).parse(str(fd, "name")), waterRatio: optStr(fd, "waterRatio"), settingMinutes: minutes ? int(fd, "settingMinutes") : null, hardness: optStr(fd, "hardness"), note: optStr(fd, "note") };
-    const s = id ? await prisma.gypsumCharacter.update({ where: { id }, data }) : await prisma.gypsumCharacter.create({ data });
-    await audit(user, "KARAKTER_GYPSUM_DISIMPAN", "GypsumCharacter", s.id, data);
-    return "Karakter gypsum tersimpan";
-  },
-  ["/stok/master"],
-);
 
 /** Opname barang jadi akhir bulan: kolom fisik_<idItem>; kosong = tidak dihitung */
 export const opnameFinished = action(

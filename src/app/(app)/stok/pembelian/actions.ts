@@ -3,6 +3,7 @@ import { action, str, optStr, int } from "@/lib/action";
 import { assertPerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { cancelPurchase, createPurchase, termFor, lineAmounts } from "@/lib/purchase";
+import { closePurchase, receivePurchase } from "@/lib/purchaseReceive";
 import { matchAccount } from "@/lib/extract";
 import { readReceipt, receiptReaderConfigured } from "@/lib/receipt";
 import { isModelUnavailable } from "@/lib/ai";
@@ -23,6 +24,9 @@ export const savePurchase = action(
     const bill = lineAmounts(lines.filter((l) => l.itemId && l.qty > 0)).reduce((s, l) => s + l.amount, 0);
     const paid = int(fd, "paidAmount");
     const term = termFor(bill, paid);
+    // Status barang: sudah diterima (stok langsung masuk) atau masih dikirim (stok masuk saat "Terima barang")
+    const inTransit = str(fd, "delivery") === "DIKIRIM";
+    const cod = inTransit && str(fd, "cod") === "on";
     let proofPath: string | null = null;
     let proofMime: string | null = null;
     const file = fd.get("proof");
@@ -41,13 +45,16 @@ export const savePurchase = action(
         lines,
         paidNow: term === "BERTAHAP" ? paid : 0,
         bankAccountId: paid > 0 ? optStr(fd, "bankAccountId") : null,
-        dueDate: term !== "LUNAS" && optStr(fd, "dueDate") ? jakartaDateTime(str(fd, "dueDate"), "12:00") : null,
+        dueDate: term !== "LUNAS" && !cod && optStr(fd, "dueDate") ? jakartaDateTime(str(fd, "dueDate"), "12:00") : null,
+        inTransit,
+        cod,
         note: optStr(fd, "note"),
         proofPath,
         proofMime,
       },
       user,
     );
+    if (inTransit) return `Pesanan ${p.number} tercatat (menunggu barang datang${cod ? ", COD" : paid > 0 ? ", uang muka tercatat" : ""}). Stok bertambah saat barang diterima.`;
     return `Pembelian ${p.number} tercatat${term === "LUNAS" ? " (lunas)" : " (hutang)"}`;
   },
   ["/stok", "/akuntansi/piutang-utang", "/supplier"],
@@ -83,4 +90,45 @@ export const cancelPurchaseAction = action(
     return `Pembelian ${p.number} dibatalkan`;
   },
   ["/stok", "/akuntansi/piutang-utang", "/supplier"],
+);
+
+/** Terima barang pesanan (Supervisor / Kapten): isi jumlah yang datang per barang + foto barang/nota */
+export const receivePurchaseAction = action(
+  "stock.receive",
+  async (fd, user) => {
+    const lineIds = fd.getAll("lineId").map(String);
+    const qtys = fd.getAll("recvQty").map(num);
+    let photoPath: string | null = null;
+    let photoMime: string | null = null;
+    const file = fd.get("photo");
+    if (file instanceof File && file.size > 0) {
+      photoMime = file.type;
+      photoPath = await saveProof(Buffer.from(await file.arrayBuffer()), file.type);
+    }
+    const r = await receivePurchase(
+      {
+        purchaseId: str(fd, "purchaseId"),
+        // Hari ini = jam sekarang; tanggal lampau = pukul 12.00 WIB
+        date: !str(fd, "date") || str(fd, "date") === todayStr() ? new Date() : jakartaDateTime(str(fd, "date"), "12:00"),
+        lines: lineIds.map((lineId, i) => ({ lineId, qty: qtys[i] })),
+        bankAccountId: optStr(fd, "bankAccountId"),
+        photoPath,
+        photoMime,
+        note: optStr(fd, "note"),
+      },
+      user,
+    );
+    return `Barang diterima (${r.receipt.number})${r.done ? ", pesanan lengkap" : ", sisa masih ditunggu"}${r.payable ? `. Hutang ${r.payable.number} Rp ${r.rest.toLocaleString("id-ID")}` : ""}`;
+  },
+  ["/stok", "/akuntansi/piutang-utang", "/supplier", "/"],
+);
+
+/** Tutup pesanan yang sisanya tidak datang: uang muka sisa jadi piutang refund ke supplier */
+export const closePurchaseAction = action(
+  "finance.approve",
+  async (fd, user) => {
+    const r = await closePurchase(str(fd, "id"), str(fd, "reason"), user);
+    return r.receivable ? `Pesanan ditutup. Refund Rp ${r.refund.toLocaleString("id-ID")} dicatat sebagai piutang ${r.receivable.number}` : "Pesanan ditutup";
+  },
+  ["/stok", "/akuntansi/piutang-utang", "/"],
 );

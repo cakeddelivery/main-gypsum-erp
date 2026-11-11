@@ -106,7 +106,7 @@ export async function unsentReportCount(date: string, divisionId?: string | null
   return Math.max(0, expectedReportCount(divisions, shifts) - sent);
 }
 
-export type OrderRow = { itemId: string; name: string; unit: string; limit: number; qty: number; reportId: string; date: Date; shift: string };
+export type OrderRow = { itemId: string; name: string; unit: string; limit: number; qty: number; reportId: string; date: Date; shift: string; url?: string | null };
 
 /** Bahan baku per divisi yang perlu diorder: hitungan stok akhir shift terakhir tiap bahan ≤ limit */
 export async function materialOrderList(divisionId?: string | null) {
@@ -128,7 +128,7 @@ export async function materialOrderList(divisionId?: string | null) {
     const rows = d.items.map((i) => ({ item: i, limit: Number(i.minStock), count: last.get(i.id) }));
     const order: OrderRow[] = rows
       .filter((r) => r.count && needsOrder({ qty: r.count.qty, limit: r.limit }))
-      .map((r) => ({ itemId: r.item.id, name: r.item.name, unit: r.item.unit, limit: r.limit, ...r.count! }));
+      .map((r) => ({ itemId: r.item.id, name: r.item.name, unit: r.item.unit, limit: r.limit, url: r.item.buyMode === "ONLINE" ? r.item.productUrl : null, ...r.count! }));
     return { division: d, order, uncounted: rows.filter((r) => !r.count).map((r) => r.item) };
   });
 }
@@ -142,7 +142,7 @@ export function materialOrderText(groups: { division: { name: string }; order: O
   return [
     `<b>⚠️ Order bahan baku (${total})</b>`,
     "Stok akhir shift terakhir ≤ limit:",
-    ...g.flatMap((x) => [``, `<b>${esc(x.division.name)}</b>`, ...x.order.map((o) => `• ${esc(o.name)}: stok ${fmt(o.qty)} · limit ${fmt(o.limit)} ${esc(o.unit)}`)]),
+    ...g.flatMap((x) => [``, `<b>${esc(x.division.name)}</b>`, ...x.order.map((o) => `• ${esc(o.name)}: stok ${fmt(o.qty)} · limit ${fmt(o.limit)} ${esc(o.unit)}${o.url ? `\n  🛒 <a href="${esc(o.url)}">Order online</a>` : ""}`)]),
   ].join("\n");
 }
 

@@ -9,7 +9,7 @@ import { itemCategories } from "@/lib/itemCategories";
 import { toRecipeQty } from "@/lib/itemCatalog";
 import { recipeUnit } from "@/lib/unitcost";
 import { OVERHEAD_CATEGORIES, monthlyDepreciation, parseFees, type FeeConfig } from "@/lib/pricing";
-import type { Prisma, ProductType, ProductVariant } from "@prisma/client";
+import type { Prisma, ProductVariant } from "@prisma/client";
 
 /** Persen 0–95 */
 const pct = (fd: FormData, k: string, def: number) => {
@@ -18,7 +18,6 @@ const pct = (fd: FormData, k: string, def: number) => {
   return v;
 };
 
-const PACK: Record<string, number> = { SATUAN: 1, PAKET_12: 12, PAKET_24: 24, PAKET_48: 48, GIFTBOX: 1, CUSTOM: 1 };
 
 /**
  * Produk jadi. Produk baru otomatis mendapat item stok barang jadi (kode MG-xxx) dengan stok awal
@@ -28,7 +27,9 @@ export const saveProduct = action(
   "product.manage",
   async (fd, user) => {
     const id = optStr(fd, "id");
-    const type = str(fd, "type") as ProductType;
+    const type = str(fd, "type");
+    const opt = await prisma.productTypeOption.findUnique({ where: { code: type } });
+    if (!opt) throw new Error("Tipe produk tidak dikenal");
     const name = z.string().min(2, "Nama wajib").parse(str(fd, "name"));
     const category = optStr(fd, "category") ?? (await itemCategories()).BARANG_JADI[0].name;
     const minStock = dec(fd, "minStock", 0);
@@ -39,7 +40,7 @@ export const saveProduct = action(
       type,
       variant: str(fd, "variant") as ProductVariant,
       storeId: str(fd, "storeId"),
-      packQty: int(fd, "packQty", PACK[type] ?? 1) || 1,
+      packQty: int(fd, "packQty", opt.packQty) || 1,
       affiliatePct: pct(fd, "affiliatePct", 0),
       adsPct: pct(fd, "adsPct", 0),
       itemsPerOrder: Math.max(1, dec(fd, "itemsPerOrder", 1)),

@@ -23,6 +23,9 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
   if (can("stock.view")) {
     tasks.push(negativeStock().then((l) => void (l.length && out.push({ key: "negstock", label: "Stok minus (pemakaian melebihi stok tercatat)", count: l.length, href: "/stok?filter=minus", tone: "red" }))));
   }
+  if (can("stock.receive") || can("finance.approve")) {
+    tasks.push(prisma.purchase.count({ where: { cancelledAt: null, delivery: { in: ["MENUNGGU", "SEBAGIAN"] } } }).then((c) => void (c && out.push({ key: "delivery", label: "Pesanan bahan baku dalam pengiriman", count: c, href: "/stok/pembelian", tone: "blue" }))));
+  }
   if (can("stock.approve")) {
     tasks.push(prisma.stockRequest.count({ where: { status: "DIAJUKAN" } }).then((c) => void (c && out.push({ key: "stockreq", label: "Permintaan stok menunggu", count: c, href: "/stok/permintaan", tone: "blue" }))));
   }
