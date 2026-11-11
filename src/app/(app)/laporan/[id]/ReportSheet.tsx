@@ -125,7 +125,7 @@ export function ReportSheet(p: Props) {
       {/* Versi ber-kop surat untuk unduhan JPG */}
       <DocExport>
         <DocSheet
-          id="report-preview" lh={p.lh} exportWidth={900} eyebrow="Standar kinerja operasional" title="Laporan Penutup Shift" subtitle={`${label} • ${p.shift}`}
+          id="report-preview" lh={p.lh} exportWidth={1000} eyebrow="Standar kinerja operasional" title="Laporan Penutup Shift" subtitle={`${label} • ${p.shift}`}
           meta={{ label: `PIC Divisi: ${p.pic}`, value: fmtLong(p.date) }} signer={`PIC ${p.division}`} signDate={p.date}
           notes={[`Dibuat dari Laporan Shift • ${photos} foto bukti.`, "Laporan ini dihasilkan secara otomatis dari sistem dan dapat digunakan sebagai referensi internal."]}
         >

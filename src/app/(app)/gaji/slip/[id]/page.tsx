@@ -80,7 +80,7 @@ export default async function SlipPage({ params }: { params: Promise<{ id: strin
       </div>
       <DocExport>
         <DocSheet
-          id="slip" lh={lh} exportWidth={900} eyebrow={tunj ? "Slip tunjangan karyawan" : "Slip gaji karyawan"} title={tunj ? "Slip Tunjangan" : "Slip Gaji"}
+          id="slip" lh={lh} exportWidth={1000} eyebrow={tunj ? "Slip tunjangan karyawan" : "Slip gaji karyawan"} title={tunj ? "Slip Tunjangan" : "Slip Gaji"}
           subtitle={`${s.employee.name} · ${s.employee.division.name}`}
           meta={{ label: `Periode ${s.period.code}`, value: fmtRange(s.period.startDate.toISOString(), s.period.endDate.toISOString()) }}
           signer="Finance" signDate={s.period.paidAt ? todayStr(s.period.paidAt) : undefined}

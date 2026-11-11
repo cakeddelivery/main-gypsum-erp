@@ -10,6 +10,6 @@ async function tick() {
   }
 }
 
-console.log("Scheduler Main Gypsum aktif (rekap 07.00 WIB, cek saldo 05.00 + pengingat 12.00, pengingat WD TikTok 08.00, tutup buku bulan lalu sesuai Pengaturan, default tgl 10 09.00 WIB)");
+console.log("Scheduler Main Gypsum aktif (rekap 07.00 WIB, cek saldo 05.00 + pengingat 12.00, pengingat WD TikTok 08.00, order bahan 19.00, tutup buku bulan lalu sesuai Pengaturan, default tgl 10 09.00 WIB)");
 tick();
 setInterval(tick, 60_000);

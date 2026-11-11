@@ -140,7 +140,7 @@ export default async function PenjualanDetail({ params }: { params: Promise<{ id
       {!s.cancelledAt && (
         <DocExport>
           <DocSheet
-            id="nota" lh={lh} exportWidth={900} eyebrow="Nota penjualan" title={rest > 0 ? "Invoice" : "Nota Penjualan"}
+            id="nota" lh={lh} exportWidth={1000} eyebrow="Nota penjualan" title={rest > 0 ? "Invoice" : "Nota Penjualan"}
             subtitle={`${s.customerName} · ${s.store.name}`}
             meta={{ label: "No. nota", value: s.number }}
             signer="Admin Penjualan" signDate={todayStr(s.date)}

@@ -36,8 +36,8 @@ export type TemplateDef = {
   label: string;
   heading: string;
   sections: Section[];
-  /** Ringkasan di bawah judul laporan: label + bagian yang dijumlah */
-  summary: { label: string; sections: string[]; unit?: string }[];
+  /** Ringkasan di bawah judul laporan: label + bagian yang dijumlah; ifFilled = hanya tampil bila ada angka yang diisi */
+  summary: { label: string; sections: string[]; unit?: string; ifFilled?: boolean }[];
 };
 
 const VARIANTS = ["Hewan", "Cowok", "Transportasi", "Cewek"];
@@ -61,7 +61,7 @@ export const TEMPLATES: Record<ReportTemplate, TemplateDef> = {
       { kind: "count", key: "giftbox", title: "Giftbox", fields: GIFTBOX_CODES.map((c) => ({ key: c, label: c })), totalLabel: "Total giftbox", unit: "box" },
       { kind: "derived", key: "patung", title: "Patung", from: "giftbox", factor: 5, totalLabel: "Total patung" },
     ],
-    summary: [{ label: "Total resi", sections: ["resi"], unit: "" }, { label: "Total patung", sections: ["patung"] }],
+    summary: [{ label: "Total resi", sections: ["resi"], unit: "", ifFilled: true }, { label: "Total giftbox", sections: ["giftbox"], unit: "box" }, { label: "Total patung", sections: ["patung"] }],
   },
   PACKING: {
     label: "Packing",
@@ -141,9 +141,19 @@ export function sectionTotal(t: TemplateDef, work: WorkData, key: string): numbe
   return sectionFieldValues(t, work, s).reduce((a, f) => a + f.pcs, 0);
 }
 
+/** Ada angka yang diisi (bukan kosong) di bagian ini */
+export function sectionFilled(t: TemplateDef, work: WorkData, key: string): boolean {
+  const s = t.sections.find((x) => x.key === key);
+  if (!s) return false;
+  if (s.kind === "grid") return gridRows(work, s).some((r) => r.v.some((v) => v != null));
+  return sectionFieldValues(t, work, s).some((f) => f.value != null);
+}
+
 export function summaryOf(template: ReportTemplate, work: WorkData) {
   const t = TEMPLATES[template];
-  return t.summary.map((s) => ({ label: s.label, unit: s.unit ?? "pcs", value: s.sections.reduce((a, k) => a + sectionTotal(t, work, k), 0) }));
+  return t.summary
+    .filter((s) => !s.ifFilled || s.sections.some((k) => sectionFilled(t, work, k)))
+    .map((s) => ({ label: s.label, unit: s.unit ?? "pcs", value: s.sections.reduce((a, k) => a + sectionTotal(t, work, k), 0) }));
 }
 
 const fmt = (v: number | null) => (v == null ? "—" : v.toLocaleString("id-ID"));
@@ -198,6 +208,31 @@ export function parseWork(template: ReportTemplate, get: (k: string) => string |
     }
   }
   return work;
+}
+
+// ---------------- Waktu shift & kelengkapan laporan ----------------
+
+/**
+ * Waktu stok akhir shift (WIB): tanggal laporan + jam selesai shift. Shift yang melewati tengah malam selesai esok hari.
+ * Tidak pernah di masa depan (laporan yang dikirim sebelum jam selesai memakai waktu kirim).
+ */
+export function shiftEndAt(date: Date, shift: { startTime: string; endTime: string }, now: Date = new Date()): Date {
+  const hm = (s: string) => {
+    const m = /^(\d{1,2}):(\d{2})/.exec(s ?? "");
+    return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+  };
+  const start = hm(shift.startTime);
+  const end = hm(shift.endTime) ?? 24 * 60 - 1;
+  const day = date.toISOString().slice(0, 10);
+  const nextDay = start != null && end <= start;
+  // WIB = UTC+7
+  const at = new Date(Date.parse(`${day}T00:00:00.000Z`) + (nextDay ? 86_400_000 : 0) + (end - 7 * 60) * 60_000);
+  return at > now ? now : at;
+}
+
+/** Jumlah laporan shift yang seharusnya ada per hari: tiap divisi berformat laporan × jumlah shift-nya */
+export function expectedReportCount(divisions: { shiftCount: number }[], activeShifts: number): number {
+  return divisions.reduce((a, d) => a + Math.min(Math.max(1, d.shiftCount), Math.max(0, activeShifts)), 0);
 }
 
 // ---------------- Checklist & stok ----------------
