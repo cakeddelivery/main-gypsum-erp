@@ -477,3 +477,47 @@ const FLOW_LABEL = { kering: "Patung kering", jadi: "Produk jadi", giftbox: "Gif
 export function flowLines(steps: FlowStep[]): string[] {
   return steps.map((s) => `${s.dir === "in" ? "+" : "−"} ${FLOW_LABEL[s.kind]} ${s.key} ${s.qty.toLocaleString("id-ID")}`);
 }
+
+// ---------------- Rekap laporan shift (harian/mingguan/bulanan) ----------------
+
+export type RecapInput = { date: Date; shift: string; division: string; template: string | null; target: number | null; work: WorkData };
+export type RecapMetric = { label: string; unit: string; value: number };
+export type RecapDivision = { division: string; reports: number; metrics: RecapMetric[]; target: { value: number; target: number; pct: number; label: string; unit: string } | null };
+
+function addMetrics(into: RecapMetric[], add: RecapMetric[]) {
+  for (const m of add) {
+    const cur = into.find((x) => x.label === m.label);
+    if (cur) cur.value += m.value;
+    else into.push({ ...m });
+  }
+}
+
+/** Jumlahkan ringkasan laporan shift per divisi (urutan label mengikuti format divisi) + capaian target gabungan */
+export function recapByDivision(rows: RecapInput[]): RecapDivision[] {
+  const out = new Map<string, RecapDivision & { _t: number; _v: number; _tl?: { label: string; unit: string } }>();
+  for (const r of rows) {
+    if (!isTemplate(r.template)) continue;
+    const d = out.get(r.division) ?? { division: r.division, reports: 0, metrics: [], target: null, _t: 0, _v: 0 };
+    d.reports++;
+    addMetrics(d.metrics, summaryOf(r.template, r.work).map((s) => ({ label: s.label, unit: s.unit, value: s.value })));
+    const tg = targetOf(r.template, r.work, r.target);
+    if (tg) { d._t += tg.target; d._v += tg.value; d._tl = { label: tg.label, unit: tg.unit }; }
+    out.set(r.division, d);
+  }
+  return [...out.values()].map(({ _t, _v, _tl, ...d }) => ({ ...d, target: _t > 0 && _tl ? { value: _v, target: _t, pct: Math.round((_v / _t) * 100), ..._tl } : null }));
+}
+
+/** Ringkasan satu laporan untuk tabel rekap harian */
+export function recapLine(r: RecapInput): { text: string; pct: number | null } {
+  if (!isTemplate(r.template)) return { text: "—", pct: null };
+  const text = summaryOf(r.template, r.work).map((s) => `${s.label}: ${s.value.toLocaleString("id-ID")}${s.unit ? ` ${s.unit}` : ""}`).join(" · ");
+  return { text, pct: targetOf(r.template, r.work, r.target)?.pct ?? null };
+}
+
+export const metricText = (m: RecapMetric) => `${m.label}: ${m.value.toLocaleString("id-ID")}${m.unit ? ` ${m.unit}` : ""}`;
+
+/** Angka utama laporan (yang dibandingkan dengan target): panen / produk jadi / giftbox / patung packing */
+export function mainMetric(template: ReportTemplate, work: WorkData) {
+  const t = TEMPLATES[template];
+  return { label: t.target.label, unit: t.target.unit, value: t.target.sections.reduce((a, k) => a + sectionTotal(t, work, k), 0) };
+}
