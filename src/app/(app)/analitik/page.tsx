@@ -11,7 +11,7 @@ import { requestAdvice } from "./actions";
 import { Paged } from "@/components/Paged";
 import { prisma } from "@/lib/db";
 import { addDays, dateOnly, todayStr } from "@/lib/time";
-import { isTemplate, mainMetric, type WorkData } from "@/lib/shiftReport";
+import { MONITOR_TEMPLATES, isTemplate, mainMetric, monitorDaily, type WorkData } from "@/lib/shiftReport";
 
 const PROD_COLORS = ["#2563eb", "#16a34a", "#f97316", "#9333ea", "#0891b2"];
 
@@ -36,6 +36,16 @@ async function shiftProduction() {
   return { data: series.size ? data : [], series: [...series].map(([key, label], i) => ({ key, label, color: PROD_COLORS[i % PROD_COLORS.length] })) };
 }
 
+/** Resi (order marketplace) & patung keluar per hari dari laporan Packing + Giftbox (30 hari terakhir) */
+async function resiPatung() {
+  const end = todayStr();
+  const start = addDays(end, -29);
+  const reports = await prisma.shiftReport.findMany({ where: { date: { gte: dateOnly(start), lte: dateOnly(end) }, status: { in: ["TERKIRIM", "DIREVISI"] }, division: { reportTemplate: { in: MONITOR_TEMPLATES } } }, include: { division: true } });
+  const days = monitorDaily(reports.map((r) => ({ date: r.date, division: r.division.name, template: r.division.reportTemplate, work: r.work as WorkData })), start, end, []);
+  if (!days.some((d) => d.total.resi || d.total.patung)) return [];
+  return days.map((d) => ({ label: `${d.date.slice(8, 10)}/${d.date.slice(5, 7)}`, resi: d.total.resi, patung: d.total.patung }));
+}
+
 export const metadata = { title: "Analitik & Advisor" };
 
 const pct = (v: number | null) => (v === null ? "—" : `${v > 0 ? "▲" : v < 0 ? "▼" : ""} ${Math.abs(v).toLocaleString("id-ID")}%`);
@@ -43,7 +53,7 @@ const TONE = { red: "border-rose-200 bg-rose-50", amber: "border-amber-200 bg-am
 
 export default async function AnalitikPage() {
   await requirePerm("accounting.view");
-  const [s, advice, prod] = await Promise.all([businessSnapshot(), lastAdvice(), shiftProduction()]);
+  const [s, advice, prod, rp] = await Promise.all([businessSnapshot(), lastAdvice(), shiftProduction(), resiPatung()]);
   const insights = ruleInsights(s);
   const g = growth(s.prev.revenue, s.series[s.series.length - 3]?.revenue ?? 0);
   const ai = advisorConfigured();
@@ -66,9 +76,18 @@ export default async function AnalitikPage() {
         </Card>
       </div>
 
-      <Card title="Hasil produksi 30 hari (dari laporan shift)" actions={<Link href="/laporan/rekap?period=bulanan" className="btn-secondary btn-sm">Rekap</Link>}>
+      <Card title="Hasil produksi 30 hari (dari laporan shift)" actions={<><Link href="/laporan/monitoring" className="btn-secondary btn-sm">Resi &amp; patung</Link><Link href="/laporan/rekap?period=bulanan" className="btn-secondary btn-sm">Rekap</Link></>}>
         <BarsChart data={prod.data} series={prod.series} />
       </Card>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Card title="Resi harian (order marketplace, 30 hari)" actions={<Link href="/laporan/monitoring" className="btn-secondary btn-sm">Rincian</Link>}>
+          <TrendChart data={rp} series={[{ key: "resi", label: "Resi Packing + Giftbox", color: "#f97316" }]} />
+        </Card>
+        <Card title="Patung keluar harian (30 hari)" actions={<Link href="/laporan/monitoring" className="btn-secondary btn-sm">Rincian</Link>}>
+          <BarsChart data={rp} series={[{ key: "patung", label: "Patung Packing + Giftbox", color: "#2563eb" }]} />
+        </Card>
+      </div>
 
       <div className="grid gap-5 lg:grid-cols-3">
         <Card title="Saran strategis otomatis" className="lg:col-span-2">

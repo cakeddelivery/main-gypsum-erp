@@ -26,6 +26,7 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
           <>
             <Link href="/laporan/order" className="btn-secondary">Order bahan baku</Link>
             <Link href="/laporan/rekap" className="btn-secondary">Rekap</Link>
+            <Link href="/laporan/monitoring" className="btn-secondary">Resi &amp; patung</Link>
             {user.can("material.manage") && <Link href="/laporan/bahan" className="btn-secondary">Bahan & checklist divisi</Link>}
           </>
         }

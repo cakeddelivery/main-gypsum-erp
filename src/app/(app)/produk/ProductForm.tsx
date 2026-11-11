@@ -22,7 +22,7 @@ export function ProductForm({ p, stores, items, hpp, minStock, categories, types
       ) : (
         <Field label="Estimasi HPP / Pcs (Rp)" hint="Nilai stok awal; nanti dihitung dari resep"><input name="estimatedHpp" inputMode="numeric" placeholder="0" className="input" /></Field>
       )}
-      {p ? <Field label="Isi per kemasan (pcs)"><input name="packQty" defaultValue={p.packQty} inputMode="numeric" className="input" /></Field> : <Field label="Harga Jual / Pcs (Rp)" hint="Harga toko offline"><input name="price" inputMode="numeric" placeholder="Cth: 15000" className="input" /></Field>}
+      {p ? <Field label="Jumlah patung per produk" hint="Satuan 1, Paket 12 = 12, Giftbox = 5"><input name="packQty" defaultValue={p.packQty} inputMode="numeric" className="input" /></Field> : <Field label="Harga Jual / Pcs (Rp)" hint="Harga toko offline"><input name="price" inputMode="numeric" placeholder="Cth: 15000" className="input" /></Field>}
       {!p && <Field label="Stok Awal (Pcs)"><input name="openingQty" inputMode="decimal" placeholder="0" className="input" /></Field>}
       <Field label="Batas Minim Stok (Pcs)" className={p ? "col-span-2" : ""}><input name="minStock" defaultValue={minStock ?? 10} inputMode="decimal" className="input" /></Field>
       <Field label="Catatan" className="col-span-2"><input name="note" defaultValue={p?.note ?? ""} placeholder="Opsional (cth: Paket 4 patung + 6 cat)" className="input" /></Field>

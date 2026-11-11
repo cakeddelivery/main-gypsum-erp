@@ -29,11 +29,19 @@ async function ensureItem(tx: Tx, sku: string, data: { name: string; type: "BARA
  * Barang untuk tiap langkah (dibuat otomatis bila belum ada, kode tetap):
  * - Patung kering <varian> (setengah jadi) — SJ-PTG-<VARIAN>
  * - Produk jadi satuan <varian>: barang jadi produk SATUAN varian itu di Produk & HPP; bila belum ada — BJ-SAT-<VARIAN>
- * - Giftbox <kode> — BJ-GB-<KODE>
+ * - Giftbox <kode> — BJ-GB-<KODE> (laporan lama); SKU katalog → item barang jadi produknya
  */
 export async function flowItem(tx: Tx, s: Pick<FlowStep, "kind" | "key">): Promise<string> {
   if (s.kind === "kering") return ensureItem(tx, `SJ-PTG-${s.key.toUpperCase()}`, { name: `Patung kering ${s.key}`, type: "BARANG_DALAM_PROSES", unit: "pcs" });
   if (s.kind === "giftbox") return ensureItem(tx, `BJ-GB-${s.key.toUpperCase()}`, { name: `Giftbox ${s.key}`, type: "BARANG_JADI", unit: "box" });
+  if (s.kind === "produk") {
+    // SKU katalog (Produk Induk): item barang jadi produk itu; dibuatkan bila belum ada
+    const p = await tx.product.findUniqueOrThrow({ where: { id: s.key } });
+    if (p.finishedItemId) return p.finishedItemId;
+    const itemId = await ensureItem(tx, `BJ-${p.sku}`, { name: p.name, type: "BARANG_JADI", unit: p.type === "GIFTBOX" ? "box" : "pcs" });
+    await tx.product.update({ where: { id: p.id }, data: { finishedItemId: itemId } });
+    return itemId;
+  }
   const p = await tx.product.findFirst({ where: { type: "SATUAN", variant: VARIANT_ENUM[s.key], active: true, finishedItemId: { not: null } }, orderBy: { sku: "asc" } });
   if (p?.finishedItemId) return p.finishedItemId;
   return ensureItem(tx, `BJ-SAT-${s.key.toUpperCase()}`, { name: `Patung satuan ${s.key}`, type: "BARANG_JADI", unit: "pcs" });

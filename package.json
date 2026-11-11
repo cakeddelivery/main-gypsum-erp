@@ -11,6 +11,7 @@
     "scheduler": "tsx scripts/scheduler.ts",
     "setup:divisi": "tsx scripts/bahan-baku-divisi.ts",
     "setup:borongan": "tsx scripts/siapkan-borongan.ts",
+    "katalog:produk": "tsx scripts/katalog-produk.ts",
     "cek:password": "tsx scripts/cek-password.ts",
     "test": "bash tests/global-reset.sh && vitest run",
     "typecheck": "tsc --noEmit",
