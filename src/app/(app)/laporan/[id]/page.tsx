@@ -3,7 +3,9 @@ import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { fmtDateTime, fmtDay } from "@/lib/time";
 import { STAGE_LABEL } from "@/lib/stock";
-import { isTemplate, toEntries, type StockCountRow, type WorkData } from "@/lib/shiftReport";
+import { flowLines, isTemplate, plannedFlow, toEntries, type StockCountRow, type WorkData } from "@/lib/shiftReport";
+import { boronganLines } from "@/lib/shiftReportBorongan";
+import { flowEnabled } from "@/lib/shiftReportFlow";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { DownloadJpg } from "@/components/DownloadJpg";
@@ -36,6 +38,8 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
   const canEdit = user.can("report.create") && !(ownOnly && user.divisionId !== r.divisionId);
   const day = r.date.toISOString().slice(0, 10);
   const lh = await letterhead();
+  const [extraLines, flowOn] = await Promise.all([boronganLines(template, r.date), flowEnabled()]);
+  const flow = flowOn && template ? flowLines(plannedFlow(template, work)) : [];
   const fname = `laporan-${r.division.code}-${r.shift.code}-${day}`;
 
   return (
@@ -81,6 +85,8 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
             complaints={r.complaints}
             followUp={r.followUp}
             followUpStatus={r.followUpStatus}
+            extraLines={extraLines}
+            target={r.division.targetPerShift}
             legacyLines={entries.map((e) => `${STAGE_LABEL[e.stage]}: ${e._sum.qtyGood ?? 0} pcs (reject ${e._sum.qtyReject ?? 0})`)}
           />
           <div className="flex items-center gap-2"><Badge tone={r.status === "TERKIRIM" ? "green" : r.status === "DIREVISI" ? "purple" : "amber"}>{r.status}</Badge><span className="text-xs text-slate-500">Dibuat oleh {r.createdBy}</span></div>
@@ -89,6 +95,12 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
               <ActionForm action={sendReport} confirm="Kirim laporan sekarang? Stok akhir shift akan menjadi stok sistem (stock opname).">
                 <input type="hidden" name="id" value={r.id} />
                 <p className="mb-3 text-sm text-slate-500">Simpan dulu isian laporan. Saat dikirim, laporan diteruskan ke penerima rekap di Telegram (bila bot aktif) dan stok akhir shift dicatat sebagai stock opname bahan baku divisi.</p>
+                {flowOn && template && (
+                  <div className="mb-3 rounded-lg bg-slate-50 p-3 text-sm">
+                    <div className="mb-1 font-medium text-slate-700">Hasil kerja masuk stok saat dikirim{r.workPostedVersion > 0 ? " (posting lama dibatalkan dulu)" : ""}:</div>
+                    {flow.length ? <ul className="space-y-0.5 text-slate-600">{flow.map((l) => <li key={l}>{l}</li>)}</ul> : <p className="text-slate-500">Tidak ada (hasil kerja kosong)</p>}
+                  </div>
+                )}
                 <Submit className="btn-success w-full sm:w-auto" pendingText="Mengirim…">Kirim laporan</Submit>
               </ActionForm>
             </Card>

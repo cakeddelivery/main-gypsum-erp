@@ -1,3 +1,4 @@
+import { REJECT_REASONS } from "./reject";
 /**
  * Format Laporan Penutup Shift per divisi (Produksi, Giftbox, Packing, Assembling).
  * Modul murni (tanpa akses database) agar bisa dipakai di server, komponen klien, seed, dan skrip.
@@ -30,7 +31,9 @@ export type CountSection = {
 };
 /** Hitungan otomatis dari bagian lain × faktor (mis. 1 giftbox = 5 patung) */
 export type DerivedSection = { kind: "derived"; key: string; title: string; from: string; factor: number; totalLabel: string };
-export type Section = GridSection | CountSection | DerivedSection;
+/** Satu pilihan teks (mis. alasan reject); hanya ditampilkan bila `showIf` (bagian lain) berisi angka > 0 */
+export type ChoiceSection = { kind: "choice"; key: string; title: string; options: readonly string[]; showIf?: string };
+export type Section = GridSection | CountSection | DerivedSection | ChoiceSection;
 
 export type TemplateDef = {
   label: string;
@@ -38,9 +41,11 @@ export type TemplateDef = {
   sections: Section[];
   /** Ringkasan di bawah judul laporan: label + bagian yang dijumlah; ifFilled = hanya tampil bila ada angka yang diisi */
   summary: { label: string; sections: string[]; unit?: string; ifFilled?: boolean }[];
+  /** Angka yang dibandingkan dengan target per shift divisi */
+  target: { label: string; sections: string[]; unit: string };
 };
 
-const VARIANTS = ["Hewan", "Cowok", "Transportasi", "Cewek"];
+export const VARIANTS: string[] = ["Hewan", "Cowok", "Transportasi", "Cewek"];
 const GIFTBOX_CODES = ["MIX", "CEW", "CWO", "HWN", "TRN", "MIX-PLT", "CEW-PLT", "CWO-PLT", "HWN-PLT", "TRN-PLT"];
 
 export const TEMPLATES: Record<ReportTemplate, TemplateDef> = {
@@ -49,9 +54,12 @@ export const TEMPLATES: Record<ReportTemplate, TemplateDef> = {
     heading: "",
     sections: [
       { kind: "grid", key: "panen", title: "Hasil panen", rows: ["Oven Besar", "Oven Kecil"], cols: VARIANTS, totalLabel: "Total panen" },
+      { kind: "grid", key: "reject", title: "Reject panen", rows: ["Oven Besar", "Oven Kecil"], cols: VARIANTS, totalLabel: "Total reject" },
+      { kind: "choice", key: "rejectReason", title: "Alasan reject", options: REJECT_REASONS, showIf: "reject" },
       { kind: "grid", key: "cetak", title: "Hasil cetak", rows: "people", cols: ["pcs"], totalLabel: "Total hasil cetak" },
     ],
-    summary: [{ label: "Total panen", sections: ["panen"] }, { label: "Total hasil cetak", sections: ["cetak"] }],
+    summary: [{ label: "Total panen", sections: ["panen"] }, { label: "Total reject", sections: ["reject"], ifFilled: true }, { label: "Total hasil cetak", sections: ["cetak"] }],
+    target: { label: "panen", sections: ["panen"], unit: "pcs" },
   },
   GIFTBOX: {
     label: "Giftbox",
@@ -62,6 +70,7 @@ export const TEMPLATES: Record<ReportTemplate, TemplateDef> = {
       { kind: "derived", key: "patung", title: "Patung", from: "giftbox", factor: 5, totalLabel: "Total patung" },
     ],
     summary: [{ label: "Total resi", sections: ["resi"], unit: "", ifFilled: true }, { label: "Total giftbox", sections: ["giftbox"], unit: "box" }, { label: "Total patung", sections: ["patung"] }],
+    target: { label: "giftbox", sections: ["giftbox"], unit: "box" },
   },
   PACKING: {
     label: "Packing",
@@ -78,12 +87,14 @@ export const TEMPLATES: Record<ReportTemplate, TemplateDef> = {
       { kind: "count", key: "satuan", title: "Patung satuan", fields: ["Cowok", "Cewek", "Transportasi", "Hewan"].map((v) => ({ key: v.toLowerCase(), label: v })), totalLabel: "Total patung satuan" },
     ],
     summary: [{ label: "Total resi", sections: ["resi"], unit: "" }, { label: "Total patung", sections: ["mix", "satuan"] }],
+    target: { label: "patung", sections: ["mix", "satuan"], unit: "pcs" },
   },
   ASSEMBLING: {
     label: "Assembling",
     heading: "Hasil produk jadi assembling",
     sections: [{ kind: "grid", key: "jadi", title: "Produk jadi per orang", rows: "people", cols: VARIANTS, totalLabel: "Total produk jadi", colTotals: true }],
     summary: [{ label: "Total produk jadi", sections: ["jadi"] }],
+    target: { label: "produk jadi", sections: ["jadi"], unit: "pcs" },
   },
 };
 
@@ -94,8 +105,8 @@ export function isTemplate(v: unknown): v is ReportTemplate {
 // ---------------- Data hasil kerja ----------------
 
 export type GridRow = { name: string; v: (number | null)[] };
-/** work[sectionKey] = GridRow[] (grid) atau { fieldKey: angka } (count) */
-export type WorkData = Record<string, GridRow[] | Record<string, number | null>>;
+/** work[sectionKey] = GridRow[] (grid), { fieldKey: angka } (count), atau teks (choice) */
+export type WorkData = Record<string, GridRow[] | Record<string, number | null> | string>;
 
 const n = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : 0);
 
@@ -107,7 +118,7 @@ export function gridRows(work: WorkData, s: GridSection): GridRow[] {
 
 export function countValues(work: WorkData, key: string): Record<string, number | null> {
   const v = work[key];
-  return v && !Array.isArray(v) ? v : {};
+  return v && typeof v === "object" && !Array.isArray(v) ? v : {};
 }
 
 export function rowTotal(r: GridRow) {
@@ -136,7 +147,7 @@ export function sectionFieldValues(t: TemplateDef, work: WorkData, s: CountSecti
 
 export function sectionTotal(t: TemplateDef, work: WorkData, key: string): number {
   const s = t.sections.find((x) => x.key === key);
-  if (!s) return 0;
+  if (!s || s.kind === "choice") return 0;
   if (s.kind === "grid") return gridRows(work, s).reduce((a, r) => a + rowTotal(r), 0);
   return sectionFieldValues(t, work, s).reduce((a, f) => a + f.pcs, 0);
 }
@@ -145,8 +156,31 @@ export function sectionTotal(t: TemplateDef, work: WorkData, key: string): numbe
 export function sectionFilled(t: TemplateDef, work: WorkData, key: string): boolean {
   const s = t.sections.find((x) => x.key === key);
   if (!s) return false;
+  if (s.kind === "choice") return typeof work[s.key] === "string" && !!work[s.key];
   if (s.kind === "grid") return gridRows(work, s).some((r) => r.v.some((v) => v != null));
   return sectionFieldValues(t, work, s).some((f) => f.value != null);
+}
+
+/** Teks pilihan (mis. alasan reject); kosong bila bagian syaratnya tidak berisi angka */
+export function choiceValue(t: TemplateDef, work: WorkData, s: ChoiceSection): string | null {
+  const v = work[s.key];
+  if (typeof v !== "string" || !v) return null;
+  if (s.showIf && sectionTotal(t, work, s.showIf) <= 0) return null;
+  return v;
+}
+
+/** Capaian target per shift: angka hasil vs target divisi (null bila divisi tanpa target) */
+export function targetOf(template: ReportTemplate, work: WorkData, target: number | null | undefined) {
+  if (!target || target <= 0) return null;
+  const t = TEMPLATES[template];
+  const value = t.target.sections.reduce((a, k) => a + sectionTotal(t, work, k), 0);
+  return { label: t.target.label, unit: t.target.unit, target, value, pct: Math.round((value / target) * 100), reached: value >= target };
+}
+
+/** Teks satu baris capaian target, mis. "Target panen 2.400 pcs · tercapai 2.300 (96%) ⚠ di bawah target" */
+export function targetLine(x: NonNullable<ReturnType<typeof targetOf>>) {
+  const f = (v: number) => v.toLocaleString("id-ID");
+  return `Target ${x.label} ${f(x.target)} ${x.unit} · hasil ${f(x.value)} (${x.pct}%)${x.reached ? " ✓" : " ⚠ di bawah target"}`;
 }
 
 export function summaryOf(template: ReportTemplate, work: WorkData) {
@@ -164,7 +198,14 @@ export function workLines(template: ReportTemplate, work: WorkData): string[] {
   const out: string[] = [];
   if (t.heading) out.push(t.heading.toUpperCase());
   for (const s of t.sections) {
+    if (s.kind === "choice") {
+      const v = choiceValue(t, work, s);
+      if (v) out.push(`${s.title.toUpperCase()}: ${v}`);
+      continue;
+    }
     if (s.kind === "grid") {
+      // Bagian opsional (mis. reject) yang tidak diisi tidak ditampilkan
+      if (s.key === "reject" && !sectionFilled(t, work, s.key)) continue;
       if (!t.heading) out.push(s.title.toUpperCase());
       const rows = gridRows(work, s);
       for (const r of rows) {
@@ -205,6 +246,12 @@ export function parseWork(template: ReportTemplate, get: (k: string) => string |
       work[s.key] = rows;
     } else if (s.kind === "count") {
       work[s.key] = Object.fromEntries(s.fields.map((f) => [f.key, num(`w.${s.key}.${f.key}`)]));
+    } else if (s.kind === "choice") {
+      const v = (get(`w.${s.key}`) ?? "").trim();
+      if (v) {
+        if (!s.options.includes(v)) throw new Error(`${s.title} tidak valid`);
+        work[s.key] = v;
+      }
     }
   }
   return work;
@@ -355,3 +402,78 @@ export const DIVISION_SETUP: Record<ReportTemplate, DivisionSetup> = {
     ],
   },
 };
+
+// ---------------- Hasil kerja → stok (setengah jadi / barang jadi) ----------------
+
+/**
+ * Langkah stok dari hasil kerja laporan:
+ * - kering = patung kering polos per varian (setengah jadi), jadi = produk jadi satuan per varian, giftbox = giftbox per kode
+ * - dir "in" = masuk stok, "out" = keluar stok
+ */
+export type FlowStep = { kind: "kering" | "jadi" | "giftbox"; key: string; qty: number; dir: "in" | "out" };
+
+/** Isi patung per giftbox */
+export const GIFTBOX_PATUNG = 5;
+const GIFTBOX_VARIANT: Record<string, string | null> = { MIX: null, CEW: "Cewek", CWO: "Cowok", HWN: "Hewan", TRN: "Transportasi" };
+
+/** Bagi rata ke 4 varian; sisa pembagian diberikan berurutan Hewan, Cowok, Transportasi, Cewek */
+export function splitEven(total: number): Record<string, number> {
+  const base = Math.floor(total / VARIANTS.length);
+  const rest = total - base * VARIANTS.length;
+  return Object.fromEntries(VARIANTS.map((v, i) => [v, base + (i < rest ? 1 : 0)]));
+}
+
+export function plannedFlow(template: ReportTemplate, work: WorkData): FlowStep[] {
+  const t = TEMPLATES[template];
+  const acc = new Map<string, FlowStep>();
+  const add = (kind: FlowStep["kind"], key: string, qty: number, dir: FlowStep["dir"]) => {
+    if (!(qty > 0)) return;
+    const k = `${kind}|${key}|${dir}`;
+    const cur = acc.get(k);
+    if (cur) cur.qty += qty;
+    else acc.set(k, { kind, key, qty, dir });
+  };
+  const grid = (key: string) => {
+    const s = t.sections.find((x) => x.key === key);
+    return s && s.kind === "grid" ? colTotals(gridRows(work, s), s.cols.length) : [];
+  };
+  if (template === "PRODUKSI") {
+    grid("panen").forEach((q, i) => add("kering", VARIANTS[i], q, "in"));
+  } else if (template === "ASSEMBLING") {
+    grid("jadi").forEach((q, i) => {
+      add("kering", VARIANTS[i], q, "out");
+      add("jadi", VARIANTS[i], q, "in");
+    });
+  } else if (template === "GIFTBOX") {
+    const v = countValues(work, "giftbox");
+    for (const code of GIFTBOX_CODES) {
+      const box = n(v[code]);
+      if (!box) continue;
+      const variant = GIFTBOX_VARIANT[code.replace(/-PLT$/, "")] ?? null;
+      const patung = box * GIFTBOX_PATUNG;
+      if (variant) add("kering", variant, patung, "out");
+      else for (const [vv, q] of Object.entries(splitEven(patung))) add("kering", vv, q, "out");
+      // Giftbox dibuat lalu dikirim dari divisi Giftbox sendiri (keluar = HPP)
+      add("giftbox", code, box, "in");
+      add("giftbox", code, box, "out");
+    }
+  } else if (template === "PACKING") {
+    const sat = countValues(work, "satuan");
+    for (const vv of VARIANTS) add("jadi", vv, n(sat[vv.toLowerCase()]), "out");
+    const mix = countValues(work, "mix");
+    for (const size of [12, 24, 48, 96]) {
+      const paket = n(mix[`p${size}`]);
+      if (!paket) continue;
+      for (const [vv, q] of Object.entries(splitEven(size))) add("jadi", vv, q * paket, "out");
+    }
+  }
+  const order = { in: 0, out: 1 };
+  return [...acc.values()].sort((a, b) => order[a.dir] - order[b.dir]);
+}
+
+const FLOW_LABEL = { kering: "Patung kering", jadi: "Produk jadi", giftbox: "Giftbox" } as const;
+
+/** Teks ringkas langkah stok, mis. "+ Patung kering Hewan 300" */
+export function flowLines(steps: FlowStep[]): string[] {
+  return steps.map((s) => `${s.dir === "in" ? "+" : "−"} ${FLOW_LABEL[s.kind]} ${s.key} ${s.qty.toLocaleString("id-ID")}`);
+}

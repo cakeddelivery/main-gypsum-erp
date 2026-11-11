@@ -35,6 +35,11 @@ export async function recordProductionEntry(input: EntryInput, user: Actor) {
   // Operator hanya boleh mencatat hasil dirinya; kapten hanya divisinya
   if (user.role === "OPERATOR" && data.employeeId !== user.employeeId) throw new EntryForbidden();
   if (user.role === "KAPTEN_DIVISI" && user.divisionId && data.divisionId !== user.divisionId) throw new EntryForbidden();
+  // Laporan shift jadi sumber hasil tahap ini: input manual hanya Owner (koreksi), agar stok tidak dobel
+  const { FLOW_STAGES, flowEnabled } = await import("./shiftReportFlow");
+  if (user.role !== "OWNER" && (FLOW_STAGES as readonly string[]).includes(data.stage) && (await flowEnabled())) {
+    throw new Error("Hasil tahap ini sekarang dicatat otomatis dari Laporan Shift. Input manual hanya untuk Owner (koreksi).");
+  }
   const emp = await prisma.employee.findUniqueOrThrow({ where: { id: data.employeeId } });
   if (emp.status === "NONAKTIF") throw new Error("Karyawan nonaktif");
   return prisma.$transaction(async (tx) => {

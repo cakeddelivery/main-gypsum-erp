@@ -1,6 +1,6 @@
 import type { Letterhead } from "@/lib/letterhead";
 import { DocExport, DocSheet, fmtLong } from "@/components/DocSheet";
-import { TEMPLATES, isDone, needsOrder, summaryOf, workLines, type ChecklistEntry, type ReportTemplate, type StockCountRow, type WorkData } from "@/lib/shiftReport";
+import { TEMPLATES, isDone, needsOrder, summaryOf, targetLine, targetOf, workLines, type ChecklistEntry, type ReportTemplate, type StockCountRow, type WorkData } from "@/lib/shiftReport";
 
 type Props = {
   id: string;
@@ -17,6 +17,10 @@ type Props = {
   followUpStatus: string;
   /** Laporan lama/umum: ringkasan hasil produksi dari modul Produksi */
   legacyLines?: string[];
+  /** Hasil borongan di tanggal ini (dari setoran, hanya ditampilkan) */
+  extraLines?: string[];
+  /** Target hasil per shift divisi */
+  target?: number | null;
   lh: Letterhead;
 };
 
@@ -28,9 +32,15 @@ export function ReportSheet(p: Props) {
   const photos = p.checklist.filter((c) => c.photoPath).length;
   const order = p.stock.filter(needsOrder);
   const summary = p.template ? summaryOf(p.template, p.work) : [];
-  const lines = p.template ? workLines(p.template, p.work) : (p.legacyLines ?? []);
+  const lines = p.template ? [...workLines(p.template, p.work), ...(p.extraLines ?? [])] : (p.legacyLines ?? []);
+  const tgt = p.template ? targetOf(p.template, p.work, p.target) : null;
   const label = p.template ? TEMPLATES[p.template].label : p.division;
-  const sum = summary.length > 0 && <div className="text-sm text-[#4b5563]">{summary.map((s) => `${s.label}: ${fmt(s.value)}${s.unit ? ` ${s.unit}` : ""}`).join(" | ")}</div>;
+  const sum = summary.length > 0 && (
+    <>
+      <div className="text-sm text-[#4b5563]">{summary.map((s) => `${s.label}: ${fmt(s.value)}${s.unit ? ` ${s.unit}` : ""}`).join(" | ")}</div>
+      {tgt && <div className={`text-sm font-semibold ${tgt.reached ? "text-[#059669]" : "text-[#dc2626]"}`}>{targetLine(tgt)}</div>}
+    </>
+  );
   const body = (
     <>
         <Heading tone="blue">Detail hasil kerja</Heading>

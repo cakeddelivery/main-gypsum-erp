@@ -310,3 +310,23 @@ Bubuk gypsum ─(Produksi: cetak + oven)─▶ PANEN = patung kering polos per v
 3. **Paket mix 12/24/48/96**: isinya dipecah rata per varian (mis. paket 12 = 3 Hewan + 3 Cowok + 3 Transportasi + 3 Cewek), atau ada barang "paket mix" sendiri?
 4. **Resi giftbox**: giftbox dikirim oleh divisi Giftbox sendiri (stok giftbox berkurang dari laporan Giftbox), atau lewat Packing?
 5. **Reject panen**: perlu kolom reject + alasan di laporan Produksi?
+
+## 10. Jawaban A1 (11 Nov) dan yang dikerjakan (paket 2)
+
+Jawaban user: **1b** (hasil cetak hanya kinerja, tidak masuk gaji), **2b** (Giftbox memakai patung kering polos yang dicat di Giftbox), **3a** (paket mix dibagi rata per varian), **4a** (giftbox keluar dari laporan Giftbox), **5a** (kolom reject + alasan di laporan Produksi).
+
+Dikerjakan:
+- **Hasil kerja → stok** (`src/lib/shiftReportFlow.ts`), sakelar Owner di Laporan Shift → Bahan & checklist divisi → "Hasil kerja → stok" (bawaan **MATI**, dinyalakan saat tim pindah sesuai B3). Saat laporan dikirim, dicatat per jam selesai shift:
+  - Produksi: panen (dua oven) → + Patung kering <varian> (gudang setengah jadi).
+  - Assembling: produk jadi karyawan → − patung kering, + produk jadi satuan (barang jadi produk SATUAN varian itu; bila belum ada dibuat otomatis). Nilai bahan dari resep: Dr Persediaan Barang Jadi / Cr HPP Pemakaian Bahan Baku.
+  - Giftbox: − 5 patung kering per box (MIX dibagi rata, kode -PLT ikut variannya). Giftbox <kode> masuk lalu langsung keluar (dikirim divisi Giftbox) → HPP.
+  - Packing: satuan + paket mix (12 = 3 per varian, dst.) keluar dari produk jadi → HPP (harga rata-rata; bila 0 dari resep).
+  - Revisi laporan yang sudah dikirim: posting lama dibalik (stok + jurnal balik), lalu posting baru.
+  - Saat sakelar menyala, input manual tahap Panen/Assembling/Packing/Barang Jadi di menu Produksi & bot hanya untuk Owner (koreksi), agar tidak dobel.
+  - Kartu "Kirim laporan" menampilkan daftar perubahan stok sebelum dikirim.
+- **C3**: hasil borongan (setoran BMR/Mastrip) tanggal itu tampil di laporan Assembling (pekerjaan "assembling") dan Giftbox (pekerjaan "giftbox"), hanya ditampilkan, tidak diposting ulang.
+- **F1**: target hasil per shift per divisi (Ubah divisi → "Target hasil per shift"). Laporan & pesan bot menampilkan "Target … · hasil … (…%)", merah bila di bawah target.
+- **5a**: bagian "Reject panen" (Oven Besar/Kecil × varian) + "Alasan reject" (wajib dipilih bila ada reject). Ringkasan menampilkan Total reject bila diisi.
+- Migrasi: `Division.targetPerShift`, `ShiftReport.workPostedVersion`.
+
+Catatan/asumsi: patung kering dicatat tanpa nilai (bahan sudah dibebankan lewat stock opname); nilai baru muncul di barang jadi dari resep. Rekap/analitik produksi dari laporan shift belum (masih dari menu Produksi).
