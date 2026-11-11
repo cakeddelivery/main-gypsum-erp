@@ -26,6 +26,7 @@ export default async function OrderBahanPage() {
                   <li key={o.itemId} className="flex flex-wrap items-baseline justify-between gap-x-3 py-1.5 text-sm">
                     <span className="font-medium text-rose-700">⚠ {o.name}</span>
                     <span className="text-slate-600">stok {o.qty.toLocaleString("id-ID")} · limit {o.limit.toLocaleString("id-ID")} {o.unit}</span>
+                    {o.url && <a href={o.url} target="_blank" rel="noopener noreferrer" className="btn-secondary btn-sm">🛒 Order online</a>}
                     <Link href={`/laporan/${o.reportId}`} className="w-full text-xs text-slate-400 hover:underline">dihitung {fmtDay(o.date)} · {o.shift}</Link>
                   </li>
                 ))}

@@ -11,6 +11,19 @@ export * from "./itemCatalog";
 type Tx = Prisma.TransactionClient;
 type Actor = { id: string; name: string };
 
+/** Link produk: hanya http(s); "tokopedia.com/…" otomatis diberi https:// */
+export function normalizeUrl(u?: string | null): string | null {
+  const t = u?.trim();
+  if (!t) return null;
+  const withProto = /^https?:\/\//i.test(t) ? t : `https://${t}`;
+  try {
+    const url = new URL(withProto);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Kode item berikutnya per awalan, mis. BU-001; melewati kode yang sudah dipakai manual */
 export async function nextItemSku(tx: Tx, prefix: string) {
   return nextSequence(tx, prefix, async (sku) => !!(await tx.item.findUnique({ where: { sku } })), { key: `SKU-${prefix}` });
@@ -29,12 +42,21 @@ export type ItemInput = {
   supplierId?: string | null;
   /** Supplier baru yang diketik langsung di form (dibuat bila supplierId kosong) */
   newSupplierName?: string | null;
-  gypsumCharacterId?: string | null;
   divisionId?: string | null;
+  /** OFFLINE / ONLINE (+ link produk); tidak diubah bila tidak dikirim */
+  buyMode?: "OFFLINE" | "ONLINE";
+  productUrl?: string | null;
+  /** Jumlah order biasa (satuan beli) untuk permintaan stok otomatis */
+  orderQty?: number;
+  /** Item lama: harga pembelian & quantity diisi manual (hanya Owner; dicek di pemanggil) */
+  manualCost?: { price: number; qty: number } | null;
   note?: string | null;
   active?: boolean;
   /** Item baru: harga beli per satuan beli & stok awal (dalam satuan beli) */
   price?: number;
+  /** Item baru: harga pembelian total & quantity-nya (price = buyPrice ÷ buyQty); menggantikan `price` bila diisi */
+  buyPrice?: number;
+  buyQty?: number;
   openingQty?: number;
 };
 
@@ -50,7 +72,12 @@ export async function saveItemRecord(input: ItemInput, actor: Actor) {
     const cats = await itemCategories(prisma, { includeInactive: true });
     if (!cats[input.type].some((c) => c.name === input.category)) throw new StockError("Kategori tidak sesuai jenis item");
   }
-  const price = Math.round(input.price ?? 0);
+  const buyQty = input.buyQty && input.buyQty > 0 ? input.buyQty : 1;
+  if (input.buyQty != null && !(input.buyQty > 0)) throw new StockError("Quantity pembelian harus lebih dari 0");
+  const price = input.buyPrice != null ? Math.round(input.buyPrice / buyQty) : Math.round(input.price ?? 0);
+  const productUrl = input.buyMode === "ONLINE" ? normalizeUrl(input.productUrl) : null;
+  if (input.buyMode === "ONLINE" && !productUrl) throw new StockError("Item ONLINE wajib diisi Link Produk (https://…)");
+  if ((input.orderQty ?? 0) < 0) throw new StockError("Jumlah order tidak boleh minus");
   const openingQty = input.openingQty ?? 0;
   if (price < 0 || openingQty < 0) throw new StockError("Harga dan stok awal tidak boleh minus");
   const unit = input.unit.trim() || "pcs";
@@ -72,19 +99,31 @@ export async function saveItemRecord(input: ItemInput, actor: Actor) {
       hppFactor: hppUnit ? input.hppFactor : 1,
       minStock: input.minStock,
       supplierId,
-      gypsumCharacterId: input.gypsumCharacterId || null,
       divisionId: input.divisionId || null,
       note: input.note?.trim() || null,
+      ...(input.buyMode ? { buyMode: input.buyMode, productUrl } : {}),
+      ...(input.orderQty != null ? { orderQty: input.orderQty } : {}),
     };
     if (input.id) {
       const sku = input.sku?.trim().toUpperCase();
       if (!sku || sku.length < 2) throw new StockError("Kode item wajib diisi");
       const it = await tx.item.update({ where: { id: input.id }, data: { ...data, sku, active: input.active ?? true } });
       await audit(actor, "ITEM_DIUBAH", "Item", it.id, data, tx);
+      const m = input.manualCost;
+      if (m) {
+        if (!(m.qty > 0) || m.price < 0) throw new StockError("Harga pembelian & quantity tidak valid");
+        const unitCost = Math.round(m.price / m.qty);
+        if (BigInt(Math.round(m.price)) !== it.buyPrice || Math.abs(Number(it.buyQty) - m.qty) > 0.0005 || BigInt(unitCost) !== it.lastCost) {
+          const now = new Date();
+          const upd = await tx.item.update({ where: { id: it.id }, data: { prevCost: it.lastCost > BigInt(0) ? it.lastCost : BigInt(unitCost), lastCost: BigInt(unitCost), lastCostAt: now, buyPrice: BigInt(Math.round(m.price)), buyQty: m.qty, costManualBy: actor.name, costManualAt: now } });
+          await audit(actor, "HARGA_ITEM_MANUAL", "Item", it.id, { lama: { harga: Number(it.buyPrice), qty: Number(it.buyQty), perSatuan: Number(it.lastCost) }, baru: { harga: Math.round(m.price), qty: m.qty, perSatuan: unitCost } }, tx);
+          return upd;
+        }
+      }
       return it;
     }
     const sku = input.sku?.trim().toUpperCase() || (await nextItemSku(tx, await categoryPrefixOf(tx, input.type, input.category)));
-    const it = await tx.item.create({ data: { ...data, sku, avgCost: BigInt(price), lastCost: BigInt(price), lastCostAt: price > 0 ? new Date() : null } });
+    const it = await tx.item.create({ data: { ...data, sku, avgCost: BigInt(price), lastCost: BigInt(price), lastCostAt: price > 0 ? new Date() : null, buyPrice: BigInt(input.buyPrice != null ? Math.round(input.buyPrice) : price), buyQty: input.buyPrice != null ? buyQty : 1 } });
     if (openingQty > 0) {
       const locs = await locationSettings(tx);
       const loc = input.type === "BAHAN_BAKU" ? locs.raw : input.type === "BARANG_DALAM_PROSES" ? locs.wip : locs.finished;

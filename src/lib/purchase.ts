@@ -1,4 +1,5 @@
 import { Prisma, type PaymentTerm } from "@prisma/client";
+import { onItemPurchased } from "./itemCost";
 import { prisma } from "./db";
 import { resolveSupplier } from "./suppliers";
 import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } from "./accounting";
@@ -100,8 +101,7 @@ export async function createPurchase(input: PurchaseInput, actor: Actor) {
       const rc = l.receiptId ? receipts.find((r) => r.id === l.receiptId) : null;
       await recordMovement(tx, { type: "PENERIMAAN", itemId: l.itemId, qty: l.qty, toLocationId: raw, unitCost: l.unitCost, ref: number, note: rc ? `Pembelian ${vendor} (barang masuk ${rc.number})` : `Pembelian ${vendor}`, date: rc ? rc.receivedAt : input.date }, actor);
       // Harga beli terbaru untuk HPP realtime; harga sebelumnya disimpan untuk indikator naik/turun
-      const it = await tx.item.findUniqueOrThrow({ where: { id: l.itemId } });
-      if (!it.lastCostAt || input.date >= it.lastCostAt) await tx.item.update({ where: { id: l.itemId }, data: { prevCost: it.lastCost > BigInt(0) ? it.lastCost : BigInt(l.unitCost), lastCost: BigInt(l.unitCost), lastCostAt: input.date } });
+      await onItemPurchased(tx, l.itemId, { unitCost: l.unitCost, qty: l.qty, total: l.unitCost * l.qty, date: input.date, ref: number, by: actor.name });
     }
     const payable = debt > 0
       ? await tx.payable.create({ data: { number: await nextNumber(tx, "UTG", input.date), vendor, supplierId: supplier?.id ?? null, storeId: input.storeId, date: input.date, dueDate: input.dueDate ?? null, amount: BigInt(debt), note: `Sisa pembelian ${number}`, journalId: j.id } })

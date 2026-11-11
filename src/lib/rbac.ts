@@ -126,3 +126,50 @@ export function effectivePermissions(role: Role, overrides: PermissionOverride[]
   for (const [p, roles] of Object.entries(RESTRICTED)) if (!roles.includes(role)) set.delete(p as Permission);
   return set;
 }
+
+/**
+ * Menu untuk tabel "Akses menu" (Pengaturan › Pengguna & hak akses). Satu menu = sekelompok izin;
+ * menu dimatikan = semua izinnya dicabut sehingga halaman & tindakan ditolak di server juga.
+ * `on` = izin minimal saat menu dinyalakan untuk role yang tidak punya bawaan.
+ */
+export const MENU_GROUPS: { key: string; label: string; perms: Permission[]; on: Permission[] }[] = [
+  { key: "dashboard", label: "Dashboard", perms: ["dashboard.view", "dashboard.finance"], on: ["dashboard.view"] },
+  { key: "production", label: "Produksi", perms: ["production.view", "production.create", "production.edit", "production.target"], on: ["production.view"] },
+  { key: "report", label: "Laporan Shift", perms: ["report.view", "report.create", "material.manage"], on: ["report.view"] },
+  { key: "attendance", label: "Absensi", perms: ["attendance.view", "attendance.self", "attendance.manage", "attendance.location"], on: ["attendance.self"] },
+  { key: "stock", label: "Stok & Persediaan", perms: ["stock.view", "stock.move", "stock.request", "stock.approve", "master.manage"], on: ["stock.view"] },
+  { key: "product", label: "Produk & HPP", perms: ["product.view", "product.manage"], on: ["product.view"] },
+  { key: "sales", label: "Penjualan", perms: ["sales.view", "sales.manage"], on: ["sales.view"] },
+  { key: "partner", label: "Supplier & Pelanggan", perms: ["partner.view", "partner.manage"], on: ["partner.view"] },
+  { key: "borongan", label: "Borongan", perms: ["borongan.view", "borongan.point", "borongan.manage", "borongan.pay"], on: ["borongan.view"] },
+  { key: "employee", label: "Karyawan", perms: ["employee.view", "employee.manage"], on: ["employee.view"] },
+  { key: "payroll", label: "Penggajian", perms: ["payroll.view", "payroll.manage", "payroll.approve", "payroll.self"], on: ["payroll.self"] },
+  { key: "finance", label: "Transaksi", perms: ["finance.view", "finance.create", "finance.review", "finance.approve"], on: ["finance.view"] },
+  { key: "accounting", label: "Akuntansi & Analitik", perms: ["accounting.view", "accounting.post", "accounting.close"], on: ["accounting.view"] },
+  { key: "settings", label: "Pengaturan", perms: ["settings.manage", "users.manage", "audit.view"], on: ["audit.view"] },
+];
+
+/**
+ * Terapkan pilihan menu (nyala/mati) ke himpunan izin efektif sebuah role.
+ * Menu yang dimatikan: semua izinnya dicabut. Menu yang dinyalakan tapi sebelumnya mati: izin bawaan role
+ * untuk menu itu, atau izin minimal `on` bila role tidak punya bawaan. Menu yang sudah menyala tidak diubah.
+ */
+export function applyMenuChoice(role: Role, current: Set<Permission>, enabled: Set<string>): Set<Permission> {
+  const next = new Set(current);
+  const defaults = new Set(DEFAULT_MATRIX[role]);
+  for (const g of MENU_GROUPS) {
+    const isOn = g.perms.some((p) => current.has(p));
+    if (!enabled.has(g.key)) for (const p of g.perms) next.delete(p);
+    else if (!isOn) {
+      const base = g.perms.filter((p) => defaults.has(p));
+      for (const p of base.length ? base : g.on) next.add(p);
+    }
+  }
+  return next;
+}
+
+/** Override yang perlu disimpan agar izin efektif role = `want` (selisih dengan matriks bawaan) */
+export function overridesFor(role: Role, want: Set<Permission>): { permission: Permission; allowed: boolean }[] {
+  const defaults = new Set(DEFAULT_MATRIX[role]);
+  return ALL_PERMISSIONS.filter((p) => want.has(p) !== defaults.has(p)).map((p) => ({ permission: p, allowed: want.has(p) }));
+}

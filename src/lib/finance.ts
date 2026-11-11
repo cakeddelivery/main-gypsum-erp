@@ -1,4 +1,5 @@
 import { Prisma, type TxDirection, type TxSource, type TxStatus } from "@prisma/client";
+import { onItemPurchased } from "./itemCost";
 import { prisma } from "./db";
 import { nextNumber } from "./numbering";
 import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } from "./accounting";
@@ -449,8 +450,7 @@ async function bookInTx(tx: Tx, id: string, actor: Actor & { id: string }, note?
         const qty = Number(x.qty);
         const unitCost = Math.round(Number(x.amount) / qty);
         await recordMovement(tx, { type: "PENERIMAAN", itemId: x.itemId!, qty, toLocationId: raw, unitCost, ref: cur.number, note: `Rincian ${cur.number}`, date: cur.date }, { id: actor.id, name: actor.name });
-        const it = await tx.item.findUniqueOrThrow({ where: { id: x.itemId! } });
-        if (!it.lastCostAt || cur.date >= it.lastCostAt) await tx.item.update({ where: { id: it.id }, data: { prevCost: it.lastCost > BigInt(0) ? it.lastCost : BigInt(unitCost), lastCost: BigInt(unitCost), lastCostAt: cur.date } });
+        await onItemPurchased(tx, x.itemId!, { unitCost, qty, total: Number(x.amount), date: cur.date, ref: cur.number, by: actor.name });
       }
     }
     const t = await tx.financeTransaction.update({ where: { id }, data: { status: "DIBUKUKAN", journalId: journal.id } });

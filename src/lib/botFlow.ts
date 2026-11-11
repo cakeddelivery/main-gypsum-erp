@@ -107,11 +107,12 @@ export function inputMenuRows(i: BotIdent): InlineButton[][] {
   return rows;
 }
 
+const REQ_AUTO = "Permintaan stok sekarang dibuat otomatis dari laporan shift saat stok bahan ≤ batas minimum.";
+
 function stockMenu(i: BotIdent): Prompt {
   const rows: InlineButton[][] = [];
   if (can(i, "stock.view")) rows.push([{ text: "🔎 Cek stok", callback_data: "f:start:cek" }]);
   if (can(i, "stock.move")) rows.push([{ text: "🔁 Mutasi stok", callback_data: "f:start:mut" }]);
-  if (can(i, "stock.request")) rows.push([{ text: "📝 Permintaan stok", callback_data: "f:start:req" }]);
   rows.push([{ text: "⬅ Kembali", callback_data: "m:home" }]);
   return { text: "<b>📦 Stok</b>\nPilih menu:", buttons: rows };
 }
@@ -482,11 +483,9 @@ async function stokAnswer(ctx: Ctx, s: Session, v: string, fromText: boolean): P
       if (v !== "ok") return "Tekan Simpan atau Batal";
       const actor = { id: ctx.i.userId, name: ctx.i.user.name };
       try {
-        if (s.flow === "req") {
-          if (!can(ctx.i, "stock.request")) return "Anda tidak berwenang";
-          const r = await prisma.stockRequest.create({ data: { itemId: String(d.itemId), divisionId: String(d.divisionId), qty: Number(d.qty), note: d.note ? String(d.note) : null, requestedBy: ctx.i.user.name } });
-          await audit(actor, "PERMINTAAN_STOK", "StockRequest", r.id, { via: "TELEGRAM" });
-        } else {
+        // Permintaan stok dibuat otomatis dari laporan shift (stok ≤ limit), bukan lewat bot
+        if (s.flow === "req") return REQ_AUTO;
+        {
           if (!can(ctx.i, "stock.move")) return "Anda tidak berwenang";
           const type = d.type as MovementType;
           if (type === "PENYESUAIAN" && !can(ctx.i, "stock.approve")) return "Penyesuaian stok hanya untuk penyetuju stok";
@@ -549,7 +548,7 @@ async function start(ctx: Ctx, flow: string) {
   else if (flow === "absen") r = await absenStart(ctx);
   else if (flow === "cek") r = can(i, "stock.view") ? { chatId, userId: i.userId, flow: "cek", step: "item", data: {} } : "Anda tidak berwenang melihat stok";
   else if (flow === "mut") r = can(i, "stock.move") ? { chatId, userId: i.userId, flow: "mut", step: "type", data: { canAdjust: can(i, "stock.approve") ? 1 : 0 } } : "Anda tidak berwenang mencatat mutasi stok";
-  else if (flow === "req") r = can(i, "stock.request") ? { chatId, userId: i.userId, flow: "req", step: "item", data: {} } : "Anda tidak berwenang mengajukan permintaan stok";
+  else if (flow === "req") r = REQ_AUTO;
   else r = "Menu tidak dikenal";
   if (typeof r === "string") return sendTelegram(chatId, `❌ ${esc(r)}`);
   if (!("flow" in r)) return present(ctx, r);

@@ -1,4 +1,5 @@
 "use server";
+import { autoRequestsFromReport } from "@/lib/stockRequestAuto";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { Prisma } from "@prisma/client";
@@ -166,6 +167,8 @@ export const sendReport = action(
     // Stok akhir shift = stock opname bahan baku divisi (per jam selesai shift). Diterapkan dulu: bila gagal
     // (mis. periode sudah ditutup), laporan tidak dikirim agar pesan dan stok tidak berbeda.
     const stockRes = await applyShiftStockCount(id, user);
+    // Bahan dengan stok ≤ limit → permintaan stok otomatis (tidak dobel bila masih ada yang terbuka)
+    await autoRequestsFromReport(id, user).catch((e) => console.error("Permintaan stok otomatis gagal:", e));
     // Hasil kerja → stok setengah jadi / barang jadi (bila diaktifkan Owner)
     const flowRes = await postShiftWork(id, user);
     // Stok akhir hasil (patung kering / produk jadi per karakter): selisih ditandai; disamakan bila sakelar menyala

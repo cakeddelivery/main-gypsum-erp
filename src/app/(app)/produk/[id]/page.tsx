@@ -14,6 +14,7 @@ import { ModalForm } from "@/components/ModalForm";
 import { Paged } from "@/components/Paged";
 import { ProductForm } from "../ProductForm";
 import { itemCategories } from "@/lib/itemCategories";
+import { productTypes, typeLabel } from "@/lib/productTypes";
 import { saveProductRecipe, savePrice } from "../actions";
 import { RecipeEditor } from "../RecipeEditor";
 import { recipeInitial, recipeOptions } from "../recipeData";
@@ -26,7 +27,7 @@ export default async function ProductDetail({ params }: { params: Promise<{ id: 
   const p = await prisma.product.findUnique({ where: { id }, include: { store: true, finishedItem: true } });
   if (!p) notFound();
   const costs = await itemCosts();
-  const [cost, prices, stores, finItems, fees, opts, catMap] = await Promise.all([
+  const [cost, prices, stores, finItems, fees, opts, catMap, types] = await Promise.all([
     productCosting(id, costs),
     latestPrices(id),
     prisma.store.findMany(),
@@ -34,6 +35,7 @@ export default async function ProductDetail({ params }: { params: Promise<{ id: 
     feeConfig(),
     recipeOptions(costs),
     itemCategories(),
+    productTypes(prisma, { includeInactive: true }),
   ]);
   const initial = recipeInitial(
     cost.lines.map((l) => ({ componentId: l.item.id, qty: l.qty, useUnit: l.useUnit, unit: l.unit })),
@@ -52,7 +54,7 @@ export default async function ProductDetail({ params }: { params: Promise<{ id: 
   const manage = user.can("product.manage");
   return (
     <div className="space-y-5">
-      <PageHeader title={p.name} subtitle={`${p.sku} · ${p.type} · ${p.variant} · ${p.store.name} · isi ${p.packQty} pcs`} actions={<>{manage && <Modal trigger="Ubah produk" triggerClass="btn-secondary" title="Ubah Master Produk Jadi"><ProductForm p={p} stores={stores} items={finItems} hpp={cost.hpp} minStock={p.finishedItem ? Number(p.finishedItem.minStock) : undefined} categories={catMap.BARANG_JADI.map((c) => c.name)} /></Modal>}</>} />
+      <PageHeader title={p.name} subtitle={`${p.sku} · ${typeLabel(types, p.type)} · ${p.variant} · ${p.store.name} · isi ${p.packQty} pcs`} actions={<>{manage && <Modal trigger="Ubah produk" triggerClass="btn-secondary" title="Ubah Master Produk Jadi"><ProductForm p={p} stores={stores} items={finItems} hpp={cost.hpp} minStock={p.finishedItem ? Number(p.finishedItem.minStock) : undefined} categories={catMap.BARANG_JADI.map((c) => c.name)} types={types} /></Modal>}</>} />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Bahan & setengah jadi" value={idr(cost.material)} hint={cost.bookMaterial !== cost.material + cost.packaging - Number(p.extraPackaging) ? `Nilai buku (harga rata-rata): ${idr(cost.bookMaterial)}` : undefined} />
         <Stat label="Packaging & kemasan" value={idr(cost.packaging)} />

@@ -197,7 +197,8 @@ model Employee {
   name           String
   divisionId     String
   division       Division            @relation(fields: [divisionId], references: [id])
-  position       String
+  /// Jabatan (tidak ditampilkan lagi sejak Nov 2026; cukup divisi + role)
+  position       String              @default("")
   status         EmployeeStatus      @default(AKTIF)
   wageType       WageType            @default(HARIAN)
   dailyRate      BigInt              @default(0)
@@ -703,6 +704,12 @@ model ReportSend {
 
 // ============ STOK ============
 
+/// Cara beli bahan: OFFLINE (toko/supplier langsung) atau ONLINE (lewat link produk)
+enum BuyMode {
+  OFFLINE
+  ONLINE
+}
+
 enum ItemType {
   BAHAN_BAKU
   BARANG_DALAM_PROSES
@@ -777,6 +784,17 @@ model Item {
   lastCost          BigInt                 @default(0)
   prevCost          BigInt                 @default(0)
   lastCostAt        DateTime?
+  /// Harga pembelian terakhir (total Rp) & jumlahnya (satuan beli): lastCost = buyPrice ÷ buyQty
+  buyPrice          BigInt                 @default(0)
+  buyQty            Decimal                @default(1) @db.Decimal(14, 3)
+  /// Harga diisi manual oleh Owner (bukan dari pembelian): siapa & kapan
+  costManualBy      String?
+  costManualAt      DateTime?
+  /// OFFLINE / ONLINE; bila ONLINE, productUrl = link produk untuk order
+  buyMode           BuyMode                @default(OFFLINE)
+  productUrl        String?
+  /// Jumlah order biasa (satuan beli) untuk permintaan stok otomatis
+  orderQty          Decimal                @default(0) @db.Decimal(14, 3)
   supplierId        String?
   supplier          Supplier?              @relation(fields: [supplierId], references: [id])
   gypsumCharacterId String?
@@ -855,18 +873,24 @@ model StockRequest {
   status      RequestStatus @default(DIAJUKAN)
   requestedBy String
   decidedBy   String?
+  /// Dibuat otomatis dari laporan shift (stok ≤ limit)
+  auto        Boolean       @default(false)
+  reportId    String?
   createdAt   DateTime      @default(now())
+
+  @@index([itemId, status])
 }
 
 // ============ PRODUK & HPP ============
 
-enum ProductType {
-  SATUAN
-  PAKET_12
-  PAKET_24
-  PAKET_48
-  GIFTBOX
-  CUSTOM
+/// Tipe produk jadi (diatur Owner di Pengaturan › Tipe produk). Kode bawaan: SATUAN, PAKET_12, PAKET_24, PAKET_48, GIFTBOX, CUSTOM
+model ProductTypeOption {
+  code      String  @id
+  name      String
+  /// Isi per paket bawaan (mis. Paket 12 = 12)
+  packQty   Int     @default(1)
+  active    Boolean @default(true)
+  sortOrder Int     @default(0)
 }
 
 enum ProductVariant {
@@ -881,7 +905,8 @@ model Product {
   id             String            @id @default(cuid())
   sku            String            @unique
   name           String
-  type           ProductType
+  /// Kode ProductTypeOption (dulu enum ProductType)
+  type           String
   variant        ProductVariant
   storeId        String
   store          Store             @relation(fields: [storeId], references: [id])
