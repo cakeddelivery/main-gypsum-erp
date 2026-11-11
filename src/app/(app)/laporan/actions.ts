@@ -11,6 +11,7 @@ import { sendTelegram, telegramConfigured, esc } from "@/lib/telegram";
 import { STAGE_LABEL } from "@/lib/stock";
 import { applyShiftStockCount } from "@/lib/shiftReportStock";
 import { postShiftWork } from "@/lib/shiftReportFlow";
+import { sendShiftReportJpg } from "@/lib/shiftReportJpg";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { saveProof } from "@/lib/storage";
 import { addShiftReceipt, removeShiftReceipt } from "@/lib/shiftReceipt";
@@ -225,6 +226,11 @@ export const sendReport = action(
       prisma.shiftReport.update({ where: { id }, data: { status: status === "GAGAL" ? r.status : "TERKIRIM" } }),
     ]);
     await audit(user, "LAPORAN_DIKIRIM", "ShiftReport", id, { status, channel, stockAdjusted: stockRes.adjusted, stockSkipped: stockRes.skipped ?? null, workPosted: flowRes.posted, resultAdjusted: resultRes.adjusted });
+    // JPG laporan ke penerima & grup Telegram (latar belakang; tidak menahan tombol Kirim)
+    if (channel === "TELEGRAM" && status !== "GAGAL") {
+      const summary = isTemplate(template) ? summaryOf(template, r.work as Parameters<typeof workLines>[1]).map((s) => `${s.label}: ${s.value.toLocaleString("id-ID")}${s.unit ? ` ${s.unit}` : ""}`).join(" | ") : "";
+      void sendShiftReportJpg(id, user.id, summary).catch((e) => console.error("JPG laporan shift gagal:", e));
+    }
     if (status === "GAGAL") throw new Error(`Pengiriman gagal: ${error}${stockRes.adjusted ? " (stok akhir shift sudah tercatat)" : ""}`);
     const msg = status === "SEBAGIAN" ? "Terkirim sebagian, cek riwayat" : "Laporan terkirim";
     return stockRes.skipped ? `${msg}. ${stockRes.skipped}` : msg;

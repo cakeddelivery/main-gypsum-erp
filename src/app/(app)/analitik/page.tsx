@@ -9,6 +9,32 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { BarsChart, TrendChart } from "@/components/Charts";
 import { requestAdvice } from "./actions";
 import { Paged } from "@/components/Paged";
+import { prisma } from "@/lib/db";
+import { addDays, dateOnly, todayStr } from "@/lib/time";
+import { isTemplate, mainMetric, type WorkData } from "@/lib/shiftReport";
+
+const PROD_COLORS = ["#2563eb", "#16a34a", "#f97316", "#9333ea", "#0891b2"];
+
+/** Hasil utama per hari per divisi dari laporan shift terkirim (30 hari terakhir) */
+async function shiftProduction() {
+  const end = todayStr();
+  const start = addDays(end, -29);
+  const reports = await prisma.shiftReport.findMany({ where: { date: { gte: dateOnly(start), lte: dateOnly(end) }, status: { in: ["TERKIRIM", "DIREVISI"] } }, include: { division: true }, orderBy: { date: "asc" } });
+  const series = new Map<string, string>();
+  const days = new Map<string, Record<string, number | string>>();
+  for (let d = start; d <= end; d = addDays(d, 1)) days.set(d, { label: `${d.slice(8, 10)}/${d.slice(5, 7)}` });
+  for (const r of reports) {
+    const t = r.division.reportTemplate;
+    if (!isTemplate(t)) continue;
+    const m = mainMetric(t, r.work as WorkData);
+    const key = r.division.name;
+    series.set(key, `${r.division.name} (${m.label}, ${m.unit})`);
+    const row = days.get(r.date.toISOString().slice(0, 10))!;
+    row[key] = (Number(row[key]) || 0) + m.value;
+  }
+  const data = [...days.values()].map((row) => Object.fromEntries([...Object.entries(row), ...[...series.keys()].filter((k) => !(k in row)).map((k) => [k, 0])]));
+  return { data: series.size ? data : [], series: [...series].map(([key, label], i) => ({ key, label, color: PROD_COLORS[i % PROD_COLORS.length] })) };
+}
 
 export const metadata = { title: "Analitik & Advisor" };
 
@@ -17,7 +43,7 @@ const TONE = { red: "border-rose-200 bg-rose-50", amber: "border-amber-200 bg-am
 
 export default async function AnalitikPage() {
   await requirePerm("accounting.view");
-  const [s, advice] = await Promise.all([businessSnapshot(), lastAdvice()]);
+  const [s, advice, prod] = await Promise.all([businessSnapshot(), lastAdvice(), shiftProduction()]);
   const insights = ruleInsights(s);
   const g = growth(s.prev.revenue, s.series[s.series.length - 3]?.revenue ?? 0);
   const ai = advisorConfigured();
@@ -39,6 +65,10 @@ export default async function AnalitikPage() {
           <BarsChart data={s.series.map((m) => ({ label: m.label, masuk: m.cashIn, keluar: m.cashOut }))} series={[{ key: "masuk", label: "Kas masuk", color: "#16a34a" }, { key: "keluar", label: "Kas keluar", color: "#e11d48" }]} />
         </Card>
       </div>
+
+      <Card title="Hasil produksi 30 hari (dari laporan shift)" actions={<Link href="/laporan/rekap?period=bulanan" className="btn-secondary btn-sm">Rekap</Link>}>
+        <BarsChart data={prod.data} series={prod.series} />
+      </Card>
 
       <div className="grid gap-5 lg:grid-cols-3">
         <Card title="Saran strategis otomatis" className="lg:col-span-2">
