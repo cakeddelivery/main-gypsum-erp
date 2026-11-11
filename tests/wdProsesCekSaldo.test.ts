@@ -118,7 +118,8 @@ describe("WD TikTok Dalam Proses", () => {
     expect(await sales(sentDay)).toBe(s0 + amt); // tidak dobel
     expect(await bal(tiktok)).toBe(0);
     // Sekali saja
-    await expect(receiveWithdraw(t.id, owner, { canApprove: true, proof: pf(amt, got) })).rejects.toThrow(/sudah dibukukan/);
+    // Waktu "sekarang" tetap (sesudah jam terima) agar tes tidak bergantung jam dijalankan
+    await expect(receiveWithdraw(t.id, owner, { canApprove: true, proof: pf(amt, got) }, new Date(got.getTime() + 120_000))).rejects.toThrow(/sudah dibukukan/);
     expect(await prisma.journal.count({ where: { sourceId: t.id, source: "FINANCE" } })).toBe(1);
     expect(await prisma.journal.count({ where: { sourceId: t.id, source: "WD_DITERIMA" } })).toBe(1);
     // Pemeriksaan jurnal ganda (audit:saldo) tidak salah menandai
@@ -308,7 +309,7 @@ describe("WD TikTok Dalam Proses", () => {
     const blank = { path: "uji/b.jpg", mime: "image/jpeg", read: null };
     await expect(receiveWithdraw(t.id, owner, { canApprove: false, proof: blank, manual: true, receivedAt: new Date() })).rejects.toThrow(/Owner\/Finance/);
     const at = jakartaDateTime(todayStr(), "06:05");
-    const r = await receiveWithdraw(t.id, owner, { canApprove: true, proof: pf(amt, at), receivedAt: new Date() }, new Date(at.getTime() + 60_000));
+    const r = await receiveWithdraw(t.id, owner, { canApprove: true, proof: pf(amt, at), receivedAt: new Date(at.getTime() + 30_000) }, new Date(at.getTime() + 60_000));
     expect(r.transaction.receivedAt?.getTime()).toBe(at.getTime());
   });
 
