@@ -6,12 +6,14 @@ import { AutoCode, Badge, Card, Empty, Field, PageHeader, Tabs } from "@/compone
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ChecklistEditor } from "./ChecklistEditor";
-import { deleteMaterial, saveDivision, saveMaterial } from "./actions";
+import { deleteMaterial, saveDivision, saveFlowSetting, saveMaterial } from "./actions";
+import { flowEnabled } from "@/lib/shiftReportFlow";
 
 export const metadata = { title: "Bahan Baku & Checklist Divisi" };
 
 export default async function BahanDivisiPage({ searchParams }: { searchParams: Promise<{ div?: string }> }) {
-  await requirePerm("material.manage");
+  const user = await requirePerm("material.manage");
+  const flowOn = await flowEnabled();
   const sp = await searchParams;
   const divisions = await prisma.division.findMany({ orderBy: [{ active: "desc" }, { code: "asc" }], include: { _count: { select: { items: { where: { active: true } } } } } });
   const current = divisions.find((d) => d.id === sp.div) ?? divisions.find((d) => d.reportTemplate && d.active) ?? divisions[0];
@@ -38,6 +40,9 @@ export default async function BahanDivisiPage({ searchParams }: { searchParams: 
           <option value="">Umum (tanpa detail hasil kerja)</option>
           {REPORT_TEMPLATES.map((t) => <option key={t} value={t}>{TEMPLATES[t].label}</option>)}
         </select>
+      </Field>
+      <Field label="Target hasil per shift" hint="Produksi: panen (pcs) · Giftbox: giftbox (box) · Packing: patung (pcs) · Assembling: produk jadi (pcs). Kosongkan bila tanpa target">
+        <input name="targetPerShift" defaultValue={d?.targetPerShift ?? ""} inputMode="numeric" className="input" placeholder="mis. 2400" />
       </Field>
       <Field label="Jumlah shift">
         <select name="shiftCount" defaultValue={String(d?.shiftCount ?? 1)} className="input"><option value="1">1 shift (Shift 1 saja)</option><option value="2">2 shift</option></select>
@@ -89,9 +94,23 @@ export default async function BahanDivisiPage({ searchParams }: { searchParams: 
                 <div className="flex flex-wrap gap-1.5">
                   <Badge tone={current.reportTemplate ? "blue" : "gray"}>Format: {current.reportTemplate ? TEMPLATES[current.reportTemplate as keyof typeof TEMPLATES]?.label ?? current.reportTemplate : "Umum"}</Badge>
                   <Badge>{current.shiftCount} shift</Badge>
+                  {current.targetPerShift ? <Badge tone="purple">Target {current.targetPerShift.toLocaleString("id-ID")}/shift</Badge> : null}
                   <Badge tone={current.active ? "green" : "red"}>{current.active ? "Aktif" : "Nonaktif"}</Badge>
                 </div>
               </div>
+            </Card>
+            <Card title="Hasil kerja → stok">
+              <p className="mb-2 text-sm text-slate-600">
+                {flowOn
+                  ? "NYALA: saat laporan dikirim, panen menambah patung kering, assembling menambah produk jadi, giftbox & packing mengurangi stok (HPP). Input manual tahap Panen/Assembling/Packing/Barang Jadi di menu Produksi hanya untuk Owner."
+                  : "MATI: hasil kerja di laporan shift hanya laporan, belum mengubah stok setengah jadi / barang jadi."}
+              </p>
+              {user.role === "OWNER" ? (
+                <ActionForm action={saveFlowSetting} confirm={flowOn ? "Matikan? Laporan berikutnya tidak lagi mengubah stok hasil produksi." : "Nyalakan? Mulai sekarang laporan shift yang dikirim mengubah stok patung kering, produk jadi, giftbox, dan HPP. Pastikan tim sudah memakai laporan ERP."}>
+                  <input type="hidden" name="on" value={flowOn ? "false" : "true"} />
+                  <Submit className={flowOn ? "btn-secondary btn-sm" : "btn-primary btn-sm"}>{flowOn ? "Matikan" : "Nyalakan"}</Submit>
+                </ActionForm>
+              ) : <p className="text-xs text-slate-400">Hanya Owner yang bisa mengubah.</p>}
             </Card>
             <Card title="Checklist penutupan shift" actions={
               <Modal trigger="Ubah checklist" triggerClass="btn-primary btn-sm" title={`Checklist · ${current.name}`} wide>

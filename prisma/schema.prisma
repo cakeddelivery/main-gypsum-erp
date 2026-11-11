@@ -51,6 +51,8 @@ model Division {
   active         Boolean            @default(true)
   /// Format laporan penutup shift: PRODUKSI | GIFTBOX | PACKING | ASSEMBLING (null = laporan umum)
   reportTemplate String?
+  /// Target hasil per shift (laporan shift menampilkan capaian %); kosong = tanpa target
+  targetPerShift Int?
   /// Jumlah shift yang berlaku (1 = hanya Shift 1; Cetak & Oven/Produksi = 2)
   shiftCount     Int                @default(1)
   /// Checklist penutupan shift divisi: [{label, photo}] (photo = wajib foto bukti)
@@ -642,6 +644,8 @@ model ShiftReport {
   stockApplied      Boolean      @default(false)
   /// Hitungan stok yang terakhir diterapkan; revisi laporan hanya menerapkan selisihnya
   stockAppliedCount Json?
+  /// Versi posting hasil kerja ke stok setengah jadi / barang jadi (0 = belum); revisi = balik versi lama lalu posting versi baru
+  workPostedVersion Int          @default(0)
   complaints        String?
   followUp          String?
   followUpStatus    String       @default("BELUM")

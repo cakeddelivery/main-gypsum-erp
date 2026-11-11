@@ -5,6 +5,7 @@ import { action, bool, dec, int, optStr, str } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { isTemplate, type ChecklistTask } from "@/lib/shiftReport";
 import { autoCode } from "@/lib/codes";
+import { FLOW_SETTING } from "@/lib/shiftReportFlow";
 
 const PATHS = ["/laporan", "/stok"];
 
@@ -77,6 +78,7 @@ export const saveDivision = action(
       name: z.string().min(2, "Nama divisi wajib").parse(str(fd, "name")),
       reportTemplate: isTemplate(tpl) ? tpl : null,
       shiftCount: Math.min(Math.max(int(fd, "shiftCount", 1), 1), 3),
+      targetPerShift: str(fd, "targetPerShift") ? z.number().int().min(1, "Target minimal 1").max(1_000_000).parse(int(fd, "targetPerShift")) : null,
       active: id ? bool(fd, "active") : true,
     };
     const d = id
@@ -84,6 +86,19 @@ export const saveDivision = action(
       : await prisma.division.create({ data: { ...data, code: await autoCode.division(prisma, data.name) } });
     await audit(user, id ? "DIVISI_DIUBAH" : "DIVISI_DIBUAT", "Division", d.id, data);
     return "Divisi tersimpan";
+  },
+  PATHS,
+);
+
+/** Owner: nyalakan/matikan hasil kerja laporan shift → stok setengah jadi & barang jadi */
+export const saveFlowSetting = action(
+  "material.manage",
+  async (fd, user) => {
+    if (user.role !== "OWNER") throw new Error("Hanya Owner yang bisa mengubah pengaturan ini");
+    const on = str(fd, "on") === "true";
+    await prisma.setting.upsert({ where: { key: FLOW_SETTING }, create: { key: FLOW_SETTING, value: String(on) }, update: { value: String(on) } });
+    await audit(user, "LAPORAN_KE_STOK", "Setting", FLOW_SETTING, { on });
+    return on ? "Hasil kerja laporan shift sekarang masuk stok" : "Hasil kerja laporan shift tidak lagi mengubah stok";
   },
   PATHS,
 );

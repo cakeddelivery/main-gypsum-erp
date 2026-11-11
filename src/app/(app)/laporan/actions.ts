@@ -10,8 +10,10 @@ import { assertPerm, ForbiddenError } from "@/lib/auth";
 import { sendTelegram, telegramConfigured, esc } from "@/lib/telegram";
 import { STAGE_LABEL } from "@/lib/stock";
 import { applyShiftStockCount } from "@/lib/shiftReportStock";
+import { postShiftWork } from "@/lib/shiftReportFlow";
+import { boronganLines } from "@/lib/shiftReportBorongan";
 import { saveProof } from "@/lib/storage";
-import { isDone, isTemplate, needsOrder, parseWork, summaryOf, toEntries, workLines, type ChecklistEntry, type StockCountRow } from "@/lib/shiftReport";
+import { isDone, isTemplate, needsOrder, parseWork, summaryOf, targetLine, targetOf, toEntries, workLines, type ChecklistEntry, type StockCountRow } from "@/lib/shiftReport";
 
 const DEFAULT_CHECKLIST = ["Area kerja bersih & rapi", "Peralatan/cetakan dicek", "Bahan cukup untuk shift berikutnya", "Hasil sudah dihitung ulang", "Reject dipisahkan & dicatat"];
 
@@ -158,6 +160,8 @@ export const sendReport = action(
     // Stok akhir shift = stock opname bahan baku divisi (per jam selesai shift). Diterapkan dulu: bila gagal
     // (mis. periode sudah ditutup), laporan tidak dikirim agar pesan dan stok tidak berbeda.
     const stockRes = await applyShiftStockCount(id, user);
+    // Hasil kerja → stok setengah jadi / barang jadi (bila diaktifkan Owner)
+    const flowRes = await postShiftWork(id, user);
     const template = r.division.reportTemplate;
     const checklist = toEntries(r.checklist) as ChecklistEntry[];
     const stock = r.stockCount as StockCountRow[];
@@ -165,10 +169,13 @@ export const sendReport = action(
     let body: string[];
     if (isTemplate(template)) {
       const work = r.work as Parameters<typeof workLines>[1];
+      const tgt = targetOf(template, work, r.division.targetPerShift);
       body = [
         summaryOf(template, work).map((s) => `${s.label}: ${s.value.toLocaleString("id-ID")}${s.unit ? ` ${s.unit}` : ""}`).join(" | "),
+        ...(tgt ? [tgt.reached ? targetLine(tgt) : `<b>${targetLine(tgt)}</b>`] : []),
         "",
         ...workLines(template, work).map(esc),
+        ...(await boronganLines(template, r.date)).map(esc),
         "",
         `<b>Checklist penutupan ${checklist.filter(isDone).length}/${checklist.length}</b>`,
         ...checklist.filter((c) => !isDone(c)).map((c) => `✗ ${esc(c.label)}${c.photo ? " (foto belum ada)" : ""}`),
@@ -206,7 +213,7 @@ export const sendReport = action(
       prisma.reportSend.create({ data: { reportId: id, sentBy: user.name, channel, status, error } }),
       prisma.shiftReport.update({ where: { id }, data: { status: status === "GAGAL" ? r.status : "TERKIRIM" } }),
     ]);
-    await audit(user, "LAPORAN_DIKIRIM", "ShiftReport", id, { status, channel, stockAdjusted: stockRes.adjusted, stockSkipped: stockRes.skipped ?? null });
+    await audit(user, "LAPORAN_DIKIRIM", "ShiftReport", id, { status, channel, stockAdjusted: stockRes.adjusted, stockSkipped: stockRes.skipped ?? null, workPosted: flowRes.posted });
     if (status === "GAGAL") throw new Error(`Pengiriman gagal: ${error}${stockRes.adjusted ? " (stok akhir shift sudah tercatat)" : ""}`);
     const msg = status === "SEBAGIAN" ? "Terkirim sebagian, cek riwayat" : "Laporan terkirim";
     return stockRes.skipped ? `${msg}. ${stockRes.skipped}` : msg;

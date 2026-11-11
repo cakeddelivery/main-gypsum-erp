@@ -158,6 +158,20 @@ export function ReportForm(p: Props) {
                 </div>
               );
             }
+            if (s.kind === "choice") {
+              const v = typeof work[s.key] === "string" ? (work[s.key] as string) : "";
+              const need = !!s.showIf && sectionTotal(t, work, s.showIf) > 0;
+              if (s.showIf && !need && !v) return <input key={s.key} type="hidden" name={`w.${s.key}`} value="" />;
+              return (
+                <label key={s.key} className="block">
+                  <span className="text-sm font-medium text-slate-700">{s.title}</span>
+                  <select name={`w.${s.key}`} value={v} required={need} onChange={(e) => setWork((w) => ({ ...w, [s.key]: e.target.value }))} className="input mt-1">
+                    <option value="">— pilih —</option>
+                    {s.options.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </label>
+              );
+            }
             return (
               <div key={s.key} className="rounded-lg bg-slate-50 p-2 text-xs text-slate-600">
                 <b>{s.title} (otomatis ×{s.factor}):</b> {sectionFieldValues(t, work, s).map((f) => `${f.label} ${f.value ?? "—"}`).join(" · ")} · <b>{s.totalLabel} {fmt(sectionTotal(t, work, s.key))}</b>
