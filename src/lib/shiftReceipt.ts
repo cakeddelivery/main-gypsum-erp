@@ -4,6 +4,7 @@ import { audit } from "./audit";
 import { nextNumber } from "./numbering";
 import { shiftEndAt } from "./shiftReport";
 import { StockError } from "./stock";
+import { receivePurchaseTx } from "./purchaseReceive";
 
 type Tx = Prisma.TransactionClient;
 type DB = Tx | typeof prisma;
@@ -16,7 +17,13 @@ type Actor = { id: string; name: string };
  * - Selama belum ditautkan, stock opname laporan shift menganggap barang ini sudah ada (tidak jadi pemakaian/HPP).
  * - Saat ditautkan, stok masuk bertanggal waktu barang masuk, jadi tidak dobel dengan hitungan fisik.
  */
-export type ReceiptInput = { itemId: string; qty: number; supplierName?: string | null; photoPath?: string | null; photoMime?: string | null };
+export type ReceiptInput = {
+  itemId: string; qty: number; supplierName?: string | null; photoPath?: string | null; photoMime?: string | null;
+  /** Barang ini datang dari pesanan yang sedang dikirim: langsung jadi penerimaan pesanan (stok, uang muka/hutang) */
+  purchaseLineId?: string | null;
+  /** Pesanan COD: rekening/dompet yang dipakai membayar */
+  bankAccountId?: string | null;
+};
 
 export async function addShiftReceipt(reportId: string, input: ReceiptInput, actor: Actor, now: Date = new Date()) {
   if (!(input.qty > 0)) throw new StockError("Jumlah barang masuk harus lebih dari 0");
@@ -33,6 +40,13 @@ export async function addShiftReceipt(reportId: string, input: ReceiptInput, act
         supplierName: input.supplierName?.trim().slice(0, 80) || null, photoPath: input.photoPath ?? null, photoMime: input.photoMime ?? null, receivedAt, createdBy: actor.name,
       },
     });
+    if (input.purchaseLineId) {
+      const line = await tx.purchaseLine.findUniqueOrThrow({ where: { id: input.purchaseLineId }, include: { purchase: true } });
+      if (line.itemId !== item.id) throw new StockError("Barang tidak sama dengan barang di pesanan");
+      // Stok masuk bertanggal waktu barang masuk → stok akhir shift tetap pas (tidak dobel)
+      await receivePurchaseTx(tx, { purchaseId: line.purchaseId, date: receivedAt, lines: [{ lineId: line.id, qty: Number(x.qty) }], bankAccountId: input.bankAccountId, photoPath: input.photoPath, photoMime: input.photoMime, shiftReceiptId: x.id, note: `Barang masuk ${number} (laporan shift)` }, actor);
+      await tx.shiftReceipt.update({ where: { id: x.id }, data: { purchaseId: line.purchaseId, supplierName: x.supplierName ?? line.purchase.vendor } });
+    }
     if (r.status === "TERKIRIM") await tx.shiftReport.update({ where: { id: r.id }, data: { status: "DIREVISI" } });
     await audit(actor, "BARANG_MASUK_LAPORAN", "ShiftReceipt", x.id, { number, item: item.sku, qty: input.qty }, tx);
     return x;

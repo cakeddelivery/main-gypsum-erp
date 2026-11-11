@@ -256,7 +256,10 @@ export async function addReceipt(fd: FormData): Promise<{ ok: boolean; error?: s
       photoMime = file.type || "image/jpeg";
       photoPath = await saveProof(Buffer.from(await file.arrayBuffer()), photoMime);
     }
-    await addShiftReceipt(id, { itemId: str(fd, "itemId"), qty, supplierName: optStr(fd, "supplierName"), photoPath, photoMime }, user);
+    const purchaseLineId = optStr(fd, "purchaseLineId");
+    // Menautkan ke pesanan = validasi barang datang: khusus yang berwenang Terima barang (Supervisor/Kapten)
+    if (purchaseLineId && !user.can("stock.receive")) throw new ForbiddenError();
+    await addShiftReceipt(id, { itemId: str(fd, "itemId"), qty, supplierName: optStr(fd, "supplierName"), photoPath, photoMime, purchaseLineId, bankAccountId: optStr(fd, "bankAccountId") }, user);
     revalidatePath(`/laporan/${id}`);
     return { ok: true };
   } catch (e) {

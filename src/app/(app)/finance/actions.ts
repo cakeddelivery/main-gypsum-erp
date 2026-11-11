@@ -45,6 +45,8 @@ async function readForm(fd: FormData): Promise<TxInput> {
     splits: readSplits(fd),
     payableId: direction === "KELUAR" ? optStr(fd, "payableId") : null,
     payInterest: direction === "KELUAR" && str(fd, "payInterest") ? int(fd, "payInterest") : null,
+    // Kategori BPJS: daftar karyawan yang dibayarkan (form tanpa bagian ini = tidak diubah)
+    bpjsEmployeeIds: fd.has("bpjsOn") ? fd.getAll("bpjsEmployeeIds").map(String) : undefined,
   };
 }
 

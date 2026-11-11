@@ -23,6 +23,8 @@ import {
 } from "@/lib/shiftReport";
 import { addReceipt, removeChecklistPhoto, removeReceipt, saveReport, uploadChecklistPhoto } from "../actions";
 
+/** Baris pesanan yang sedang dikirim (Stok → Pembelian) untuk barang divisi ini */
+export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean };
 export type ReceiptView = { id: string; number: string; itemName: string; unit: string; qty: number; supplierName: string | null; hasPhoto: boolean; linked: boolean };
 export type ResultCountRow = { key: string; label: string; unit: string; qty: number | null };
 
@@ -40,6 +42,9 @@ type Props = {
   /** Barang masuk hari ini (supplier/toko) + bahan divisi yang bisa dipilih */
   receipts: ReceiptView[];
   materials: { id: string; name: string; unit: string }[];
+  /** Pesanan dalam pengiriman (hanya untuk yang boleh Terima barang) + rekening untuk COD */
+  orders: OrderOption[];
+  banks: { id: string; name: string }[];
   /** Laporan sudah dikirim (stok akhir tercatat): barang masuk lama tidak bisa dihapus */
   applied: boolean;
   /** Stok akhir hasil (patung kering / produk jadi per karakter) */
@@ -211,7 +216,7 @@ export function ReportForm(p: Props) {
         </ul>
       </section>
 
-      {p.materials.length > 0 && <ReceiptSection id={p.id} receipts={p.receipts} materials={p.materials} applied={p.applied} />}
+      {p.materials.length > 0 && <ReceiptSection id={p.id} receipts={p.receipts} materials={p.materials} applied={p.applied} orders={p.orders} banks={p.banks} />}
 
       {p.resultTitle && p.resultCount.length > 0 && (
         <section className="card p-4">
@@ -279,7 +284,7 @@ export function ReportForm(p: Props) {
   );
 }
 
-function ReceiptSection({ id, receipts, materials, applied }: { id: string; receipts: ReceiptView[]; materials: { id: string; name: string; unit: string }[]; applied: boolean }) {
+function ReceiptSection({ id, receipts, materials, applied, orders, banks }: { id: string; receipts: ReceiptView[]; materials: { id: string; name: string; unit: string }[]; applied: boolean; orders: OrderOption[]; banks: { id: string; name: string }[] }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [itemId, setItemId] = useState("");
@@ -287,6 +292,10 @@ function ReceiptSection({ id, receipts, materials, applied }: { id: string; rece
   const [shop, setShop] = useState("");
   const photo = useRef<HTMLInputElement>(null);
   const unit = materials.find((m) => m.id === itemId)?.unit;
+  const itemOrders = orders.filter((o) => o.itemId === itemId);
+  const [orderLine, setOrderLine] = useState("");
+  const [bank, setBank] = useState(banks[0]?.id ?? "");
+  const order = itemOrders.find((o) => o.lineId === orderLine);
   const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, ok: string) => {
     setBusy(true);
     try {
@@ -310,6 +319,10 @@ function ReceiptSection({ id, receipts, materials, applied }: { id: string; rece
       fd.set("itemId", itemId);
       fd.set("qty", qty);
       fd.set("supplierName", shop);
+      if (order) {
+        fd.set("purchaseLineId", order.lineId);
+        if (order.cod) fd.set("bankAccountId", bank);
+      }
       const f = photo.current?.files?.[0];
       if (f) {
         const blob = await shrink(f);
@@ -320,6 +333,7 @@ function ReceiptSection({ id, receipts, materials, applied }: { id: string; rece
       if (!ok) return;
       setItemId("");
       setQty("");
+      setOrderLine("");
       if (photo.current) photo.current.value = "";
     });
   return (
@@ -333,7 +347,7 @@ function ReceiptSection({ id, receipts, materials, applied }: { id: string; rece
               {x.hasPhoto ? <ProofPreview thumb src={`/api/files/receipt/${x.id}`} title={`Nota ${x.number}`} thumbClass="h-10 w-10 object-cover" /> : <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md border border-dashed border-slate-300 text-xs text-slate-400">nota</span>}
               <div className="min-w-0 flex-1">
                 <div>{x.itemName}: <b>{fmt(x.qty)}</b> {x.unit}</div>
-                <div className="text-xs text-slate-500">{x.number}{x.supplierName ? ` · ${x.supplierName}` : ""} · {x.linked ? "✓ sudah dicatat di Pembelian" : "menunggu dicatat di Pembelian"}</div>
+                <div className="text-xs text-slate-500">{x.number}{x.supplierName ? ` · ${x.supplierName}` : ""} · {x.linked ? "✓ tercatat di Pembelian" : "menunggu dicatat di Pembelian"}</div>
               </div>
               {!x.linked && !applied && (
                 <button type="button" className="btn-secondary btn-sm shrink-0" disabled={busy} onClick={() => {
@@ -350,13 +364,27 @@ function ReceiptSection({ id, receipts, materials, applied }: { id: string; rece
       )}
       <div className="grid grid-cols-12 gap-2 rounded-lg border border-slate-200 p-2 [&>*]:min-w-0">
         <label className="col-span-12 sm:col-span-5"><span className="text-xs text-slate-500">Barang</span>
-          <select value={itemId} onChange={(e) => setItemId(e.target.value)} className="input py-1.5">
+          <select value={itemId} onChange={(e) => { setItemId(e.target.value); const o = orders.find((x) => x.itemId === e.target.value); setOrderLine(o?.lineId ?? ""); if (o) setQty(String(o.remaining).replace(".", ",")); }} className="input py-1.5">
             <option value="">— pilih bahan —</option>
             {materials.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>)}
           </select>
         </label>
         <label className="col-span-5 sm:col-span-2"><span className="text-xs text-slate-500">Jumlah{unit ? ` (${unit})` : ""}</span><input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" className="input py-1.5" placeholder="0" /></label>
         <label className="col-span-7 sm:col-span-5"><span className="text-xs text-slate-500">Toko / supplier (opsional)</span><input value={shop} onChange={(e) => setShop(e.target.value)} className="input py-1.5" /></label>
+        {itemOrders.length > 0 && (
+          <label className="col-span-12 sm:col-span-7"><span className="text-xs text-slate-500">Dari pesanan yang dikirim?</span>
+            <select value={orderLine} onChange={(e) => setOrderLine(e.target.value)} className="input py-1.5">
+              <option value="">Bukan pesanan (beli langsung di toko)</option>
+              {itemOrders.map((o) => <option key={o.lineId} value={o.lineId}>{o.label}</option>)}
+            </select>
+          </label>
+        )}
+        {order?.cod && (
+          <label className="col-span-12 sm:col-span-5"><span className="text-xs text-slate-500">Bayar COD dari</span>
+            <select value={bank} onChange={(e) => setBank(e.target.value)} className="input py-1.5">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
+          </label>
+        )}
+        {order && <p className="col-span-12 text-xs text-sky-700">Barang ini divalidasi sebagai penerimaan pesanan: stok masuk dan {order.cod ? "pembayaran COD" : "uang muka/hutang"} tercatat otomatis. Tidak perlu dicatat lagi di Pembelian.</p>}
         <label className="col-span-12 sm:col-span-8"><span className="text-xs text-slate-500">Foto nota (opsional)</span><input ref={photo} type="file" accept="image/*" capture="environment" className="block w-full text-sm" /></label>
         <div className="col-span-12 flex items-end sm:col-span-4"><button type="button" className="btn-primary btn-sm w-full" disabled={busy} onClick={add}>{busy ? "Menyimpan…" : "+ Catat barang masuk"}</button></div>
       </div>

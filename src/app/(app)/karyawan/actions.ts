@@ -24,6 +24,9 @@ export const saveEmployee = action(
       phone: optStr(fd, "phone"),
       joinDate: join ? dateOnly(join) : null,
       monthlySalary: BigInt(int(fd, "monthlySalary")),
+      // BPJS Ketenagakerjaan (dibayar perusahaan); nominal kosong = bawaan Pengaturan
+      bpjsTk: str(fd, "bpjsTk") === "on",
+      bpjsTkAmount: str(fd, "bpjsTkAmount") ? BigInt(int(fd, "bpjsTkAmount")) : null,
     };
     if (data.wageType === "BULANAN" && !data.joinDate) throw new Error("Karyawan bulanan wajib punya tanggal masuk (dasar tanggal gajian)");
     if (data.wageType === "BULANAN" && data.monthlySalary <= BigInt(0)) throw new Error("Isi gaji bulanan");

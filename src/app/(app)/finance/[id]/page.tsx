@@ -1,4 +1,5 @@
 import { payableOptions } from "@/lib/payables";
+import { BPJS_COA, bpjsEmployeeOptions } from "@/lib/bpjs";
 import { notFound } from "next/navigation";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -29,7 +30,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
   if (!t) notFound();
   const [banks, categories, stores, dup, journal, def] = await Promise.all([
     prisma.bankAccount.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
-    prisma.txCategory.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
+    prisma.txCategory.findMany({ where: { active: true }, orderBy: { name: "asc" }, include: { coaAccount: { select: { code: true } } } }),
     prisma.store.findMany({ where: { active: true } }),
     t.duplicateOfId ? prisma.financeTransaction.findUnique({ where: { id: t.duplicateOfId } }) : null,
     t.journalId ? prisma.journal.findUnique({ where: { id: t.journalId }, include: { lines: { include: { account: true } } } }) : null,
@@ -37,6 +38,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
   ]);
   // WD TikTok: jurnal ke-2 "uang diterima" (Dana dalam Perjalanan → rekening bank)
   const receivedJournals = t.sentAt ? await prisma.journal.findMany({ where: { source: WD_RECEIVED_SOURCE, sourceId: t.id }, include: { lines: { include: { account: true } } }, orderBy: { date: "asc" } }) : [];
+  const bpjsNames = t.bpjsEmployeeIds.length ? (await prisma.employee.findMany({ where: { id: { in: t.bpjsEmployeeIds } }, select: { name: true }, orderBy: { name: "asc" } })).map((e) => e.name) : [];
   const payable = t.payableId ? await prisma.payable.findUnique({ where: { id: t.payableId } }) : null;
   const own = !t.origin;
   const reclassable = own && t.status === "DIBUKUKAN" && t.direction !== "TRANSFER" && !t.splits.length && user.can("finance.approve");
@@ -82,7 +84,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
         <div className="space-y-5 lg:col-span-2">
           <Card title="Data transaksi" actions={editable && user.can("finance.create") && (
             <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah transaksi" wide>
-              <TxForm mode="edit" action={updateTx} banks={banks} categories={categories} stores={stores} defaultStoreId={def?.value} payables={await payableOptions(t.payableId)} init={{ id: t.id, direction: t.direction, amount: Number(t.amount), date: dateStr(new Date(Date.UTC(p.year, p.month - 1, p.day))), time: `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`, accountId: t.accountId, toAccountId: t.toAccountId, categoryId: t.categoryId, payableId: t.payableId, storeId: t.storeId, counterparty: t.counterparty, note: t.note, splits: t.splits.map((x) => ({ categoryId: x.categoryId, amount: Number(x.amount), note: x.note ?? "", itemId: x.itemId, itemName: splitItems.find((i) => i.id === x.itemId)?.name ?? null, qty: x.qty ? Number(x.qty) : null })) }} />
+              <TxForm mode="edit" action={updateTx} banks={banks} categories={categories.map((c) => ({ ...c, bpjs: c.coaAccount.code === BPJS_COA }))} bpjsEmployees={await bpjsEmployeeOptions()} stores={stores} defaultStoreId={def?.value} payables={await payableOptions(t.payableId)} init={{ id: t.id, direction: t.direction, amount: Number(t.amount), date: dateStr(new Date(Date.UTC(p.year, p.month - 1, p.day))), time: `${String(p.hour).padStart(2, "0")}:${String(p.minute).padStart(2, "0")}`, accountId: t.accountId, toAccountId: t.toAccountId, categoryId: t.categoryId, payableId: t.payableId, storeId: t.storeId, counterparty: t.counterparty, note: t.note, splits: t.splits.map((x) => ({ categoryId: x.categoryId, amount: Number(x.amount), note: x.note ?? "", itemId: x.itemId, itemName: splitItems.find((i) => i.id === x.itemId)?.name ?? null, qty: x.qty ? Number(x.qty) : null })), bpjsEmployeeIds: t.bpjsEmployeeIds }} />
             </Modal>
           )}>
               <dl className="grid grid-cols-2 gap-y-2 text-sm">
@@ -91,6 +93,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
                 {t.direction === "TRANSFER" && banks.find((b) => b.id === t.accountId)?.marketplace && <><dt className="text-slate-500">Pemasukan</dt><dd className="text-emerald-700">Penjualan {t.store?.name ?? "(toko belum dipilih)"} {idr(t.amount)} · dari withdraw saldo penjual</dd></>}
                 <dt className="text-slate-500">Kategori</dt><dd>{payable ? <>{payable.kind === "PINJAMAN" ? "Cicilan pinjaman" : "Bayar hutang"} <b>{payable.number}</b> {payable.vendor}<div className="text-xs text-slate-500">Pokok {idr(Number(t.amount - t.payInterest))}{t.payInterest > BigInt(0) ? ` · bunga/biaya ${idr(t.payInterest)}` : ""} · sisa hutang {idr(payable.amount - payable.paid)}</div></> : t.splits.length ? `${t.splits.length} rincian` : categories.find((c) => c.id === t.categoryId)?.name ?? "—"}</dd>
                 <dt className="text-slate-500">Pihak terkait</dt><dd>{t.counterparty ?? "—"}</dd>
+                {bpjsNames.length > 0 && <><dt className="text-slate-500">BPJS untuk</dt><dd>{bpjsNames.join(", ")}</dd></>}
                 <dt className="text-slate-500">Catatan</dt><dd>{t.note ?? "—"}</dd>
               </dl>
               {t.splits.length > 0 && (

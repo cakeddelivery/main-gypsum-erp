@@ -7,8 +7,9 @@ import type { ActionResult } from "@/lib/action";
 import type { Extraction } from "@/lib/extract";
 
 type Opt = { id: string; name: string };
-type Cat = Opt & { direction: string };
-type Init = { id?: string; direction?: string; amount?: number; date?: string; time?: string; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; payableId?: string | null; storeId?: string | null; counterparty?: string | null; note?: string | null; rawText?: string | null; splits?: Split[] };
+type Cat = Opt & { direction: string; bpjs?: boolean };
+type BpjsEmp = { id: string; name: string; amount: number; member: boolean };
+type Init = { id?: string; direction?: string; amount?: number; date?: string; time?: string; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; payableId?: string | null; storeId?: string | null; counterparty?: string | null; note?: string | null; rawText?: string | null; splits?: Split[]; bpjsEmployeeIds?: string[] };
 type Split = { categoryId: string | null; amount: number | ""; note: string; itemId?: string | null; itemName?: string | null; qty?: number | null };
 
 export function TxForm(p: {
@@ -23,6 +24,8 @@ export function TxForm(p: {
   mode: "create" | "edit";
   /** Hutang supplier / pinjaman yang belum lunas: pengeluaran bisa langsung dicatat sebagai pembayarannya */
   payables?: { id: string; label: string; vendor: string }[];
+  /** Karyawan untuk kategori BPJS Ketenagakerjaan */
+  bpjsEmployees?: BpjsEmp[];
 }) {
   const close = useCloseModal();
   const [v, setV] = useState<Init>(p.init);
@@ -40,6 +43,7 @@ export function TxForm(p: {
   }, [timeAuto]);
   const set = (k: keyof Init) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => setV((o) => ({ ...o, [k]: e.target.value }));
   const cats = p.categories.filter((c) => c.direction === v.direction);
+  const [bpjsIds, setBpjsIds] = useState<string[]>(p.init.bpjsEmployeeIds ?? []);
   // Rincian: satu transfer dipecah ke beberapa kategori (jumlahnya harus = nominal)
   const [splits, setSplits] = useState<Split[]>(p.init.splits ?? []);
   const splitSum = splits.reduce((t, x) => t + (Number(x.amount) || 0), 0);
@@ -131,6 +135,28 @@ export function TxForm(p: {
             {v.payableId && <label><span className="label">Bunga / biaya (opsional)</span><input name="payInterest" inputMode="numeric" className="input" placeholder="0" /><span className="mt-0.5 block text-xs text-slate-500">Khusus pinjaman; sisanya mengurangi pokok</span></label>}
           </>
         )}
+        {(() => {
+          const isBpjs = v.direction === "KELUAR" && (p.categories.find((c) => c.id === v.categoryId)?.bpjs || splits.some((x) => p.categories.find((c) => c.id === x.categoryId)?.bpjs));
+          if (!isBpjs || !p.bpjsEmployees?.length) return null;
+          const total = p.bpjsEmployees.filter((e) => bpjsIds.includes(e.id)).reduce((t, e) => t + e.amount, 0);
+          return (
+            <div className="col-span-2 rounded-lg border border-sky-200 bg-sky-50/60 p-3 md:col-span-3">
+              <input type="hidden" name="bpjsOn" value="1" />
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="label mb-0">Karyawan yang dibayarkan BPJS-nya ({bpjsIds.length})</span>
+                <span className="text-xs">Iuran terpilih Rp {total.toLocaleString("id-ID")} {total > 0 && <button type="button" className="btn-secondary btn-sm ml-1" onClick={() => setV((o) => ({ ...o, amount: total }))}>Pakai sebagai nominal</button>}</span>
+              </div>
+              <div className="grid max-h-48 grid-cols-1 gap-1 overflow-y-auto sm:grid-cols-2">
+                {p.bpjsEmployees.map((e) => (
+                  <label key={e.id} className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" name="bpjsEmployeeIds" value={e.id} checked={bpjsIds.includes(e.id)} onChange={(x) => setBpjsIds((o) => (x.target.checked ? [...o, e.id] : o.filter((y) => y !== e.id)))} />
+                    {e.name} <span className="text-xs text-slate-500">{e.member ? `Rp ${e.amount.toLocaleString("id-ID")}` : "(belum terdaftar BPJS)"}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
         <label><span className="label">Pihak terkait (opsional)</span><input name="counterparty" value={v.counterparty ?? ""} onChange={set("counterparty")} className="input" placeholder="Nama toko / supplier / pembeli" /><span className="mt-0.5 block text-xs text-slate-500">Siapa penerima/pengirim uang. Untuk pencarian & cek duplikat.</span></label>
         <label className="col-span-2 md:col-span-1"><span className="label">Bukti (JPG/PNG/PDF, maks 15 MB)</span><input type="file" name="proof" accept="image/jpeg,image/png,image/webp,application/pdf" className="input py-1.5" /></label>
         <label className="col-span-2 md:col-span-3"><span className="label">Catatan</span><textarea name="note" value={v.note ?? ""} onChange={set("note")} rows={2} className="input" /></label>

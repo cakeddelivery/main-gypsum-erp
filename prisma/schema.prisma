@@ -208,6 +208,9 @@ model Employee {
   joinDate       DateTime?
   /// Tanggal resign; resign sebelum tanggal gajian = slip siklus itu Rp0
   resignDate     DateTime?           @db.Date
+  /// BPJS Ketenagakerjaan dibayar perusahaan (info di slip, tidak memotong gaji); nominal kosong = bawaan setting bpjs_tk_amount
+  bpjsTk         Boolean             @default(false)
+  bpjsTkAmount   BigInt?
   user           User?
   attendances    Attendance[]
   schedules      ShiftSchedule[]
@@ -568,6 +571,8 @@ model Payslip {
   /// Rekap telat periode ini (hanya rekap, tidak memotong gaji): berapa kali & total menit di atas toleransi
   lateCount        Int           @default(0)
   lateMinutes      Int           @default(0)
+  /// BPJS Ketenagakerjaan per bulan yang ditanggung perusahaan (info saja, tidak masuk total)
+  bpjsCompany      BigInt        @default(0)
   total            BigInt
 
   @@unique([periodId, employeeId])
@@ -1134,6 +1139,8 @@ model FinanceTransaction {
   /// Pembayaran hutang supplier / cicilan pinjaman: nominal = pokok + payInterest (bunga/biaya → beban bunga)
   payableId           String?
   payable             Payable?         @relation(fields: [payableId], references: [id])
+  /// Kategori BPJS Ketenagakerjaan: karyawan yang dibayarkan iurannya (satu atau beberapa sekaligus)
+  bpjsEmployeeIds     String[]         @default([])
   payInterest         BigInt           @default(0)
   /// Transfer dana sisihan: rincian sisihan {parts:[{fundId,date,amount}]} yang dibukukan bersama transaksi ini,
   /// atau {skip:true} = transfer biasa (tidak dicocokkan ke dana sisihan)
@@ -1444,16 +1451,16 @@ enum PaymentTerm {
 
 /// Pembelian bahan baku: menambah stok, membayar sebagian/seluruhnya, sisa menjadi utang usaha
 model Purchase {
-  id            String         @id @default(cuid())
-  number        String         @unique
+  id            String            @id @default(cuid())
+  number        String            @unique
   supplierId    String?
-  supplier      Supplier?      @relation(fields: [supplierId], references: [id])
+  supplier      Supplier?         @relation(fields: [supplierId], references: [id])
   vendor        String
   storeId       String
   date          DateTime
   term          PaymentTerm
   total         BigInt
-  paidNow       BigInt         @default(0)
+  paidNow       BigInt            @default(0)
   bankAccountId String?
   payableId     String?
   journalId     String?
@@ -1462,23 +1469,70 @@ model Purchase {
   proofPath     String?
   proofMime     String?
   createdBy     String
-  createdAt     DateTime       @default(now())
+  createdAt     DateTime          @default(now())
   lines         PurchaseLine[]
   receipts      ShiftReceipt[]
   /// Dibatalkan: jurnal dibalik, dokumen tetap tersimpan
   cancelledAt   DateTime?
   cancelReason  String?
+  /// Status barang: DITERIMA (langsung masuk gudang) atau pesanan yang masih dikirim (MENUNGGU/SEBAGIAN), DITUTUP = sisa tidak datang
+  delivery      PurchaseDelivery  @default(DITERIMA)
+  /// COD: dibayar saat barang diterima
+  cod           Boolean           @default(false)
+  /// Uang muka (paidNow) yang sudah dipakai untuk barang diterima; sisa = paidNow - prepaidUsed
+  prepaidUsed   BigInt            @default(0)
+  /// Dibayar saat barang datang (COD)
+  codPaid       BigInt            @default(0)
+  /// Jatuh tempo bila sisa tagihan jadi hutang saat barang diterima
+  dueDate       DateTime?
+  closedReason  String?
+  deliveries    PurchaseReceipt[]
+}
+
+enum PurchaseDelivery {
+  DITERIMA
+  MENUNGGU
+  SEBAGIAN
+  DITUTUP
+}
+
+/// Penerimaan barang pesanan (validasi barang datang): stok masuk + uang muka → persediaan, sisa → hutang/COD
+model PurchaseReceipt {
+  id             String   @id @default(cuid())
+  number         String   @unique
+  purchaseId     String
+  purchase       Purchase @relation(fields: [purchaseId], references: [id])
+  date           DateTime
+  /// [{lineId, itemId, qty, amount}]
+  lines          Json
+  value          BigInt
+  fromPrepaid    BigInt   @default(0)
+  codPaid        BigInt   @default(0)
+  toPayable      BigInt   @default(0)
+  bankAccountId  String?
+  payableId      String?
+  journalId      String?
+  shiftReceiptId String?  @unique
+  photoPath      String?
+  photoMime      String?
+  note           String?
+  receivedBy     String
+  createdAt      DateTime @default(now())
+
+  @@index([purchaseId])
 }
 
 model PurchaseLine {
-  id         String   @id @default(cuid())
-  purchaseId String
-  purchase   Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
-  itemId     String
-  item       Item     @relation(fields: [itemId], references: [id])
-  qty        Decimal  @db.Decimal(14, 3)
-  unitCost   BigInt
-  amount     BigInt
+  id          String   @id @default(cuid())
+  purchaseId  String
+  purchase    Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  itemId      String
+  item        Item     @relation(fields: [itemId], references: [id])
+  qty         Decimal  @db.Decimal(14, 3)
+  unitCost    BigInt
+  amount      BigInt
+  /// Jumlah yang sudah diterima (pembelian biasa = qty)
+  qtyReceived Decimal  @default(0) @db.Decimal(14, 3)
 }
 
 /// Dana sisihan harian: kompensasi owner (dicadangkan di ShopeePay) dan dana cicilan pinjaman modal

@@ -152,6 +152,12 @@ async function settingStr(tx: Tx, key: string) {
   return s?.value?.trim() || null;
 }
 
+/** BPJS Ketenagakerjaan per bulan yang ditanggung perusahaan (info slip): nominal karyawan, atau bawaan setting */
+export function bpjsAmount(e: { bpjsTk: boolean; bpjsTkAmount: bigint | null }, def: number) {
+  if (!e.bpjsTk) return 0;
+  return e.bpjsTkAmount != null ? Number(e.bpjsTkAmount) : def;
+}
+
 async function settingNum(tx: Tx, key: string, def: number) {
   const s = await tx.setting.findUnique({ where: { key } });
   const v = Number(s?.value);
@@ -243,6 +249,7 @@ export async function computePeriod(periodId: string, actor: Actor) {
     const rateMap = Object.fromEntries(rates.map((r) => [r.stage, Number(r.ratePerPcs)]));
     const lateDed = Number(setting?.value ?? 0);
     const requireValidated = (onlyValidated?.value ?? "true") === "true";
+    const bpjsDef = await settingNum(tx, "bpjs_tk_amount", 28400);
     await tx.payslip.deleteMany({ where: { periodId } });
     for (const e of employees) {
       const att = await tx.attendance.findMany({ where: { employeeId: e.id, date: range, status: { in: ["HADIR", "TERLAMBAT"] }, ...(requireValidated ? { validated: true } : {}) } });
@@ -273,6 +280,7 @@ export async function computePeriod(periodId: string, actor: Actor) {
           deduction: BigInt(calc.deduction),
           advanceDeduction: BigInt(adv.deduction),
           advanceDetail: adv.detail,
+          bpjsCompany: BigInt(bpjsAmount(e, bpjsDef)),
           total: BigInt(calc.total - adv.deduction),
         },
       });
@@ -296,6 +304,7 @@ async function monthlyEmployeesFor(tx: Tx, period: Period, offset: number) {
 }
 
 async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
+  const bpjsDef = await settingNum(tx, "bpjs_tk_amount", 28400);
   const [offset, quota, workdays, lateDed, requireValidated, goLive] = await Promise.all([
     settingNum(tx, "payday_offset_days", 7),
     settingNum(tx, "weekly_off_quota", 1),
@@ -348,6 +357,7 @@ async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
         advanceDetail: adv.detail,
         lateCount: late.count,
         lateMinutes: late.minutes,
+        bpjsCompany: BigInt(bpjsAmount(e, bpjsDef)),
         total: BigInt(calc.total - adv.deduction),
       },
     });

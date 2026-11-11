@@ -34,6 +34,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
   // Nominal gaji rahasia: hanya pengelola karyawan & penggajian (bukan kapten/supervisor)
   const canSeePay = canManage || user.can("payroll.manage") || user.can("payroll.approve");
   const canAllowance = user.can("payroll.manage");
+  const bpjsDefault = Number((await prisma.setting.findUnique({ where: { key: "bpjs_tk_amount" } }))?.value) || 28400;
   const roles = user.can("users.manage") ? ROLES.filter((r) => r !== "OWNER" || user.role === "OWNER") : (["OPERATOR", "KAPTEN_DIVISI", "PIC_CONTENT", "ADMIN_PRODUKSI", "ADMIN_MARKETPLACE"] as const);
   const form = (e?: (typeof employees)[number]) => (
     <ModalForm action={saveEmployee} className="grid grid-cols-2 gap-3">
@@ -47,6 +48,10 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
       <Field label="Upah harian (IDR)" hint="Untuk Harian / Campuran"><input name="dailyRate" inputMode="numeric" defaultValue={e ? Number(e.dailyRate) : 0} className="input" /></Field>
       <Field label="Telepon"><input name="phone" defaultValue={e?.phone ?? ""} className="input" /></Field>
       <Field label="Tanggal masuk" hint="Menentukan siklus & tanggal gajian"><input type="date" name="joinDate" defaultValue={e?.joinDate?.toISOString().slice(0, 10)} className="input" /></Field>
+      <div className="col-span-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+        <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" name="bpjsTk" defaultChecked={e?.bpjsTk} /> Ikut BPJS Ketenagakerjaan <span className="text-xs font-normal text-slate-500">(dibayar perusahaan, tidak memotong gaji)</span></label>
+        <Field label="Nominal per bulan (Rp)" hint={`Kosongkan = bawaan ${idr(bpjsDefault)}`} className="mt-2"><input name="bpjsTkAmount" inputMode="numeric" defaultValue={e?.bpjsTkAmount != null ? Number(e.bpjsTkAmount) : ""} placeholder={String(bpjsDefault)} className="input" /></Field>
+      </div>
       {canAllowance && <AllowanceFields initial={(e?.allowances ?? []).map((a) => ({ id: a.id, name: a.name, amount: Number(a.amount) }))} />}
       <div className="col-span-2 flex justify-end"><Submit>Simpan</Submit></div>
     </ModalForm>
@@ -68,7 +73,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
                 <tr key={e.id}>
                   <td className="font-mono text-xs">{e.code}</td><td>{e.name}</td><td>{e.division.name}</td>
                   <td><Badge tone={e.status === "AKTIF" ? "green" : e.status === "CUTI" ? "amber" : "gray"}>{e.status}</Badge></td>
-                  <td>{WAGE[e.wageType]}{!canSeePay ? null : e.wageType === "BULANAN" ? <div className="text-xs text-slate-400">{idr(e.monthlySalary)}/bulan</div> : Number(e.dailyRate) > 0 && <div className="text-xs text-slate-400">{idr(e.dailyRate)}/hari</div>}{canSeePay && e.allowances.length > 0 && <div className="text-xs text-slate-400">+ tunjangan {idr(e.allowances.reduce((t, a) => t + Number(a.amount), 0))}/bulan</div>}</td>
+                  <td>{WAGE[e.wageType]}{!canSeePay ? null : e.wageType === "BULANAN" ? <div className="text-xs text-slate-400">{idr(e.monthlySalary)}/bulan</div> : Number(e.dailyRate) > 0 && <div className="text-xs text-slate-400">{idr(e.dailyRate)}/hari</div>}{canSeePay && e.bpjsTk && <div className="text-xs text-sky-600">BPJS TK {idr(e.bpjsTkAmount != null ? e.bpjsTkAmount : bpjsDefault)}/bulan (perusahaan)</div>}{canSeePay && e.allowances.length > 0 && <div className="text-xs text-slate-400">+ tunjangan {idr(e.allowances.reduce((t, a) => t + Number(a.amount), 0))}/bulan</div>}</td>
                   <td>{fmtDay(e.joinDate)}{e.resignDate && <div className="text-xs text-rose-600">Resign {fmtDay(e.resignDate)}</div>}</td>
                   <td>{e.user ? <span className="text-xs">{e.user.username} · {ROLE_LABEL[e.user.role]}{!e.user.active && " (nonaktif)"}</span> : <span className="text-xs text-slate-400">—</span>}</td>
                   {canManage && (

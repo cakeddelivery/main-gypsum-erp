@@ -60,6 +60,9 @@ export function PurchaseFields({ items, suppliers, banks, today, defaultBank, re
   const hintSupplier = supplierHint ? suppliers.find((x) => x.name.toLowerCase() === supplierHint.toLowerCase()) : undefined;
   const [newSupplier, setNewSupplier] = useState(!!supplierHint && !hintSupplier);
   const [paid, setPaid] = useState("");
+  // Status barang: sudah diterima (stok langsung masuk) / masih dikirim (checkout marketplace, pesan supplier)
+  const [transit, setTransit] = useState(false);
+  const [cod, setCod] = useState(false);
   const [bank, setBank] = useState(defaultBank ?? banks[0]?.id ?? "");
   const [reading, setReading] = useState(false);
   const [hint, setHint] = useState<{ ok: boolean; text: string } | null>(null);
@@ -110,6 +113,22 @@ export function PurchaseFields({ items, suppliers, banks, today, defaultBank, re
 
   return (
     <div className="space-y-4">
+      {!receipts?.length && (
+        <div>
+          <span className="label">Status barang</span>
+          <input type="hidden" name="delivery" value={transit ? "DIKIRIM" : "DITERIMA"} />
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" className={!transit ? "btn-primary btn-sm" : "btn-secondary btn-sm"} aria-pressed={!transit} onClick={() => { setTransit(false); setCod(false); }}>Sudah diterima</button>
+            <button type="button" className={transit ? "btn-primary btn-sm" : "btn-secondary btn-sm"} aria-pressed={transit} onClick={() => setTransit(true)}>Masih dikirim</button>
+          </div>
+          {transit && (
+            <div className="mt-2 space-y-2 rounded-xl border border-sky-200 bg-sky-50/60 p-3 text-sm">
+              <p className="text-sky-800">Stok belum bertambah. Uang yang sudah dibayar dicatat sebagai uang muka. Supervisor/Kapten menekan <b>Terima barang</b> saat barang datang (boleh sebagian).</p>
+              <label className="flex items-center gap-2"><input type="checkbox" name="cod" checked={cod} onChange={(e) => { setCod(e.target.checked); if (e.target.checked) setPaid(""); }} /> COD (bayar di tempat saat barang datang)</label>
+            </div>
+          )}
+        </div>
+      )}
       <div className="grid gap-3 sm:grid-cols-3">
         <label><span className="label">Tanggal transaksi</span><input type="date" name="date" defaultValue={today} className="input" required /></label>
         <div className="sm:col-span-2">
@@ -164,7 +183,8 @@ export function PurchaseFields({ items, suppliers, banks, today, defaultBank, re
 
       <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
         <div className="flex items-center justify-between text-sm"><span className="text-slate-600">Tagihan</span><b className="text-lg">{rp(bill)}</b></div>
-        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 [&>*]:min-w-0">
+        {cod && <p className="mt-2 text-sm text-slate-600">COD: belum ada pembayaran. Nominal dibayar & rekeningnya diisi saat <b>Terima barang</b>.</p>}
+        <div className={cod ? "hidden" : "mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 [&>*]:min-w-0"}>
           <div className="sm:col-span-2">
             <span className="label">Foto bukti transfer (opsional, nominal terisi otomatis)</span>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -187,14 +207,14 @@ export function PurchaseFields({ items, suppliers, banks, today, defaultBank, re
             </div>
           </div>
           {paidN > 0 && <label><span className="label">Sumber rekening / dompet</span><select name="bankAccountId" value={bank} onChange={(e) => setBank(e.target.value)} className="input">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></label>}
-          {debt > 0 && paidN <= bill && <label><span className="label">Jatuh tempo sisa hutang</span><input type="date" name="dueDate" className="input" required /></label>}
+          {!cod && debt > 0 && paidN <= bill && <label><span className="label">{transit ? "Jatuh tempo sisa (jadi hutang saat barang datang)" : "Jatuh tempo sisa hutang"}</span><input type="date" name="dueDate" className="input" required /></label>}
         </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
         <label className="sm:col-span-3"><span className="label">Catatan</span><input name="note" className="input" placeholder="cth: beli 5 sak gypsum super casting" /></label>
       </div>
-      <p className="text-xs text-amber-700">Pembelian di sini sudah menambah stok dan membukukan pembayarannya. Jangan dicatat lagi di menu Transaksi agar tidak dobel. Sisa hutang dibayar lewat Akuntansi › Piutang, hutang & pinjaman.</p>
+      <p className="text-xs text-amber-700">{transit ? "Pesanan di sini membukukan uang muka (bila sudah dibayar). Stok & sisa hutang tercatat saat barang diterima." : "Pembelian di sini sudah menambah stok dan membukukan pembayarannya."} Jangan dicatat lagi di menu Transaksi agar tidak dobel. Sisa hutang dibayar lewat Akuntansi › Piutang, hutang & pinjaman.</p>
     </div>
   );
 }

@@ -40,6 +40,8 @@ export default async function SlipPage({ params }: { params: Promise<{ id: strin
   for (const a of s.advanceDetail as { number: string; amount: number }[]) cut.push({ l: `Potongan kasbon ${a.number}`, v: a.amount });
   const sum = (x: { v: number }[]) => x.reduce((t, r) => t + r.v, 0);
   const tunj = s.period.kind === "TUNJANGAN";
+  // BPJS Ketenagakerjaan: info saja (dibayar perusahaan, tidak masuk total)
+  const bpjs = Number(s.bpjsCompany);
   const lh = await letterhead();
   // Rekap telat: hanya informasi, tidak memotong gaji
   const lateText = s.lateCount ? `${s.lateCount}× · total ${fmtMinutes(s.lateMinutes)}` : "tidak pernah";
@@ -77,6 +79,12 @@ export default async function SlipPage({ params }: { params: Promise<{ id: strin
           {(s.advanceDetail as { number: string; amount: number }[]).map((a) => <Row key={a.number} l={`Potongan kasbon ${a.number}`} v={a.amount} neg />)}
         </div>
         <div className="flex justify-between pt-3 text-base font-semibold"><span>Total diterima</span><span>{idr(s.total)}</span></div>
+        {bpjs > 0 && (
+          <div className="mt-3 rounded-lg bg-sky-50 p-2 text-xs text-sky-900">
+            <div className="flex justify-between"><span>BPJS Ketenagakerjaan per bulan</span><span className="tabular-nums">{idr(bpjs)}</span></div>
+            <div className="text-sky-700">Ditanggung perusahaan, tidak memotong gaji.</div>
+          </div>
+        )}
         {s.note && <div className="mt-1 text-xs text-slate-500">{s.note}</div>}
         {advanceLeft > 0 && <div className="mt-1 text-xs text-slate-500">Sisa kasbon setelah gaji ini: {idr(advanceLeft)}</div>}
         <div className="mt-2 text-right text-xs text-slate-400">Status: {s.period.status}{s.period.paidAt && ` · dibayar ${fmtDay(s.period.paidAt)}`}</div>
@@ -108,6 +116,13 @@ export default async function SlipPage({ params }: { params: Promise<{ id: strin
                 {cut.map((r, i) => <tr key={i}><td>{r.l}</td><td className="num doc-neg">-{r.v.toLocaleString("id-ID")}</td></tr>)}
               </DocTable>
               <DocBar label="Total potongan" value={`-${idr(sum(cut))}`} tone="red" negative />
+            </DocSection>
+          )}
+          {bpjs > 0 && (
+            <DocSection no={cut.length > 0 ? 3 : 2} tone="blue" title="Ditanggung perusahaan (tidak memotong gaji)">
+              <DocTable head={<tr><th>Keterangan</th><th className="num">Jumlah (Rp)</th></tr>}>
+                <tr><td>BPJS Ketenagakerjaan per bulan</td><td className="num">{bpjs.toLocaleString("id-ID")}</td></tr>
+              </DocTable>
             </DocSection>
           )}
           <DocSummary rows={[{ label: "Total diterima", hint: s.period.payDate ? `${tunj ? "Dibayar" : "Gajian"} ${fmtLong(s.period.payDate)}` : undefined, value: idr(s.total), strong: true }]} />

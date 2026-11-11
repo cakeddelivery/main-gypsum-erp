@@ -78,6 +78,8 @@ export type TxInput = {
   dupAckIds?: string[] | null;
   /** Withdraw TikTok: No. Referensi Seller Center (sama = duplikat pasti) */
   withdrawRef?: string | null;
+  /** Kategori BPJS Ketenagakerjaan: karyawan yang dibayarkan iurannya */
+  bpjsEmployeeIds?: string[];
 };
 
 export type SplitInput = { categoryId?: string | null; amount: number; note?: string | null; itemId?: string | null; qty?: number | null };
@@ -188,6 +190,7 @@ export async function createTransaction(input: TxInput, source: TxSource, actor:
         proofMime: input.proofMime ?? null,
         aiExtraction: input.aiExtraction ?? undefined,
         withdrawRef: input.withdrawRef ?? null,
+        bpjsEmployeeIds: input.bpjsEmployeeIds ?? [],
         status,
         fingerprint: fingerprint(input.direction, input.amount, input.date, input.accountId),
         duplicateOfId: dup?.id ?? null,
@@ -256,6 +259,7 @@ export async function updateTransaction(id: string, input: Partial<TxInput>, act
         reserveLink: merged.direction !== "TRANSFER" ? Prisma.DbNull : input.reserveLink !== undefined ? (input.reserveLink ? (input.reserveLink as Prisma.InputJsonValue) : Prisma.DbNull) : undefined,
         fingerprint: fingerprint(merged.direction, merged.amount, merged.date, merged.accountId),
         duplicateOfId: dup?.id ?? null,
+        bpjsEmployeeIds: input.bpjsEmployeeIds !== undefined ? input.bpjsEmployeeIds : undefined,
         status,
       },
     });
@@ -426,6 +430,9 @@ async function bookInTx(tx: Tx, id: string, actor: Actor & { id: string }, note?
     const splits = await tx.financeTxSplit.findMany({ where: { transactionId: id }, orderBy: { sortOrder: "asc" } });
     const missing = [...missingFields(cur), ...splitIssues(cur.amount, cur.direction, splits)];
     if (missing.length) throw new FinanceError(`Data belum lengkap: ${missing.join(", ")}`);
+    // Setoran BPJS Ketenagakerjaan wajib menyebut karyawan yang dibayarkan (satu atau beberapa)
+    const catIds = [cur.categoryId, ...splits.map((x) => x.categoryId)].filter((x): x is string => !!x);
+    if (catIds.length && !cur.bpjsEmployeeIds.length && (await tx.txCategory.count({ where: { id: { in: catIds }, coaAccount: { code: "6-1120" } } }))) throw new FinanceError("Data belum lengkap: pilih karyawan yang dibayarkan BPJS-nya");
     const reserveParts = await resolveReserveLink(tx, cur);
     if (reserveParts.length) await tx.financeTransaction.update({ where: { id }, data: { reserveLink: { parts: reserveParts } as Prisma.InputJsonValue } });
     const lines = await txJournalLines(tx, cur, reserveParts);
