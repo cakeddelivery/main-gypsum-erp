@@ -6,7 +6,7 @@ import { clearLoginBlocks, passwordChangeData } from "@/lib/loginGuard";
 import { prisma } from "@/lib/db";
 import { autoCode } from "@/lib/codes";
 import { audit } from "@/lib/audit";
-import { BoronganError, assertPoint, boronganScope, cancelHandover, checkSplit, createHandover, deleteResult, receiveHandover, recordResults, removePerson, savePerson, settlePoint, cancelSettlement } from "@/lib/borongan";
+import { BoronganError, assertPoint, boronganScope, canWarehouse, cancelHandover, checkSplit, createHandover, deleteResult, receiveHandover, recordResults, removePerson, savePerson, settlePoint, cancelSettlement } from "@/lib/borongan";
 import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 
 const PATHS = ["/borongan", "/stok"];
@@ -24,7 +24,7 @@ export const sendHandover = action(
     const scope = await boronganScope(prisma, user);
     const pointId = str(fd, "pointId");
     // Bahan dikirim dari gudang oleh pengelola; hasil dikirim balik oleh koordinator titik
-    if (kind === "KIRIM" && !scope.all) throw new BoronganError("Pengiriman bahan dicatat oleh pengelola gudang");
+    if (kind === "KIRIM" && !canWarehouse(scope)) throw new BoronganError("Pengiriman bahan dicatat oleh pengelola gudang / Kapten Assembling");
     if (kind === "KEMBALI") assertPoint(scope, pointId);
     const h = await createHandover({ kind, pointId, driverId: optStr(fd, "driverId"), date: when(fd), note: optStr(fd, "note"), lines: lines(fd) }, user);
     return `Serah terima ${h.number} tercatat, menunggu dikonfirmasi penerima`;

@@ -153,3 +153,22 @@ export const opnameFinished = action(
   },
   ["/stok", "/akuntansi"],
 );
+
+/** Stok awal riil: hitung fisik semua gudang (kolom fisik_<id>, harga_<id>) */
+export const saveOpening = action(
+  "stock.approve",
+  async (fd, user) => {
+    const { saveOpeningStock } = await import("@/lib/stockOpening");
+    const n = (v: FormDataEntryValue | null) => {
+      const s = String(v ?? "").trim().replace(/\./g, "").replace(",", ".");
+      return s === "" ? null : Number(s);
+    };
+    const rows = [...fd.keys()].filter((k) => k.startsWith("fisik_")).map((k) => ({ itemId: k.slice(6), physical: n(fd.get(k)), unitCost: n(fd.get(`harga_${k.slice(6)}`)) }))
+      .filter((r): r is { itemId: string; physical: number; unitCost: number | null } => r.physical != null);
+    if (rows.some((r) => !Number.isFinite(r.physical) || (r.unitCost != null && !Number.isFinite(r.unitCost)))) throw new Error("Ada angka yang tidak valid");
+    const date = str(fd, "date") || todayStr();
+    const r = await saveOpeningStock(rows, jakartaDateTime(date, str(fd, "time") || "06:00"), user);
+    return `Stok awal tersimpan: ${r.changed} barang disesuaikan`;
+  },
+  ["/stok"],
+);

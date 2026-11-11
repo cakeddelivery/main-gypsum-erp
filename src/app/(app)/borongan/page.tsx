@@ -5,14 +5,15 @@ import { idr } from "@/lib/money";
 import { fmtDay, todayStr } from "@/lib/time";
 import { stockBalances } from "@/lib/stock";
 import { recipeUnit } from "@/lib/unitcost";
-import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, payLines, resultShares } from "@/lib/borongan";
+import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, canWarehouse, payLines, resultShares } from "@/lib/borongan";
 import { Badge, Card, Empty, Field, PageHeader, Tabs } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Paged } from "@/components/Paged";
 import { ItemLines } from "@/components/ItemLines";
-import { ResultRows } from "./BoronganForms";
+import { KitSend, ResultRows } from "./BoronganForms";
+import { pointConfig } from "@/lib/boronganSetup";
 import { addResults, cancelPayPoint, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, saveTask, sendHandover, voidHandover } from "./actions";
 
 export const metadata = { title: "Borongan" };
@@ -54,6 +55,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
     );
   }
   const itemById = new Map(items.map((i) => [i.id, i]));
+  const cfg = await pointConfig(prisma);
   const stockAt = (locationId: string) => balances.filter((b) => b.locationId === locationId && Math.abs(b.qty) > 0.0005).map((b) => ({ ...b, item: itemById.get(b.itemId) })).filter((b) => b.item);
   const warehouseStock = new Map<string, number>();
   for (const b of balances) if (!points.some((p) => p.locationId === b.locationId)) warehouseStock.set(b.itemId, (warehouseStock.get(b.itemId) ?? 0) + b.qty);
@@ -65,16 +67,15 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
     <Field label="Driver"><select name="driverId" className="input" defaultValue={drivers[0].id}>{drivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
   );
 
-  const sendMaterial = manage && (
+  const sendMaterial = canWarehouse(scope) && (
     <Modal trigger="+ Kirim Bahan" title="Kirim bahan ke titik lewat driver" wide>
       <ModalForm action={sendHandover} className="space-y-3">
         <input type="hidden" name="kind" value="KIRIM" />
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Titik tujuan"><select name="pointId" className="input">{points.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
+        <div className="grid gap-3 sm:grid-cols-2">
           {driverField}
           <Field label="Tanggal"><input type="date" name="date" defaultValue={t} className="input" /></Field>
         </div>
-        <ItemLines items={items.map((i) => ({ id: i.id, name: i.name, unit: i.unit, stock: Math.round((warehouseStock.get(i.id) ?? 0) * 1000) / 1000 }))} />
+        <KitSend points={points.map((p) => ({ id: p.id, name: p.name }))} kits={Object.fromEntries(Object.entries(cfg).map(([k, v]) => [k, v.kit]))} items={items.map((i) => ({ id: i.id, name: i.name, unit: i.unit, stock: Math.round((warehouseStock.get(i.id) ?? 0) * 1000) / 1000 }))} />
         <Field label="Catatan"><input name="note" className="input" /></Field>
         <p className="text-xs text-slate-500">Bahan keluar dari gudang begitu diserahkan ke driver, lalu masuk stok titik setelah koordinator menekan Terima.</p>
         <Submit>Serahkan Ke Driver</Submit>
@@ -99,7 +100,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
   const resultForm = (
     <Modal trigger="+ Setoran Hasil" title="Catat setoran hasil kerja" wide>
       <ModalForm action={addResults} className="space-y-3">
-        <ResultRows points={points.map((p) => ({ id: p.id, name: p.name }))} workers={workers.map((w) => ({ id: w.id, name: w.name, pointId: w.pointId! }))} tasks={activeTasks.map((x) => ({ id: x.id, name: x.name, workerRate: Number(x.workerRate), coordinatorRate: Number(x.coordinatorRate), driverRate: Number(x.driverRate) }))} />
+        <ResultRows pointTasks={Object.fromEntries(Object.entries(cfg).map(([k, v]) => [k, v.tasks]))} points={points.map((p) => ({ id: p.id, name: p.name }))} workers={workers.map((w) => ({ id: w.id, name: w.name, pointId: w.pointId! }))} tasks={activeTasks.map((x) => ({ id: x.id, name: x.name, workerRate: Number(x.workerRate), coordinatorRate: Number(x.coordinatorRate), driverRate: Number(x.driverRate) }))} />
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Tanggal"><input type="date" name="date" defaultValue={t} className="input" /></Field>
           <Field label="Catatan"><input name="note" className="input" /></Field>
@@ -114,7 +115,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
     <div className="space-y-5">
       <PageHeader
         title="Borongan"
-        subtitle={manage ? "Bahan dikirim lewat driver ke titik BMR & Mastrip, hasil disetor per pekerja, upah dibagi pekerja, koordinator, dan driver" : `Titik ${points.map((p) => p.name).join(", ")}`}
+        subtitle={canWarehouse(scope) ? "Bahan dikirim lewat driver ke titik borongan, hasil disetor per pekerja, upah dibagi pekerja, koordinator, dan driver" : `Titik ${points.map((p) => p.name).join(", ")}`}
         actions={<div className="flex flex-wrap gap-2">{sendMaterial}{resultForm}{sendBack}</div>}
       />
       <Tabs current={tab} tabs={tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: x.key === "serah" ? pending.length || undefined : undefined }))} />
@@ -148,8 +149,8 @@ function PendingList({ pending, scope }: { pending: Pending; scope: Scope }) {
     <Card title="Menunggu konfirmasi terima">
       <ul className="divide-y divide-slate-100 text-sm">
         {pending.map((h) => {
-          const canReceive = h.kind === "KIRIM" ? canPoint(scope, h.pointId) : scope.all;
-          const canCancel = h.kind === "KIRIM" ? scope.all : canPoint(scope, h.pointId);
+          const canReceive = h.kind === "KIRIM" ? canPoint(scope, h.pointId) : canWarehouse(scope);
+          const canCancel = h.kind === "KIRIM" ? canWarehouse(scope) : canPoint(scope, h.pointId);
           return (
             <li key={h.id} className="flex flex-wrap items-start justify-between gap-2 py-2">
               <div className="min-w-0">

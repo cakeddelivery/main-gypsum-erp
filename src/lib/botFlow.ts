@@ -318,7 +318,7 @@ export async function handleFlowLocation(i: BotIdent, chatId: string, loc: TgLoc
     } else {
       const r = await selfCheckOut(actor, pos, "TELEGRAM");
       await clearSession(chatId, i.userId);
-      await restoreKeyboard(chatId, `✅ <b>Absen pulang tercatat</b>\nMasuk ${fmtDateTime(r.checkIn)} · Pulang ${fmtDateTime(r.checkOut)}${r.site ? `\nLokasi: ${esc(r.site)} (${r.distance} m)` : ""}`);
+      await restoreKeyboard(chatId, `✅ <b>Absen pulang tercatat</b>\nMasuk ${fmtDateTime(r.checkIn)} · Pulang ${fmtDateTime(r.checkOut)}${r.site ? `\nLokasi: ${esc(r.site)} (${r.distance} m)` : ""}${r.warning ? `\n\n⚠️ ${esc(r.warning)}` : ""}`);
     }
   } catch (e) {
     await sendTelegram(chatId, `❌ ${esc((e as Error).message)}\n\nCoba kirim lokasi lagi, atau tekan Batal.`, { buttons: [cancelRow] });

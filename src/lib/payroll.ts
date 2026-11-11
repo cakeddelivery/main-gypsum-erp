@@ -1,4 +1,5 @@
 import type { Prisma, ProductionStage, WageType } from "@prisma/client";
+import { lateOf } from "./lateRecap";
 import { prisma } from "./db";
 import { assertPeriodOpen, postJournal, reverseJournal, COA } from "./accounting";
 import { nextNumber } from "./numbering";
@@ -326,6 +327,8 @@ async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
       resignedBeforePayday: !!e.resignDate && dateStr(e.resignDate) < payDate,
     });
     const adv = await allocateAdvances(tx, e.id, period.id, calc.total);
+    // Rekap telat (hanya rekap, tidak memotong gaji): semua absen Terlambat di siklus ini, tervalidasi atau belum
+    const late = lateOf(await tx.attendance.findMany({ where: { employeeId: e.id, date: { gte: period.startDate, lte: period.endDate }, status: "TERLAMBAT" }, select: { status: true, lateMinutes: true } }));
     const preLive = countFrom !== start ? (countFrom ? `Absen dihitung mulai go-live ${countFrom}` : "Siklus sebelum go-live aplikasi: gaji penuh") : null;
     await tx.payslip.create({
       data: {
@@ -343,6 +346,8 @@ async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
         deduction: BigInt(calc.deduction),
         advanceDeduction: BigInt(adv.deduction),
         advanceDetail: adv.detail,
+        lateCount: late.count,
+        lateMinutes: late.minutes,
         total: BigInt(calc.total - adv.deduction),
       },
     });

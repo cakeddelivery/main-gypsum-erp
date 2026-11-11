@@ -32,6 +32,8 @@ export const SOURCE_LABEL: Record<string, string> = {
   PENYUSUTAN: "Penyusutan",
   PRODUKSI: "Produksi",
   STOK: "Stok",
+  STOK_AWAL: "Stok awal",
+  LAPORAN_SHIFT: "Laporan shift",
   BB: "Bahan baku",
   MANUAL: "Manual",
   PENYESUAIAN: "Penyesuaian",
@@ -71,6 +73,8 @@ export function sourceHref(source: string, sourceId: string | null, docId?: stri
     case "STOK":
     case "BB":
       return "/stok/mutasi";
+    case "STOK_AWAL":
+      return "/stok/awal";
     default:
       return null;
   }

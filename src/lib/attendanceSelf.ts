@@ -31,7 +31,19 @@ export async function selfCheckIn(user: Actor, pos: GeoPoint | null, via: "WEB" 
   return { status: ev.status, lateMinutes: ev.lateMinutes, shift: shift.name, site: geo.site?.name ?? null, distance: geo.distance };
 }
 
-/** Absen pulang diri sendiri dengan cek geofence */
+/**
+ * Laporan shift divisi karyawan di tanggal & shift absennya sudah terkirim? (null = divisi tanpa laporan shift)
+ * Divisi 1 shift memakai laporan shift mana pun di tanggal itu.
+ */
+export async function divisionReportSent(employeeId: string, date: Date, shiftId: string): Promise<{ sent: boolean; division: string } | null> {
+  const e = await prisma.employee.findUnique({ where: { id: employeeId }, include: { division: true } });
+  if (!e?.division?.reportTemplate || !e.division.active) return null;
+  const reports = await prisma.shiftReport.findMany({ where: { date, divisionId: e.divisionId, status: { in: ["TERKIRIM", "DIREVISI"] } }, select: { shiftId: true } });
+  const sent = e.division.shiftCount > 1 ? reports.some((r) => r.shiftId === shiftId) || reports.length >= e.division.shiftCount : reports.length > 0;
+  return { sent, division: e.division.name };
+}
+
+/** Absen pulang diri sendiri dengan cek geofence. Laporan shift divisi belum terkirim = peringatan saja (tidak dikunci). */
 export async function selfCheckOut(user: Actor, pos: GeoPoint | null, via: "WEB" | "TELEGRAM" = "WEB") {
   if (!user.employeeId) throw new Error("Akun belum ditautkan ke karyawan");
   const a = await prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(todayStr()) } } });
@@ -40,10 +52,13 @@ export async function selfCheckOut(user: Actor, pos: GeoPoint | null, via: "WEB"
   const geo = checkGeofence(pos, await activeSites());
   if (!geo.ok) throw new Error(geo.error);
   const now = new Date();
+  const rep = await divisionReportSent(user.employeeId, a.date, a.shiftId);
+  const reportMissing = !!rep && !rep.sent;
   await prisma.attendance.update({
     where: { id: a.id },
-    data: { checkOut: now, checkOutLat: pos?.lat, checkOutLng: pos?.lng, checkOutAccuracy: pos?.accuracy, checkOutDistance: geo.distance },
+    data: { checkOut: now, checkOutLat: pos?.lat, checkOutLng: pos?.lng, checkOutAccuracy: pos?.accuracy, checkOutDistance: geo.distance, reportMissing },
   });
-  await audit(user, "ABSEN_PULANG", "Attendance", a.id, { lat: pos?.lat, lng: pos?.lng, lokasi: geo.site?.name, jarak: geo.distance, via });
-  return { checkIn: a.checkIn, checkOut: now, site: geo.site?.name ?? null, distance: geo.distance };
+  await audit(user, "ABSEN_PULANG", "Attendance", a.id, { lat: pos?.lat, lng: pos?.lng, lokasi: geo.site?.name, jarak: geo.distance, via, laporanBelumTerkirim: reportMissing || undefined });
+  const warning = reportMissing ? `Laporan shift ${rep!.division} hari ini belum dikirim. Ingatkan PIC divisi untuk mengirimnya.` : null;
+  return { checkIn: a.checkIn, checkOut: now, site: geo.site?.name ?? null, distance: geo.distance, warning };
 }
