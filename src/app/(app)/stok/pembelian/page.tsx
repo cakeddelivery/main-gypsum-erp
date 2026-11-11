@@ -53,10 +53,15 @@ export default async function PembelianPage() {
               return (
                 <li key={p.id} className="flex flex-wrap items-start justify-between gap-2 py-2">
                   <div className="min-w-0">
-                    <p><span className="font-mono text-xs">{p.number}</span> · {fmtDate(p.date)} · <b>{p.vendor}</b> · {idr(p.total)} {p.cod ? <Badge tone="amber">COD</Badge> : left > 0 ? <Badge tone="blue">Uang muka {idr(left)}</Badge> : <Badge tone="amber">Belum dibayar</Badge>} {p.delivery === "SEBAGIAN" && <Badge tone="blue">Datang sebagian</Badge>}</p>
+                    <p><span className="font-mono text-xs">{p.number}</span> · {fmtDate(p.date)} · <b>{p.vendor}</b> · {idr(p.total)} {p.cod ? <Badge tone="amber">COD</Badge> : Number(p.paidNow) >= Number(p.total) ? <Badge tone="green">Lunas di depan</Badge> : Number(p.paidNow) > 0 ? <Badge tone="blue">DP {idr(p.paidNow)}</Badge> : <Badge tone="amber">Belum dibayar</Badge>} {p.delivery === "SEBAGIAN" && <Badge tone="blue">Datang sebagian</Badge>}</p>
                     <ul className="mt-1 text-xs text-slate-600">
                       {p.lines.map((l) => <li key={l.id}>{l.item.name}: datang {qtyFmt(Number(l.qtyReceived))} dari {qtyFmt(Number(l.qty))} {l.item.unit}</li>)}
                     </ul>
+                    <p className="mt-1 text-xs text-slate-600">
+                      Dibayar {idr(p.paidNow + p.codPaid)} · barang datang senilai {idr(p.deliveries.reduce((t, d) => t + Number(d.value), 0))}
+                      {left > 0 && <> · <b className="text-sky-700">supplier masih berhutang barang senilai {idr(left)}</b> (uang muka)</>}
+                      {!p.cod && Number(p.total) > Number(p.paidNow) && <> · sisa {idr(Number(p.total) - Number(p.paidNow))} jadi hutang saat barangnya datang</>}
+                    </p>
                     {p.deliveries.length > 0 && <p className="mt-1 text-xs text-slate-400">Penerimaan: {p.deliveries.map((d) => `${d.number} (${fmtDate(d.date)}, ${d.receivedBy})`).join(", ")}</p>}
                   </div>
                   <div className="flex gap-1">
