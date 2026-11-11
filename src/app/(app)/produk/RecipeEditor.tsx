@@ -138,7 +138,7 @@ export function RecipeEditor({ components, tasks, overheads, initial, product }:
         <Total label="Total Biaya Bahan:" value={material} />
       </Section>
 
-      <Section title={product ? "Section 2: Biaya Tenaga Kerja Borongan" : "Biaya Tenaga Kerja Borongan (Opsional)"} tone="border-indigo-200 bg-indigo-50/40 dark:border-indigo-900 dark:bg-indigo-950/20" add="Tenaga Kerja" onAdd={() => setLabor((x) => [...x, { k: key(), taskId: "", name: "", custom: "" }])} hint={<>Hanya untuk pekerjaan <b>borongan</b> (dibayar per pcs). Karyawan bergaji bulanan tidak diisi di sini: bila gajinya mau dihitung ke HPP, buat Overhead &quot;Gaji Produksi&quot; (total gaji per bulan ÷ output per bulan) lalu pilih di bagian Overhead.</>}>
+      <Section title={product ? "Section 2: Biaya Tenaga Kerja Borongan" : "Biaya Tenaga Kerja Borongan (Opsional)"} tone="border-indigo-200 bg-indigo-50/40 dark:border-indigo-900 dark:bg-indigo-950/20" add="Tenaga Kerja" onAdd={() => setLabor((x) => [...x, { k: key(), taskId: "", name: "", custom: "" }])} hint={<>Hanya untuk pekerjaan <b>borongan</b> (dibayar per pcs). Karyawan bergaji bulanan tidak diisi di sini: bila gajinya mau dihitung ke HPP, pilih Overhead &quot;Gaji Produksi&quot; di bagian Overhead (totalnya otomatis dari gaji pokok + tunjangan + BPJS TK karyawan, dibagi output per bulan).</>}>
         <table className="tbl min-w-[560px]">
           <thead><tr><th>Pekerja / Spesialisasi Borongan</th><th className="num">Tarif Master / Pcs</th><th>Tarif Custom / Pcs</th><th className="num">Subtotal</th><th /></tr></thead>
           <tbody>

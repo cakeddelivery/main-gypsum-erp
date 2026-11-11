@@ -1019,19 +1019,25 @@ model ItemRecipeLine {
 
 /// Biaya overhead bulanan (listrik, LPG, penyusutan, sewa, dll.) yang dibebankan per pcs produksi
 model Overhead {
-  id             String           @id @default(cuid())
-  category       String
-  name           String
+  id                String           @id @default(cuid())
+  category          String
+  name              String
   /// Biaya per bulan; untuk penyusutan = harga aset / umur (bulan)
-  monthlyAmount  BigInt
-  assetCost      BigInt?
-  lifeMonths     Int?
+  monthlyAmount     BigInt
+  assetCost         BigInt?
+  lifeMonths        Int?
   /// Estimasi output per bulan (pcs); beban per pcs = biaya per bulan / output
-  outputPerMonth Int              @default(0)
-  note           String?
-  usages         RecipeOverhead[]
-  active         Boolean          @default(true)
-  createdAt      DateTime         @default(now())
+  outputPerMonth    Int              @default(0)
+  note              String?
+  usages            RecipeOverhead[]
+  active            Boolean          @default(true)
+  createdAt         DateTime         @default(now())
+  /// Biaya per bulan dihitung otomatis dari gaji karyawan (gaji pokok + tunjangan + BPJS TK) divisi terpilih
+  autoSalary        Boolean          @default(false)
+  /// Divisi yang gajinya dijumlah (kosong = semua divisi berformat laporan shift)
+  salaryDivisionIds String[]         @default([])
+  /// Terakhir dihitung ulang otomatis
+  autoUpdatedAt     DateTime?
 }
 
 /// Tenaga kerja dalam resep (barang setengah jadi atau produk): dari tarif borongan atau tarif custom, per 1 unit

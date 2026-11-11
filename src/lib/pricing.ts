@@ -3,7 +3,7 @@
  * Semua persen dihitung dari harga jual.
  */
 
-export const OVERHEAD_CATEGORIES = ["Listrik", "LPG", "Bensin", "Air", "Penyusutan Oven", "Penyusutan Cetakan", "Sewa Tempat", "Wifi & Internet", "Perlengkapan Produksi"] as const;
+export const OVERHEAD_CATEGORIES = ["Listrik", "LPG", "Bensin", "Air", "Penyusutan Oven", "Penyusutan Cetakan", "Sewa Tempat", "Wifi & Internet", "Perlengkapan Produksi", "Gaji Produksi"] as const;
 
 export type ChannelFee = { fees: { name: string; pct: number }[]; perOrder: number };
 export type FeeConfig = Record<string, ChannelFee>;
