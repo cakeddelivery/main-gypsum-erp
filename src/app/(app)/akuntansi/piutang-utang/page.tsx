@@ -1,4 +1,5 @@
 import { requirePerm } from "@/lib/auth";
+import { prepaidLeft } from "@/lib/purchaseReceive";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDate, todayStr } from "@/lib/time";
@@ -38,6 +39,11 @@ export default async function PiutangUtang({ searchParams }: { searchParams: Pro
       <Field label="Catatan" className="col-span-2"><input name="note" className="input" /></Field>
     </>
   );
+  // Barang dari supplier datang kurang dari pesanan padahal sudah dibayar: nilai barang yang belum dikirim = piutang barang ke supplier
+  // (tetap di akun Uang Muka Pembelian sampai barangnya datang, atau jadi piutang refund saat pesanan ditutup)
+  const short = (await prisma.purchase.findMany({ where: { cancelledAt: null, delivery: "SEBAGIAN" }, include: { lines: { include: { item: true } } }, orderBy: { date: "asc" } }))
+    .map((p) => ({ p, left: prepaidLeft(p) }))
+    .filter((x) => x.left > 0);
   const usaha = pay.filter((p) => p.kind === "USAHA");
   const loans = pay.filter((p) => p.kind === "PINJAMAN");
   const rows = tab === "piutang" ? recv.map((r) => ({ ...r, party: r.customer })) : (tab === "pinjaman" ? loans : usaha).map((p) => ({ ...p, party: p.vendor }));
@@ -80,7 +86,26 @@ export default async function PiutangUtang({ searchParams }: { searchParams: Pro
           </ModalForm>
         </Modal>
       ))}</>} />
-      <Tabs current={tab} tabs={[{ key: "piutang", label: "Piutang", href: "?tab=piutang", count: recv.filter((r) => r.paid < r.amount).length }, { key: "utang", label: "Hutang supplier", href: "?tab=utang", count: usaha.filter((r) => r.paid < r.amount).length }, { key: "pinjaman", label: "Pinjaman modal", href: "?tab=pinjaman", count: loans.filter((r) => r.paid < r.amount).length }]} />
+      <Tabs current={tab} tabs={[{ key: "piutang", label: "Piutang", href: "?tab=piutang", count: recv.filter((r) => r.paid < r.amount).length + short.length }, { key: "utang", label: "Hutang supplier", href: "?tab=utang", count: usaha.filter((r) => r.paid < r.amount).length }, { key: "pinjaman", label: "Pinjaman modal", href: "?tab=pinjaman", count: loans.filter((r) => r.paid < r.amount).length }]} />
+      {tab === "piutang" && short.length > 0 && (
+        <Card title={`Barang kurang dari supplier · sudah dibayar (${short.length})`}>
+          <p className="mb-3 text-sm text-slate-500">Barang yang datang kurang dari pesanan. Nilai barang yang belum dikirim adalah piutang ke supplier (uang muka). Bila sisanya datang, tekan Terima barang di Pembelian; bila tidak akan datang, tekan Tutup agar tercatat sebagai refund.</p>
+          <div className="overflow-x-auto"><table className="tbl">
+            <thead><tr><th>Pesanan</th><th>Supplier</th><th>Tanggal</th><th>Barang kurang</th><th className="num">Nilai piutang</th><th /></tr></thead>
+            <tbody>{short.map(({ p, left }) => (
+              <tr key={p.id}>
+                <td className="font-mono text-xs">{p.number}</td>
+                <td>{p.supplierId ? <Link className="link" href={`/supplier/${p.supplierId}`}>{p.vendor}</Link> : p.vendor}</td>
+                <td>{fmtDate(p.date)}</td>
+                <td className="text-xs">{p.lines.filter((l) => Number(l.qty) > Number(l.qtyReceived)).map((l) => `${l.item.name}: kurang ${(Number(l.qty) - Number(l.qtyReceived)).toLocaleString("id-ID")} ${l.item.unit}`).join(", ")}</td>
+                <td className="num">{idr(left)}</td>
+                <td><Link href="/stok/pembelian" className="btn-secondary btn-sm">Buka Pembelian</Link></td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+          <div className="mt-2 text-sm">Total piutang barang: <b>{idr(short.reduce((t, x) => t + x.left, 0))}</b></div>
+        </Card>
+      )}
       <Card>
         <div className="mb-3 text-sm">Total outstanding: <b>{idr(rows.reduce((s, r) => s + Number(r.amount - r.paid), 0))}</b></div>
         <div className="overflow-x-auto">
