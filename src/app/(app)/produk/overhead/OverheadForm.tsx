@@ -6,14 +6,18 @@ import { Field } from "@/components/ui";
 import { OVERHEAD_CATEGORIES, monthlyDepreciation, overheadPerPcs } from "@/lib/pricing";
 import { saveOverhead } from "../actions";
 
-export type OverheadData = { id: string; name: string; category: string; monthlyAmount: number; outputPerMonth: number; assetCost: number | null; lifeMonths: number | null; note: string | null; active: boolean; autoSalary: boolean; salaryDivisionIds: string[] };
+export type OverheadData = { id: string; name: string; category: string; monthlyAmount: number; outputPerMonth: number; assetCost: number | null; lifeMonths: number | null; note: string | null; active: boolean; autoSalary: boolean; salaryDivisionIds: string[]; outputAuto: boolean };
 /** Biaya gaji per bulan per divisi (gaji pokok + tunjangan + BPJS TK), untuk pratinjau overhead gaji otomatis */
 export type SalaryDivision = { id: string; name: string; total: number; employees: number; preset: boolean };
 
 const num = (v: string) => Number(v.replace(/\./g, "").replace(",", ".")) || 0;
 
 /** Form overhead: beban per pcs dihitung langsung dari biaya per bulan / estimasi output */
-export function OverheadForm({ o, capacity, salary }: { o?: OverheadData; capacity: number; salary: SalaryDivision[] }) {
+/** Output otomatis dari laporan shift: perkiraan per bulan + jumlah hari laporan yang dipakai */
+export type AutoOutput = { perMonth: number; days: number };
+
+export function OverheadForm({ o, capacity, salary, autoOutput }: { o?: OverheadData; capacity: number; salary: SalaryDivision[]; autoOutput: AutoOutput }) {
+  const [outMode, setOutMode] = useState(o?.outputAuto ? "auto" : "manual");
   const [category, setCategory] = useState(o?.category ?? "");
   const [auto, setAuto] = useState(o?.autoSalary ?? false);
   const [divs, setDivs] = useState<Set<string>>(() => new Set(o?.salaryDivisionIds.length ? o.salaryDivisionIds : salary.filter((d) => d.preset).map((d) => d.id)));
@@ -24,7 +28,8 @@ export function OverheadForm({ o, capacity, salary }: { o?: OverheadData; capaci
   const [life, setLife] = useState(o?.lifeMonths ? String(o.lifeMonths) : "");
   const dep = num(asset) > 0 && num(life) > 0 ? monthlyDepreciation(num(asset), num(life)) : 0;
   const perMonth = auto ? salaryTotal : dep || num(monthly);
-  const perPcs = overheadPerPcs(perMonth, num(output));
+  const outAuto = outMode === "auto" && autoOutput.perMonth > 0;
+  const perPcs = overheadPerPcs(perMonth, outAuto ? autoOutput.perMonth : num(output));
   return (
     <ModalForm action={saveOverhead} className="space-y-3">
       {o && <input type="hidden" name="id" value={o.id} />}
@@ -50,8 +55,21 @@ export function OverheadForm({ o, capacity, salary }: { o?: OverheadData; capaci
       )}
       <div className="grid grid-cols-2 gap-3">
         <Field label="Estimasi Biaya / Bulan (Rp)"><input name="monthlyAmount" inputMode="numeric" value={auto ? String(salaryTotal) : dep ? String(dep) : monthly} readOnly={!!dep || auto} onChange={(e) => setMonthly(e.target.value)} className="input" placeholder="Cth: 300000" /></Field>
-        <Field label="Est. Output / Bulan (Pcs)"><input name="outputPerMonth" inputMode="numeric" value={output} onChange={(e) => setOutput(e.target.value)} className="input" placeholder="Cth: 3000" /></Field>
+        <Field label="Est. Output / Bulan (Pcs)"><input name="outputPerMonth" inputMode="numeric" value={outAuto ? String(autoOutput.perMonth) : output} readOnly={outAuto} onChange={(e) => setOutput(e.target.value)} className="input" placeholder="Cth: 3000" /></Field>
       </div>
+      <Field label="Output / bulan diisi">
+        <select name="outputAuto" value={outMode} onChange={(e) => setOutMode(e.target.value)} className="input">
+          <option value="manual">Manual</option>
+          <option value="auto">Otomatis dari laporan shift</option>
+        </select>
+      </Field>
+      {outMode === "auto" && (
+        <p className="-mt-1 text-xs text-slate-500">
+          {autoOutput.perMonth > 0
+            ? `Total panen patung kering ${autoOutput.days} hari terakhir (laporan Produksi terkirim), disetarakan ke 30 hari: ${autoOutput.perMonth.toLocaleString("id-ID")} pcs/bulan. Diperbarui otomatis setiap hari.`
+            : "Belum ada laporan Produksi terkirim. Sementara memakai angka manual di atas; berganti otomatis setelah laporan shift berjalan."}
+        </p>
+      )}
       <div className="flex items-center justify-between rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
         <span>Beban Overhead Per Pcs:</span><span>Rp {perPcs.toLocaleString("id-ID", { maximumFractionDigits: 2 })} / pcs</span>
       </div>

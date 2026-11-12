@@ -1,7 +1,8 @@
 import type { Prisma, PrismaClient, WageType } from "@prisma/client";
 import { prisma } from "./db";
 import { bpjsAmount, sumAllowances } from "./payroll";
-import { dateOnly, todayStr } from "./time";
+import { addDays, dateOnly, todayStr } from "./time";
+import { TEMPLATES, sectionTotal, type WorkData } from "./shiftReport";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -53,14 +54,45 @@ export async function salaryBreakdown(divisionIds: string[], db: Db = prisma) {
   return { divisionIds: ids, workdays, rows, base: sum("base"), allowance: sum("allowance"), bpjs: sum("bpjs"), total: sum("total") };
 }
 
-/** Hitung ulang semua overhead gaji otomatis; kembalikan yang berubah */
+/** Hari yang dipakai untuk output otomatis (30 hari terakhir, termasuk hari ini) */
+export const OUTPUT_DAYS = 30;
+
+/**
+ * Output patung per bulan dari laporan shift: total panen patung kering (laporan Produksi yang sudah dikirim)
+ * 30 hari terakhir. Hari-hari sebelum laporan pertama tidak dihitung, jadi di awal pemakaian angkanya
+ * disetarakan ke 30 hari dari hari yang sudah ada laporannya. 0 = belum ada laporan.
+ */
+export async function monthlyOutputFromReports(db: Db = prisma, today: string = todayStr()) {
+  const start = addDays(today, -(OUTPUT_DAYS - 1));
+  const reports = await db.shiftReport.findMany({
+    where: { date: { gte: dateOnly(start), lte: dateOnly(today) }, status: { in: ["TERKIRIM", "DIREVISI"] }, division: { reportTemplate: "PRODUKSI" } },
+    select: { date: true, work: true },
+  });
+  const t = TEMPLATES.PRODUKSI;
+  const total = reports.reduce((a, r) => a + sectionTotal(t, r.work as WorkData, "panen"), 0);
+  if (!total) return { total: 0, days: 0, perMonth: 0 };
+  const first = reports.reduce((m, r) => (r.date < m ? r.date : m), reports[0].date).toISOString().slice(0, 10);
+  const days = Math.min(OUTPUT_DAYS, Math.round((Date.parse(today) - Date.parse(first)) / 86_400_000) + 1);
+  return { total, days, perMonth: Math.round((total / days) * OUTPUT_DAYS) };
+}
+
+/**
+ * Hitung ulang semua overhead otomatis: biaya dari gaji (autoSalary) dan/atau output dari laporan shift (outputAuto).
+ * Output otomatis yang belum punya laporan (0) tidak menimpa angka manual. Kembalikan biaya yang berubah.
+ */
 export async function syncSalaryOverheads(db: Db = prisma) {
-  const list = await db.overhead.findMany({ where: { autoSalary: true } });
+  const list = await db.overhead.findMany({ where: { OR: [{ autoSalary: true }, { outputAuto: true }] } });
   const changed: { id: string; name: string; from: number; to: number }[] = [];
+  const output = list.some((o) => o.outputAuto) ? await monthlyOutputFromReports(db) : null;
   for (const o of list) {
-    const { total } = await salaryBreakdown(o.salaryDivisionIds, db);
-    if (Number(o.monthlyAmount) !== total) changed.push({ id: o.id, name: o.name, from: Number(o.monthlyAmount), to: total });
-    await db.overhead.update({ where: { id: o.id }, data: { monthlyAmount: BigInt(total), autoUpdatedAt: new Date() } });
+    const data: Prisma.OverheadUpdateInput = { autoUpdatedAt: new Date() };
+    if (o.autoSalary) {
+      const { total } = await salaryBreakdown(o.salaryDivisionIds, db);
+      if (Number(o.monthlyAmount) !== total) changed.push({ id: o.id, name: o.name, from: Number(o.monthlyAmount), to: total });
+      data.monthlyAmount = BigInt(total);
+    }
+    if (o.outputAuto && output && output.perMonth > 0) data.outputPerMonth = output.perMonth;
+    await db.overhead.update({ where: { id: o.id }, data });
   }
   return changed;
 }

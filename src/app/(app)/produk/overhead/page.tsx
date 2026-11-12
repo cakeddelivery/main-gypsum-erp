@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { overheadSummary, overheadUnitCost } from "@/lib/hpp";
 import { fmtUnitPrice } from "@/lib/unitcost";
 import { OverheadForm, type OverheadData, type SalaryDivision } from "./OverheadForm";
-import { salaryBreakdown, syncSalaryOverheads } from "@/lib/salaryOverhead";
+import { monthlyOutputFromReports, salaryBreakdown, syncSalaryOverheads } from "@/lib/salaryOverhead";
 import { idr } from "@/lib/money";
 import { Badge, Card, Empty, Field, PageHeader, Stat } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
@@ -15,7 +15,7 @@ import type { Overhead } from "@prisma/client";
 
 export const metadata = { title: "Overhead" };
 
-const data = (o: Overhead): OverheadData => ({ id: o.id, name: o.name, category: o.category, monthlyAmount: Number(o.monthlyAmount), outputPerMonth: o.outputPerMonth, assetCost: o.assetCost ? Number(o.assetCost) : null, lifeMonths: o.lifeMonths, note: o.note, active: o.active, autoSalary: o.autoSalary, salaryDivisionIds: o.salaryDivisionIds });
+const data = (o: Overhead): OverheadData => ({ id: o.id, name: o.name, category: o.category, monthlyAmount: Number(o.monthlyAmount), outputPerMonth: o.outputPerMonth, assetCost: o.assetCost ? Number(o.assetCost) : null, lifeMonths: o.lifeMonths, note: o.note, active: o.active, autoSalary: o.autoSalary, salaryDivisionIds: o.salaryDivisionIds, outputAuto: o.outputAuto });
 
 export default async function OverheadPage() {
   const user = await requirePerm("product.view");
@@ -27,11 +27,12 @@ export default async function OverheadPage() {
     const b = await salaryBreakdown([d.id]);
     return { id: d.id, name: d.name, total: b.total, employees: b.rows.length, preset: !!d.reportTemplate };
   }));
+  const autoOutput = await monthlyOutputFromReports();
   const [rows, sum] = await Promise.all([prisma.overhead.findMany({ orderBy: [{ active: "desc" }, { category: "asc" }, { name: "asc" }] }), overheadSummary()]);
   const divName = (ids: string[]) => ids.map((id) => divisions.find((d) => d.id === id)?.name ?? "?").join(", ");
   return (
     <div className="space-y-5">
-      <PageHeader title="Produk & HPP" subtitle="Beban per pcs = biaya per bulan ÷ estimasi output per bulan. Pilih overhead ini di resep setengah jadi atau produk jadi." actions={manage && <Modal trigger="+ Overhead" title="Tambah Overhead Produksi"><OverheadForm capacity={sum.capacity} salary={salary} /></Modal>} />
+      <PageHeader title="Produk & HPP" subtitle="Beban per pcs = biaya per bulan ÷ estimasi output per bulan. Pilih overhead ini di resep setengah jadi atau produk jadi." actions={manage && <Modal trigger="+ Overhead" title="Tambah Overhead Produksi"><OverheadForm capacity={sum.capacity} salary={salary} autoOutput={autoOutput} /></Modal>} />
       <ProdukTabs current="overhead" />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         <Stat label="Total overhead / bulan" value={idr(sum.total)} />
@@ -52,11 +53,11 @@ export default async function OverheadPage() {
             <tbody>{rows.map((o) => (
               <tr key={o.id} className={o.active ? "" : "opacity-50"}>
                 <td>{o.category}</td><td>{o.name}{!o.active && <Badge>nonaktif</Badge>}{o.autoSalary && <div><Badge tone="blue">otomatis dari gaji</Badge></div>}</td><td className="num">{idr(o.monthlyAmount)}</td>
-                <td className="num">{o.outputPerMonth ? `${o.outputPerMonth.toLocaleString("id-ID")} pcs` : <span className="text-slate-400">{sum.capacity ? `${sum.capacity.toLocaleString("id-ID")} (default)` : "-"}</span>}</td>
+                <td className="num">{o.outputAuto && <div><Badge tone="blue">otomatis</Badge></div>}{o.outputPerMonth ? `${o.outputPerMonth.toLocaleString("id-ID")} pcs` : <span className="text-slate-400">{sum.capacity ? `${sum.capacity.toLocaleString("id-ID")} (default)` : "-"}</span>}</td>
                 <td className="num">{fmtUnitPrice(overheadUnitCost(o, sum.capacity))}</td>
                 <td className="text-xs">{[o.autoSalary ? `Gaji pokok + tunjangan + BPJS TK: ${divName(o.salaryDivisionIds)}` : "", o.assetCost && o.lifeMonths ? `${idr(o.assetCost)} ÷ ${o.lifeMonths} bulan` : "", o.note].filter(Boolean).join(" · ")}</td>
                 <td>{manage && <span className="flex gap-2">
-                  <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${o.name}`}><OverheadForm o={data(o)} capacity={sum.capacity} salary={salary} /></Modal>
+                  <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${o.name}`}><OverheadForm o={data(o)} capacity={sum.capacity} salary={salary} autoOutput={autoOutput} /></Modal>
                   <ActionForm action={deleteOverhead} confirm={`Hapus ${o.name}?`}><input type="hidden" name="id" value={o.id} /><Submit className="btn-secondary btn-sm" pendingText="…">Hapus</Submit></ActionForm>
                 </span>}</td>
               </tr>

@@ -1038,6 +1038,8 @@ model Overhead {
   salaryDivisionIds String[]         @default([])
   /// Terakhir dihitung ulang otomatis
   autoUpdatedAt     DateTime?
+  /// Output per bulan diambil otomatis dari laporan shift (total panen patung kering 30 hari terakhir); false = diisi manual
+  outputAuto        Boolean          @default(false)
 }
 
 /// Tenaga kerja dalam resep (barang setengah jadi atau produk): dari tarif borongan atau tarif custom, per 1 unit

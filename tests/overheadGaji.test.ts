@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
-import { employeeMonthlyCost, salaryBreakdown, syncSalaryOverheads } from "@/lib/salaryOverhead";
+import { employeeMonthlyCost, monthlyOutputFromReports, salaryBreakdown, syncSalaryOverheads } from "@/lib/salaryOverhead";
+import { dateOnly } from "@/lib/time";
 import { overheadUnitCost } from "@/lib/hpp";
 
 describe("Overhead Gaji Produksi otomatis", () => {
@@ -39,5 +40,26 @@ describe("Overhead Gaji Produksi otomatis", () => {
     // Tidak membuat jurnal apa pun
     expect(await prisma.journal.count({ where: { description: { contains: "Gaji Produksi" } } })).toBe(0);
     await prisma.overhead.update({ where: { id: o.id }, data: { active: false, autoSalary: false } });
+  });
+
+  it("output otomatis dari laporan shift: panen 30 hari terakhir disetarakan ke 30 hari; tanpa laporan angka manual tetap", async () => {
+    const today = "2031-03-20";
+    expect(await monthlyOutputFromReports(prisma, today)).toEqual({ total: 0, days: 0, perMonth: 0 });
+    const div = await prisma.division.findFirstOrThrow({ where: { reportTemplate: "PRODUKSI" } });
+    const s1 = (await prisma.shift.findUniqueOrThrow({ where: { code: "S1" } })).id;
+    const mk = (date: string, qty: number, status: "TERKIRIM" | "DRAFT") => prisma.shiftReport.create({ data: { date: dateOnly(date), shiftId: s1, divisionId: div.id, createdBy: "uji", status, work: { panen: [{ name: "Oven Besar", v: [qty, null, null, null] }] } } });
+    await mk("2031-03-11", 1000, "TERKIRIM");
+    await mk("2031-03-20", 2000, "TERKIRIM");
+    await mk("2031-03-19", 9999, "DRAFT");
+    // 3.000 patung dalam 10 hari (11–20 Mar) → 9.000 per 30 hari; draft tidak dihitung
+    expect(await monthlyOutputFromReports(prisma, today)).toEqual({ total: 3000, days: 10, perMonth: 9000 });
+    // Belum ada laporan (hari ini): output manual tidak ditimpa 0
+    const o = await prisma.overhead.create({ data: { category: "Air", name: "Uji Output Otomatis", monthlyAmount: 80000n, outputPerMonth: 5000, outputAuto: true } });
+    await syncSalaryOverheads();
+    const cur = await prisma.overhead.findUniqueOrThrow({ where: { id: o.id } });
+    const nowOut = (await monthlyOutputFromReports()).perMonth;
+    expect(cur.outputPerMonth).toBe(nowOut > 0 ? nowOut : 5000);
+    expect(Number(cur.monthlyAmount)).toBe(80000);
+    await prisma.overhead.delete({ where: { id: o.id } });
   });
 });
