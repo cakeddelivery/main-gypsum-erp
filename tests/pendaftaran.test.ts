@@ -9,7 +9,7 @@ const tag = Date.now().toString(36).slice(-5);
 const form = (n: string, extra: Record<string, string> = {}) => ({
   fullName: `Calon Karyawan ${n}`, nickname: `Calon${n}`, birthPlace: "Lamongan", birthDate: "2001-05-17", address: "Jl. Uji No. 1 RT 01 RW 02, Lamongan",
   phone: "0812-3456-7890", email: `calon${n}${tag}@contoh.id`, username: `calon${n}${tag}`, password: "rahasia123", gender: "P" as const,
-  startDate: "2027-01-02", seabankNo: "9012 3456 7890", seabankName: `Calon ${n}`, ...extra,
+  startDate: "2027-01-02", bankName: "BCA", bankAccountNo: "9012 3456 7890", bankAccountName: `Calon ${n}`, ...extra,
 });
 
 beforeAll(async () => {
@@ -40,7 +40,8 @@ describe("Pendaftaran karyawan", () => {
     const r = await submitRegistration(code, form("a"), "10.1.1.1");
     expect(r.status).toBe("MENUNGGU");
     expect(r.phone).toBe("6281234567890");
-    expect(r.seabankNo).toBe("901234567890");
+    expect(r.bankAccountNo).toBe("901234567890");
+    expect(r.bankName).toBe("BCA");
     expect(await registrationLoginHint(r.username)).toMatch(/menunggu verifikasi/);
     // Username & email tidak boleh dobel dengan pendaftaran yang masih menunggu
     await expect(submitRegistration(code, form("b", { username: r.username }), "10.1.1.2")).rejects.toThrow(/Username sudah dipakai/);
@@ -51,6 +52,7 @@ describe("Pendaftaran karyawan", () => {
     const ok = await approveRegistration(r.id, { divisionId, role: "OPERATOR", wageType: "HARIAN", monthlySalary: 0, dailyRate: 60_000, joinDate: "2027-01-03", bpjsTk: true, bpjsTkAmount: null }, actor);
     expect(ok.employee.nickname).toBe("Calona");
     expect(ok.employee.bpjsTk).toBe(true);
+    expect(ok.employee.bankName).toBe("BCA");
     expect(ok.user.active).toBe(true);
     expect(await bcrypt.compare("rahasia123", ok.user.passwordHash)).toBe(true);
     expect(await registrationLoginHint(r.username)).toBeNull();

@@ -51,7 +51,7 @@ export default async function PendaftaranPage() {
                   <p className="text-slate-600">{r.birthPlace}, {fmtDay(r.birthDate)} ({age(r.birthDate)} th) · WA {r.phone} · {r.email}</p>
                   <p className="text-slate-600">{r.address}</p>
                   <p className="text-slate-600">Usulan mulai kerja {fmtDay(r.startDate)} · username <span className="font-mono">{r.username}</span></p>
-                  <p className="text-slate-600">Seabank: {seeBank ? <>{r.seabankNo} a.n. {r.seabankName}</> : <span className="text-slate-400">hanya terlihat Owner/Finance</span>}</p>
+                  <p className="text-slate-600">Rekening: {seeBank ? <>{r.bankName} {r.bankAccountNo} a.n. {r.bankAccountName}</> : <span className="text-slate-400">hanya terlihat Owner/Finance</span>}</p>
                   <p className="text-xs text-slate-400">Dikirim {fmtDateTime(r.createdAt)}</p>
                 </div>
                 <div className="flex gap-1">

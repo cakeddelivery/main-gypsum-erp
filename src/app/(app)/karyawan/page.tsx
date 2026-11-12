@@ -10,6 +10,7 @@ import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
 import { cancelResign, resignEmployee, saveAccount, saveEmployee } from "./actions";
 import { AllowanceFields } from "./AllowanceFields";
+import { BankSelect } from "@/components/BankSelect";
 import { ActionForm } from "@/components/ActionForm";
 import { todayStr } from "@/lib/time";
 import type { EmployeeStatus } from "@prisma/client";
@@ -64,8 +65,9 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
           <Field label="Tanggal lahir"><input type="date" name="birthDate" defaultValue={e?.birthDate?.toISOString().slice(0, 10)} className="input" /></Field>
           <Field label="Alamat lengkap" className="col-span-2"><input name="address" defaultValue={e?.address ?? ""} className="input" /></Field>
           <Field label="Email" className="col-span-2"><input type="email" name="email" defaultValue={e?.email ?? ""} className="input" autoCapitalize="none" /></Field>
-          {seeBank && <Field label="No. rekening Seabank"><input name="seabankNo" defaultValue={e?.seabankNo ?? ""} inputMode="numeric" className="input" /></Field>}
-          {seeBank && <Field label="Atas nama rekening"><input name="seabankName" defaultValue={e?.seabankName ?? ""} className="input" /></Field>}
+          {seeBank && <div className="col-span-2"><span className="label">Nama bank / e-wallet</span><BankSelect defaultValue={e?.bankName} /></div>}
+          {seeBank && <Field label="No. rekening"><input name="bankAccountNo" defaultValue={e?.bankAccountNo ?? ""} inputMode="numeric" className="input" /></Field>}
+          {seeBank && <Field label="Atas nama rekening"><input name="bankAccountName" defaultValue={e?.bankAccountName ?? ""} className="input" /></Field>}
         </div>
       </details>
       {canAllowance && <AllowanceFields initial={(e?.allowances ?? []).map((a) => ({ id: a.id, name: a.name, amount: Number(a.amount) }))} />}

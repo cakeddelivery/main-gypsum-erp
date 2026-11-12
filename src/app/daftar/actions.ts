@@ -18,7 +18,7 @@ export async function registerAction(_p: ActionResult | null, fd: FormData): Pro
       {
         fullName: f(fd, "fullName"), nickname: f(fd, "nickname"), birthPlace: f(fd, "birthPlace"), birthDate: f(fd, "birthDate"), address: f(fd, "address"),
         phone: f(fd, "phone"), email: f(fd, "email"), username: f(fd, "username"), password: f(fd, "password"), gender: f(fd, "gender") as "L" | "P",
-        startDate: f(fd, "startDate"), seabankNo: f(fd, "seabankNo"), seabankName: f(fd, "seabankName"),
+        startDate: f(fd, "startDate"), bankName: f(fd, "bankName"), bankAccountNo: f(fd, "bankAccountNo"), bankAccountName: f(fd, "bankAccountName"),
       },
       await clientIp(),
     );

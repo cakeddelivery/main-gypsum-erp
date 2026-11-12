@@ -40,7 +40,7 @@ export const saveEmployee = action(
           }
         : {}),
       // Rekening gaji: hanya Owner/Finance
-      ...(fd.has("seabankNo") && (user.role === "OWNER" || user.role === "FINANCE") ? { seabankNo: optStr(fd, "seabankNo")?.replace(/\D/g, "") || null, seabankName: optStr(fd, "seabankName") } : {}),
+      ...(fd.has("bankAccountNo") && (user.role === "OWNER" || user.role === "FINANCE") ? { bankName: optStr(fd, "bankName"), bankAccountNo: optStr(fd, "bankAccountNo")?.replace(/\D/g, "") || null, bankAccountName: optStr(fd, "bankAccountName") } : {}),
     };
     if (data.wageType === "BULANAN" && !data.joinDate) throw new Error("Karyawan bulanan wajib punya tanggal masuk (dasar tanggal gajian)");
     if (data.wageType === "BULANAN" && data.monthlySalary <= BigInt(0)) throw new Error("Isi gaji bulanan");

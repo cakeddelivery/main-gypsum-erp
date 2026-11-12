@@ -67,8 +67,9 @@ export const registrationSchema = z.object({
   password: z.string().min(8, "Password minimal 8 karakter").max(200),
   gender: z.enum(["L", "P"], { message: "Pilih jenis kelamin" }),
   startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Tanggal mulai kerja wajib"),
-  seabankNo: z.string().transform((s) => s.replace(/\D/g, "")).pipe(z.string().regex(/^\d{8,20}$/, "No. rekening Seabank 8–20 angka")),
-  seabankName: z.string().trim().min(2, "Atas nama rekening wajib").max(80),
+  bankName: z.string().trim().min(2, "Pilih nama bank / e-wallet").max(60),
+  bankAccountNo: z.string().transform((s) => s.replace(/\D/g, "")).pipe(z.string().regex(/^\d{6,20}$/, "No. rekening 6–20 angka")),
+  bankAccountName: z.string().trim().min(2, "Atas nama rekening wajib").max(80),
 });
 export type RegistrationInput = z.input<typeof registrationSchema>;
 
@@ -102,7 +103,7 @@ export async function submitRegistration(code: string, raw: RegistrationInput, i
       data: {
         number: await nextNumber(tx, "DFT", now), inviteId: inv.id, fullName: d.fullName, nickname: d.nickname, birthPlace: d.birthPlace, birthDate: dateOnly(d.birthDate),
         address: d.address, phone, email: d.email, username: d.username, passwordHash, gender: d.gender, startDate: dateOnly(d.startDate),
-        seabankNo: d.seabankNo, seabankName: d.seabankName, ip, createdAt: now,
+        bankName: d.bankName, bankAccountNo: d.bankAccountNo, bankAccountName: d.bankAccountName, ip, createdAt: now,
       },
     }),
   );
@@ -149,7 +150,7 @@ export async function approveRegistration(id: string, input: ApproveInput, actor
         code: await autoCode.employee(tx, division.id), name: r.fullName, divisionId: division.id, status: "AKTIF", wageType: input.wageType,
         monthlySalary: BigInt(Math.round(input.wageType === "BULANAN" ? input.monthlySalary : 0)), dailyRate: BigInt(Math.round(input.wageType === "BULANAN" ? 0 : input.dailyRate)),
         phone: r.phone, joinDate: dateOnly(input.joinDate), nickname: r.nickname, birthPlace: r.birthPlace, birthDate: r.birthDate, address: r.address, gender: r.gender,
-        email: r.email, seabankNo: r.seabankNo, seabankName: r.seabankName, bpjsTk: input.bpjsTk, bpjsTkAmount: input.bpjsTk && input.bpjsTkAmount != null ? BigInt(input.bpjsTkAmount) : null,
+        email: r.email, bankName: r.bankName, bankAccountNo: r.bankAccountNo, bankAccountName: r.bankAccountName, bpjsTk: input.bpjsTk, bpjsTkAmount: input.bpjsTk && input.bpjsTkAmount != null ? BigInt(input.bpjsTkAmount) : null,
       },
     });
     const user = await tx.user.create({ data: { username: r.username, name: r.fullName, email: r.email, passwordHash: r.passwordHash, role: input.role, employeeId: emp.id, divisionId: input.role === "KAPTEN_DIVISI" ? division.id : null } });

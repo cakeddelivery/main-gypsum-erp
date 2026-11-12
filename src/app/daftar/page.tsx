@@ -5,6 +5,8 @@ import { validInvite } from "@/lib/registration";
 import { todayStr } from "@/lib/time";
 import { AuthCard } from "../login/AuthCard";
 import { registerAction } from "./actions";
+import { BankSelect } from "@/components/BankSelect";
+import { ChoiceEnhancer } from "@/components/ChoiceEnhancer";
 
 export const metadata = { title: "Pendaftaran karyawan" };
 export const dynamic = "force-dynamic";
@@ -31,6 +33,8 @@ export default async function DaftarPage({ searchParams }: { searchParams: Promi
   }
   return (
     <AuthCard subtitle="Formulir pendaftaran karyawan" wide>
+      {/* Dropdown bisa dicari & pilihan ≤3 jadi tombol, sama seperti di dalam aplikasi */}
+      <ChoiceEnhancer />
       <ActionForm action={registerAction} className="space-y-4" persist>
         <input type="hidden" name="kode" value={kode} />
         {/* Honeypot anti-bot: tidak terlihat, jangan diisi */}
@@ -51,9 +55,10 @@ export default async function DaftarPage({ searchParams }: { searchParams: Promi
           <L label="Tanggal mulai kerja" hint="Usulan; Owner bisa menyesuaikan" wide><input type="date" name="startDate" className="input" required defaultValue={todayStr()} /></L>
         </fieldset>
         <fieldset className="grid gap-3 sm:grid-cols-2">
-          <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Rekening gaji (Seabank)</legend>
-          <L label="No. rekening Seabank"><input name="seabankNo" inputMode="numeric" className="input" required /></L>
-          <L label="Atas nama rekening"><input name="seabankName" className="input" required maxLength={80} /></L>
+          <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Rekening gaji</legend>
+          <div className="block sm:col-span-2"><span className="label">Nama bank / e-wallet</span><BankSelect required /></div>
+          <L label="No. rekening"><input name="bankAccountNo" inputMode="numeric" className="input" required /></L>
+          <L label="Atas nama rekening"><input name="bankAccountName" className="input" required maxLength={80} /></L>
         </fieldset>
         <fieldset className="grid gap-3 sm:grid-cols-2">
           <legend className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Akun login</legend>
