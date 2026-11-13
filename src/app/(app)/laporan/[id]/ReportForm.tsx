@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { useCloseModal } from "@/components/Modal";
 import { revealField } from "@/components/FormFeedback";
+import { celebrate } from "@/components/Celebrate";
 import { toast } from "@/components/Toaster";
 import { ProofPreview } from "@/components/ProofPreview";
 import {
@@ -30,7 +31,7 @@ import {
 import { addReceipt, removeChecklistPhoto, removeReceipt, saveReport, uploadChecklistPhoto } from "../actions";
 
 /** Baris pesanan yang sedang dikirim (Stok → Pembelian) untuk barang divisi ini */
-export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean };
+export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean; vendor: string; itemName: string; unit: string };
 export type ReceiptView = { id: string; number: string; itemName: string; unit: string; qty: number; supplierName: string | null; hasPhoto: boolean; linked: boolean };
 export type ResultCountRow = { key: string; label: string; unit: string; qty: number | null };
 
@@ -119,8 +120,25 @@ export function ReportForm(p: Props) {
   };
   // Pindah langkah → kembali ke atas popup
   useEffect(() => {
-    bodyTop.current?.scrollIntoView({ block: "start" });
+    const body = bodyTop.current?.closest(".modal-body");
+    if (body) body.scrollTop = 0;
+    bodyTop.current?.querySelector('[aria-current="step"]')?.scrollIntoView({ block: "nearest", inline: "center" });
   }, [step]);
+  // Penilaian harian divisi dari checklist (dipakai di langkah terakhir & konfirmasi kirim)
+  const missingPhoto = p.checklist.filter((c) => c.photo && !c.photoPath);
+  const unchecked = p.checklist.filter((c, i) => !c.photo && !checks[i]);
+  const score = p.checklist.length ? Math.round((doneCount / p.checklist.length) * 100) : 100;
+  const [confirming, setConfirming] = useState(false);
+  const sending = useRef(false);
+  const router = useRouter();
+  const trySend = () => {
+    if (missingPhoto.length) {
+      toast(`Lampirkan foto dulu: ${missingPhoto.map((c) => c.label).join(", ")}`, false);
+      go(steps.findIndex((x) => x.key === "checklist"));
+      return;
+    }
+    setConfirming(true);
+  };
   // Kolom wajib yang kosong di langkah lain: buka langkahnya lalu gulir & fokus ke kolom itu
   useEffect(() => {
     const el = formRef.current;
@@ -152,7 +170,30 @@ export function ReportForm(p: Props) {
           ))}
         </ol>
       </nav>
-    <ActionForm action={saveReport} className="space-y-4" onSuccess={() => window.setTimeout(close, 750)}>
+    <ActionForm
+      action={async (prev, fd) => {
+        const r = await saveReport(prev, fd);
+        // Selebrasi dipicu langsung dari respons server: setelah terkirim, halaman mengunci laporan
+        // (form bisa hilang sebelum efek onSuccess sempat berjalan)
+        if (r.ok && fd.get("intent") === "send") {
+          sending.current = false;
+          celebrate("Laporan Berhasil Terkirim");
+          router.replace(`/laporan/${p.id}?jpg=1`, { scroll: true });
+        }
+        return r;
+      }}
+      className="space-y-4"
+      onSuccess={() => {
+        setConfirming(false);
+        window.setTimeout(close, 750);
+      }}
+      onError={(err) => {
+        if (!sending.current) return;
+        sending.current = false;
+        setConfirming(false);
+        toast(err, false);
+      }}
+    >
       <input type="hidden" name="id" value={p.id} />
       <section data-step="hasil" className={`card p-4 ${show("hasil")}`}>
         <label className="block">
@@ -397,11 +438,20 @@ export function ReportForm(p: Props) {
       )}
 
       <section data-step="catatan" className={`card space-y-3 p-4 ${show("catatan")}`}>
-        <label className="block"><span className="label">Catatan / kendala</span><textarea name="complaints" defaultValue={p.complaints} className="input" rows={3} /></label>
-        <label className="block"><span className="label">Tindak lanjut</span><textarea name="followUp" defaultValue={p.followUp} className="input" rows={2} /></label>
-        <label className="block"><span className="label">Status tindak lanjut</span>
-          <select name="followUpStatus" defaultValue={p.followUpStatus} className="input"><option value="BELUM">Belum</option><option value="PROSES">Proses</option><option value="SELESAI">Selesai</option></select>
-        </label>
+        <label className="block"><span className="label">Catatan / kendala (opsional)</span><textarea name="complaints" defaultValue={p.complaints} className="input" rows={3} /></label>
+        <p className="text-xs text-slate-500">Bila ada kendala, Supervisor, Finance, dan Owner mendapat peringatan untuk menindaklanjuti.</p>
+      </section>
+      <section data-step="catatan" className={`card p-4 ${show("catatan")}`}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-slate-800">Penilaian harian divisi</h3>
+            <p className="text-xs text-slate-500">Dari checklist penutupan: {doneCount}/{p.checklist.length} selesai</p>
+          </div>
+          <span className={`text-2xl font-bold tabular-nums ${score >= 90 ? "text-emerald-600" : score >= 70 ? "text-amber-600" : "text-rose-600"}`}>{score}</span>
+        </div>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full transition-all ${score >= 90 ? "bg-emerald-500" : score >= 70 ? "bg-amber-500" : "bg-rose-500"}`} style={{ width: `${score}%` }} /></div>
+        {missingPhoto.length > 0 && <p className="mt-2 text-xs font-medium text-rose-600">⚠ Foto wajib belum dilampirkan: {missingPhoto.map((c) => c.label).join(", ")}. Laporan belum bisa dikirim.</p>}
+        {missingPhoto.length === 0 && unchecked.length > 0 && <p className="mt-2 text-xs text-amber-700">{unchecked.length} checklist belum dicentang dan akan mengurangi nilai.</p>}
       </section>
       {p.flow && (
         <section data-step="catatan" className={`rounded-lg bg-slate-50 p-3 text-sm ${show("catatan")}`}>
@@ -417,19 +467,43 @@ export function ReportForm(p: Props) {
         {step > 0 && (
           <button type="button" className="btn-secondary btn-icon" aria-label="Langkah sebelumnya" onClick={() => go(step - 1)}>‹</button>
         )}
-        <Submit className="btn-secondary flex-1" name="intent" value="draft" pendingText="Menyimpan…">Simpan draf</Submit>
+        <span className="flex flex-1" onClickCapture={() => (sending.current = false)}>
+          <Submit className="btn-secondary flex-1" name="intent" value="draft" pendingText="Menyimpan…">Simpan draf</Submit>
+        </span>
         {last ? (
-          <Submit className="btn-success flex-1" name="intent" value="send" pendingText="Mengirim…" confirm="Kirim laporan sekarang? Stok akhir shift akan menjadi stok sistem (stock opname).">
-            {p.sent ? "Kirim ulang" : "Kirim laporan"}
-          </Submit>
+          <button type="button" className="btn-success flex-1" onClick={trySend}>{p.sent ? "Kirim ulang" : "Kirim laporan"}</button>
         ) : (
           <button type="button" className="btn-primary flex-1" onClick={() => go(step + 1)}>Berikutnya ›</button>
         )}
       </div>
+      {/* Konfirmasi kirim: nilai checklist + daftar yang belum dicentang */}
+      {confirming && (
+        <div role="alertdialog" aria-labelledby="kirim-judul" className="anim-fade fixed inset-0 z-30 grid place-items-center bg-slate-900/50 p-4">
+          <div className="anim-pop w-full max-w-sm rounded-xl border border-slate-300 bg-white p-4 shadow-2xl">
+            <p id="kirim-judul" className="font-semibold text-slate-900">Kirim laporan sekarang?</p>
+            <p className="mt-1 text-sm text-slate-600">Nilai checklist hari ini: <b className={score >= 90 ? "text-emerald-600" : score >= 70 ? "text-amber-600" : "text-rose-600"}>{score}</b> ({doneCount}/{p.checklist.length})</p>
+            {unchecked.length > 0 && (
+              <div className="mt-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-800">
+                <p className="font-medium">{unchecked.length} checklist belum dicentang:</p>
+                <ul className="mt-1 list-disc pl-5 text-xs">{unchecked.map((c) => <li key={c.label}>{c.label}</li>)}</ul>
+              </div>
+            )}
+            <p className="mt-2 text-xs text-slate-500">Stok akhir shift akan menjadi stok sistem (stock opname). {reportLockNote}</p>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button type="button" className="btn-secondary" onClick={() => { setConfirming(false); if (unchecked.length) go(steps.findIndex((x) => x.key === "checklist")); }}>{unchecked.length ? "Lengkapi checklist" : "Batal"}</button>
+              <span onClickCapture={() => (sending.current = true)}>
+                <Submit className="btn-success" name="intent" value="send" pendingText="Mengirim…">Ya, kirim</Submit>
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
     </ActionForm>
     </div>
   );
 }
+
+const reportLockNote = "Setelah terkirim, anggota tidak bisa mengubah laporan.";
 
 
 
@@ -445,6 +519,12 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
   const [orderLine, setOrderLine] = useState("");
   const [bank, setBank] = useState(banks[0]?.id ?? "");
   const order = itemOrders.find((o) => o.lineId === orderLine);
+  // Pilih barang manual: bukan dari pesanan → kolom supplier tidak ditampilkan & dikosongkan
+  const pick = (id: string) => {
+    setItemId(id);
+    setOrderLine("");
+    setShop("");
+  };
   const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, ok: string) => {
     setBusy(true);
     try {
@@ -511,22 +591,54 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
           ))}
         </ul>
       )}
+      {orders.length > 0 && (
+        <div className="mb-3">
+          <p className="mb-1.5 text-xs font-medium text-slate-600">Rekomendasi: pesanan yang sedang dalam perjalanan</p>
+          <ul className="space-y-1.5">
+            {orders.map((o) => {
+              const on = orderLine === o.lineId;
+              return (
+                <li key={o.lineId}>
+                  <button
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => {
+                      if (on) return pick("");
+                      setItemId(o.itemId);
+                      setOrderLine(o.lineId);
+                      setShop(o.vendor);
+                      setQty(String(o.remaining).replace(".", ","));
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition ${on ? "border-brand-500 bg-brand-50 ring-2 ring-brand-100" : "border-slate-200 hover:bg-slate-50"}`}
+                  >
+                    <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[11px] ${on ? "border-brand-600 bg-brand-600 text-white" : "border-slate-300"}`}>{on ? "✓" : ""}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-medium text-slate-800">{o.itemName} · {fmt(o.remaining)} {o.unit}</span>
+                      <span className="block text-xs text-slate-500">{o.vendor}{o.cod ? " · COD" : ""}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="mt-1.5 text-xs text-slate-500">Atau pilih barang lain secara manual di bawah.</p>
+        </div>
+      )}
       <div className="grid grid-cols-12 gap-2 rounded-lg border border-slate-200 p-2 [&>*]:min-w-0">
-        <label className="col-span-12 sm:col-span-5"><span className="text-xs text-slate-500">Barang</span>
-          <select value={itemId} onChange={(e) => { setItemId(e.target.value); const o = orders.find((x) => x.itemId === e.target.value); setOrderLine(o?.lineId ?? ""); if (o) setQty(String(o.remaining).replace(".", ",")); }} className="input py-1.5">
+        <label className="col-span-12 sm:col-span-6"><span className="text-xs text-slate-500">Barang</span>
+          <select value={itemId} onChange={(e) => pick(e.target.value)} className="input py-1.5">
             <option value="">— pilih bahan —</option>
-            {materials.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>)}
+            {materials.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </label>
-        <label className="col-span-5 sm:col-span-2"><span className="text-xs text-slate-500">Jumlah{unit ? ` (${unit})` : ""}</span><input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" className="input py-1.5" placeholder="0" /></label>
-        <label className="col-span-7 sm:col-span-5"><span className="text-xs text-slate-500">Toko / supplier (opsional)</span><input value={shop} onChange={(e) => setShop(e.target.value)} className="input py-1.5" /></label>
-        {itemOrders.length > 0 && (
-          <label className="col-span-12 sm:col-span-7"><span className="text-xs text-slate-500">Dari pesanan yang dikirim?</span>
-            <select value={orderLine} onChange={(e) => setOrderLine(e.target.value)} className="input py-1.5">
-              <option value="">Bukan pesanan (beli langsung di toko)</option>
-              {itemOrders.map((o) => <option key={o.lineId} value={o.lineId}>{o.label}</option>)}
-            </select>
-          </label>
+        <label className={order ? "col-span-5 sm:col-span-3" : "col-span-12 sm:col-span-6"}><span className="text-xs text-slate-500">Jumlah</span>
+          <span className="relative block">
+            <input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" className={`input py-1.5 ${unit ? "pr-14" : ""}`} placeholder="0" />
+            {unit && <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-slate-800 opacity-25" aria-hidden>{unit}</span>}
+          </span>
+        </label>
+        {order && (
+          <label className="col-span-7 sm:col-span-3"><span className="text-xs text-slate-500">Supplier</span><input value={shop} readOnly tabIndex={-1} className="input bg-slate-100 py-1.5 dark:bg-slate-800" /></label>
         )}
         {order?.cod && (
           <label className="col-span-12 sm:col-span-5"><span className="text-xs text-slate-500">Bayar COD dari</span>

@@ -11,6 +11,8 @@ type Props = {
   className?: string;
   resetOnSuccess?: boolean;
   onSuccess?: () => void;
+  /** Dipanggil saat server menolak (pesan error tetap tampil di bawah form) */
+  onError?: (error: string) => void;
   confirm?: string;
   /** Pesan sukses tetap tampil (mis. API key yang hanya ditampilkan sekali) */
   persist?: boolean;
@@ -24,7 +26,7 @@ export const DONE_MS = 1400;
 type State = (ActionResult & { n: number }) | null;
 
 /** Form dengan state loading / error / sukses untuk server action */
-export function ActionForm({ action, children, className, resetOnSuccess, onSuccess, confirm, persist }: Props) {
+export function ActionForm({ action, children, className, resetOnSuccess, onSuccess, onError, confirm, persist }: Props) {
   // Toast dipicu langsung setelah respons server, sebelum form bisa hilang karena data ter-render ulang
   const [state, formAction] = useActionState(async (prev: State, fd: FormData): Promise<State> => {
     const r = await action(prev, fd);
@@ -38,8 +40,13 @@ export function ActionForm({ action, children, className, resetOnSuccess, onSucc
   const [done, setDone] = useState(false);
   // Tombol kirim yang ditekan terakhir (name=value), agar centang hanya muncul di tombol itu
   const by = useRef<string | null>(null);
+  // Callback terbaru disimpan di ref: efek di bawah hanya berjalan sekali per respons server
+  // (fungsi inline dari induk berubah tiap render dan tidak boleh memicu ulang onSuccess/onError)
+  const cb = useRef({ onSuccess, onError, resetOnSuccess, persist });
+  cb.current = { onSuccess, onError, resetOnSuccess, persist };
   useEffect(() => {
     if (!state) return;
+    const { onSuccess, onError, resetOnSuccess, persist } = cb.current;
     setVisible(true);
     if (state.ok) {
       if (resetOnSuccess) ref.current?.reset();
@@ -51,8 +58,9 @@ export function ActionForm({ action, children, className, resetOnSuccess, onSucc
     }
     // Gagal: pesan error digulir ke tengah layar agar terlihat (form panjang / di popup)
     setDone(false);
+    onError?.(state.error ?? "Gagal");
     if (msgRef.current) revealField(msgRef.current, false);
-  }, [state, resetOnSuccess, onSuccess, persist]);
+  }, [state]);
   return (
     <form
       ref={ref}

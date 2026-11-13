@@ -21,3 +21,9 @@ export function canSeeDivision(user: ScopeUser, divisionId: string) {
   const d = reportDivision(user);
   return d === null || d === divisionId;
 }
+
+/** Yang menindaklanjuti kendala laporan shift (dapat peringatan bila kendala belum selesai) */
+export const FOLLOW_UP_ROLES: Role[] = ["OWNER", "SUPERVISOR", "FINANCE"];
+export function canFollowUp(user: { role: Role }) {
+  return FOLLOW_UP_ROLES.includes(user.role);
+}

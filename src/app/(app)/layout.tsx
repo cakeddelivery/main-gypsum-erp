@@ -20,7 +20,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     ? await Promise.all([
         prisma.division.findMany({ where: { active: true, ...(scope ? { id: scope } : {}) }, orderBy: { code: "asc" }, select: { id: true, name: true, shiftCount: true } }),
         prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, select: { id: true, name: true, startTime: true, endTime: true } }),
-      ]).then(([divisions, shifts]) => ({ today: todayStr(), divisions, shifts }))
+      ]).then(([divisions, shifts]) => ({ today: todayStr(), divisions, shifts, auto: scope !== null }))
     : null;
   const [alerts, reads] = await Promise.all([alertsFor(user.can, user.role === "KAPTEN_DIVISI" ? user.divisionId : null), prisma.alertRead.findMany({ where: { userId: user.id } })]);
   // Dibaca = sudah dibuka/ditandai dan jumlahnya tidak bertambah sejak itu

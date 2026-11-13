@@ -8,6 +8,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { Toaster } from "./Toaster";
 import { ChoiceEnhancer } from "./ChoiceEnhancer";
 import { FormFeedback } from "./FormFeedback";
+import { Celebrate } from "./Celebrate";
 import { NavTracker } from "./FilterMemory";
 import { NavProgress } from "./NavProgress";
 import { LinkPending } from "./LinkPending";
@@ -39,6 +40,10 @@ export function Shell({ nav, bottomNav, user, env, children, alerts, quickReport
   const path = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [path]);
+  // Halaman baru selalu dibuka dari paling atas (judul & tombol kembali terlihat)
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
+  }, [path]);
   // Slot terakhir diisi tombol "Menu" bila menu prioritas kurang dari 5
   const showMenuSlot = bottomNav.length + (quickReport ? 1 : 0) < 5;
   const back = backTarget(path, nav);
@@ -122,6 +127,7 @@ export function Shell({ nav, bottomNav, user, env, children, alerts, quickReport
       <Toaster />
       <ChoiceEnhancer />
       <FormFeedback />
+      <Celebrate />
       <Suspense fallback={null}>
         <NavTracker />
       </Suspense>

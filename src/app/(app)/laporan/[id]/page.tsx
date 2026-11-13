@@ -13,7 +13,9 @@ import { divisionPendingReturns } from "@/lib/borongan";
 import { confirmReturnForReport } from "../actions";
 import Link from "next/link";
 import { Suspense } from "react";
-import { canSeeDivision } from "@/lib/reportScope";
+import { canFollowUp, canSeeDivision, reportDivision } from "@/lib/reportScope";
+import { ModalForm } from "@/components/ModalForm";
+import { saveFollowUp } from "../actions";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { DownloadJpg } from "@/components/DownloadJpg";
@@ -26,10 +28,10 @@ import { letterhead } from "@/lib/letterhead";
 
 export const metadata = { title: "Laporan Penutup Shift" };
 
-export default async function ReportDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ isi?: string; masuk?: string }> }) {
+export default async function ReportDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ isi?: string; masuk?: string; jpg?: string }> }) {
   const user = await requirePerm("report.view");
   const { id } = await params;
-  const { isi, masuk } = await searchParams;
+  const { isi, masuk, jpg } = await searchParams;
   const r = await prisma.shiftReport.findUnique({ where: { id }, include: { shift: true, division: true, sends: { orderBy: { sentAt: "desc" } } } });
   if (!r) notFound();
   // Karyawan hanya boleh membuka laporan divisinya sendiri (ditegakkan di server)
@@ -47,7 +49,9 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const editStock: StockCountRow[] = items.map((i) => ({ itemId: i.id, name: i.name, unit: i.unit, limit: Number(i.minStock), qty: saved.find((x) => x.itemId === i.id)?.qty ?? null }));
   const stock = saved;
   const work = r.work as WorkData;
-  const canEdit = user.can("report.create");
+  // Anggota divisi tidak bisa mengubah laporan yang sudah terkirim (Supervisor/Admin/Owner tetap bisa)
+  const locked = r.status !== "DRAFT" && reportDivision(user) !== null;
+  const canEdit = user.can("report.create") && !locked;
   const day = r.date.toISOString().slice(0, 10);
   const lh = await letterhead();
   const [bLines, flowOn, resultStatus, receipts, pendingReturns] = await Promise.all([
@@ -58,11 +62,13 @@ export default async function ReportDetail({ params, searchParams }: { params: P
     divisionPendingReturns(r.divisionId),
   ]);
   // Pesanan dalam pengiriman untuk bahan divisi ini (validasi barang datang lewat barang masuk)
+  // Rekomendasi barang masuk: pesanan bahan divisi yang sedang dalam perjalanan. Pesanan COD (bayar di tempat)
+  // hanya untuk yang berwenang Terima barang; yang sudah dibayar boleh dipilih semua yang mengisi laporan.
   const canReceive = user.can("stock.receive");
-  const [pend, bankRows] = canReceive ? await Promise.all([pendingDeliveries(prisma, items.map((i) => i.id)), prisma.bankAccount.findMany({ where: { active: true }, orderBy: { code: "asc" } })]) : [[], []];
-  const orders = pend.flatMap((p) => p.lines.filter((l) => items.some((i) => i.id === l.itemId) && Number(l.qty) - Number(l.qtyReceived) > 0.0005).map((l) => {
+  const [pend, bankRows] = canEdit ? await Promise.all([pendingDeliveries(prisma, items.map((i) => i.id)), prisma.bankAccount.findMany({ where: { active: true }, orderBy: { code: "asc" } })]) : [[], []];
+  const orders = pend.filter((p) => canReceive || !p.cod).flatMap((p) => p.lines.filter((l) => items.some((i) => i.id === l.itemId) && Number(l.qty) - Number(l.qtyReceived) > 0.0005).map((l) => {
     const remaining = Number(l.qty) - Number(l.qtyReceived);
-    return { lineId: l.id, itemId: l.itemId, remaining, cod: p.cod, label: `${p.number} · ${p.vendor} · sisa ${remaining.toLocaleString("id-ID")} ${l.item.unit}${p.cod ? " · COD" : ""}` };
+    return { lineId: l.id, itemId: l.itemId, remaining, cod: p.cod, vendor: p.vendor, itemName: l.item.name, unit: l.item.unit, label: `${p.number} · ${p.vendor} · sisa ${remaining.toLocaleString("id-ID")} ${l.item.unit}${p.cod ? " · COD" : ""}` };
   }));
   const banks = [...bankRows].sort((a, b) => (a.code === "KAS" ? -1 : b.code === "KAS" ? 1 : 0)).map((b) => ({ id: b.id, name: b.name }));
   const extraLines = [...bLines, ...(resultStatus ? resultLines(resultStatus) : [])];
@@ -124,7 +130,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                 )}
               </Modal>
             )}
-            {sent && <DownloadJpg targetId="report-preview" filename={fname} />}
+
           </>
         }
       />
@@ -154,6 +160,9 @@ export default async function ReportDetail({ params, searchParams }: { params: P
           )}
         </div>
       )}
+      {locked && isi === "1" && (
+        <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">✓ Laporan shift ini sudah terkirim, jadi tidak bisa diubah lagi. Bila ada yang salah, minta Supervisor/Admin mengubahnya.</p>
+      )}
       {!sent ? (
         <div className="card p-5 text-sm">
           <div className="flex flex-wrap items-center gap-2"><Badge tone="amber">Draf</Badge><span className="text-slate-500">Dibuat oleh {r.createdBy} · PIC {r.picName ?? r.createdBy}</span></div>
@@ -166,8 +175,36 @@ export default async function ReportDetail({ params, searchParams }: { params: P
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="flex flex-wrap items-center gap-2"><Badge tone={r.status === "TERKIRIM" ? "green" : "purple"}>{r.status === "TERKIRIM" ? "Terkirim" : "Direvisi"}</Badge><span className="text-xs text-slate-500">Dibuat oleh {r.createdBy}</span></div>
-          <div className="mx-auto max-w-3xl">
+          <Suspense fallback={null}><ClearQuery param="jpg" /></Suspense>
+          <div className="card mx-auto max-w-3xl p-5 text-sm">
+            <div className="flex flex-wrap items-center gap-2"><Badge tone={r.status === "TERKIRIM" ? "green" : "purple"}>{r.status === "TERKIRIM" ? "Terkirim" : "Direvisi"}</Badge><span className="text-slate-500">PIC {r.picName ?? r.createdBy}</span></div>
+            <ul className="mt-3 grid gap-1 text-slate-600 sm:grid-cols-3">
+              <li>Nilai checklist: <b>{checklist.length ? Math.round((checklist.filter((c) => (c.photo ? !!c.photoPath : c.done)).length / checklist.length) * 100) : 100}</b></li>
+              <li>Barang masuk: <b>{receipts.length}</b></li>
+              <li>Stok akhir: <b>{saved.filter((x) => x.qty != null).length}/{saved.length}</b></li>
+            </ul>
+            {r.complaints && (
+              <div className={`mt-3 rounded-lg p-3 ${r.followUpStatus === "SELESAI" ? "bg-slate-50" : "bg-rose-50"}`}>
+                <p className="font-medium text-slate-800">Kendala: <span className="font-normal">{r.complaints}</span></p>
+                <p className="mt-1 text-xs text-slate-600">Tindak lanjut: {r.followUp || "—"} · <b>{r.followUpStatus === "SELESAI" ? "Selesai" : r.followUpStatus === "PROSES" ? "Proses" : "Belum"}</b></p>
+                {canFollowUp(user) && (
+                  <Modal trigger="Tindak lanjuti" triggerClass="btn-secondary btn-sm mt-2" title="Tindak lanjut kendala" subtitle={`${r.division.name} · ${r.shift.name} · ${fmtDay(r.date)}`}>
+                    <ModalForm action={saveFollowUp} className="space-y-3">
+                      <input type="hidden" name="id" value={r.id} />
+                      <p className="rounded-lg bg-slate-50 p-2 text-sm">Kendala: {r.complaints}</p>
+                      <label className="block"><span className="label">Tindak lanjut</span><textarea name="followUp" defaultValue={r.followUp ?? ""} className="input" rows={3} required /></label>
+                      <label className="block"><span className="label">Status</span>
+                        <select name="followUpStatus" defaultValue={r.followUpStatus} className="input"><option value="BELUM">Belum</option><option value="PROSES">Proses</option><option value="SELESAI">Selesai</option></select>
+                      </label>
+                      <Submit>Simpan tindak lanjut</Submit>
+                    </ModalForm>
+                  </Modal>
+                )}
+              </div>
+            )}
+            <div className="mt-4"><DownloadJpg targetId="report-preview" filename={fname} autoOpen={jpg === "1"} label="🖼️ Lihat & unduh JPG" className="btn-primary" /></div>
+          </div>
+          <div className="hidden" aria-hidden>{/* Sumber gambar JPG; ditampilkan lewat popup pratinjau */}
             <ReportSheet
               lh={lh}
               id={r.id}
