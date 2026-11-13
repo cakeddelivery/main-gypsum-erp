@@ -10,7 +10,7 @@ import { isIosStandalone } from "./Pwa";
  * Dokumen disalin ke wadah tersembunyi selebar data-export-width (default 1000px) agar hasilnya selalu tata letak lebar,
  * versi terang, dan memuat semua baris tabel, juga saat dibuka dari HP.
  */
-export function DownloadJpg({ targetId, filename }: { targetId: string; filename: string }) {
+export function DownloadJpg({ targetId, filename, autoOpen, label = "⬇ Unduh JPG", className = "btn-secondary" }: { targetId: string; filename: string; /** Langsung buat & tampilkan pratinjau saat halaman dibuka (mis. setelah laporan terkirim) */ autoOpen?: boolean; label?: string; className?: string }) {
   const [busy, setBusy] = useState(false);
   const [url, setUrl] = useState<string | null>(null);
   const [canShare, setCanShare] = useState(false);
@@ -59,6 +59,16 @@ export function DownloadJpg({ targetId, filename }: { targetId: string; filename
     }
   };
 
+  // Pratinjau otomatis (sekali) setelah dokumen siap
+  const auto = useRef(false);
+  useEffect(() => {
+    if (!autoOpen || auto.current) return;
+    auto.current = true;
+    // Tidak dibatalkan saat parameter alamat dibersihkan; jeda agar selebrasi "terkirim" sempat terlihat
+    window.setTimeout(() => void render(), 1600);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpen]);
+
   const save = () => {
     if (!url) return;
     // Aplikasi terpasang di iPhone: simpan lewat menu Bagikan ("Simpan Gambar") agar tidak terjebak di layar gambar
@@ -76,8 +86,8 @@ export function DownloadJpg({ targetId, filename }: { targetId: string; filename
 
   return (
     <>
-      <button type="button" className="btn-secondary" disabled={busy} onClick={render}>
-        {busy ? "Membuat JPG…" : "⬇ Unduh JPG"}
+      <button type="button" className={className} disabled={busy} onClick={render}>
+        {busy ? "Membuat JPG…" : label}
       </button>
       <dialog
         ref={ref}

@@ -8,7 +8,7 @@ import { action, str, optStr } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { dateOnly, fmtDay } from "@/lib/time";
 import { assertPerm, ForbiddenError } from "@/lib/auth";
-import { canSeeDivision } from "@/lib/reportScope";
+import { canSeeDivision, canFollowUp, reportDivision } from "@/lib/reportScope";
 import { sendTelegram, telegramConfigured, esc } from "@/lib/telegram";
 import { STAGE_LABEL } from "@/lib/stock";
 import { applyShiftStockCount } from "@/lib/shiftReportStock";
@@ -75,6 +75,13 @@ async function guardReport(id: string, user: User) {
   return r;
 }
 
+/** Anggota divisi tidak boleh mengubah laporan yang sudah terkirim (Supervisor/Admin/Owner boleh) */
+async function guardEditable(id: string, user: User) {
+  const r = await guardReport(id, user);
+  if (r.status !== "DRAFT" && reportDivision(user) !== null) throw new Error("Laporan yang sudah terkirim hanya bisa diubah Supervisor/Admin");
+  return r;
+}
+
 const num = (s: string) => {
   const t = s.replace(/\./g, "").replace(/,/g, ".");
   if (!t) return null;
@@ -87,7 +94,7 @@ const num = (s: string) => {
 async function saveReportData(fd: FormData, user: User) {
   {
     const id = str(fd, "id");
-    const r = await guardReport(id, user);
+    const r = await guardEditable(id, user);
     const checklist = toEntries(r.checklist).map((c, i) => ({ ...c, done: c.photo ? !!c.photoPath : fd.get(`check_${i}`) === "on" }));
     const template = r.division.reportTemplate;
     const get = (k: string) => (typeof fd.get(k) === "string" ? (fd.get(k) as string) : null);
@@ -103,8 +110,7 @@ async function saveReportData(fd: FormData, user: User) {
         stockCount: stock,
         picName: user.username,
         complaints: optStr(fd, "complaints"),
-        followUp: optStr(fd, "followUp"),
-        followUpStatus: str(fd, "followUpStatus") || "BELUM",
+        // Tindak lanjut diisi Supervisor/Finance/Owner lewat tombol sendiri (saveFollowUp), bukan di form laporan
         status: r.status === "TERKIRIM" ? "DIREVISI" : r.status,
       },
     });
@@ -174,8 +180,11 @@ export const sendReport = action("report.create", async (fd, user) => sendReport
 /** Kirim laporan: stok akhir → opname, hasil kerja → stok, pesan Telegram + JPG, riwayat pengiriman */
 async function sendReportData(id: string, user: User): Promise<string> {
   {
-    await guardReport(id, user);
+    await guardEditable(id, user);
     const r = await prisma.shiftReport.findUniqueOrThrow({ where: { id }, include: { shift: true, division: true } });
+    // Checklist wajib foto harus lengkap sebelum laporan bisa dikirim
+    const noPhoto = toEntries(r.checklist).filter((c) => c.photo && !c.photoPath);
+    if (noPhoto.length) throw new Error(`Lampirkan foto dulu: ${noPhoto.map((c) => c.label).join(", ")}`);
     // Stok akhir shift = stock opname bahan baku divisi (per jam selesai shift). Diterapkan dulu: bila gagal
     // (mis. periode sudah ditutup), laporan tidak dikirim agar pesan dan stok tidak berbeda.
     const stockRes = await applyShiftStockCount(id, user);
@@ -257,7 +266,7 @@ export async function addReceipt(fd: FormData): Promise<{ ok: boolean; error?: s
   try {
     const user = await assertPerm("report.create");
     const id = str(fd, "id");
-    await guardReport(id, user);
+    await guardEditable(id, user);
     const qty = num(str(fd, "qty"));
     if (qty == null || qty <= 0) throw new Error("Isi jumlah barang masuk");
     let photoPath: string | null = null;
@@ -269,7 +278,12 @@ export async function addReceipt(fd: FormData): Promise<{ ok: boolean; error?: s
     }
     const purchaseLineId = optStr(fd, "purchaseLineId");
     // Menautkan ke pesanan = validasi barang datang: khusus yang berwenang Terima barang (Supervisor/Kapten)
-    if (purchaseLineId && !user.can("stock.receive")) throw new ForbiddenError();
+    // Pesanan yang sudah dibayar (bukan COD) boleh divalidasi anggota yang mencatat barang datang;
+    // pesanan COD (bayar di tempat dari rekening) tetap khusus yang berwenang Terima barang
+    if (purchaseLineId && !user.can("stock.receive")) {
+      const line = await prisma.purchaseLine.findUnique({ where: { id: purchaseLineId }, include: { purchase: { select: { cod: true } } } });
+      if (!line || line.purchase.cod) throw new ForbiddenError();
+    }
     await addShiftReceipt(id, { itemId: str(fd, "itemId"), qty, supplierName: optStr(fd, "supplierName"), photoPath, photoMime, purchaseLineId, bankAccountId: optStr(fd, "bankAccountId") }, user);
     revalidatePath(`/laporan/${id}`);
     return { ok: true };
@@ -303,4 +317,20 @@ export const confirmReturnForReport = action(
     return "Kiriman diterima, stok sudah masuk gudang";
   },
   ["/laporan", "/borongan", "/stok"],
+);
+
+/** Tindak lanjut kendala laporan shift (Supervisor/Finance/Owner) */
+export const saveFollowUp = action(
+  "report.view",
+  async (fd, user) => {
+    if (!canFollowUp(user)) throw new ForbiddenError();
+    const id = str(fd, "id");
+    await guardReport(id, user);
+    const status = str(fd, "followUpStatus");
+    if (!["BELUM", "PROSES", "SELESAI"].includes(status)) throw new Error("Status tidak valid");
+    await prisma.shiftReport.update({ where: { id }, data: { followUp: optStr(fd, "followUp"), followUpStatus: status } });
+    await audit(user, "LAPORAN_TINDAK_LANJUT", "ShiftReport", id, { status });
+    return "Tindak lanjut tersimpan";
+  },
+  ["/laporan", "/"],
 );

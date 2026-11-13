@@ -92,9 +92,12 @@ input[type="file"]::file-selector-button { @apply mr-3 min-h-[2.5rem] cursor-poi
 }
 
 /* ===== Popup (Modal, pratinjau JPG, WD): hanya isi yang menggulir, judul & tombol tutup tetap di atas ===== */
-dialog.modal { max-height: calc(100vh - 1.5rem); overflow: hidden; overscroll-behavior: contain; }
+/* overflow visible: panel dropdown (position fixed) di dalam popup tidak terpotong tepi popup (iPhone/Safari).
+   Tinggi tetap dibatasi .modal-shell, dan hanya .modal-body yang menggulir. */
+dialog.modal { max-height: calc(100vh - 1.5rem); overflow: visible; overscroll-behavior: contain; }
 @supports (height: 100dvh) { dialog.modal { max-height: calc(100dvh - 1.5rem); } }
-.modal-shell { position: relative; display: flex; flex-direction: column; max-height: calc(100vh - 1.5rem); }
+.modal-shell { position: relative; display: flex; flex-direction: column; max-height: calc(100vh - 1.5rem); border-radius: inherit; }
+.modal-head { border-top-left-radius: inherit; border-top-right-radius: inherit; }
 @supports (height: 100dvh) { .modal-shell { max-height: calc(100dvh - 1.5rem); } }
 .modal-head { @apply flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 py-2 pl-5 pr-2; }
 .modal-x { @apply grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-600 transition hover:bg-slate-100; }
@@ -112,7 +115,7 @@ dialog.modal.modal-full .modal-body > * > form { flex: 1 0 auto; display: flex; 
 dialog.modal.modal-full .modal-foot { margin-top: auto; }
 /* Bilah tombol yang selalu terlihat di bawah popup (di dalam area gulir) */
 .modal-foot { @apply sticky bottom-0 z-10 -mx-5 -mb-4 mt-4 flex items-center gap-2 border-t border-slate-200 bg-white px-5 py-3; padding-bottom: calc(0.75rem + env(safe-area-inset-bottom)); }
-.modal-body { position: relative; min-height: 0; flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.modal-body { position: relative; min-height: 0; flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
 
 /* HP: saat mengetik di halaman, navigasi bawah disembunyikan agar tidak menutupi kolom di atas keyboard */
 @media (max-width: 1023px) {
@@ -297,6 +300,12 @@ dialog.modal[data-closing]::backdrop { animation: fade-out 0.16s ease-in forward
 .nav-fab:focus-visible { outline: 3px solid theme("colors.brand.300"); outline-offset: 2px; }
 @keyframes fab-in { from { opacity: 0; transform: translateY(12px) scale(0.6); } }
 
+/* Selebrasi (Celebrate): kartu muncul memantul, lalu memudar */
+.celebrate-card { animation: celebrate-pop 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.4); }
+.celebrate-check { animation: celebrate-pop 0.5s cubic-bezier(0.2, 0.9, 0.3, 1.6) 0.1s backwards; }
+.celebrate-out { animation: fade-out 0.35s ease-in forwards; }
+@keyframes celebrate-pop { from { opacity: 0; transform: scale(0.6); } }
+
 /* Popup yang "keluar" dari tombolnya (tombol + Laporan di navigasi bawah) */
 dialog.modal[data-grow][open] { animation: modal-grow 0.32s cubic-bezier(0.2, 0.9, 0.25, 1.08); }
 dialog.modal[data-grow][data-closing] { animation: modal-shrink 0.2s ease-in forwards; }
@@ -350,7 +359,7 @@ button.is-done.btn-secondary { @apply border-emerald-300 text-emerald-700; }
 }
 @media (prefers-reduced-motion: reduce) {
   .page-enter, dialog.modal[open], dialog.modal[open]::backdrop, dialog.modal[data-grow][open], dialog.modal[data-grow][data-closing], .nav-fab, dialog.modal[data-closing], dialog.modal[data-closing]::backdrop,
-  .anim-fade, .anim-pop, .anim-drawer, .loading-skeleton, .choice-panel { animation: none !important; }
+  .anim-fade, .anim-pop, .anim-drawer, .loading-skeleton, .choice-panel, .celebrate-card, .celebrate-check { animation: none !important; }
   .nav-progress[data-state="loading"] { animation-duration: 0.01s; }
 }
 /* Pemutar di tautan menu/tab yang sedang dimuat (LinkPending); muncul setelah jeda singkat agar tidak berkedip */

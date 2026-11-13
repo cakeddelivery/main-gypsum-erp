@@ -22,12 +22,12 @@ const isDate = (s?: string) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
  * Daftar laporan penutup shift. Form isian tidak pernah terbuka di halaman:
  * "+ Kirim laporan" membuka popup pilih tanggal/divisi/shift, lalu form lengkap terbuka di popup layar penuh.
  */
-export default async function LaporanPage({ searchParams }: { searchParams: Promise<{ dari?: string; sampai?: string; divisi?: string; status?: string }> }) {
+export default async function LaporanPage({ searchParams }: { searchParams: Promise<{ dari?: string; sampai?: string; divisi?: string; status?: string; kendala?: string }> }) {
   const user = await requirePerm("report.view");
   const q = await searchParams;
   const today = todayStr();
   const to = isDate(q.sampai) ? q.sampai! : today;
-  const from = isDate(q.dari) ? q.dari! : addDays(to, -6);
+  const from = isDate(q.dari) ? q.dari! : addDays(to, q.kendala ? -14 : -6);
   const fixedDivision = reportDivision(user);
   const divFilter = fixedDivision ?? (q.divisi || undefined);
   const statusFilter = q.status && STATUS[q.status] ? q.status : undefined;
@@ -35,7 +35,7 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
     prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
     prisma.division.findMany({ where: { active: true, ...(fixedDivision ? { id: fixedDivision } : {}) }, orderBy: { code: "asc" } }),
     prisma.shiftReport.findMany({
-      where: { date: { gte: dateOnly(from), lte: dateOnly(to) }, ...(divFilter ? { divisionId: divFilter } : {}), ...(statusFilter ? { status: statusFilter as never } : {}) },
+      where: { date: { gte: dateOnly(from), lte: dateOnly(to) }, ...(divFilter ? { divisionId: divFilter } : {}), ...(statusFilter ? { status: statusFilter as never } : {}), ...(q.kendala ? { complaints: { not: null }, NOT: [{ complaints: "" }, { followUpStatus: "SELESAI" }] } : {}) },
       include: { shift: true, division: true },
       orderBy: [{ date: "desc" }, { division: { code: "asc" } }, { shift: { code: "asc" } }],
       take: 300,
@@ -50,7 +50,7 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
   const sentToday = todayReports.filter((r) => r.status !== "DRAFT").length;
   const canCreate = user.can("report.create") && divisions.length > 0;
 
-  const startData = { today, divisions: divisions.map((d) => ({ id: d.id, name: d.name, shiftCount: d.shiftCount })), shifts: shifts.map((s) => ({ id: s.id, name: s.name, startTime: s.startTime, endTime: s.endTime })) };
+  const startData = { auto: fixedDivision !== null, today, divisions: divisions.map((d) => ({ id: d.id, name: d.name, shiftCount: d.shiftCount })), shifts: shifts.map((s) => ({ id: s.id, name: s.name, startTime: s.startTime, endTime: s.endTime })) };
   const newForm = canCreate && (
     <>
       <Modal trigger="+ Kirim laporan" title="Kirim laporan shift"><ReportStartForm data={startData} /></Modal>
@@ -90,7 +90,9 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
             {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
           </select>
         </Field>
+        {q.kendala && <input type="hidden" name="kendala" value="1" />}
       </FilterBar>
+      {q.kendala && <p className="mb-3 text-sm text-rose-700">Menampilkan laporan dengan kendala yang belum selesai ditindaklanjuti. <a href="/laporan" className="link">Tampilkan semua</a></p>}
       {rows.length === 0 ? (
         <Empty title="Belum ada laporan di periode ini" hint={canCreate ? "Tekan + Kirim laporan untuk mengisi laporan penutup shift." : undefined} />
       ) : (
@@ -109,7 +111,7 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
                   return (
                     <tr key={r.id}>
                       <td>{fmtDate(r.date)}</td>
-                      <td><Badge tone={st.tone}>{st.label}</Badge></td>
+                      <td><Badge tone={st.tone}>{st.label}</Badge>{r.complaints && r.followUpStatus !== "SELESAI" && <span className="mt-1 block"><Badge tone="red">Kendala</Badge></span>}</td>
                       <td>{r.division.name}<span className="block text-xs text-slate-500">{r.shift.name}</span></td>
                       <td>{r.picName ?? r.createdBy}</td>
                       <td className="text-xs text-slate-500">{cl.filter(isDone).length}/{cl.length}{low > 0 && <span className="block text-rose-600">{low} bahan perlu order</span>}</td>
