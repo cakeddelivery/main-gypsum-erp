@@ -103,7 +103,7 @@ export function ItemFields({ i, suppliers, divisions, categories: ITEM_CATEGORIE
 
       {!i && <Field label={`Stok awal (${unitLabel(unit)})`}><input name="openingQty" inputMode="decimal" className="input" defaultValue="0" /></Field>}
       <Field label="Batas minimum stok (reorder)" hint="Muncul di daftar reorder bila stok ≤ angka ini"><input name="minStock" defaultValue={i ? i.minStock : 10} inputMode="decimal" className="input" /></Field>
-      {raw && <Field label="Divisi pemakai" hint="Divisi yang memakai & menghitung stoknya"><select name="divisionId" defaultValue={i?.divisionId ?? ""} className="input"><option value="">—</option>{divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>}
+      {<Field label={raw ? "Divisi pemakai" : "Divisi penanggung jawab"} hint={raw ? "Divisi yang memakai & menghitung stoknya" : "Divisi yang menghitung stok akhirnya di laporan shift"}><select name="divisionId" defaultValue={i?.divisionId ?? ""} className="input"><option value="">—</option>{divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>}
       {raw && <Field label={`Jumlah order biasa (${unitLabel(unit)})`} hint="Untuk permintaan stok otomatis: kekurangan s/d batas + jumlah ini"><input name="orderQty" defaultValue={i ? i.orderQty : 0} inputMode="decimal" className="input" /></Field>}
       <Field label="Catatan" className="col-span-2"><input name="note" defaultValue={i?.note ?? ""} className="input" placeholder="Opsional (cth: kemasan sak 40 kg)" /></Field>
       {i && <label className="col-span-2 flex items-center gap-2 text-sm"><input type="checkbox" name="active" defaultChecked={i.active} /> Aktif</label>}

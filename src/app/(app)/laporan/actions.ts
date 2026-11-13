@@ -17,7 +17,7 @@ import { sendShiftReportJpg } from "@/lib/shiftReportJpg";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { saveProof } from "@/lib/storage";
 import { addShiftReceipt, removeShiftReceipt } from "@/lib/shiftReceipt";
-import { RESULT_KEY, applyResultCount, parseResultCount, resultCountStatus, resultLines } from "@/lib/shiftResultCount";
+import { RESULT_KEY, applyResultCount, parseResultCount, resultCountStatus, resultItems, resultLines } from "@/lib/shiftResultCount";
 import { reportCatalogs } from "@/lib/productFamily";
 import { isDone, isTemplate, needsOrder, parseWork, summaryOf, targetLine, targetOf, toEntries, workLines, type ChecklistEntry, type StockCountRow } from "@/lib/shiftReport";
 
@@ -99,7 +99,7 @@ async function saveReportData(fd: FormData, user: User) {
     const template = r.division.reportTemplate;
     const get = (k: string) => (typeof fd.get(k) === "string" ? (fd.get(k) as string) : null);
     const work: Record<string, unknown> = isTemplate(template) ? parseWork(template, get, await reportCatalogs(template)) : {};
-    const rc = parseResultCount(isTemplate(template) ? template : null, get);
+    const rc = parseResultCount((await resultItems(r.divisionId)).map((i) => i.id), get);
     if (rc) work[RESULT_KEY] = rc;
     const stock = (await stockRows(r.divisionId, r.stockCount as StockCountRow[])).map((row) => (fd.has(`s.${row.itemId}`) ? { ...row, qty: num(str(fd, `s.${row.itemId}`)) } : row));
     await prisma.shiftReport.update({
@@ -192,7 +192,7 @@ async function sendReportData(id: string, user: User): Promise<string> {
     await autoRequestsFromReport(id, user).catch((e) => console.error("Permintaan stok otomatis gagal:", e));
     // Hasil kerja → stok setengah jadi / barang jadi (bila diaktifkan Owner)
     const flowRes = await postShiftWork(id, user);
-    // Stok akhir hasil (patung kering / produk jadi per karakter): selisih ditandai; disamakan bila sakelar menyala
+    // Stok akhir setengah jadi / produk jadi milik divisi (sesudah hasil kerja diposting): selisih ditandai; disamakan bila sakelar menyala
     const resultRes = await applyResultCount(id, user);
     const resultStatus = await resultCountStatus(id);
     const receipts = await prisma.shiftReceipt.findMany({ where: { reportId: id }, include: { item: true }, orderBy: { number: "asc" } });
