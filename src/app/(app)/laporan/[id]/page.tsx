@@ -12,10 +12,12 @@ import { VARIANTS } from "@/lib/shiftReport";
 import { divisionPendingReturns } from "@/lib/borongan";
 import { confirmReturnForReport } from "../actions";
 import Link from "next/link";
+import { Suspense } from "react";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { DownloadJpg } from "@/components/DownloadJpg";
-import { sendReport } from "../actions";
+import { Modal } from "@/components/Modal";
+import { ClearQuery } from "@/components/ClearQuery";
 import { ReportForm } from "./ReportForm";
 import { ReportSheet } from "./ReportSheet";
 import { reportCatalogs } from "@/lib/productFamily";
@@ -23,9 +25,10 @@ import { letterhead } from "@/lib/letterhead";
 
 export const metadata = { title: "Laporan Penutup Shift" };
 
-export default async function ReportDetail({ params }: { params: Promise<{ id: string }> }) {
+export default async function ReportDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ isi?: string }> }) {
   const user = await requirePerm("report.view");
   const { id } = await params;
+  const { isi } = await searchParams;
   const r = await prisma.shiftReport.findUnique({ where: { id }, include: { shift: true, division: true, sends: { orderBy: { sentAt: "desc" } } } });
   if (!r) notFound();
   const ownOnly = user.role === "KAPTEN_DIVISI" || user.role === "OPERATOR";
@@ -75,59 +78,70 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
         subtitle={`${r.shift.name} · ${fmtDay(r.date)}`}
         actions={
           <>
+            {canEdit && (
+              <Modal
+                full
+                defaultOpen={isi === "1"}
+                trigger={r.status === "DRAFT" ? "✏️ Lanjutkan isi laporan" : "✏️ Ubah laporan"}
+                title={`Laporan ${r.division.name}`}
+                subtitle={`${r.shift.name} · ${fmtDay(r.date)}`}
+              >
+                <ReportForm
+                  id={r.id}
+                  template={template}
+                  picName={r.picName ?? r.createdBy}
+                  work={work}
+                  checklist={checklist}
+                  stock={editStock}
+                  people={people.map((p) => p.name)}
+                  complaints={r.complaints ?? ""}
+                  followUp={r.followUp ?? ""}
+                  followUpStatus={r.followUpStatus}
+                  receipts={receipts.map((x) => ({ id: x.id, number: x.number, itemName: x.item.name, unit: x.item.unit, qty: Number(x.qty), supplierName: x.supplierName, hasPhoto: !!x.photoPath, linked: !!x.purchaseId }))}
+                  materials={items.map((i) => ({ id: i.id, name: i.name, unit: i.unit }))}
+                  orders={orders}
+                  banks={banks}
+                  applied={r.stockApplied}
+                  resultTitle={resultDef?.title ?? null}
+                  catalogs={catalogs}
+                  resultCount={resultDef ? VARIANTS.map((v) => ({ key: v, label: `${resultDef.label} ${v}`, unit: resultDef.unit, qty: rv[v] ?? null })) : []}
+                  flow={flowOn && template ? flow : null}
+                  sent={r.workPostedVersion > 0 || r.status !== "DRAFT"}
+                />
+              </Modal>
+            )}
             <DownloadJpg targetId="report-preview" filename={fname} />
           </>
         }
       />
+      {canEdit && (
+        <div className="space-y-4">
+          <Suspense fallback={null}><ClearQuery param="isi" /></Suspense>
+          {template === "ASSEMBLING" && (
+            <div className="card p-4 text-sm">
+              <h3 className="mb-1 font-semibold text-slate-800">Setoran borongan hari ini</h3>
+              {bLines.length ? <ul className="text-slate-600">{bLines.slice(1).map((l) => <li key={l}>{l}</li>)}</ul> : <p className="text-slate-500">Belum ada setoran tercatat untuk tanggal ini.</p>}
+              {user.can("borongan.view") && <Link href="/borongan" className="btn-secondary btn-sm mt-2">Catat setoran / kirim bahan di menu Borongan</Link>}
+            </div>
+          )}
+          {pendingReturns.length > 0 && (
+            <div className="card p-4 text-sm">
+              <h3 className="mb-1 font-semibold text-slate-800">Kiriman hasil borongan menunggu diterima</h3>
+              <p className="mb-2 text-xs text-slate-500">Hitung barangnya, lalu tekan Terima SEBELUM menghitung stok akhir agar tidak dobel.</p>
+              <ul className="divide-y divide-slate-100">
+                {pendingReturns.map((h) => (
+                  <li key={h.id} className="flex flex-wrap items-start justify-between gap-2 py-2">
+                    <div><b>{h.point.name}</b> · {fmtDay(h.date)}{h.driver && ` · driver ${h.driver.name}`}<ul className="text-xs text-slate-600">{h.lines.map((l) => <li key={l.id}>{l.item.name}: {Number(l.qty).toLocaleString("id-ID")} {l.item.unit}</li>)}</ul></div>
+                    <ActionForm action={confirmReturnForReport} confirm="Barang sudah diterima lengkap?"><input type="hidden" name="id" value={h.id} /><input type="hidden" name="reportId" value={r.id} /><Submit className="btn-success btn-sm" pendingText="…">Terima</Submit></ActionForm>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
       <div className="grid gap-5 lg:grid-cols-5">
-        {canEdit && (
-          <div className="space-y-4 lg:order-1 lg:col-span-3">
-                <>
-                  {template === "ASSEMBLING" && (
-                    <div className="card p-4 text-sm">
-                      <h3 className="mb-1 font-semibold text-slate-800">Setoran borongan hari ini</h3>
-                      {bLines.length ? <ul className="text-slate-600">{bLines.slice(1).map((l) => <li key={l}>{l}</li>)}</ul> : <p className="text-slate-500">Belum ada setoran tercatat untuk tanggal ini.</p>}
-                      {user.can("borongan.view") && <Link href="/borongan" className="btn-secondary btn-sm mt-2">Catat setoran / kirim bahan di menu Borongan</Link>}
-                    </div>
-                  )}
-                  {pendingReturns.length > 0 && (
-                    <div className="card p-4 text-sm">
-                      <h3 className="mb-1 font-semibold text-slate-800">Kiriman hasil borongan menunggu diterima</h3>
-                      <p className="mb-2 text-xs text-slate-500">Hitung barangnya, lalu tekan Terima SEBELUM menghitung stok akhir agar tidak dobel.</p>
-                      <ul className="divide-y divide-slate-100">
-                        {pendingReturns.map((h) => (
-                          <li key={h.id} className="flex flex-wrap items-start justify-between gap-2 py-2">
-                            <div><b>{h.point.name}</b> · {fmtDay(h.date)}{h.driver && ` · driver ${h.driver.name}`}<ul className="text-xs text-slate-600">{h.lines.map((l) => <li key={l.id}>{l.item.name}: {Number(l.qty).toLocaleString("id-ID")} {l.item.unit}</li>)}</ul></div>
-                            <ActionForm action={confirmReturnForReport} confirm="Barang sudah diterima lengkap?"><input type="hidden" name="id" value={h.id} /><input type="hidden" name="reportId" value={r.id} /><Submit className="btn-success btn-sm" pendingText="…">Terima</Submit></ActionForm>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </>
-            <ReportForm
-              id={r.id}
-              template={template}
-              picName={r.picName ?? r.createdBy}
-              work={work}
-              checklist={checklist}
-              stock={editStock}
-              people={people.map((p) => p.name)}
-              complaints={r.complaints ?? ""}
-              followUp={r.followUp ?? ""}
-              followUpStatus={r.followUpStatus}
-              receipts={receipts.map((x) => ({ id: x.id, number: x.number, itemName: x.item.name, unit: x.item.unit, qty: Number(x.qty), supplierName: x.supplierName, hasPhoto: !!x.photoPath, linked: !!x.purchaseId }))}
-              materials={items.map((i) => ({ id: i.id, name: i.name, unit: i.unit }))}
-              orders={orders}
-              banks={banks}
-              applied={r.stockApplied}
-              resultTitle={resultDef?.title ?? null}
-              catalogs={catalogs}
-              resultCount={resultDef ? VARIANTS.map((v) => ({ key: v, label: `${resultDef.label} ${v}`, unit: resultDef.unit, qty: rv[v] ?? null })) : []}
-            />
-          </div>
-        )}
-        <div className={`space-y-5 ${canEdit ? "lg:order-2 lg:col-span-2" : "lg:col-span-3"}`}>
+        <div className="space-y-5 lg:col-span-3">
           <ReportSheet
             lh={lh}
             id={r.id}
@@ -147,22 +161,9 @@ export default async function ReportDetail({ params }: { params: Promise<{ id: s
             target={r.division.targetPerShift}
             legacyLines={entries.map((e) => `${STAGE_LABEL[e.stage]}: ${e._sum.qtyGood ?? 0} pcs (reject ${e._sum.qtyReject ?? 0})`)}
           />
-          <div className="flex items-center gap-2"><Badge tone={r.status === "TERKIRIM" ? "green" : r.status === "DIREVISI" ? "purple" : "amber"}>{r.status}</Badge><span className="text-xs text-slate-500">Dibuat oleh {r.createdBy}</span></div>
-          {canEdit && (
-            <Card title="Kirim laporan">
-              <ActionForm action={sendReport} confirm="Kirim laporan sekarang? Stok akhir shift akan menjadi stok sistem (stock opname).">
-                <input type="hidden" name="id" value={r.id} />
-                <p className="mb-3 text-sm text-slate-500">Simpan dulu isian laporan. Saat dikirim, laporan diteruskan ke penerima rekap di Telegram (bila bot aktif) dan stok akhir shift dicatat sebagai stock opname bahan baku divisi.</p>
-                {flowOn && template && (
-                  <div className="mb-3 rounded-lg bg-slate-50 p-3 text-sm">
-                    <div className="mb-1 font-medium text-slate-700">Hasil kerja masuk stok saat dikirim{r.workPostedVersion > 0 ? " (posting lama dibatalkan dulu)" : ""}:</div>
-                    {flow.length ? <ul className="space-y-0.5 text-slate-600">{flow.map((l) => <li key={l}>{l}</li>)}</ul> : <p className="text-slate-500">Tidak ada (hasil kerja kosong)</p>}
-                  </div>
-                )}
-                <Submit className="btn-success w-full sm:w-auto" pendingText="Mengirim…">Kirim laporan</Submit>
-              </ActionForm>
-            </Card>
-          )}
+        </div>
+        <div className="space-y-5 lg:col-span-2">
+          <div className="flex items-center gap-2"><Badge tone={r.status === "TERKIRIM" ? "green" : r.status === "DIREVISI" ? "purple" : "amber"}>{r.status === "DRAFT" ? "Draf" : r.status === "TERKIRIM" ? "Terkirim" : "Direvisi"}</Badge><span className="text-xs text-slate-500">Dibuat oleh {r.createdBy}</span></div>
           <Card title="Riwayat pengiriman">
             {r.sends.length === 0 ? <p className="text-sm text-slate-400">Belum pernah dikirim</p> : (
               <ul className="space-y-2 text-sm">

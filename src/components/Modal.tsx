@@ -11,7 +11,17 @@ export const CLOSE_MS = 160;
  * Popup form. Bila isian sudah diubah, menutup (✕, Esc, ketuk di luar popup) meminta konfirmasi dulu
  * agar isian tidak hilang tanpa sengaja. Setelah tersimpan, popup ditutup tanpa konfirmasi.
  */
-export function Modal({ trigger, title, children, triggerClass = "btn-primary", wide, defaultOpen = false }: { trigger: React.ReactNode; title: string; children: React.ReactNode; triggerClass?: string; wide?: boolean; defaultOpen?: boolean }) {
+export function Modal({ trigger, title, children, triggerClass = "btn-primary", wide, full, defaultOpen = false, subtitle }: {
+  trigger: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+  triggerClass?: string;
+  wide?: boolean;
+  /** Form panjang: layar penuh di HP, lebar besar di komputer */
+  full?: boolean;
+  defaultOpen?: boolean;
+  subtitle?: React.ReactNode;
+}) {
   const [open, setOpen] = useState(defaultOpen);
   const [dirty, setDirty] = useState(false);
   const [asking, setAsking] = useState(false);
@@ -50,14 +60,17 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
         onClick={(e) => {
           if (e.target === e.currentTarget) requestClose();
         }}
-        className={`modal w-[calc(100%-1.5rem)] ${wide ? "max-w-3xl" : "max-w-lg"} rounded-2xl bg-white p-0 text-slate-800 shadow-xl backdrop:bg-slate-900/50`}
+        className={`modal ${full ? "modal-full max-w-4xl" : wide ? "max-w-3xl" : "max-w-lg"} w-[calc(100%-1.5rem)] rounded-2xl bg-white p-0 text-slate-800 shadow-xl backdrop:bg-slate-900/50`}
         aria-label={title}
       >
         {open && (
           <Ctx.Provider value={forceClose}>
             <div className="modal-shell" onInput={() => setDirty(true)} onChange={() => setDirty(true)}>
               <div className="modal-head">
-                <h2 className="min-w-0 font-semibold capitalize text-slate-900">{title}</h2>
+                <div className="min-w-0">
+                  <h2 className="font-semibold capitalize text-slate-900">{title}</h2>
+                  {subtitle && <p className="truncate text-xs text-slate-500">{subtitle}</p>}
+                </div>
                 <button type="button" aria-label="Tutup" className="modal-x" onClick={requestClose}>
                   ✕
                 </button>

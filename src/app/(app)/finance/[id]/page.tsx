@@ -148,27 +148,31 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
                   </p>
                   {fixTo && <p className="mb-2 text-xs text-amber-700">Rekening tujuan {toBank?.name} tidak bisa menerima transfer dari bank. Mungkin maksudnya {fixTo.name}: ubah rekening tujuan dulu.</p>}
                   {user.can("finance.create") && (
-                    <ActionForm action={setReserveTx} className="space-y-2">
+                    <Modal trigger="Pilih dana sisihan" triggerClass="btn-secondary btn-sm" title={`Dana sisihan · ${t.number}`}>
+                    <ModalForm action={setReserveTx} className="space-y-3">
                       <input type="hidden" name="id" value={t.id} />
                       <select name="pick" className="input" defaultValue={link && "skip" in link ? "skip" : "auto"}>
                         <option value="auto">Otomatis (dicocokkan saat dibukukan)</option>
                         {!fixTo && rsv?.options.map((o, k) => <option key={k} value={String(k)}>{o.label} ({o.dates.map((d) => d.slice(8)).join(",")})</option>)}
                         <option value="skip">Bukan sisihan (transfer biasa)</option>
                       </select>
-                      <Submit className="btn-secondary btn-sm">Simpan pilihan</Submit>
-                    </ActionForm>
+                      <Submit>Simpan pilihan</Submit>
+                    </ModalForm>
+                    </Modal>
                   )}
                 </>
               ) : rsv ? (
                 <>
                   <p className="mb-2 text-sm">Transfer ini cocok dengan dana sisihan tapi belum tercatat di sana{fixTo ? <> (rekening tujuan kemungkinan <b>{fixTo.name}</b>, bukan {toBank?.name})</> : ""}.</p>
-                  <ActionForm action={linkReserveTx} className="space-y-2" confirm="Sinkronkan transfer ini ke dana sisihan? Jurnalnya dibukukan ulang.">
+                  <Modal trigger="Sinkronkan ke dana sisihan" triggerClass="btn-secondary btn-sm" title={`Sinkronkan ${t.number}`}>
+                  <ModalForm action={linkReserveTx} className="space-y-3">
                     <input type="hidden" name="id" value={t.id} />
                     {fixTo && <input type="hidden" name="toAccountId" value={fixTo.id} />}
                     <select name="pick" className="input" defaultValue="0">{rsv.options.map((o, k) => <option key={k} value={String(k)}>{o.label} ({o.dates.map((d) => d.slice(8)).join(",")})</option>)}</select>
                     <p className="text-xs text-slate-500">Jurnal lama dibalik lalu dibukukan ulang{fixTo ? ` ke ${fixTo.name}` : ""}{" "}beserta beban kompensasi (untuk dana owner). Sisihan tanpa bukti di tanggal tsb memakai transfer ini, jadi tidak dobel.</p>
-                    <Submit className="btn-secondary btn-sm" pendingText="Menyinkronkan…">Sinkronkan ke dana sisihan</Submit>
-                  </ActionForm>
+                    <Submit pendingText="Menyinkronkan…" confirm="Sinkronkan transfer ini ke dana sisihan? Jurnalnya dibukukan ulang.">Sinkronkan ke dana sisihan</Submit>
+                  </ModalForm>
+                  </Modal>
                 </>
               ) : null}
             </Card>
