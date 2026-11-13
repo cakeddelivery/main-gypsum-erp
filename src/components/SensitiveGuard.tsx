@@ -13,7 +13,7 @@ export function SensitiveGuard() {
     const form = ref.current?.form;
     if (!form) return;
     const onSubmit = (e: SubmitEvent) => {
-      const boxes = [...form.querySelectorAll<HTMLInputElement>('input[type="checkbox"][data-sensitive="1"]')].filter((b) => b.checked && !b.defaultChecked);
+      const boxes = [...form.querySelectorAll<HTMLInputElement>('input[type="checkbox"][data-sensitive="1"]')].filter((b) => b.checked && b.dataset.initial !== "1" && !(b.dataset.initial === undefined && b.defaultChecked));
       if (!boxes.length) { ref.current!.value = ""; return; }
       const names = boxes.map((b) => b.getAttribute("aria-label") || b.closest("label")?.textContent?.trim() || b.value).slice(0, 8);
       if (window.confirm(`Izin SENSITIF (keuangan, gaji, pengaturan) akan diberikan ke role lapangan:\n\n• ${names.join("\n• ")}\n\nRole lapangan (Operator, Kapten, Supervisor, Koordinator, PIC Content) biasanya tidak boleh melihat data ini. Lanjutkan?`)) {
