@@ -271,7 +271,9 @@ export const adjustBankBalances = action(
     });
     const lines = balanceAdjustmentLines(rows);
     if (!lines.length) return "Semua saldo sudah sesuai, tidak ada penyesuaian";
-    const j = await prisma.$transaction((tx) => postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: "Penyesuaian saldo rekening", source: "SALDO_AWAL", actor: user, lines }));
+    // Saldo buku dihitung sampai akhir hari, jadi penyesuaian bertanggal 23.59 (bukan 12.00) agar transaksi sore
+    // hari itu tidak terlihat "sesudah" penyesuaian dan saldo per jam di Mutasi rekening tetap benar
+    const j = await prisma.$transaction((tx) => postJournal(tx, { date: jakartaDateTime(date, "23:59"), storeId: optStr(fd, "storeId"), description: "Penyesuaian saldo rekening", source: "SALDO_AWAL", actor: user, lines }));
     await audit(user, "SALDO_REKENING_DISESUAIKAN", "Journal", j.id, { date, rows: rows.filter((r) => r.actual !== null) });
     return `Saldo rekening disesuaikan (${j.number})`;
   },

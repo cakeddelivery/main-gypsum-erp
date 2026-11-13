@@ -17,7 +17,8 @@ export function margin(price: number, hpp: number) {
   return { value, pct: price > 0 ? Math.round((value / price) * 1000) / 10 : 0 };
 }
 
-export type UnitCost = { cur: number; prev: number; fromRecipe: boolean };
+/** `mat` = nilai BAHAN saja (harga beli terbaru), tanpa tenaga kerja & overhead di resep mana pun (untuk nilai buku persediaan) */
+export type UnitCost = { cur: number; prev: number; fromRecipe: boolean; mat: number };
 
 export const PACKAGING_CATEGORY = "Kemasan & Packaging";
 
@@ -51,22 +52,24 @@ export async function itemCosts(db: DB = prisma) {
     const it = byId.get(id)!;
     const hasRecipe = it.recipe.length + it.recipeLabor.length + it.recipeOverhead.length > 0;
     if (!hasRecipe || stack.has(id)) {
-      const r = { cur: latestCost(it), prev: previousCost(it), fromRecipe: false };
+      const r = { cur: latestCost(it), prev: previousCost(it), fromRecipe: false, mat: latestCost(it) };
       if (!stack.has(id)) memo.set(id, r);
       return r;
     }
     stack.add(id);
     let cur = laborOf(it.recipeLabor) + overheadOf(it.recipeOverhead, cap);
     let prev = cur;
+    let mat = 0;
     for (const l of it.recipe) {
       const comp = byId.get(l.componentId);
       if (!comp) continue;
       const c = visit(comp.id, stack);
       cur += bomLineCost(l.qty, comp, c.cur);
       prev += bomLineCost(l.qty, comp, c.prev);
+      mat += bomLineCost(l.qty, comp, c.mat);
     }
     stack.delete(id);
-    const r = { cur: Math.round(cur), prev: Math.round(prev), fromRecipe: true };
+    const r = { cur: Math.round(cur), prev: Math.round(prev), fromRecipe: true, mat };
     memo.set(id, r);
     return r;
   };
@@ -98,7 +101,7 @@ export async function recipeCosting(itemId: string, costs?: Map<string, UnitCost
   const cap = await capacity(prisma);
   const it = await prisma.item.findUniqueOrThrow({ where: { id: itemId }, include: { recipe: { include: { component: true } }, recipeLabor: true, recipeOverhead: { include: { overhead: true } } } });
   const lines = it.recipe.map((l) => {
-    const c = map.get(l.componentId) ?? { cur: 0, prev: 0, fromRecipe: false };
+    const c = map.get(l.componentId) ?? { cur: 0, prev: 0, fromRecipe: false, mat: 0 };
     return { id: l.id, component: l.component, qty: Number(l.qty), useUnit: l.useUnit, unit: recipeUnit(l.component), unitPrice: costPerRecipeUnit(c.cur, l.component), cost: bomLineCost(l.qty, l.component, c.cur), fromRecipe: c.fromRecipe };
   });
   const material = Math.round(lines.reduce((s, l) => s + l.cost, 0));
@@ -131,7 +134,7 @@ export async function productCosting(productId: string, costs?: Map<string, Unit
   const map = costs ?? (await itemCosts());
   const cap = await capacity(prisma);
   const p = await prisma.product.findUniqueOrThrow({ where: { id: productId }, include: { bom: { include: { item: true } }, recipeLabor: true, recipeOverhead: { include: { overhead: true } } } });
-  const unit = (i: Item) => map.get(i.id) ?? { cur: latestCost(i), prev: previousCost(i), fromRecipe: false };
+  const unit = (i: Item) => map.get(i.id) ?? { cur: latestCost(i), prev: previousCost(i), fromRecipe: false, mat: latestCost(i) };
   const lines = p.bom.map((b) => {
     const c = unit(b.item);
     return { id: b.id, item: b.item, qty: Number(b.qty), useUnit: b.useUnit, unit: recipeUnit(b.item), unitPrice: costPerRecipeUnit(c.cur, b.item), cost: bomLineCost(b.qty, b.item, c.cur), prevCost: bomLineCost(b.qty, b.item, c.prev), trend: trendOf(c.cur, c.prev), fromRecipe: c.fromRecipe, packaging: b.item.category === PACKAGING_CATEGORY };
@@ -203,11 +206,14 @@ export async function draftRecipeCost(r: RecipeInput, db: DB = prisma) {
 /**
  * Nilai bahan + kemasan per unit dari resep produk yang terhubung ke barang jadi `itemId` (0 bila tidak ada resep).
  * Dipakai sebagai cadangan harga pokok saat harga rata-rata barang jadi masih 0. Tenaga kerja & overhead tidak
- * ikut karena sudah dibebankan lewat gaji/beban, agar tidak dihitung ganda.
+ * ikut karena sudah dibebankan lewat gaji/beban, agar tidak dihitung ganda. Ini berlaku sampai ke resep barang
+ * setengah jadi di dalamnya (mis. Patung Kering yang resepnya memuat upah & overhead Listrik/Gaji Produksi):
+ * hanya bahannya yang dihitung.
  */
-export async function recipeMaterialCost(itemId: string): Promise<number> {
-  const p = await prisma.product.findFirst({ where: { finishedItemId: itemId }, select: { id: true } });
+export async function recipeMaterialCost(itemId: string, costs?: Map<string, UnitCost>): Promise<number> {
+  const p = await prisma.product.findFirst({ where: { finishedItemId: itemId }, include: { bom: { include: { item: true } } } });
   if (!p) return 0;
-  const c = await productCosting(p.id);
-  return Math.max(0, Math.round(c.material + c.packaging));
+  const map = costs ?? (await itemCosts());
+  const total = p.bom.reduce((s, b) => s + bomLineCost(b.qty, b.item, map.get(b.itemId)?.mat ?? latestCost(b.item)), 0) + Number(p.extraPackaging);
+  return Math.max(0, Math.round(total));
 }

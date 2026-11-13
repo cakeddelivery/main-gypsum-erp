@@ -383,7 +383,7 @@ export function avgAfterReturn(curQty: number, avg: number, qty: number, unitCos
  * - barang yang dulu KELUAR (konsumsi bahan) dikembalikan dengan harga saat keluar
  * Jurnalnya dibalik terpisah oleh pemanggil.
  */
-export async function reverseMovementsByRef(tx: Tx, ref: string, reversalRef: string, note: string, actor: Actor) {
+export async function reverseMovementsByRef(tx: Tx, ref: string, reversalRef: string, note: string, actor: Actor, opts: { keepDate?: boolean } = {}) {
   const moves = await tx.stockMovement.findMany({ where: { ref }, orderBy: { id: "asc" } });
   await lockItems(tx, moves.map((m) => m.itemId));
   for (const mv of moves) {
@@ -399,7 +399,8 @@ export async function reverseMovementsByRef(tx: Tx, ref: string, reversalRef: st
       if (next !== avg) await tx.item.update({ where: { id: item.id }, data: { avgCost: BigInt(next) } });
     }
     await tx.stockMovement.create({
-      data: { date: new Date(), type: "PENYESUAIAN", itemId: mv.itemId, fromLocationId: mv.toLocationId, toLocationId: mv.fromLocationId, qty: mv.qty, unitCost: mv.unitCost, ref: reversalRef, note, createdBy: actor.name },
+      // keepDate: pembalik bertanggal sama dengan mutasi aslinya (revisi laporan shift), agar stok per jam shift tidak dobel
+      data: { date: opts.keepDate ? mv.date : new Date(), type: "PENYESUAIAN", itemId: mv.itemId, fromLocationId: mv.toLocationId, toLocationId: mv.fromLocationId, qty: mv.qty, unitCost: mv.unitCost, ref: reversalRef, note, createdBy: actor.name },
     });
   }
   return moves.length;

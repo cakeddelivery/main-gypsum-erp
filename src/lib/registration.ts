@@ -165,7 +165,9 @@ export async function rejectRegistration(id: string, reason: string, actor: Acto
   if (!reason?.trim()) throw new RegistrationError("Alasan penolakan wajib diisi");
   const r = await prisma.employeeRegistration.findUniqueOrThrow({ where: { id } });
   if (r.status !== "MENUNGGU") throw new RegistrationError(`${r.number} sudah diproses`);
-  await prisma.employeeRegistration.update({ where: { id }, data: { status: "DITOLAK", rejectReason: reason.trim().slice(0, 300), decidedBy: actor.name, decidedAt: new Date() } });
+  // Bersyarat status MENUNGGU: Tolak & Setujui yang ditekan bersamaan tidak bisa sama-sama berhasil (akun aktif tapi tercatat Ditolak)
+  const n = await prisma.employeeRegistration.updateMany({ where: { id, status: "MENUNGGU" }, data: { status: "DITOLAK", rejectReason: reason.trim().slice(0, 300), decidedBy: actor.name, decidedAt: new Date() } });
+  if (!n.count) throw new RegistrationError(`${r.number} sudah diproses`);
   await audit(actor, "PENDAFTARAN_DITOLAK", "EmployeeRegistration", id, { number: r.number, reason });
 }
 

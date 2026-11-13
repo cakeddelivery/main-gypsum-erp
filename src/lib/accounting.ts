@@ -118,6 +118,11 @@ export async function postJournal(tx: Tx, input: JournalInput) {
   return journal;
 }
 
+/** Tanggal jurnal pembalik: tanggal asli bila periodenya masih terbuka (laporan harian tetap bersih), selain itu `now` */
+export async function reversalDate(tx: Tx, date: Date, now: Date = new Date()) {
+  return assertPeriodOpen(tx, date).then(() => date, () => now);
+}
+
 /** Koreksi jurnal dengan jurnal pembalik (jurnal asli tidak pernah diubah). */
 export async function reverseJournal(tx: Tx, journalId: string, date: Date, actor: { id: string; name: string }, reason: string) {
   const j = await tx.journal.findUniqueOrThrow({ where: { id: journalId }, include: { lines: true } });
