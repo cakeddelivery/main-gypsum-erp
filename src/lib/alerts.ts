@@ -23,6 +23,9 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
   if (can("stock.view")) {
     tasks.push(negativeStock().then((l) => void (l.length && out.push({ key: "negstock", label: "Stok minus (pemakaian melebihi stok tercatat)", count: l.length, href: "/stok?filter=minus", tone: "red" }))));
   }
+  if (can("employee.manage")) {
+    tasks.push(prisma.employeeRegistration.count({ where: { status: "MENUNGGU" } }).then((c) => void (c && out.push({ key: "registration", label: "Pendaftaran karyawan menunggu verifikasi", count: c, href: "/karyawan/pendaftaran", tone: "blue" }))));
+  }
   if (can("stock.receive") || can("finance.approve")) {
     tasks.push(prisma.purchase.count({ where: { cancelledAt: null, delivery: { in: ["MENUNGGU", "SEBAGIAN"] } } }).then((c) => void (c && out.push({ key: "delivery", label: "Pesanan bahan baku dalam pengiriman", count: c, href: "/stok/pembelian", tone: "blue" }))));
   }

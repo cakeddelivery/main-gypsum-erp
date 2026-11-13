@@ -4,12 +4,13 @@ import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDay } from "@/lib/time";
 import { ROLE_LABEL, ROLES } from "@/lib/rbac";
-import { AutoCode, Badge, Empty, FilterBar, Field, PageHeader } from "@/components/ui";
+import { AutoCode, Badge, Empty, FilterBar, Field, PageHeader, Tabs } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
 import { cancelResign, resignEmployee, saveAccount, saveEmployee } from "./actions";
 import { AllowanceFields } from "./AllowanceFields";
+import { BankSelect } from "@/components/BankSelect";
 import { ActionForm } from "@/components/ActionForm";
 import { todayStr } from "@/lib/time";
 import type { EmployeeStatus } from "@prisma/client";
@@ -34,6 +35,8 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
   // Nominal gaji rahasia: hanya pengelola karyawan & penggajian (bukan kapten/supervisor)
   const canSeePay = canManage || user.can("payroll.manage") || user.can("payroll.approve");
   const canAllowance = user.can("payroll.manage");
+  // Rekening gaji: data pribadi, hanya Owner & Finance
+  const seeBank = user.role === "OWNER" || user.role === "FINANCE";
   const bpjsDefault = Number((await prisma.setting.findUnique({ where: { key: "bpjs_tk_amount" } }))?.value) || 28400;
   const roles = user.can("users.manage") ? ROLES.filter((r) => r !== "OWNER" || user.role === "OWNER") : (["OPERATOR", "KAPTEN_DIVISI", "PIC_CONTENT", "ADMIN_PRODUKSI", "ADMIN_MARKETPLACE"] as const);
   const form = (e?: (typeof employees)[number]) => (
@@ -52,6 +55,21 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
         <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" name="bpjsTk" defaultChecked={e?.bpjsTk} /> Ikut BPJS Ketenagakerjaan <span className="text-xs font-normal text-slate-500">(dibayar perusahaan, tidak memotong gaji)</span></label>
         <Field label="Nominal per bulan (Rp)" hint={`Kosongkan = bawaan ${idr(bpjsDefault)}`} className="mt-2"><input name="bpjsTkAmount" inputMode="numeric" defaultValue={e?.bpjsTkAmount != null ? Number(e.bpjsTkAmount) : ""} placeholder={String(bpjsDefault)} className="input" /></Field>
       </div>
+      <details className="col-span-2 rounded-xl border border-slate-200 p-3 dark:border-slate-700">
+        <summary className="cursor-pointer text-sm font-medium">Data diri{e?.nickname ? ` · ${e.nickname}` : ""}</summary>
+        <input type="hidden" name="profilePresent" value="1" />
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <Field label="Nama panggilan"><input name="nickname" defaultValue={e?.nickname ?? ""} className="input" /></Field>
+          <Field label="Jenis kelamin"><select name="gender" defaultValue={e?.gender ?? ""} className="input"><option value="">—</option><option value="L">Laki-laki</option><option value="P">Perempuan</option></select></Field>
+          <Field label="Tempat lahir"><input name="birthPlace" defaultValue={e?.birthPlace ?? ""} className="input" /></Field>
+          <Field label="Tanggal lahir"><input type="date" name="birthDate" defaultValue={e?.birthDate?.toISOString().slice(0, 10)} className="input" /></Field>
+          <Field label="Alamat lengkap" className="col-span-2"><input name="address" defaultValue={e?.address ?? ""} className="input" /></Field>
+          <Field label="Email" className="col-span-2"><input type="email" name="email" defaultValue={e?.email ?? ""} className="input" autoCapitalize="none" /></Field>
+          {seeBank && <div className="col-span-2"><span className="label">Nama bank / e-wallet</span><BankSelect defaultValue={e?.bankName} /></div>}
+          {seeBank && <Field label="No. rekening"><input name="bankAccountNo" defaultValue={e?.bankAccountNo ?? ""} inputMode="numeric" className="input" /></Field>}
+          {seeBank && <Field label="Atas nama rekening"><input name="bankAccountName" defaultValue={e?.bankAccountName ?? ""} className="input" /></Field>}
+        </div>
+      </details>
       {canAllowance && <AllowanceFields initial={(e?.allowances ?? []).map((a) => ({ id: a.id, name: a.name, amount: Number(a.amount) }))} />}
       <div className="col-span-2 flex justify-end"><Submit>Simpan</Submit></div>
     </ModalForm>
@@ -59,6 +77,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
   return (
     <div>
       <PageHeader title="Karyawan" subtitle="Data karyawan, divisi, status, sistem upah, tunjangan, dan akun login" actions={canManage && <Modal trigger="+ Karyawan" title="Karyawan baru">{form()}</Modal>} />
+      {canManage && <Tabs current="karyawan" tabs={[{ key: "karyawan", label: "Karyawan", href: "/karyawan", count: employees.length }, { key: "pendaftaran", label: "Pendaftaran", href: "/karyawan/pendaftaran", count: await prisma.employeeRegistration.count({ where: { status: "MENUNGGU" } }) }]} />}
       <FilterBar>
         <Field label="Cari"><input name="q" defaultValue={sp.q} className="input" placeholder="Nama / kode" /></Field>
         {!fixedDiv && <Field label="Divisi"><select name="division" defaultValue={sp.division ?? ""} className="input"><option value="">Semua</option>{divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>}

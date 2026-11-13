@@ -132,6 +132,71 @@ model PasswordResetRequest {
   @@index([createdAt])
 }
 
+enum Gender {
+  L
+  P
+}
+
+enum RegistrationStatus {
+  MENUNGGU
+  DISETUJUI
+  DITOLAK
+}
+
+/// Tautan undangan form pendaftaran karyawan (/daftar?kode=…), dibuat Owner; bisa kedaluwarsa & dimatikan
+model RegistrationInvite {
+  id            String                 @id @default(cuid())
+  /// Kode acak di tautan (bukan password; bisa dimatikan/kedaluwarsa)
+  code          String                 @unique
+  note          String?
+  expiresAt     DateTime
+  active        Boolean                @default(true)
+  createdBy     String
+  createdAt     DateTime               @default(now())
+  registrations EmployeeRegistration[]
+}
+
+/// Pendaftaran calon karyawan (diisi sendiri lewat tautan undangan). Disetujui Owner → Employee + User aktif.
+model EmployeeRegistration {
+  id              String             @id @default(cuid())
+  number          String             @unique
+  inviteId        String
+  invite          RegistrationInvite @relation(fields: [inviteId], references: [id])
+  fullName        String
+  nickname        String
+  birthPlace      String
+  birthDate       DateTime           @db.Date
+  address         String
+  phone           String
+  email           String
+  username        String
+  passwordHash    String
+  gender          Gender
+  startDate       DateTime           @db.Date
+  bankName        String             @default("SeaBank")
+  bankAccountNo   String
+  bankAccountName String
+  status          RegistrationStatus @default(MENUNGGU)
+  rejectReason    String?
+  decidedBy       String?
+  decidedAt       DateTime?
+  employeeId      String?            @unique
+  ip              String
+  createdAt       DateTime           @default(now())
+
+  @@index([status, createdAt])
+  @@index([ip, createdAt])
+}
+
+/// Percobaan buka/kirim form pendaftaran dengan kode salah (batas per IP)
+model RegistrationAttempt {
+  id        String   @id @default(cuid())
+  ip        String
+  createdAt DateTime @default(now())
+
+  @@index([ip, createdAt])
+}
+
 /// Catatan percobaan login (untuk batas per IP & kunci bertahap). Dibersihkan otomatis setelah 2 hari.
 model LoginAttempt {
   id        String   @id @default(cuid())
@@ -192,35 +257,46 @@ enum WageType {
 }
 
 model Employee {
-  id             String              @id @default(cuid())
-  code           String              @unique
-  name           String
-  divisionId     String
-  division       Division            @relation(fields: [divisionId], references: [id])
+  id              String              @id @default(cuid())
+  code            String              @unique
+  name            String
+  divisionId      String
+  division        Division            @relation(fields: [divisionId], references: [id])
   /// Jabatan (tidak ditampilkan lagi sejak Nov 2026; cukup divisi + role)
-  position       String              @default("")
-  status         EmployeeStatus      @default(AKTIF)
-  wageType       WageType            @default(HARIAN)
-  dailyRate      BigInt              @default(0)
+  position        String              @default("")
+  status          EmployeeStatus      @default(AKTIF)
+  wageType        WageType            @default(HARIAN)
+  dailyRate       BigInt              @default(0)
   /// Gaji pokok per siklus bulanan (jenis upah BULANAN)
-  monthlySalary  BigInt              @default(0)
-  phone          String?
-  joinDate       DateTime?
+  monthlySalary   BigInt              @default(0)
+  phone           String?
+  /// Data diri dari form pendaftaran (Nov 2026)
+  nickname        String?
+  birthPlace      String?
+  birthDate       DateTime?           @db.Date
+  address         String?
+  gender          Gender?
+  email           String?
+  /// Rekening gaji (bank / e-wallet): hanya terlihat Owner/Finance
+  bankName        String?
+  bankAccountNo   String?
+  bankAccountName String?
+  joinDate        DateTime?
   /// Tanggal resign; resign sebelum tanggal gajian = slip siklus itu Rp0
-  resignDate     DateTime?           @db.Date
+  resignDate      DateTime?           @db.Date
   /// BPJS Ketenagakerjaan dibayar perusahaan (info di slip, tidak memotong gaji); nominal kosong = bawaan setting bpjs_tk_amount
-  bpjsTk         Boolean             @default(false)
-  bpjsTkAmount   BigInt?
-  user           User?
-  attendances    Attendance[]
-  schedules      ShiftSchedule[]
-  production     ProductionEntry[]
-  targets        ProductionTarget[]
-  payslips       Payslip[]
-  transportTrips TransportTrip[]
-  pieceWorks     PieceWork[]
-  advances       CashAdvance[]
-  allowances     EmployeeAllowance[]
+  bpjsTk          Boolean             @default(false)
+  bpjsTkAmount    BigInt?
+  user            User?
+  attendances     Attendance[]
+  schedules       ShiftSchedule[]
+  production      ProductionEntry[]
+  targets         ProductionTarget[]
+  payslips        Payslip[]
+  transportTrips  TransportTrip[]
+  pieceWorks      PieceWork[]
+  advances        CashAdvance[]
+  allowances      EmployeeAllowance[]
 }
 
 model ShiftSchedule {
