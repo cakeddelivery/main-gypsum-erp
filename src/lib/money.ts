@@ -20,6 +20,9 @@ export function parseIDR(input: string | null | undefined): number | null {
   let num = m[1];
   const unit = m[2];
   if (unit) {
+    // Dengan satuan (jt/rb/k), titik yang diikuti 1–2 angka adalah desimal: "1.5jt" = 1,5 juta (bukan 15 juta).
+    // Titik + 3 angka tetap pemisah ribuan: "1.250rb" = 1.250 ribu.
+    if (/^\d+\.\d{1,2}$/.test(num)) num = num.replace(".", ",");
     num = num.replace(/\./g, "").replace(",", ".");
     const base = parseFloat(num);
     if (isNaN(base)) return null;

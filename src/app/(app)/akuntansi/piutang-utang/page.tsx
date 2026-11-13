@@ -27,7 +27,8 @@ export default async function PiutangUtang({ searchParams }: { searchParams: Pro
     // Hutang supplier: lawannya barang/jasa yang diterima (persediaan, aset, beban) — bukan piutang
     prisma.coaAccount.findMany({ where: { type: { in: ["BEBAN", "ASET", "HPP"] }, active: true, isCash: false, NOT: { code: { startsWith: "1-13" } } }, orderBy: { code: "asc" } }),
     prisma.supplier.findMany({ orderBy: { name: "asc" } }),
-    prisma.coaAccount.findMany({ where: { type: "KEWAJIBAN", active: true }, orderBy: { code: "asc" } }),
+    // Akun pinjaman: kewajiban selain hutang sistem (Hutang Usaha, Hutang Gaji, Hutang Kompensasi Pengelola)
+    prisma.coaAccount.findMany({ where: { type: "KEWAJIBAN", active: true, code: { notIn: [COA.UTANG_USAHA, COA.UTANG_GAJI, COA.UTANG_GAJI_OWNER] } }, orderBy: { code: "asc" } }),
   ]);
   const defDebit = debitAcc.find((a) => a.code === COA.PERSEDIAAN_BAHAN)?.id;
   const defLiab = liabAcc.find((a) => a.code === COA.UTANG_PINJAMAN)?.id;

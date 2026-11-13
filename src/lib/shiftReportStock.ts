@@ -46,6 +46,12 @@ export async function applyShiftStockCount(reportId: string, actor: Actor, now: 
   const at = shiftEndAt(report.date, report.shift, now);
   let n = 0;
   await prisma.$transaction(async (tx) => {
+    // Kunci laporan lalu baca ulang hitungan yang sudah diterapkan: dua kali Kirim bersamaan tidak boleh
+    // memotong stok dua kali (permintaan kedua melihat hitungan pertama dan hanya menerapkan selisihnya, yaitu 0)
+    await tx.$queryRaw`SELECT id FROM "ShiftReport" WHERE id = ${report.id} FOR UPDATE`;
+    const fresh = await tx.shiftReport.findUniqueOrThrow({ where: { id: report.id }, select: { stockApplied: true, stockAppliedCount: true } });
+    if (fresh.stockApplied && !fresh.stockAppliedCount) return;
+    const prev = fresh.stockApplied ? (fresh.stockAppliedCount as StockCountRow[] | null) : null;
     const applied = new Map((prev ?? []).map((p) => [p.itemId, p]));
     const counted = rows.filter((r) => r.qty != null).map((r) => r.itemId);
     const pending = await pendingReceipts(tx, counted, at);
