@@ -1,5 +1,5 @@
 import "server-only";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 import { assertPerm, ForbiddenError } from "./auth";
 import type { Permission } from "./rbac";
@@ -26,6 +26,8 @@ export function action(perms: Permission | Permission[], fn: (fd: FormData, user
       const user = await assertPerm(...(Array.isArray(perms) ? perms : [perms]));
       const message = await fn(fd, user);
       for (const p of revalidate) revalidatePath(p, "layout");
+      // Angka di lonceng peringatan ikut segar setelah data berubah (lihat cachedAlerts)
+      revalidateTag("alerts");
       return { ok: true, message: message || "Tersimpan", ts: Date.now() };
     } catch (e) {
       unstable_rethrow(e); // biarkan redirect()/notFound() Next.js lewat

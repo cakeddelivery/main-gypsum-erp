@@ -2,7 +2,13 @@
 const nextConfig = {
   poweredByHeader: false,
   serverExternalPackages: ["@prisma/client", "bcryptjs", "tesseract.js"],
-  experimental: { serverActions: { bodySizeLimit: "16mb" } },
+  experimental: {
+    serverActions: { bodySizeLimit: "16mb" },
+    // Halaman yang baru dibuka disimpan 30 detik di HP: kembali/berpindah ke menu yang sama terasa instan.
+    // Setiap simpan/ubah data (server action + revalidatePath) langsung membuang simpanan ini, dan AutoRefresh
+    // menyegarkan halaman daftar penting secara berkala, jadi data tidak basi.
+    staleTimes: { dynamic: 30 },
+  },
   async headers() {
     return [
       // Service worker selalu dicek ulang agar versi baru langsung terpakai setelah deploy

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requirePerm, requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { alertsFor } from "@/lib/alerts";
+import { cachedAlerts, type Alert } from "@/lib/alerts";
 import { productionSummary, productionTrend, productivity, financeMonth, financeTrend, salesByStore } from "@/lib/dashboard";
 import { bankBalances } from "@/lib/finance";
 import { idr } from "@/lib/money";
@@ -34,7 +34,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const storeId = sp.store && stores.some((s) => s.id === sp.store) ? sp.store : null;
 
   const [alerts, prod, trend, people, fin, finTrend, banks, sales, attendance] = await Promise.all([
-    alertsFor(user.can, isCaptain ? user.divisionId : null),
+    cachedAlerts([...user.perms].sort(), isCaptain ? user.divisionId : null),
     showProduction ? productionSummary(today, scope) : null,
     showProduction ? productionTrend(14, scope) : null,
     showProduction && !isOperator ? productivity(today, isCaptain ? user.divisionId : null) : null,
@@ -187,7 +187,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   );
 }
 
-function AlertList({ alerts }: { alerts: Awaited<ReturnType<typeof alertsFor>> }) {
+function AlertList({ alerts }: { alerts: Alert[] }) {
   return (
     <div id="notifikasi">
       {alerts.length === 0 ? (
