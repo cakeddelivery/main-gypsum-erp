@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { ALL_PERMISSIONS, MENU_GROUPS, PERMISSIONS, RESTRICTED, ROLE_LABEL, ROLES, effectivePermissions } from "@/lib/rbac";
 import { fmtDateTime } from "@/lib/time";
 import { Badge, Card, Field, PageHeader, Tabs } from "@/components/ui";
+import { ClientTabs } from "@/components/ClientTabs";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ActionForm, Submit } from "@/components/ActionForm";
@@ -37,20 +38,46 @@ export default async function PenggunaPage({ searchParams }: { searchParams: Pro
     </ModalForm>
   );
   const role = (ROLES.includes(sp.role as Role) ? sp.role : "FINANCE") as Role;
-  const eff = effectivePermissions(role, overrides);
   const groups = Array.from(new Set(ALL_PERMISSIONS.map((p) => p.split(".")[0])));
+  // Semua tab dikirim sekaligus dan ditukar di HP (tanpa menunggu server), lihat ClientTabs
+  // Matriks hak akses cukup untuk role yang dipilih (10 matriks sekaligus terlalu berat untuk HP)
+  const rolePanels = Object.fromEntries([role].map((r) => [r, (
+          <Card title={`Hak akses ${ROLE_LABEL[r]}`}>
+            {r === "OWNER" ? <p className="text-sm text-slate-500">Owner selalu memiliki semua hak akses, termasuk menu pengelolaan bot Telegram (khusus Owner).</p> : (
+              <ActionForm action={saveMatrix}>
+                <input type="hidden" name="role" value={r} />
+                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                  {groups.map((g) => (
+                    <fieldset key={g} className="rounded-lg border border-slate-200 p-3">
+                      <legend className="px-1 text-xs font-semibold uppercase text-slate-500">{g}</legend>
+                      {ALL_PERMISSIONS.filter((p) => p.startsWith(g + ".")).map((p) => (
+                        <label key={p} className="flex items-center gap-2 py-0.5 text-sm"><input type="checkbox" name="perm" value={p} defaultChecked={effectivePermissions(r, overrides).has(p)} disabled={p === "telegram.manage" || !!RESTRICTED[p] && !RESTRICTED[p]!.includes(r)} /> {PERMISSIONS[p]}</label>
+                      ))}
+                    </fieldset>
+                  ))}
+                </div>
+                <div className="mt-4"><Submit>Simpan hak akses</Submit></div>
+              </ActionForm>
+            )}
+          </Card>
+  )]));
   return (
     <div className="space-y-4">
-      <PageHeader title="Pengguna & hak akses" subtitle="RBAC sampai tingkat menu dan tindakan" actions={tab === "pengguna" && <Modal trigger="+ Pengguna" title="Pengguna baru">{form()}</Modal>} />
-      <Tabs current={tab} tabs={[{ key: "pengguna", label: "Pengguna", href: "?tab=pengguna", count: users.length }, { key: "menu", label: "Akses menu", href: "?tab=menu" }, { key: "akses", label: "Hak akses detail", href: "?tab=akses" }]} />
-      {tab === "pengguna" ? (
+      <PageHeader title="Pengguna & hak akses" subtitle="RBAC sampai tingkat menu dan tindakan" />
+      <ClientTabs
+        initial={tab}
+        tabs={[{ key: "pengguna", label: "Pengguna", count: users.length }, { key: "menu", label: "Akses menu" }, { key: "akses", label: "Hak akses detail" }]}
+        actions={{ pengguna: <Modal trigger="+ Pengguna" title="Pengguna baru">{form()}</Modal> }}
+        panels={{
+          pengguna: (
         <div className="table-wrap">
           <Paged><table className="tbl">
             <thead><tr><th>Username</th><th>Nama</th><th>Role</th><th>Karyawan/Divisi</th><th>Login terakhir</th><th>Status</th><th /></tr></thead>
             <tbody>{users.map((u) => <tr key={u.id}><td className="font-mono text-xs">{u.username}</td><td>{u.name}{u.email && <div className="text-xs text-slate-500">{u.email}</div>}</td><td><Badge tone="blue">{ROLE_LABEL[u.role]}</Badge></td><td className="text-xs">{u.employee?.code}{u.division && ` · ${u.division.name}`}</td><td className="text-xs">{fmtDateTime(u.lastLoginAt)}</td><td>{u.active ? (u.lockedUntil && u.lockedUntil > new Date() ? <Badge tone="red">Terkunci</Badge> : <Badge tone="green">Aktif</Badge>) : <Badge>Nonaktif</Badge>}</td><td>{(u.role !== "OWNER" || me.role === "OWNER") && <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${u.username}`}>{form(u)}</Modal>}</td></tr>)}</tbody>
           </table></Paged>
         </div>
-      ) : tab === "menu" ? (
+          ),
+          menu: (
         <Card title="Akses menu per role">
           <p className="mb-3 text-sm text-slate-500">Centang = menu tampil dan bisa dibuka. Menu yang dimatikan juga ditolak di server (tidak bisa dibuka lewat alamat langsung atau bot). Owner selalu punya semua akses. Pengaturan halus per tindakan ada di tab Hak akses detail.</p>
           <ActionForm action={saveMenuAccess}>
@@ -74,29 +101,15 @@ export default async function PenggunaPage({ searchParams }: { searchParams: Pro
             <div className="mt-4"><Submit>Simpan akses menu</Submit></div>
           </ActionForm>
         </Card>
-      ) : (
-        <>
-          <Tabs current={role} tabs={ROLES.map((r) => ({ key: r, label: ROLE_LABEL[r], href: `?tab=akses&role=${r}` }))} />
-          <Card title={`Hak akses ${ROLE_LABEL[role]}`}>
-            {role === "OWNER" ? <p className="text-sm text-slate-500">Owner selalu memiliki semua hak akses, termasuk menu pengelolaan bot Telegram (khusus Owner).</p> : (
-              <ActionForm action={saveMatrix}>
-                <input type="hidden" name="role" value={role} />
-                <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-                  {groups.map((g) => (
-                    <fieldset key={g} className="rounded-lg border border-slate-200 p-3">
-                      <legend className="px-1 text-xs font-semibold uppercase text-slate-500">{g}</legend>
-                      {ALL_PERMISSIONS.filter((p) => p.startsWith(g + ".")).map((p) => (
-                        <label key={p} className="flex items-center gap-2 py-0.5 text-sm"><input type="checkbox" name="perm" value={p} defaultChecked={eff.has(p)} disabled={p === "telegram.manage" || !!RESTRICTED[p] && !RESTRICTED[p]!.includes(role)} /> {PERMISSIONS[p]}</label>
-                      ))}
-                    </fieldset>
-                  ))}
-                </div>
-                <div className="mt-4"><Submit>Simpan hak akses</Submit></div>
-              </ActionForm>
-            )}
-          </Card>
-        </>
-      )}
+          ),
+          akses: (
+            <>
+              <Tabs current={role} tabs={ROLES.map((r) => ({ key: r, label: ROLE_LABEL[r], href: `?tab=akses&role=${r}` }))} />
+              {rolePanels[role]}
+            </>
+          ),
+        }}
+      />
     </div>
   );
 }

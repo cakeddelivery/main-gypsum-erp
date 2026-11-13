@@ -271,6 +271,8 @@ tr[data-pg-hidden] { display: none; }
 
 /* Halaman baru muncul halus. fill-mode backwards: transform hilang setelah selesai agar elemen fixed/sticky di halaman tetap normal */
 .page-enter { animation: page-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1) backwards; }
+/* Isi tab (ClientTabs) muncul halus saat ditukar */
+.tab-enter { animation: fade-in 0.16s ease-out; }
 @keyframes page-in { from { opacity: 0; transform: translateY(6px); } }
 
 /* Popup (Modal & pratinjau JPG): muncul membesar halus, menutup mengecil & memudar */
@@ -358,7 +360,7 @@ button.is-done.btn-secondary { @apply border-emerald-300 text-emerald-700; }
   .btn-spinner { animation-duration: 1.4s; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .page-enter, dialog.modal[open], dialog.modal[open]::backdrop, dialog.modal[data-grow][open], dialog.modal[data-grow][data-closing], .nav-fab, dialog.modal[data-closing], dialog.modal[data-closing]::backdrop,
+  .page-enter, .tab-enter, dialog.modal[open], dialog.modal[open]::backdrop, dialog.modal[data-grow][open], dialog.modal[data-grow][data-closing], .nav-fab, dialog.modal[data-closing], dialog.modal[data-closing]::backdrop,
   .anim-fade, .anim-pop, .anim-drawer, .loading-skeleton, .choice-panel, .celebrate-card, .celebrate-check { animation: none !important; }
   .nav-progress[data-state="loading"] { animation-duration: 0.01s; }
 }
