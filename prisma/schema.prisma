@@ -350,6 +350,7 @@ model Attendance {
   reportMissing    Boolean          @default(false)
 
   @@unique([employeeId, date])
+  @@index([validated, date])
 }
 
 /// Titik lokasi kerja untuk absen (geofence). Absen hanya bisa di dalam radius salah satu titik aktif.
@@ -1321,6 +1322,7 @@ model FinanceTransaction {
   @@index([origin])
   @@index([status])
   @@index([deletedAt])
+  @@index([date])
 }
 
 /// Rincian transaksi: jumlah semua baris = nominal transaksi. Baris dengan itemId = pembelian bahan baku (stok masuk)
@@ -1570,6 +1572,7 @@ model Payable {
   /// Foto nota / bukti hutang (penyimpanan privat)
   proofPath     String?
   proofMime     String?
+  @@index([dueDate])
 }
 
 model FixedAsset {
@@ -1636,6 +1639,8 @@ model Purchase {
   dueDate       DateTime?
   closedReason  String?
   deliveries    PurchaseReceipt[]
+  @@index([delivery])
+  @@index([date])
 }
 
 enum PurchaseDelivery {

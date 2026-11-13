@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { prisma } from "./db";
 import { lowStockItems, negativeStock } from "./stock";
 import { addDays, dateOnly, todayStr } from "./time";
@@ -100,3 +101,15 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
   await Promise.all(tasks);
   return out;
 }
+
+/**
+ * Peringatan untuk lonceng/beranda, disimpan sebentar (30 detik) per kombinasi izin + divisi.
+ * Layout memanggilnya di setiap muat halaman penuh & penyegaran otomatis, sementara isinya berupa
+ * puluhan hitungan (termasuk saldo stok seluruh mutasi) — cukup dihitung ulang tiap 30 detik.
+ * Dibersihkan lebih awal oleh revalidateTag("alerts") / revalidatePath dari aksi yang mengubah data.
+ */
+export const cachedAlerts = unstable_cache(
+  async (perms: string[], divisionId: string | null) => alertsFor((p) => perms.includes(p), divisionId),
+  ["alerts-v1"],
+  { revalidate: 30, tags: ["alerts"] },
+);

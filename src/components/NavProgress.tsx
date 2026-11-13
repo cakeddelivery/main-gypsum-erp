@@ -1,6 +1,6 @@
 "use client";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 
 const EVT = "nav-progress:start";
 
@@ -26,8 +26,11 @@ function isNavClick(e: MouseEvent) {
 export function NavProgress() {
   const path = usePathname();
   const search = useSearchParams().toString();
-  const [state, setState] = useState<"idle" | "loading" | "done">("idle");
+  // Status bilah diubah langsung di DOM (bukan state React): setState tepat saat klik ikut tertahan
+  // bersama transisi navigasi Next dan pernah membuat pindah tab tertunda 15 detik
+  const bar = useRef<HTMLDivElement>(null);
   const timers = useRef<number[]>([]);
+  const set = (s: "idle" | "loading" | "done") => bar.current?.setAttribute("data-state", s);
 
   useEffect(() => {
     const clear = () => {
@@ -36,9 +39,9 @@ export function NavProgress() {
     };
     const start = () => {
       clear();
-      setState("loading");
+      set("loading");
       // Jaga-jaga bila navigasi batal (mis. dialihkan ke URL yang sama)
-      timers.current.push(window.setTimeout(() => setState("idle"), 15000));
+      timers.current.push(window.setTimeout(() => set("idle"), 15000));
     };
     const onClick = (e: MouseEvent) => isNavClick(e) && start();
     const onSubmit = (e: SubmitEvent) => {
@@ -59,10 +62,12 @@ export function NavProgress() {
 
   // Halaman (atau tab) baru sudah tampil → bilah penuh lalu memudar
   useEffect(() => {
-    setState((s) => (s === "loading" ? "done" : s));
-    const t = window.setTimeout(() => setState((s) => (s === "done" ? "idle" : s)), 400);
+    if (bar.current?.getAttribute("data-state") !== "loading") return;
+    timers.current.forEach(clearTimeout);
+    set("done");
+    const t = window.setTimeout(() => set("idle"), 400);
     return () => clearTimeout(t);
   }, [path, search]);
 
-  return <div aria-hidden className="nav-progress no-print" data-state={state} />;
+  return <div ref={bar} aria-hidden className="nav-progress no-print" data-state="idle" />;
 }

@@ -9,6 +9,7 @@ import { Toaster } from "./Toaster";
 import { ChoiceEnhancer } from "./ChoiceEnhancer";
 import { FormFeedback } from "./FormFeedback";
 import { Celebrate } from "./Celebrate";
+import { AutoRefresh } from "./AutoRefresh";
 import { NavTracker } from "./FilterMemory";
 import { NavProgress } from "./NavProgress";
 import { LinkPending } from "./LinkPending";
@@ -128,6 +129,7 @@ export function Shell({ nav, bottomNav, user, env, children, alerts, quickReport
       <ChoiceEnhancer />
       <FormFeedback />
       <Celebrate />
+      <AutoRefresh />
       <Suspense fallback={null}>
         <NavTracker />
       </Suspense>
