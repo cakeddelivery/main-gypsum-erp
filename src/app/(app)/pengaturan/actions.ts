@@ -8,7 +8,7 @@ import { action, str, optStr, int, bool } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { hashPassword, ForbiddenError } from "@/lib/auth";
 import { clearLoginBlocks, passwordChangeData } from "@/lib/loginGuard";
-import { ALL_PERMISSIONS, ROLES, DEFAULT_MATRIX, MENU_GROUPS, applyMenuChoice, effectivePermissions, overridesFor } from "@/lib/rbac";
+import { ALL_PERMISSIONS, ROLES, DEFAULT_MATRIX, PERMISSIONS, ROLE_LABEL, effectivePermissions, sensitiveGrants, type Permission } from "@/lib/rbac";
 import { generateApiKey, API_SCOPES } from "@/lib/apiAuth";
 import { sendDailyRecap } from "@/lib/jobs";
 import { setBotCommands } from "@/lib/telegram";
@@ -173,8 +173,13 @@ export const saveUser = action("users.manage", async (fd, user) => {
 export const saveMatrix = action("users.manage", async (fd, user) => {
   const role = str(fd, "role") as Role;
   if (role === "OWNER") throw new Error("Hak akses Owner tidak dapat dikurangi");
+  if (!ROLES.includes(role)) throw new Error("Role tidak dikenal");
   const checked = new Set(fd.getAll("perm").map(String));
   const defaults = new Set<string>(DEFAULT_MATRIX[role]);
+  // Izin keuangan/gaji/pengaturan untuk role lapangan: wajib dicentang "Saya yakin" (cegah salah simpan)
+  const before = effectivePermissions(role, await prisma.rolePermission.findMany({ where: { role } }));
+  const after = effectivePermissions(role, ALL_PERMISSIONS.filter((p) => checked.has(p) !== defaults.has(p)).map((p) => ({ role, permission: p, allowed: checked.has(p) })));
+  assertSensitiveConfirmed(fd, [[role, sensitiveGrants(role, before, after)]]);
   await prisma.$transaction(async (tx) => {
     await tx.rolePermission.deleteMany({ where: { role } });
     for (const p of ALL_PERMISSIONS) {
@@ -186,27 +191,12 @@ export const saveMatrix = action("users.manage", async (fd, user) => {
   return "Hak akses tersimpan";
 }, ["/pengaturan/pengguna"]);
 
-/** Tabel akses menu: nyala/mati menu per role (semua role sekaligus; Owner selalu penuh & tidak bisa dikunci) */
-export const saveMenuAccess = action("users.manage", async (fd, user) => {
-  const all = await prisma.rolePermission.findMany();
-  const changed: Record<string, string[]> = {};
-  await prisma.$transaction(async (tx) => {
-    for (const role of ROLES) {
-      if (role === "OWNER") continue;
-      const enabled = new Set(fd.getAll(`menu.${role}`).map(String));
-      const cur = effectivePermissions(role, all.filter((o) => o.role === role));
-      const want = applyMenuChoice(role, cur, enabled);
-      if ([...want].length === cur.size && [...want].every((p) => cur.has(p))) continue;
-      // Pertahankan override izin yang tidak disentuh (mis. telegram.manage) dengan menulis ulang selisih terhadap bawaan
-      await tx.rolePermission.deleteMany({ where: { role } });
-      for (const o of overridesFor(role, want)) await tx.rolePermission.create({ data: { role, ...o } });
-      changed[role] = MENU_GROUPS.filter((g) => enabled.has(g.key)).map((g) => g.key);
-    }
-  });
-  if (!Object.keys(changed).length) return "Tidak ada perubahan";
-  await audit(user, "AKSES_MENU_DIUBAH", "RolePermission", null, changed);
-  return `Akses menu tersimpan (${Object.keys(changed).length} role diubah)`;
-}, ["/pengaturan/pengguna", "/"]);
+/** Tolak penyimpanan yang memberi izin sensitif ke role lapangan tanpa centang konfirmasi */
+function assertSensitiveConfirmed(fd: FormData, grants: [Role, Permission[]][]) {
+  const g = grants.filter(([, ps]) => ps.length);
+  if (!g.length || fd.get("confirmSensitive") === "on") return;
+  throw new Error(`Peringatan: ${g.map(([r, ps]) => `${ROLE_LABEL[r]} akan mendapat izin sensitif (${ps.map((p) => PERMISSIONS[p]).join(", ")})`).join("; ")}. Bila memang disengaja, centang "Saya yakin memberi izin sensitif" lalu simpan lagi.`);
+}
 
 // ---------- Telegram & Hermes (khusus Owner) ----------
 export const saveIdentity = action("telegram.manage", async (fd, user) => {

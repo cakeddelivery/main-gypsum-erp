@@ -50,9 +50,18 @@ export async function dailyRecapText(now: Date, forDate?: string) {
   ].join("\n");
 }
 
+/** Penerima rekap harian: dicentang "terima rekap" DAN punya izin dashboard.finance (sesuai override role) */
+export async function financeRecapRecipients() {
+  const { effectivePermissions } = await import("./rbac");
+  const ids = await prisma.telegramIdentity.findMany({ where: { active: true, receiveRecap: true, chatId: { not: null } }, include: { user: { select: { role: true, active: true } } } });
+  const overrides = await prisma.rolePermission.findMany();
+  return ids.filter((x) => x.user?.active && effectivePermissions(x.user.role, overrides.filter((o) => o.role === x.user!.role)).has("dashboard.finance"));
+}
+
 export async function sendDailyRecap(now: Date = new Date()) {
   const date = todayStr(now);
-  const recipients = await prisma.telegramIdentity.findMany({ where: { active: true, receiveRecap: true, chatId: { not: null } } });
+  // Rekap berisi saldo rekening & uang masuk/keluar: hanya untuk akun yang boleh melihat ringkasan keuangan
+  const recipients = await financeRecapRecipients();
   const text = await dailyRecapText(now);
   if (!telegramConfigured() || recipients.length === 0) {
     await prisma.notificationLog.create({ data: { channel: "TELEGRAM", type: "REKAP_HARIAN", target: date, status: "GAGAL", payload: text, error: !telegramConfigured() ? "TELEGRAM_BOT_TOKEN belum diatur" : "Belum ada penerima rekap" } });
