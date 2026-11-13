@@ -1,7 +1,9 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ActionForm, Submit } from "@/components/ActionForm";
+import { useCloseModal } from "@/components/Modal";
+import { revealField } from "@/components/FormFeedback";
 import { toast } from "@/components/Toaster";
 import { ProofPreview } from "@/components/ProofPreview";
 import {
@@ -56,7 +58,13 @@ type Props = {
   resultCount: ResultCountRow[];
   /** SKU katalog untuk bagian isian katalog (Giftbox, Paket & Satuan Single Pack) */
   catalogs: ReportCatalogs;
+  /** Hasil kerja yang masuk stok saat dikirim (kosong bila fitur mati) */
+  flow: string[] | null;
+  /** Laporan sudah pernah dikirim (kirim ulang = revisi) */
+  sent: boolean;
 };
+
+type Step = { key: string; label: string };
 
 const fmt = (v: number) => v.toLocaleString("id-ID");
 const toNum = (s: string) => (s.trim() === "" ? null : Math.max(0, Math.round(Number(s.replace(/\./g, "").replace(/,/g, ".")) || 0)));
@@ -90,18 +98,72 @@ export function ReportForm(p: Props) {
   const order = stock.filter(needsOrder);
   const doneCount = p.checklist.filter((c, i) => (c.photo ? !!c.photoPath : checks[i])).length;
 
+  // Langkah (stepper): bagian yang tidak tampil tetap ada di form (disembunyikan) sehingga ikut tersimpan
+  const steps: Step[] = [
+    { key: "hasil", label: t ? "PIC & hasil kerja" : "PIC" },
+    { key: "checklist", label: "Checklist" },
+    ...(p.resultTitle && p.resultCount.length > 0 ? [{ key: "hasilakhir", label: "Stok hasil" }] : []),
+    ...(stock.length > 0 ? [{ key: "stok", label: "Stok akhir" }] : []),
+    { key: "catatan", label: "Catatan & kirim" },
+  ];
+  const [step, setStep] = useState(0);
+  const [seen, setSeen] = useState(() => new Set([0]));
+  const cur = steps[Math.min(step, steps.length - 1)].key;
+  const last = step >= steps.length - 1;
+  const close = useCloseModal();
+  const formRef = useRef<HTMLDivElement>(null);
+  const bodyTop = useRef<HTMLElement>(null);
+  const go = (i: number) => {
+    setStep(i);
+    setSeen((x) => new Set(x).add(i));
+  };
+  // Pindah langkah → kembali ke atas popup
+  useEffect(() => {
+    bodyTop.current?.scrollIntoView({ block: "start" });
+  }, [step]);
+  // Kolom wajib yang kosong di langkah lain: buka langkahnya lalu gulir & fokus ke kolom itu
+  useEffect(() => {
+    const el = formRef.current;
+    if (!el) return;
+    const onInvalid = (e: Event) => {
+      const box = (e.target as HTMLElement).closest<HTMLElement>("[data-step]");
+      const i = steps.findIndex((x) => x.key === box?.dataset.step);
+      if (i < 0 || steps[i].key === cur) return;
+      go(i);
+      const target = e.target as HTMLElement;
+      window.setTimeout(() => revealField(target), 60);
+    };
+    el.addEventListener("invalid", onInvalid, true);
+    return () => el.removeEventListener("invalid", onInvalid, true);
+  });
+  const show = (key: string) => (key === cur ? "" : "hidden");
+
   return (
-    <ActionForm action={saveReport} className="space-y-4">
+    <div ref={formRef}>
+      <nav ref={bodyTop} aria-label="Langkah laporan" className="sticky -top-4 z-10 -mx-5 -mt-4 mb-4 flex-none border-b border-slate-200 bg-white px-3 py-2">
+        <ol className="flex gap-1 overflow-x-auto">
+          {steps.map((x, i) => (
+            <li key={x.key} className="shrink-0">
+              <button type="button" onClick={() => go(i)} aria-current={i === step ? "step" : undefined} className={`flex min-h-10 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition ${i === step ? "bg-brand-600 text-white" : seen.has(i) ? "bg-brand-50 text-brand-700" : "bg-slate-100 text-slate-600"}`}>
+                <span className={`grid h-5 w-5 place-items-center rounded-full text-[11px] ${i === step ? "bg-white/20" : "bg-white"}`}>{seen.has(i) && i !== step ? "✓" : i + 1}</span>
+                {x.label}
+              </button>
+            </li>
+          ))}
+        </ol>
+      </nav>
+    <ActionForm action={saveReport} className="space-y-4" onSuccess={() => window.setTimeout(close, 750)}>
       <input type="hidden" name="id" value={p.id} />
-      <section className="card p-4">
+      <section data-step="hasil" className={`card p-4 ${show("hasil")}`}>
         <label className="block">
           <span className="label">PIC divisi (yang melaporkan)</span>
-          <input name="picName" defaultValue={p.picName} className="input" required />
+          <input value={p.picName} readOnly tabIndex={-1} className="input bg-slate-100 font-medium dark:bg-slate-800" aria-describedby="pic-hint" />
+          <span id="pic-hint" className="mt-1 block text-xs text-slate-500">Otomatis dari akun yang sedang masuk</span>
         </label>
       </section>
 
       {t && t.sections.some((s) => !(s.kind === "grid" && s.legacy) || gridRows(p.work, s as GridSection).length > 0) && (
-        <section className="card space-y-4 p-4">
+        <section data-step="hasil" className={`card space-y-4 p-4 ${show("hasil")}`}>
           <h3 className="font-semibold text-slate-800">Detail hasil kerja</h3>
           {t.sections.map((s) => {
             if (s.kind === "grid" && s.legacy && !gridRows(p.work, s).some((r) => r.v.some((v) => v != null))) return null;
@@ -258,7 +320,7 @@ export function ReportForm(p: Props) {
         </section>
       )}
 
-      <section className="card p-4">
+      <section data-step="checklist" className={`card p-4 ${show("checklist")}`}>
         <h3 className="mb-2 font-semibold text-slate-800">Checklist penutupan {doneCount}/{p.checklist.length}</h3>
         <ul className="space-y-2">
           {p.checklist.map((c, i) => (
@@ -276,10 +338,10 @@ export function ReportForm(p: Props) {
         </ul>
       </section>
 
-      {p.materials.length > 0 && <ReceiptSection id={p.id} receipts={p.receipts} materials={p.materials} applied={p.applied} orders={p.orders} banks={p.banks} />}
+
 
       {p.resultTitle && p.resultCount.length > 0 && (
-        <section className="card p-4">
+        <section data-step="hasilakhir" className={`card p-4 ${show("hasilakhir")}`}>
           <h3 className="mb-1 font-semibold text-slate-800">{p.resultTitle}</h3>
           <p className="mb-3 text-xs text-slate-500">Hitung fisik sisa di gudang setelah hasil kerja dihitung. Kosongkan bila tidak dihitung.</p>
           <div className="keep-cols grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -294,9 +356,13 @@ export function ReportForm(p: Props) {
       )}
 
       {stock.length > 0 && (
-        <section className="card p-4">
+        <section data-step="stok" className={`card p-4 ${show("stok")}`}>
           <h3 className="mb-1 font-semibold text-slate-800">Stok akhir shift</h3>
           <p className="mb-3 text-xs text-slate-500">Hitung fisik sisa bahan baku divisi. Bahan dengan stok ≤ limit otomatis masuk daftar order.</p>
+          <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            {p.receipts.length > 0 ? <>✓ {p.receipts.length} barang masuk hari ini sudah dicatat. </> : null}
+            Ada barang datang dari supplier/toko? Catat dulu lewat tombol <b>+ Barang masuk</b> (di luar form ini) <b>sebelum</b> menghitung stok akhir, agar tidak dobel.
+          </p>
           <ul className="divide-y divide-slate-100">
             {stock.map((row, i) => {
               const low = needsOrder(row);
@@ -330,21 +396,44 @@ export function ReportForm(p: Props) {
         </section>
       )}
 
-      <section className="card space-y-3 p-4">
+      <section data-step="catatan" className={`card space-y-3 p-4 ${show("catatan")}`}>
         <label className="block"><span className="label">Catatan / kendala</span><textarea name="complaints" defaultValue={p.complaints} className="input" rows={3} /></label>
         <label className="block"><span className="label">Tindak lanjut</span><textarea name="followUp" defaultValue={p.followUp} className="input" rows={2} /></label>
         <label className="block"><span className="label">Status tindak lanjut</span>
           <select name="followUpStatus" defaultValue={p.followUpStatus} className="input"><option value="BELUM">Belum</option><option value="PROSES">Proses</option><option value="SELESAI">Selesai</option></select>
         </label>
       </section>
-      <div className="sticky bottom-20 z-10 lg:bottom-4">
-        <Submit className="btn-primary w-full shadow-lg">Simpan laporan</Submit>
+      {p.flow && (
+        <section data-step="catatan" className={`rounded-lg bg-slate-50 p-3 text-sm ${show("catatan")}`}>
+          <div className="mb-1 font-medium text-slate-700">Hasil kerja masuk stok saat dikirim{p.sent ? " (posting lama dibatalkan dulu)" : ""}:</div>
+          {p.flow.length ? <ul className="space-y-0.5 text-slate-600">{p.flow.map((l) => <li key={l}>{l}</li>)}</ul> : <p className="text-slate-500">Tidak ada (hasil kerja kosong)</p>}
+        </section>
+      )}
+      <p data-step="catatan" className={`text-xs text-slate-500 ${show("catatan")}`}>
+        Saat dikirim, laporan diteruskan ke penerima rekap di Telegram (bila bot aktif) dan stok akhir shift dicatat sebagai stock opname bahan baku divisi.
+      </p>
+      {/* Tombol selalu terlihat di bawah popup */}
+      <div className="modal-foot">
+        {step > 0 && (
+          <button type="button" className="btn-secondary btn-icon" aria-label="Langkah sebelumnya" onClick={() => go(step - 1)}>‹</button>
+        )}
+        <Submit className="btn-secondary flex-1" name="intent" value="draft" pendingText="Menyimpan…">Simpan draf</Submit>
+        {last ? (
+          <Submit className="btn-success flex-1" name="intent" value="send" pendingText="Mengirim…" confirm="Kirim laporan sekarang? Stok akhir shift akan menjadi stok sistem (stock opname).">
+            {p.sent ? "Kirim ulang" : "Kirim laporan"}
+          </Submit>
+        ) : (
+          <button type="button" className="btn-primary flex-1" onClick={() => go(step + 1)}>Berikutnya ›</button>
+        )}
       </div>
     </ActionForm>
+    </div>
   );
 }
 
-function ReceiptSection({ id, receipts, materials, applied, orders, banks }: { id: string; receipts: ReceiptView[]; materials: { id: string; name: string; unit: string }[]; applied: boolean; orders: OrderOption[]; banks: { id: string; name: string }[] }) {
+
+
+export function ReceiptSection({ id, receipts, materials, applied, orders, banks }: { id: string; receipts: ReceiptView[]; materials: { id: string; name: string; unit: string }[]; applied: boolean; orders: OrderOption[]; banks: { id: string; name: string }[] }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [itemId, setItemId] = useState("");

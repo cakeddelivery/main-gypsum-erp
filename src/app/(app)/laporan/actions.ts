@@ -8,6 +8,7 @@ import { action, str, optStr } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { dateOnly, fmtDay } from "@/lib/time";
 import { assertPerm, ForbiddenError } from "@/lib/auth";
+import { canSeeDivision } from "@/lib/reportScope";
 import { sendTelegram, telegramConfigured, esc } from "@/lib/telegram";
 import { STAGE_LABEL } from "@/lib/stock";
 import { applyShiftStockCount } from "@/lib/shiftReportStock";
@@ -24,13 +25,9 @@ const DEFAULT_CHECKLIST = ["Area kerja bersih & rapi", "Peralatan/cetakan dicek"
 
 type User = Awaited<ReturnType<typeof assertPerm>>;
 
-/** Kapten & operator hanya boleh melaporkan divisinya sendiri */
-function ownDivisionOnly(user: User) {
-  return user.role === "KAPTEN_DIVISI" || user.role === "OPERATOR";
-}
-
+/** Karyawan (kapten, operator, akun tertaut karyawan) hanya boleh melaporkan divisinya sendiri */
 function guardDivision(user: User, divisionId: string) {
-  if (ownDivisionOnly(user) && user.divisionId !== divisionId) throw new ForbiddenError();
+  if (!canSeeDivision(user, divisionId)) throw new ForbiddenError();
 }
 
 /** Daftar bahan baku divisi untuk stok akhir shift; hitungan lama dipertahankan */
@@ -39,9 +36,10 @@ async function stockRows(divisionId: string, prev: StockCountRow[] = []): Promis
   return items.map((i) => ({ itemId: i.id, name: i.name, unit: i.unit, limit: Number(i.minStock), qty: prev.find((p) => p.itemId === i.id)?.qty ?? null }));
 }
 
-export async function openReport(fd: FormData) {
-  const user = await assertPerm("report.create");
+/** "+ Kirim laporan": buat draf (atau buka yang sudah ada) lalu langsung buka form isiannya di popup */
+export const openReport = action("report.create", async (fd, user) => {
   const date = str(fd, "date");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Tanggal tidak valid");
   const shiftId = str(fd, "shiftId");
   const divisionId = str(fd, "divisionId");
   guardDivision(user, divisionId);
@@ -60,14 +58,16 @@ export async function openReport(fd: FormData) {
       shiftId,
       divisionId,
       createdBy: user.name,
-      picName: user.employee?.name ?? user.name,
+      // PIC = username akun yang membuat/mengisi laporan (tidak bisa diketik)
+      picName: user.username,
       checklist,
       stockCount: await stockRows(divisionId),
     },
     update: {},
   });
-  redirect(`/laporan/${r.id}`);
-}
+  // go=masuk: langsung buka popup Barang masuk; selain itu buka form isian laporan
+  redirect(`/laporan/${r.id}?${fd.get("go") === "masuk" ? "masuk" : "isi"}=1`);
+});
 
 async function guardReport(id: string, user: User) {
   const r = await prisma.shiftReport.findUniqueOrThrow({ where: { id }, include: { division: true } });
@@ -83,9 +83,9 @@ const num = (s: string) => {
   return x;
 };
 
-export const saveReport = action(
-  "report.create",
-  async (fd, user) => {
+/** Simpan isian laporan (draf). Dipakai tombol "Simpan draf" dan sebelum "Kirim laporan" */
+async function saveReportData(fd: FormData, user: User) {
+  {
     const id = str(fd, "id");
     const r = await guardReport(id, user);
     const checklist = toEntries(r.checklist).map((c, i) => ({ ...c, done: c.photo ? !!c.photoPath : fd.get(`check_${i}`) === "on" }));
@@ -101,7 +101,7 @@ export const saveReport = action(
         checklist,
         work: work as Prisma.InputJsonValue,
         stockCount: stock,
-        picName: optStr(fd, "picName"),
+        picName: user.username,
         complaints: optStr(fd, "complaints"),
         followUp: optStr(fd, "followUp"),
         followUpStatus: str(fd, "followUpStatus") || "BELUM",
@@ -109,9 +109,19 @@ export const saveReport = action(
       },
     });
     await audit(user, "LAPORAN_DIUBAH", "ShiftReport", id);
-    return "Laporan tersimpan";
+    return "Draf laporan tersimpan";
+  }
+}
+
+/** Satu form di popup: intent=draft → simpan saja; intent=send → simpan lalu langsung kirim */
+export const saveReport = action(
+  "report.create",
+  async (fd, user) => {
+    const saved = await saveReportData(fd, user);
+    if (fd.get("intent") === "send") return sendReportData(str(fd, "id"), user);
+    return saved;
   },
-  ["/laporan"],
+  ["/laporan", "/", "/stok"],
 );
 
 /** Unggah foto bukti satu tugas checklist (dipanggil langsung dari form, foto sudah dikecilkan di HP) */
@@ -159,10 +169,11 @@ export async function removeChecklistPhoto(fd: FormData): Promise<{ ok: boolean;
   }
 }
 
-export const sendReport = action(
-  "report.create",
-  async (fd, user) => {
-    const id = str(fd, "id");
+export const sendReport = action("report.create", async (fd, user) => sendReportData(str(fd, "id"), user), ["/laporan", "/", "/stok"]);
+
+/** Kirim laporan: stok akhir → opname, hasil kerja → stok, pesan Telegram + JPG, riwayat pengiriman */
+async function sendReportData(id: string, user: User): Promise<string> {
+  {
     await guardReport(id, user);
     const r = await prisma.shiftReport.findUniqueOrThrow({ where: { id }, include: { shift: true, division: true } });
     // Stok akhir shift = stock opname bahan baku divisi (per jam selesai shift). Diterapkan dulu: bila gagal
@@ -238,9 +249,8 @@ export const sendReport = action(
     if (status === "GAGAL") throw new Error(`Pengiriman gagal: ${error}${stockRes.adjusted ? " (stok akhir shift sudah tercatat)" : ""}`);
     const msg = status === "SEBAGIAN" ? "Terkirim sebagian, cek riwayat" : "Laporan terkirim";
     return stockRes.skipped ? `${msg}. ${stockRes.skipped}` : msg;
-  },
-  ["/laporan", "/", "/stok"],
-);
+  }
+}
 
 /** Barang masuk hari ini (dari supplier/toko), dicatat sebelum stok akhir; foto nota opsional */
 export async function addReceipt(fd: FormData): Promise<{ ok: boolean; error?: string }> {

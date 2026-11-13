@@ -98,6 +98,20 @@ dialog.modal { max-height: calc(100vh - 1.5rem); overflow: hidden; overscroll-be
 @supports (height: 100dvh) { .modal-shell { max-height: calc(100dvh - 1.5rem); } }
 .modal-head { @apply flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 py-2 pl-5 pr-2; }
 .modal-x { @apply grid h-10 w-10 shrink-0 place-items-center rounded-lg text-slate-600 transition hover:bg-slate-100; }
+/* Popup layar penuh di HP (form panjang, mis. laporan shift) */
+@media (max-width: 639px) {
+  dialog.modal.modal-full { width: 100%; max-width: none; height: 100vh; max-height: none; margin: 0; border-radius: 0; }
+  @supports (height: 100dvh) { dialog.modal.modal-full { height: 100dvh; } }
+  dialog.modal.modal-full .modal-shell { height: 100%; max-height: none; }
+  dialog.modal.modal-full .modal-head { padding-top: calc(0.5rem + env(safe-area-inset-top)); }
+}
+/* Popup layar penuh: isi minimal setinggi popup agar bilah tombol bawah menempel di dasar layar */
+dialog.modal.modal-full .modal-body { display: flex; flex-direction: column; }
+dialog.modal.modal-full .modal-body > * { flex: 1 0 auto; display: flex; flex-direction: column; }
+dialog.modal.modal-full .modal-body > * > form { flex: 1 0 auto; display: flex; flex-direction: column; }
+dialog.modal.modal-full .modal-foot { margin-top: auto; }
+/* Bilah tombol yang selalu terlihat di bawah popup (di dalam area gulir) */
+.modal-foot { @apply sticky bottom-0 z-10 -mx-5 -mb-4 mt-4 flex items-center gap-2 border-t border-slate-200 bg-white px-5 py-3; padding-bottom: calc(0.75rem + env(safe-area-inset-bottom)); }
 .modal-body { position: relative; min-height: 0; flex: 1 1 auto; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 
 /* HP: saat mengetik di halaman, navigasi bawah disembunyikan agar tidak menutupi kolom di atas keyboard */
@@ -270,6 +284,24 @@ dialog.modal[data-closing]::backdrop { animation: fade-out 0.16s ease-in forward
   dialog.modal[open] { animation-name: modal-up; }
   @keyframes modal-up { from { opacity: 0; transform: translateY(32px); } }
 }
+/* Tombol bulat "+ Laporan" di tengah navigasi bawah: lebih besar, menonjol ke atas, warna utama */
+.nav-fab {
+  @apply absolute -top-5 grid h-14 w-14 place-items-center rounded-full bg-brand-600 text-white shadow-lg ring-4 ring-white;
+  transition: transform 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.3), box-shadow 0.18s, background-color 0.18s;
+  box-shadow: 0 8px 18px -4px rgb(37 89 184 / 0.55);
+  animation: fab-in 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.3) 0.1s backwards;
+}
+[data-theme="dark"] .nav-fab { --tw-ring-color: rgb(var(--bg-white)); }
+.nav-fab:hover { @apply bg-brand-700; transform: translateY(-2px) scale(1.05); box-shadow: 0 12px 22px -6px rgb(37 89 184 / 0.6); }
+.nav-fab:active { transform: scale(0.92); }
+.nav-fab:focus-visible { outline: 3px solid theme("colors.brand.300"); outline-offset: 2px; }
+@keyframes fab-in { from { opacity: 0; transform: translateY(12px) scale(0.6); } }
+
+/* Popup yang "keluar" dari tombolnya (tombol + Laporan di navigasi bawah) */
+dialog.modal[data-grow][open] { animation: modal-grow 0.32s cubic-bezier(0.2, 0.9, 0.25, 1.08); }
+dialog.modal[data-grow][data-closing] { animation: modal-shrink 0.2s ease-in forwards; }
+@keyframes modal-grow { from { opacity: 0; transform: scale(0.12); border-radius: 9999px; } 60% { opacity: 1; } }
+@keyframes modal-shrink { to { opacity: 0; transform: scale(0.12); } }
 .anim-fade { animation: fade-in 0.2s ease-out; }
 .anim-pop { animation: modal-in 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.05); }
 .anim-drawer { animation: drawer-in 0.24s cubic-bezier(0.2, 0.8, 0.2, 1); }
@@ -317,7 +349,7 @@ button.is-done.btn-secondary { @apply border-emerald-300 text-emerald-700; }
   .btn-spinner { animation-duration: 1.4s; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .page-enter, dialog.modal[open], dialog.modal[open]::backdrop, dialog.modal[data-closing], dialog.modal[data-closing]::backdrop,
+  .page-enter, dialog.modal[open], dialog.modal[open]::backdrop, dialog.modal[data-grow][open], dialog.modal[data-grow][data-closing], .nav-fab, dialog.modal[data-closing], dialog.modal[data-closing]::backdrop,
   .anim-fade, .anim-pop, .anim-drawer, .loading-skeleton, .choice-panel { animation: none !important; }
   .nav-progress[data-state="loading"] { animation-duration: 0.01s; }
 }

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
+import { reportDivision } from "@/lib/reportScope";
 import { prisma } from "@/lib/db";
 import { addDays, dateOnly, fmtDay, todayStr } from "@/lib/time";
 import { Card, Field, FilterBar, PageHeader, Stat } from "@/components/ui";
@@ -30,7 +31,7 @@ export default async function MonitoringPage({ searchParams }: { searchParams: P
   const user = await requirePerm("report.view");
   const sp = await searchParams;
   const { start, end, label } = range(sp.bulan);
-  const fixedDivision = user.role === "KAPTEN_DIVISI" || user.role === "OPERATOR" ? user.divisionId : null;
+  const fixedDivision = reportDivision(user);
   const divisions = await prisma.division.findMany({ where: { reportTemplate: { in: MONITOR_TEMPLATES }, ...(fixedDivision ? { id: fixedDivision } : {}) }, orderBy: { code: "asc" } });
   const reports = await prisma.shiftReport.findMany({
     where: { date: { gte: dateOnly(start), lte: dateOnly(end) }, status: { in: ["TERKIRIM", "DIREVISI"] }, divisionId: { in: divisions.map((d) => d.id) } },

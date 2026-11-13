@@ -1,29 +1,71 @@
 import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
+import { reportDivision } from "@/lib/reportScope";
 import { prisma } from "@/lib/db";
-import { dateOnly, fmtDay, todayStr } from "@/lib/time";
-import { Badge, Card, FilterBar, Field, PageHeader } from "@/components/ui";
+import { addDays, dateOnly, fmtDate, todayStr } from "@/lib/time";
+import { Badge, Empty, Field, FilterBar, PageHeader } from "@/components/ui";
 import { isDone, needsOrder, toEntries, type StockCountRow } from "@/lib/shiftReport";
-import { openReport } from "./actions";
-import { Submit } from "@/components/ActionForm";
+import { Modal } from "@/components/Modal";
+import { ReportStartForm } from "@/components/ReportStartForm";
+import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Laporan Shift" };
 
-export default async function LaporanPage({ searchParams }: { searchParams: Promise<{ date?: string }> }) {
+const STATUS: Record<string, { label: string; tone: "green" | "purple" | "amber" }> = {
+  DRAFT: { label: "Draf", tone: "amber" },
+  TERKIRIM: { label: "Terkirim", tone: "green" },
+  DIREVISI: { label: "Direvisi", tone: "purple" },
+};
+const isDate = (s?: string) => !!s && /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+/**
+ * Daftar laporan penutup shift. Form isian tidak pernah terbuka di halaman:
+ * "+ Kirim laporan" membuka popup pilih tanggal/divisi/shift, lalu form lengkap terbuka di popup layar penuh.
+ */
+export default async function LaporanPage({ searchParams }: { searchParams: Promise<{ dari?: string; sampai?: string; divisi?: string; status?: string }> }) {
   const user = await requirePerm("report.view");
-  const { date: d } = await searchParams;
-  const date = d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : todayStr();
-  const fixedDivision = user.role === "KAPTEN_DIVISI" || user.role === "OPERATOR" ? (user.divisionId ?? "-") : null;
-  const [shifts, divisions, reports, prod] = await Promise.all([
+  const q = await searchParams;
+  const today = todayStr();
+  const to = isDate(q.sampai) ? q.sampai! : today;
+  const from = isDate(q.dari) ? q.dari! : addDays(to, -6);
+  const fixedDivision = reportDivision(user);
+  const divFilter = fixedDivision ?? (q.divisi || undefined);
+  const statusFilter = q.status && STATUS[q.status] ? q.status : undefined;
+  const [shifts, divisions, reports] = await Promise.all([
     prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
     prisma.division.findMany({ where: { active: true, ...(fixedDivision ? { id: fixedDivision } : {}) }, orderBy: { code: "asc" } }),
-    prisma.shiftReport.findMany({ where: { date: dateOnly(date) }, select: { id: true, shiftId: true, divisionId: true, status: true, picName: true, checklist: true, stockCount: true } }),
-    prisma.productionEntry.groupBy({ by: ["shiftId", "divisionId"], where: { date: dateOnly(date) }, _sum: { qtyGood: true, qtyReject: true } }),
+    prisma.shiftReport.findMany({
+      where: { date: { gte: dateOnly(from), lte: dateOnly(to) }, ...(divFilter ? { divisionId: divFilter } : {}), ...(statusFilter ? { status: statusFilter as never } : {}) },
+      include: { shift: true, division: true },
+      orderBy: [{ date: "desc" }, { division: { code: "asc" } }, { shift: { code: "asc" } }],
+      take: 300,
+    }),
   ]);
+  // Draf yang belum terkirim tampil paling atas agar mudah dilanjutkan
+  const rows = [...reports].sort((a, b) => Number(a.status !== "DRAFT") - Number(b.status !== "DRAFT"));
+  const drafts = reports.filter((r) => r.status === "DRAFT").length;
+  // Ringkasan hari ini: berapa slot divisi × shift yang sudah terkirim
+  const todayReports = await prisma.shiftReport.findMany({ where: { date: dateOnly(today), ...(fixedDivision ? { divisionId: fixedDivision } : {}) }, select: { status: true } });
+  const slots = divisions.reduce((n, d) => n + Math.min(Math.max(1, d.shiftCount), shifts.length), 0);
+  const sentToday = todayReports.filter((r) => r.status !== "DRAFT").length;
+  const canCreate = user.can("report.create") && divisions.length > 0;
+
+  const startData = { today, divisions: divisions.map((d) => ({ id: d.id, name: d.name, shiftCount: d.shiftCount })), shifts: shifts.map((s) => ({ id: s.id, name: s.name, startTime: s.startTime, endTime: s.endTime })) };
+  const newForm = canCreate && (
+    <>
+      <Modal trigger="+ Kirim laporan" title="Kirim laporan shift"><ReportStartForm data={startData} /></Modal>
+      <Modal trigger="+ Barang masuk" triggerClass="btn-secondary" title="Catat barang masuk"><ReportStartForm data={startData} go="masuk" /></Modal>
+    </>
+  );
+
   return (
     <div>
-      <PageHeader title="Laporan shift" subtitle={`Laporan per divisi & shift · ${fmtDay(dateOnly(date))}`} actions={
+      <PageHeader
+        title="Laporan shift"
+        subtitle={<>Hari ini {sentToday}/{slots} laporan terkirim{drafts > 0 && <> · <span className="font-medium text-amber-700">{drafts} draf belum dikirim</span></>}</>}
+        actions={
           <>
+            {newForm}
             <Link href="/laporan/order" className="btn-secondary">Order bahan baku</Link>
             <Link href="/laporan/rekap" className="btn-secondary">Rekap</Link>
             <Link href="/laporan/monitoring" className="btn-secondary">Resi &amp; patung</Link>
@@ -32,47 +74,60 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
         }
       />
       <FilterBar>
-        <Field label="Tanggal"><input type="date" name="date" defaultValue={date} className="input" /></Field>
+        <Field label="Dari"><input type="date" name="dari" defaultValue={from} className="input" /></Field>
+        <Field label="Sampai"><input type="date" name="sampai" defaultValue={to} className="input" /></Field>
+        {!fixedDivision && (
+          <Field label="Divisi">
+            <select name="divisi" defaultValue={q.divisi ?? ""} className="input">
+              <option value="">Semua</option>
+              {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </Field>
+        )}
+        <Field label="Status">
+          <select name="status" defaultValue={statusFilter ?? ""} className="input">
+            <option value="">Semua</option>
+            {Object.entries(STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+          </select>
+        </Field>
       </FilterBar>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {divisions.map((div) => (
-          <Card key={div.id} title={div.name}>
-            <ul className="space-y-2">
-              {shifts.slice(0, Math.max(1, div.shiftCount)).map((s) => {
-                const r = reports.find((x) => x.shiftId === s.id && x.divisionId === div.id);
-                const p = prod.find((x) => x.shiftId === s.id && x.divisionId === div.id);
-                const cl = r ? toEntries(r.checklist) : [];
-                const low = r ? (r.stockCount as StockCountRow[]).filter(needsOrder).length : 0;
-                return (
-                  <li key={s.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2">
-                    <div>
-                      <div className="text-sm font-medium">{s.name} <span className="text-xs text-slate-400">{s.startTime}–{s.endTime}</span></div>
-                      <div className="text-xs text-slate-500">
-                        {r ? <>PIC {r.picName ?? "-"} · Checklist {cl.filter(isDone).length}/{cl.length}{low > 0 && <span className="text-rose-600"> · {low} bahan perlu order</span>}</> : <>Hasil {p?._sum.qtyGood ?? 0} · Reject {p?._sum.qtyReject ?? 0}</>}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {r ? <Badge tone={r.status === "TERKIRIM" ? "green" : r.status === "DIREVISI" ? "purple" : "amber"}>{r.status === "TERKIRIM" ? "Terkirim" : r.status === "DIREVISI" ? "Direvisi" : "Draft"}</Badge> : <Badge tone="red">Belum dibuat</Badge>}
-                      {r ? (
-                        <Link href={`/laporan/${r.id}`} className="btn-secondary btn-sm">Buka</Link>
-                      ) : (
-                        user.can("report.create") && (
-                          <form action={openReport}>
-                            <input type="hidden" name="date" value={date} />
-                            <input type="hidden" name="shiftId" value={s.id} />
-                            <input type="hidden" name="divisionId" value={div.id} />
-                            <Submit className="btn-primary btn-sm" pendingText="Membuat…">Buat</Submit>
-                          </form>
-                        )
-                      )}
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          </Card>
-        ))}
-      </div>
+      {rows.length === 0 ? (
+        <Empty title="Belum ada laporan di periode ini" hint={canCreate ? "Tekan + Kirim laporan untuk mengisi laporan penutup shift." : undefined} />
+      ) : (
+        <div className="table-wrap">
+          <Paged>
+            <table className="tbl">
+              <thead>
+                <tr><th>Tanggal</th><th>Status</th><th>Divisi · shift</th><th>PIC</th><th>Checklist</th><th></th></tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const st = STATUS[r.status] ?? STATUS.DRAFT;
+                  const cl = toEntries(r.checklist);
+                  const low = (r.stockCount as StockCountRow[]).filter(needsOrder).length;
+                  const draft = r.status === "DRAFT";
+                  return (
+                    <tr key={r.id}>
+                      <td>{fmtDate(r.date)}</td>
+                      <td><Badge tone={st.tone}>{st.label}</Badge></td>
+                      <td>{r.division.name}<span className="block text-xs text-slate-500">{r.shift.name}</span></td>
+                      <td>{r.picName ?? r.createdBy}</td>
+                      <td className="text-xs text-slate-500">{cl.filter(isDone).length}/{cl.length}{low > 0 && <span className="block text-rose-600">{low} bahan perlu order</span>}</td>
+                      <td>
+                        {draft && user.can("report.create") ? (
+                          <Link href={`/laporan/${r.id}?isi=1`} className="btn-primary btn-sm">Lanjutkan</Link>
+                        ) : (
+                          <Link href={`/laporan/${r.id}`} className="btn-secondary btn-sm">Lihat</Link>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Paged>
+        </div>
+      )}
     </div>
   );
 }

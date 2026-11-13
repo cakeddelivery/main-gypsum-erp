@@ -45,13 +45,22 @@ export const PRIORITY_NAV: Record<Role, string[]> = {
 export const BOTTOM_NAV_SIZE = 5;
 
 /**
+ * Pengguna yang boleh membuat laporan shift: navigasi bawah = 4 menu + tombol "+ Laporan" di tengah.
+ * Menu Produksi pindah ke menu samping (Menu lainnya) untuk memberi tempat.
+ */
+export function bottomNavWithReport(role: Role, can: (p: Permission) => boolean) {
+  return bottomNavFor(role, can, { exclude: ["/produksi"], size: 4 });
+}
+
+/**
  * Menu navigasi bawah: menu prioritas role yang diizinkan; bila ada yang tidak diizinkan
  * (override hak akses), sisa slot diisi menu lain yang diizinkan sesuai urutan menu utama.
  */
-export function bottomNavFor(role: Role, can: (p: Permission) => boolean) {
-  const allowed = NAV.filter((n) => n.perms.some(can));
+export function bottomNavFor(role: Role, can: (p: Permission) => boolean, opts: { exclude?: string[]; size?: number } = {}) {
+  const size = opts.size ?? BOTTOM_NAV_SIZE;
+  const allowed = NAV.filter((n) => n.perms.some(can) && !opts.exclude?.includes(n.href));
   const byHref = new Map(allowed.map((n) => [n.href, n]));
   const picked = PRIORITY_NAV[role].map((h) => byHref.get(h)).filter((n): n is NavItem => !!n);
-  for (const n of allowed) if (picked.length < BOTTOM_NAV_SIZE && !picked.includes(n)) picked.push(n);
-  return picked.slice(0, BOTTOM_NAV_SIZE).map((n) => ({ href: n.href, label: SHORT_LABEL[n.href] ?? n.label, icon: n.icon }));
+  for (const n of allowed) if (picked.length < size && !picked.includes(n)) picked.push(n);
+  return picked.slice(0, size).map((n) => ({ href: n.href, label: SHORT_LABEL[n.href] ?? n.label, icon: n.icon }));
 }

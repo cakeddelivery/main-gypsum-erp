@@ -8,7 +8,10 @@ import { VARIANTS } from "@/lib/shiftReport";
 import { flowEnabled, flowItem } from "@/lib/shiftReportFlow";
 import { OPENING_SETTING } from "@/lib/stockOpening";
 import { Badge, Card, Empty, Field, PageHeader } from "@/components/ui";
-import { ActionForm, Submit } from "@/components/ActionForm";
+import { Submit } from "@/components/ActionForm";
+import { Modal } from "@/components/Modal";
+import { ModalForm } from "@/components/ModalForm";
+import { Paged } from "@/components/Paged";
 import { saveOpening } from "../actions";
 
 export const metadata = { title: "Stok Awal" };
@@ -46,46 +49,75 @@ export default async function StokAwalPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Stok awal riil" subtitle="Hitung fisik semua barang sekali, supaya nilai stok sebagai aset terlihat riil. Setelah itu nyalakan sakelar Hasil kerja → stok." />
+      <PageHeader
+        title="Stok awal riil"
+        subtitle="Hitung fisik semua barang sekali, supaya nilai stok sebagai aset terlihat riil. Setelah itu nyalakan sakelar Hasil kerja → stok."
+        actions={locs.raw && locs.wip && locs.finished && groups.length > 0 && (
+          <Modal full trigger="+ Hitung stok awal" title="Hitung stok awal riil" subtitle="Kosongkan barang yang tidak dihitung">
+            <ModalForm action={saveOpening} className="space-y-4">
+              <div className="keep-cols grid grid-cols-2 gap-3">
+                <Field label="Tanggal hitung"><input type="date" name="date" defaultValue={todayStr()} className="input" required /></Field>
+                <Field label="Jam (WIB)"><input type="time" name="time" defaultValue="06:00" className="input" required /></Field>
+              </div>
+              {groups.map((g, gi) => (
+                <details key={g.key} open={gi === 0} className="group rounded-xl border border-slate-200">
+                  <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-semibold text-slate-700 [&::-webkit-details-marker]:hidden">
+                    <span>{g.title} <span className="font-normal text-slate-500">({g.rows.length})</span></span>
+                    <span className="text-xs text-slate-500 transition group-open:rotate-180" aria-hidden>▾</span>
+                  </summary>
+                  <ul className="divide-y divide-slate-100 border-t border-slate-100">
+                    {g.rows.map((i) => (
+                      <li key={i.id} className="flex flex-wrap items-center gap-2 px-3 py-2">
+                        <div className="min-w-0 basis-full sm:flex-1 sm:basis-40">
+                          <div className="text-sm">{i.name}</div>
+                          <div className="text-xs text-slate-500">Sistem {fmt(sys(i))} {i.unit} · <span className={Number(i.avgCost) === 0 ? "text-amber-600" : ""}>{idr(i.avgCost)}</span></div>
+                        </div>
+                        <input name={`fisik_${i.id}`} inputMode="decimal" aria-label={`Jumlah fisik ${i.name}`} className="input min-w-0 flex-1 text-right sm:w-24 sm:flex-none" placeholder="Jumlah fisik" />
+                        <input name={`harga_${i.id}`} inputMode="numeric" aria-label={`Harga per satuan ${i.name}`} className="input min-w-0 flex-1 text-right sm:w-28 sm:flex-none" placeholder={Number(i.avgCost) ? "Harga tetap" : "Rp/satuan"} />
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              ))}
+              <div className="modal-foot">
+                <Submit className="btn-primary flex-1" confirm="Simpan stok awal? Stok sistem di gudang akan disamakan dengan hitungan fisik.">Simpan stok awal</Submit>
+              </div>
+            </ModalForm>
+          </Modal>
+        )}
+      />
       <Card title="Langkah">
         <ol className="list-decimal space-y-1 pl-5 text-sm text-slate-700">
           <li>Pilih waktu hitung (sebaiknya setelah semua shift selesai, mis. malam / pagi sebelum produksi). Jangan ada produksi saat menghitung.</li>
           <li>Pastikan semua <b>barang masuk</b> sudah dicatat dan kiriman borongan yang sudah sampai sudah ditekan <b>Terima</b>.</li>
           <li>Hitung fisik di gudang: semua bahan baku tiap divisi, patung kering per karakter, produk jadi per karakter, giftbox. Barang di titik borongan (BMR/Mastrip/Beringin) tidak ikut — stoknya dari serah terima.</li>
-          <li>Isi kolom <b>Jumlah fisik</b>. Kosongkan barang yang tidak dihitung. Isi <b>Harga/satuan</b> bila harga rata-rata masih Rp0 atau salah (pakai harga beli terakhir).</li>
+          <li>Tekan <b>+ Hitung stok awal</b>, isi kolom <b>Jumlah fisik</b>. Kosongkan barang yang tidak dihitung. Isi <b>Harga/satuan</b> bila harga rata-rata masih Rp0 atau salah (pakai harga beli terakhir).</li>
           <li>Tekan <b>Simpan stok awal</b>. Selisih nilai masuk ke Ekuitas Saldo Awal (tidak mengubah laba rugi).</li>
           <li>Buka <Link className="link" href="/laporan/bahan">Laporan Shift › Bahan & checklist</Link>, lalu nyalakan sakelar <b>Hasil kerja → stok</b>. Status sekarang: {flowOn ? <Badge tone="green">menyala</Badge> : <Badge tone="amber">mati</Badge>}</li>
         </ol>
         {last && <p className="mt-2 text-xs text-slate-500">Stok awal terakhir disimpan: {fmtDateTime(new Date(last.value))}</p>}
       </Card>
       {!locs.raw || !locs.wip || !locs.finished ? <Empty title="Lokasi gudang belum diatur" hint="Atur di Pengaturan › Parameter" /> : (
-        <ActionForm action={saveOpening} className="space-y-4" confirm="Simpan stok awal? Stok sistem di gudang akan disamakan dengan hitungan fisik.">
-          <div className="grid max-w-md grid-cols-2 gap-3">
-            <Field label="Tanggal hitung"><input type="date" name="date" defaultValue={todayStr()} className="input" /></Field>
-            <Field label="Jam (WIB)"><input type="time" name="time" defaultValue="06:00" className="input" /></Field>
-          </div>
-          {groups.map((g) => (
-            <Card key={g.key} title={g.title}>
-              <div className="table-wrap">
+        groups.map((g) => (
+          <Card key={g.key} title={g.title}>
+            <div className="table-wrap border-0">
+              <Paged>
                 <table className="tbl">
-                  <thead><tr><th>Barang</th><th className="num">Stok sistem</th><th className="num">Harga rata²</th><th>Jumlah fisik</th><th>Harga/satuan (opsional)</th></tr></thead>
+                  <thead><tr><th>Barang</th><th className="num">Stok sistem</th><th className="num">Harga rata²</th></tr></thead>
                   <tbody>
                     {g.rows.map((i) => (
                       <tr key={i.id}>
                         <td>{i.name}<div className="text-xs text-slate-400">{i.sku}</div></td>
                         <td className="num">{fmt(sys(i))} {i.unit}</td>
                         <td className={`num ${Number(i.avgCost) === 0 ? "text-amber-600" : ""}`}>{idr(i.avgCost)}</td>
-                        <td><input name={`fisik_${i.id}`} inputMode="decimal" className="input w-28" placeholder="kosong = lewati" /></td>
-                        <td><input name={`harga_${i.id}`} inputMode="numeric" className="input w-32" placeholder={Number(i.avgCost) ? "tetap" : "Rp"} /></td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
-              </div>
-            </Card>
-          ))}
-          <div className="sticky bottom-20 z-10 lg:bottom-4"><Submit className="btn-primary w-full shadow-lg">Simpan stok awal</Submit></div>
-        </ActionForm>
+              </Paged>
+            </div>
+          </Card>
+        ))
       )}
     </div>
   );
