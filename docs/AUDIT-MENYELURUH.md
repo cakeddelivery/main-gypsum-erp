@@ -45,6 +45,17 @@ Tanda: ✅ = sudah diperbaiki di branch `claude/audit-menyeluruh` (beserta tes `
 | R6 | Pembelian: `buyPrice` item diisi `harga satuan × qty`, bukan total baris yang diketik (selisih pembulatan). | `src/lib/purchase.ts:125` | 📝 |
 | R7 | Laporan shift memanggil `itemCosts()` sekali per barang hasil (lambat bila katalog besar). | `src/lib/shiftReportFlow.ts` | ✅ dihitung sekali |
 
+### Pendaftaran karyawan publik `/daftar` (PR #83) & Overhead Gaji Produksi (PR #82)
+
+| # | Temuan | Bukti | Status |
+|---|---|---|---|
+| P1 | Tolak dan Setujui pendaftaran yang ditekan bersamaan bisa sama-sama berhasil (akun aktif, tapi status Ditolak). | `src/lib/registration.ts` `rejectRegistration` | ✅ penolakan bersyarat status Menunggu |
+| P2 | Halaman login memberi tahu bahwa sebuah username "masih menunggu verifikasi / ditolak" (orang luar bisa menebak username yang sedang mendaftar). | `registrationLoginHint` | 📝 risiko kecil, membantu pendaftar; biarkan |
+| P3 | Pendaftaran yang ditolak menyimpan hash password, alamat, dan no. rekening selamanya. | tabel `EmployeeRegistration` | 📝 saran: hapus otomatis data pendaftaran Ditolak > 90 hari |
+| P4 | Tanggal mulai kerja tidak dibatasi (bisa 1900 / 2100). | `registrationSchema.startDate` | 📝 kecil; Owner tetap mengisi tanggal masuk saat menyetujui |
+
+Sudah benar: kode undangan acak 96-bit (tidak bisa ditebak), kedaluwarsa & bisa dimatikan, honeypot anti-bot, batas 10 kode salah/15 menit dan 5 pendaftaran/hari per IP (IP dari Cloudflare; VPS hanya menerima Cloudflare), password langsung di-hash, role Owner tidak bisa diberikan, Admin hanya bisa memberi role lapangan, no. rekening hanya terlihat Owner/Finance, persetujuan mengunci baris (tidak dobel). PR #82: overhead gaji hanya angka HPP saran harga (tidak membuat jurnal) — lihat S9.
+
 ### Yang diperiksa dan **sudah benar**
 
 - Jurnal selalu seimbang & bilangan bulat (`validateLines`), jurnal append-only, pembalik tidak bisa dibalik dua kali, periode tertutup ditolak.
