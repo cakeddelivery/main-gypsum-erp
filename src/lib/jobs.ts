@@ -184,6 +184,9 @@ export async function runDueJobs(now: Date = new Date()) {
     await markRan("job_monthly_payroll_last", date);
     results.monthlyPayroll = await logFailure("GAJI_OTOMATIS", date, () => generateMonthlyPayroll(SYSTEM_ACTOR, now));
     results.allowancePayroll = await logFailure("TUNJANGAN_OTOMATIS", date, () => generateAllowancePayroll(SYSTEM_ACTOR, now));
+    // Overhead "Gaji Produksi" ikut gaji terbaru (mis. karyawan resign hari ini)
+    const { syncSalaryOverheads } = await import("./salaryOverhead");
+    results.salaryOverhead = await logFailure("OVERHEAD_GAJI", date, () => syncSalaryOverheads());
   }
   if (minutes >= 7 * 60 && !(await ranToday("job_daily_recap_last", date))) {
     await markRan("job_daily_recap_last", date);

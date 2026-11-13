@@ -1,5 +1,6 @@
 "use server";
 import { z } from "zod";
+import { syncSalaryOverheadsSafe } from "@/lib/salaryOverhead";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int } from "@/lib/action";
 import { audit } from "@/lib/audit";
@@ -47,6 +48,7 @@ export const saveEmployee = action(
     });
     if (data.status === "NONAKTIF") await prisma.user.updateMany({ where: { employeeId: e.id }, data: { active: false } });
     await audit(user, id ? "KARYAWAN_DIUBAH" : "KARYAWAN_DIBUAT", "Employee", e.id, { ...data, allowances });
+    await syncSalaryOverheadsSafe();
     return "Data karyawan tersimpan";
   },
   ["/karyawan", "/gaji/tunjangan"],
@@ -79,6 +81,7 @@ export const resignEmployee = action(
       if (now) await tx.user.updateMany({ where: { employeeId: id }, data: { active: false } });
     });
     await audit(user, "KARYAWAN_RESIGN", "Employee", id, { resignDate: date, nonaktif: now });
+    await syncSalaryOverheadsSafe();
     return now ? `${e.name} resign per ${date}. Status Nonaktif, akun login dimatikan.` : `${e.name} dijadwalkan resign ${date}.`;
   },
   ["/karyawan"],
@@ -91,6 +94,7 @@ export const cancelResign = action(
     const id = str(fd, "id");
     const e = await prisma.employee.update({ where: { id }, data: { resignDate: null, status: "AKTIF" } });
     await audit(user, "KARYAWAN_RESIGN_DIBATALKAN", "Employee", id, null);
+    await syncSalaryOverheadsSafe();
     return `Resign ${e.name} dibatalkan`;
   },
   ["/karyawan"],
