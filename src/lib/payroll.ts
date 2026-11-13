@@ -203,6 +203,8 @@ export async function giveAdvance(input: { employeeId: string; amount: number; i
   if (input.installment < 0 || input.installment > input.amount) throw new PayrollError("Cicilan per gajian harus 0 – nominal kasbon");
   return prisma.$transaction(async (tx) => {
     const emp = await tx.employee.findUniqueOrThrow({ where: { id: input.employeeId } });
+    // Aturan bisnis: pekerja borongan tidak mendapat kasbon
+    if (emp.wageType === "BORONGAN") throw new PayrollError(`${emp.name} pekerja borongan: tidak bisa diberi kasbon`);
     const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: input.bankAccountId } });
     const number = await nextNumber(tx, "KSB");
     const j = await postJournal(tx, { date: jakartaDateTime(input.date, "12:00"), storeId: input.storeId, description: `Kasbon ${number} ${emp.name}`, source: "KASBON", sourceId: number, actor, lines: [{ accountCode: COA.PIUTANG_KARYAWAN, debit: input.amount }, { accountId: bank.coaAccountId, credit: input.amount }] });

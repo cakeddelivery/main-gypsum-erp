@@ -102,9 +102,12 @@ export async function applyResultCount(reportId: string, actor: Actor, now: Date
   });
   if (newer) return { adjusted: 0, skipped: `Stok hasil tidak diubah: sudah ada laporan lebih baru (${fmtDay(newer.date)} · ${newer.shift.name})` };
   const at = shiftEndAt(r.date, r.shift, now);
-  const prev = new Map(((r.resultApplied as { itemId: string; qty: number }[] | null) ?? []).map((x) => [x.itemId, x.qty]));
   let n = 0;
   await prisma.$transaction(async (tx) => {
+    // Kunci laporan & baca ulang hitungan yang sudah diterapkan (cegah selisih dibukukan dua kali saat Kirim ganda)
+    await tx.$queryRaw`SELECT id FROM "ShiftReport" WHERE id = ${r.id} FOR UPDATE`;
+    const fresh = await tx.shiftReport.findUniqueOrThrow({ where: { id: r.id }, select: { resultApplied: true } });
+    const prev = new Map(((fresh.resultApplied as { itemId: string; qty: number }[] | null) ?? []).map((x) => [x.itemId, x.qty]));
     const snapshot = new Map(prev);
     for (const v of VARIANTS) {
       const c = vals[v];

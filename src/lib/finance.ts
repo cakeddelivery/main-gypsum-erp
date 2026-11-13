@@ -5,7 +5,7 @@ import { nextNumber } from "./numbering";
 import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } from "./accounting";
 import { locationSettings, recordMovement } from "./stock";
 import { audit } from "./audit";
-import { addDays, dateStr, jakartaDateTime, todayStr } from "./time";
+import { addDays, jakartaDateTime, todayStr } from "./time";
 import { liabilityAccountId, payableLines, splitPayment } from "./payables";
 import { applyReserveLink, parseLink, reserveAccrualLines, reserveOptions, validateLink, type ReserveLink, type ReservePart } from "./reserveSync";
 
@@ -393,7 +393,7 @@ async function syncLoanSaving(tx: Tx, cur: Pick<TxRow, "payableId" | "accountId"
     const bal = Number(sums.find((r) => r.type === "SISIH")?._sum.amount ?? 0) - Number(sums.find((r) => r.type === "TARIK")?._sum.amount ?? 0);
     const take = Math.min(left, bal);
     if (take <= 0) continue;
-    await tx.reserveEntry.create({ data: { fundId: f.id, date: new Date(`${dateStr(cur.date)}T00:00:00Z`), type: "TARIK", amount: BigInt(take), journalId, note: `Bayar hutang ${cur.number}`, createdBy: actorName } });
+    await tx.reserveEntry.create({ data: { fundId: f.id, date: new Date(`${todayStr(cur.date)}T00:00:00Z`), type: "TARIK", amount: BigInt(take), journalId, note: `Bayar hutang ${cur.number}`, createdBy: actorName } });
     left -= take;
   }
 }

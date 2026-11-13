@@ -1,6 +1,6 @@
 import type { Prisma, ProductVariant } from "@prisma/client";
 import { prisma } from "./db";
-import { COA, postJournal, reverseJournal } from "./accounting";
+import { COA, postJournal, reverseJournal, reversalDate } from "./accounting";
 import { locationSettings, recordMovement, reverseMovementsByRef, usageAccountCode } from "./stock";
 import { isTemplate, plannedFlow, shiftEndAt, type FlowStep, type WorkData } from "./shiftReport";
 
@@ -51,11 +51,11 @@ export async function flowItem(tx: Tx, s: Pick<FlowStep, "kind" | "key">): Promi
 async function reverseVersion(tx: Tx, reportId: string, v: number, actor: Actor) {
   const ref = `LPH:${reportId}:${v}`;
   const moves = await tx.stockMovement.findMany({ where: { ref }, select: { id: true } });
-  await reverseMovementsByRef(tx, ref, `BATAL-${ref}`, "Revisi laporan shift (hasil kerja)", actor);
+  await reverseMovementsByRef(tx, ref, `BATAL-${ref}`, "Revisi laporan shift (hasil kerja)", actor, { keepDate: true });
   const journals = await tx.journal.findMany({
     where: { reversalOfId: null, OR: [{ source: FLOW_SOURCE, sourceId: `${reportId}:${v}` }, { source: "STOK", sourceId: { in: moves.map((m) => m.id) } }] },
   });
-  for (const j of journals) await reverseJournal(tx, j.id, new Date(), actor, "Revisi laporan shift");
+  for (const j of journals) await reverseJournal(tx, j.id, await reversalDate(tx, j.date), actor, "Revisi laporan shift");
 }
 
 export type FlowResult = { posted: number; skipped?: string };
@@ -86,12 +86,16 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
   // Nilai resep dibaca di luar transaksi (fungsi HPP memakai koneksi biasa)
   const costs = new Map<string, number>();
   const itemIds = await prisma.$transaction(async (tx) => Promise.all(steps.map((s) => flowItem(tx, s))));
-  for (const id of new Set(itemIds)) costs.set(id, await recipeMaterialCost(id));
+  const allCosts = itemIds.length ? await (await import("./hpp")).itemCosts() : undefined;
+  for (const id of new Set(itemIds)) costs.set(id, await recipeMaterialCost(id, allCosts));
 
   let posted = 0;
   await prisma.$transaction(async (tx) => {
-    if (r.workPostedVersion > 0) await reverseVersion(tx, r.id, r.workPostedVersion, actor);
-    const v = r.workPostedVersion + 1;
+    // Kunci laporan & baca ulang versinya: klik Kirim dua kali bersamaan tidak boleh memposting hasil kerja dua kali
+    await tx.$queryRaw`SELECT id FROM "ShiftReport" WHERE id = ${r.id} FOR UPDATE`;
+    const { workPostedVersion } = await tx.shiftReport.findUniqueOrThrow({ where: { id: r.id }, select: { workPostedVersion: true } });
+    if (workPostedVersion > 0) await reverseVersion(tx, r.id, workPostedVersion, actor);
+    const v = workPostedVersion + 1;
     const ref = `LPH:${r.id}:${v}`;
     const note = `Laporan shift ${r.division.name} ${r.shift.name}`;
     let toInventory = 0;

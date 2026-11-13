@@ -5,7 +5,12 @@ import { jakartaParts, toMinutes } from "./time";
 export function evaluateCheckIn(shift: { startTime: string; toleranceMinutes: number }, checkIn: Date): { status: AttendanceStatus; lateMinutes: number } {
   const p = jakartaParts(checkIn);
   const minutes = p.hour * 60 + p.minute;
-  const late = Math.max(0, minutes - toMinutes(shift.startTime));
+  // Shift yang melewati tengah malam: mulai 22.00 lalu absen 00.10 = telat 130 menit (bukan lebih awal);
+  // mulai 00.30 lalu absen 23.50 = datang lebih awal (bukan telat 23 jam)
+  let diff = minutes - toMinutes(shift.startTime);
+  if (diff < -720) diff += 1440;
+  else if (diff > 1080) diff -= 1440;
+  const late = Math.max(0, diff);
   if (late > shift.toleranceMinutes) return { status: "TERLAMBAT", lateMinutes: late };
   return { status: "HADIR", lateMinutes: late };
 }
