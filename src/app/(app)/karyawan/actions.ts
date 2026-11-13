@@ -1,5 +1,6 @@
 "use server";
 import { z } from "zod";
+import { syncSalaryOverheadsSafe } from "@/lib/salaryOverhead";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int } from "@/lib/action";
 import { audit } from "@/lib/audit";
@@ -7,6 +8,7 @@ import { ForbiddenError, hashPassword } from "@/lib/auth";
 import { clearLoginBlocks, passwordChangeData } from "@/lib/loginGuard";
 import { dateOnly, dateStr, todayStr } from "@/lib/time";
 import { autoCode } from "@/lib/codes";
+import { approveRegistration, createInvite, disableInvite, rejectRegistration } from "@/lib/registration";
 import type { EmployeeStatus, Role, WageType } from "@prisma/client";
 
 export const saveEmployee = action(
@@ -27,6 +29,19 @@ export const saveEmployee = action(
       // BPJS Ketenagakerjaan (dibayar perusahaan); nominal kosong = bawaan Pengaturan
       bpjsTk: str(fd, "bpjsTk") === "on",
       bpjsTkAmount: str(fd, "bpjsTkAmount") ? BigInt(int(fd, "bpjsTkAmount")) : null,
+      // Data diri (form pendaftaran); hanya diubah bila bagian ini ada di form
+      ...(fd.has("profilePresent")
+        ? {
+            nickname: optStr(fd, "nickname"),
+            gender: str(fd, "gender") === "L" || str(fd, "gender") === "P" ? (str(fd, "gender") as "L" | "P") : null,
+            birthPlace: optStr(fd, "birthPlace"),
+            birthDate: str(fd, "birthDate") ? dateOnly(str(fd, "birthDate")) : null,
+            address: optStr(fd, "address"),
+            email: optStr(fd, "email")?.toLowerCase() ?? null,
+          }
+        : {}),
+      // Rekening gaji: hanya Owner/Finance
+      ...(fd.has("bankAccountNo") && (user.role === "OWNER" || user.role === "FINANCE") ? { bankName: optStr(fd, "bankName"), bankAccountNo: optStr(fd, "bankAccountNo")?.replace(/\D/g, "") || null, bankAccountName: optStr(fd, "bankAccountName") } : {}),
     };
     if (data.wageType === "BULANAN" && !data.joinDate) throw new Error("Karyawan bulanan wajib punya tanggal masuk (dasar tanggal gajian)");
     if (data.wageType === "BULANAN" && data.monthlySalary <= BigInt(0)) throw new Error("Isi gaji bulanan");
@@ -47,6 +62,7 @@ export const saveEmployee = action(
     });
     if (data.status === "NONAKTIF") await prisma.user.updateMany({ where: { employeeId: e.id }, data: { active: false } });
     await audit(user, id ? "KARYAWAN_DIUBAH" : "KARYAWAN_DIBUAT", "Employee", e.id, { ...data, allowances });
+    await syncSalaryOverheadsSafe();
     return "Data karyawan tersimpan";
   },
   ["/karyawan", "/gaji/tunjangan"],
@@ -79,6 +95,7 @@ export const resignEmployee = action(
       if (now) await tx.user.updateMany({ where: { employeeId: id }, data: { active: false } });
     });
     await audit(user, "KARYAWAN_RESIGN", "Employee", id, { resignDate: date, nonaktif: now });
+    await syncSalaryOverheadsSafe();
     return now ? `${e.name} resign per ${date}. Status Nonaktif, akun login dimatikan.` : `${e.name} dijadwalkan resign ${date}.`;
   },
   ["/karyawan"],
@@ -91,6 +108,7 @@ export const cancelResign = action(
     const id = str(fd, "id");
     const e = await prisma.employee.update({ where: { id }, data: { resignDate: null, status: "AKTIF" } });
     await audit(user, "KARYAWAN_RESIGN_DIBATALKAN", "Employee", id, null);
+    await syncSalaryOverheadsSafe();
     return `Resign ${e.name} dibatalkan`;
   },
   ["/karyawan"],
@@ -126,4 +144,59 @@ export const saveAccount = action(
     return "Akun login tersimpan";
   },
   ["/karyawan"],
+);
+
+// ---------- Pendaftaran karyawan (form publik /daftar) ----------
+
+/** Buat tautan undangan pendaftaran */
+export const createInviteAction = action(
+  "employee.manage",
+  async (fd, user) => {
+    const r = await createInvite(int(fd, "days", 7), optStr(fd, "note"), user);
+    return `Tautan dibuat, berlaku sampai ${r.invite.expiresAt.toLocaleDateString("id-ID", { timeZone: "Asia/Jakarta" })}. Salin dari daftar tautan.`;
+  },
+  ["/karyawan/pendaftaran"],
+);
+
+export const disableInviteAction = action(
+  "employee.manage",
+  async (fd, user) => {
+    await disableInvite(str(fd, "id"), user);
+    return "Tautan dimatikan";
+  },
+  ["/karyawan/pendaftaran"],
+);
+
+/** Setujui pendaftaran: Owner/pengelola mengisi divisi, role, upah, tanggal masuk, BPJS */
+export const approveRegistrationAction = action(
+  "employee.manage",
+  async (fd, user) => {
+    const role = str(fd, "role") as Role;
+    if (!user.can("users.manage") && !FIELD_ROLES.includes(role)) throw new ForbiddenError();
+    const r = await approveRegistration(
+      str(fd, "id"),
+      {
+        divisionId: z.string().min(1, "Pilih divisi").parse(str(fd, "divisionId")),
+        role,
+        wageType: str(fd, "wageType") as WageType,
+        monthlySalary: int(fd, "monthlySalary"),
+        dailyRate: int(fd, "dailyRate"),
+        joinDate: str(fd, "joinDate"),
+        bpjsTk: str(fd, "bpjsTk") === "on",
+        bpjsTkAmount: str(fd, "bpjsTkAmount") ? int(fd, "bpjsTkAmount") : null,
+      },
+      user,
+    );
+    return `Disetujui: karyawan ${r.employee.code} ${r.employee.name}, akun ${r.user.username} aktif`;
+  },
+  ["/karyawan", "/karyawan/pendaftaran", "/"],
+);
+
+export const rejectRegistrationAction = action(
+  "employee.manage",
+  async (fd, user) => {
+    await rejectRegistration(str(fd, "id"), str(fd, "reason"), user);
+    return "Pendaftaran ditolak";
+  },
+  ["/karyawan/pendaftaran", "/"],
 );

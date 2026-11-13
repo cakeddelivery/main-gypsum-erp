@@ -1,5 +1,6 @@
 "use server";
 import { z } from "zod";
+import { syncSalaryOverheadsSafe } from "@/lib/salaryOverhead";
 import { nextTypeCode } from "@/lib/productTypes";
 import { normEmail } from "@/lib/email";
 import { prisma } from "@/lib/db";
@@ -134,6 +135,7 @@ export const saveParams = action("settings.manage", async (fd, user) => {
     await prisma.setting.upsert({ where: { key: k }, create: { key: k, value: v }, update: { value: v } });
   }
   await audit(user, "PARAMETER_DIUBAH", "Setting", null, changes);
+  await syncSalaryOverheadsSafe();
   return "Parameter tersimpan";
 }, P);
 

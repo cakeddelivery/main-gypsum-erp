@@ -1,5 +1,6 @@
 "use server";
 import { z } from "zod";
+import { syncSalaryOverheadsSafe } from "@/lib/salaryOverhead";
 import { prisma } from "@/lib/db";
 import { autoCode } from "@/lib/codes";
 import { action, str, int, optStr } from "@/lib/action";
@@ -173,6 +174,7 @@ export const saveAllowance = action(
     const data = { name, amount: BigInt(amount), active: id ? fd.get("active") === "on" : true };
     const row = id ? await prisma.employeeAllowance.update({ where: { id }, data }) : await prisma.employeeAllowance.create({ data: { ...data, employeeId: str(fd, "employeeId") } });
     await audit(user, id ? "TUNJANGAN_DIUBAH" : "TUNJANGAN_DITAMBAH", "EmployeeAllowance", row.id, { name, amount });
+    await syncSalaryOverheadsSafe();
     return "Tunjangan disimpan";
   },
   ["/gaji/tunjangan"],
@@ -184,6 +186,7 @@ export const deleteAllowance = action(
     const id = str(fd, "id");
     await prisma.employeeAllowance.delete({ where: { id } });
     await audit(user, "TUNJANGAN_DIHAPUS", "EmployeeAllowance", id, null);
+    await syncSalaryOverheadsSafe();
     return "Tunjangan dihapus";
   },
   ["/gaji/tunjangan"],

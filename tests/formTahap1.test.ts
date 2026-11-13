@@ -109,3 +109,14 @@ describe("Huruf kapital tiap kata", async () => {
     expect(shouldCapitalize({ tagName: "INPUT", type: "text", name: "sku" })).toBe(false);
   });
 });
+
+describe("Posisi panel dropdown", () => {
+  it("selebar kolom pemicu, menempel di bawah; ke atas bila ruang bawah kurang; tidak keluar layar", async () => {
+    const { panelBox } = await import("@/components/ChoiceEnhancer");
+    expect(panelBox({ left: 40, top: 100, bottom: 140, width: 220 }, 390, 800)).toMatchObject({ width: 220, left: 40, up: false, top: 142, bottom: null });
+    expect(panelBox({ left: 40, top: 700, bottom: 740, width: 220 }, 390, 800)).toMatchObject({ up: true, top: null, bottom: 102 });
+    // Kolom sempit: minimal 140px; kolom yang meluber dari tabel geser dijepit ke dalam layar
+    expect(panelBox({ left: 300, top: 100, bottom: 140, width: 60 }, 390, 800)).toMatchObject({ width: 140, left: 242 });
+    expect(panelBox({ left: -20, top: 100, bottom: 140, width: 500 }, 390, 800)).toMatchObject({ width: 374, left: 8 });
+  });
+});
