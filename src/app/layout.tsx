@@ -29,6 +29,8 @@ export const viewport: Viewport = {
   maximumScale: 1,
   // Isi sampai ke tepi layar iPhone (poni/garis bawah); bottom nav memakai safe-area-inset-bottom
   viewportFit: "cover",
+  // Android: saat keyboard muncul, tinggi layar ikut mengecil sehingga popup & kolom isian tidak tertutup keyboard
+  interactiveWidget: "resizes-content",
   themeColor: [
     { media: "(prefers-color-scheme: light)", color: "#2559b8" },
     { media: "(prefers-color-scheme: dark)", color: "#0b1120" },

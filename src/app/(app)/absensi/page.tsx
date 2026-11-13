@@ -220,7 +220,7 @@ function SiteFields({ site }: { site?: { name: string; latitude: number; longitu
       <label><span className="label">Latitude</span><input name="latitude" required inputMode="decimal" defaultValue={site?.latitude} placeholder="-7.1167" className="input" /></label>
       <label><span className="label">Longitude</span><input name="longitude" required inputMode="decimal" defaultValue={site?.longitude} placeholder="112.4167" className="input" /></label>
       <UseMyLocation />
-      <label><span className="label">Radius (meter)</span><input name="radiusM" type="number" min={20} max={5000} required defaultValue={site?.radiusM ?? 100} className="input" /></label>
+      <label><span className="label">Radius (meter)</span><input name="radiusM" type="number" inputMode="numeric" min={20} max={5000} required defaultValue={site?.radiusM ?? 100} className="input" /></label>
     </>
   );
 }

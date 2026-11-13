@@ -1,3 +1,5 @@
+import { FormFeedback } from "@/components/FormFeedback";
+
 /** Bingkai halaman masuk / lupa password / reset password (logo + judul). */
 export function AuthCard({ children, subtitle = "Main Gypsum · Dunia Lukis", wide }: { children: React.ReactNode; subtitle?: string; wide?: boolean }) {
   return (
@@ -10,6 +12,8 @@ export function AuthCard({ children, subtitle = "Main Gypsum · Dunia Lukis", wi
           <p className="text-xs text-slate-500">{subtitle}</p>
         </div>
         {children}
+        {/* Kolom salah ditandai merah + getar + gulir ke kolom pertama, sama seperti di dalam aplikasi */}
+        <FormFeedback />
         {process.env.APP_ENV !== "production" && <p className="mt-4 rounded-lg bg-amber-50 p-2 text-center text-xs text-amber-700">Lingkungan staging · gunakan akun uji dari README</p>}
       </div>
     </div>

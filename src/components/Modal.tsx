@@ -11,16 +11,39 @@ export const CLOSE_MS = 160;
  * Popup form. Bila isian sudah diubah, menutup (✕, Esc, ketuk di luar popup) meminta konfirmasi dulu
  * agar isian tidak hilang tanpa sengaja. Setelah tersimpan, popup ditutup tanpa konfirmasi.
  */
-export function Modal({ trigger, title, children, triggerClass = "btn-primary", wide, defaultOpen = false }: { trigger: React.ReactNode; title: string; children: React.ReactNode; triggerClass?: string; wide?: boolean; defaultOpen?: boolean }) {
+export function Modal({ trigger, title, children, triggerClass = "btn-primary", wide, full, defaultOpen = false, subtitle, grow, triggerLabel }: {
+  trigger: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+  triggerClass?: string;
+  wide?: boolean;
+  /** Form panjang: layar penuh di HP, lebar besar di komputer */
+  full?: boolean;
+  defaultOpen?: boolean;
+  subtitle?: React.ReactNode;
+  /** Popup muncul membesar dari tombol pemicunya (dan mengecil kembali ke tombol saat ditutup) */
+  grow?: boolean;
+  /** Label aksesibel tombol pemicu (mis. tombol ikon) */
+  triggerLabel?: string;
+}) {
   const [open, setOpen] = useState(defaultOpen);
   const [dirty, setDirty] = useState(false);
   const [asking, setAsking] = useState(false);
   const [closing, setClosing] = useState(false);
   const ref = useRef<HTMLDialogElement>(null);
+  const btn = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
-    if (open && !d.open) d.showModal();
+    if (open && !d.open) {
+      d.showModal();
+      // Titik asal animasi = tengah tombol pemicu, relatif terhadap posisi popup
+      if (grow && btn.current) {
+        const b = btn.current.getBoundingClientRect();
+        const r = d.getBoundingClientRect();
+        d.style.transformOrigin = `${b.left + b.width / 2 - r.left}px ${b.top + b.height / 2 - r.top}px`;
+      }
+    }
     if (!open && d.open) d.close();
     if (!open) {
       setDirty(false);
@@ -36,12 +59,13 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
   const requestClose = () => (dirty ? setAsking(true) : forceClose());
   return (
     <>
-      <button type="button" className={triggerClass} onClick={() => setOpen(true)}>
+      <button ref={btn} type="button" className={triggerClass} aria-label={triggerLabel} onClick={() => setOpen(true)}>
         {trigger}
       </button>
       <dialog
         ref={ref}
         data-closing={closing || undefined}
+        data-grow={grow || undefined}
         onClose={() => setOpen(false)}
         onCancel={(e) => {
           e.preventDefault();
@@ -50,18 +74,23 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
         onClick={(e) => {
           if (e.target === e.currentTarget) requestClose();
         }}
-        className={`modal w-[calc(100%-1.5rem)] ${wide ? "max-w-3xl" : "max-w-lg"} rounded-2xl bg-white p-0 text-slate-800 shadow-xl backdrop:bg-slate-900/50`}
+        className={`modal ${full ? "modal-full max-w-4xl" : wide ? "max-w-3xl" : "max-w-lg"} w-[calc(100%-1.5rem)] rounded-2xl bg-white p-0 text-slate-800 shadow-xl backdrop:bg-slate-900/50`}
+        aria-label={title}
       >
         {open && (
           <Ctx.Provider value={forceClose}>
-            <div className="relative" onInput={() => setDirty(true)} onChange={() => setDirty(true)}>
-              <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-3">
-                <h2 className="font-semibold capitalize text-slate-900">{title}</h2>
-                <button type="button" aria-label="Tutup" className="rounded p-1 text-slate-600 hover:bg-slate-100" onClick={requestClose}>
+            <div className="modal-shell" onInput={() => setDirty(true)} onChange={() => setDirty(true)}>
+              <div className="modal-head">
+                <div className="min-w-0">
+                  <h2 className="font-semibold capitalize text-slate-900">{title}</h2>
+                  {subtitle && <p className="truncate text-xs text-slate-500">{subtitle}</p>}
+                </div>
+                <button type="button" aria-label="Tutup" className="modal-x" onClick={requestClose}>
                   ✕
                 </button>
               </div>
-              <div className="max-h-[75vh] overflow-y-auto overflow-x-hidden overscroll-contain px-5 py-4 supports-[height:100dvh]:max-h-[75dvh]">{children}</div>
+              {/* Satu-satunya area yang bisa digulir di popup (dialog sendiri tidak ikut menggulir → tidak ada 2 scrollbar) */}
+              <div className="modal-body px-5 py-4">{children}</div>
               {asking && (
                 <div role="alertdialog" aria-labelledby="tutup-judul" className="anim-fade absolute inset-0 z-10 grid place-items-center rounded-2xl bg-slate-900/50 p-4">
                   <div className="anim-pop w-full max-w-sm rounded-xl border border-slate-300 bg-white p-4 shadow-2xl">

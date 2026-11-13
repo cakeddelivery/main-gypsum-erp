@@ -32,6 +32,15 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
   if (can("stock.approve")) {
     tasks.push(prisma.stockRequest.count({ where: { status: "DIAJUKAN" } }).then((c) => void (c && out.push({ key: "stockreq", label: "Permintaan stok menunggu", count: c, href: "/stok/permintaan", tone: "blue" }))));
   }
+  // Kendala di laporan shift yang belum selesai ditindaklanjuti → Supervisor, Finance, Owner
+  // (production.target dibatasi tepat untuk ketiga role itu, lihat RESTRICTED di rbac.ts)
+  if (can("production.target") && can("report.view")) {
+    tasks.push(
+      prisma.shiftReport
+        .count({ where: { status: { not: "DRAFT" }, complaints: { not: null }, NOT: [{ complaints: "" }, { followUpStatus: "SELESAI" }], date: { gte: dateOnly(addDays(today, -14)) } } })
+        .then((c) => void (c && out.push({ key: "kendala", label: "Kendala laporan shift perlu ditindaklanjuti", count: c, href: "/laporan?kendala=1", tone: "red" }))),
+    );
+  }
   if (can("report.create")) {
     tasks.push(
       (async () => {

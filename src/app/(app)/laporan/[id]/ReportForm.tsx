@@ -1,7 +1,10 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ActionForm, Submit } from "@/components/ActionForm";
+import { useCloseModal } from "@/components/Modal";
+import { revealField } from "@/components/FormFeedback";
+import { celebrate } from "@/components/Celebrate";
 import { toast } from "@/components/Toaster";
 import { ProofPreview } from "@/components/ProofPreview";
 import {
@@ -28,7 +31,7 @@ import {
 import { addReceipt, removeChecklistPhoto, removeReceipt, saveReport, uploadChecklistPhoto } from "../actions";
 
 /** Baris pesanan yang sedang dikirim (Stok → Pembelian) untuk barang divisi ini */
-export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean };
+export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean; vendor: string; itemName: string; unit: string };
 export type ReceiptView = { id: string; number: string; itemName: string; unit: string; qty: number; supplierName: string | null; hasPhoto: boolean; linked: boolean };
 export type ResultCountRow = { key: string; label: string; unit: string; qty: number | null };
 
@@ -56,7 +59,13 @@ type Props = {
   resultCount: ResultCountRow[];
   /** SKU katalog untuk bagian isian katalog (Giftbox, Paket & Satuan Single Pack) */
   catalogs: ReportCatalogs;
+  /** Hasil kerja yang masuk stok saat dikirim (kosong bila fitur mati) */
+  flow: string[] | null;
+  /** Laporan sudah pernah dikirim (kirim ulang = revisi) */
+  sent: boolean;
 };
+
+type Step = { key: string; label: string };
 
 const fmt = (v: number) => v.toLocaleString("id-ID");
 const toNum = (s: string) => (s.trim() === "" ? null : Math.max(0, Math.round(Number(s.replace(/\./g, "").replace(/,/g, ".")) || 0)));
@@ -90,18 +99,112 @@ export function ReportForm(p: Props) {
   const order = stock.filter(needsOrder);
   const doneCount = p.checklist.filter((c, i) => (c.photo ? !!c.photoPath : checks[i])).length;
 
+  // Langkah (stepper): bagian yang tidak tampil tetap ada di form (disembunyikan) sehingga ikut tersimpan
+  const steps: Step[] = [
+    { key: "hasil", label: t ? "PIC & hasil kerja" : "PIC" },
+    { key: "checklist", label: "Checklist" },
+    ...(p.resultTitle && p.resultCount.length > 0 ? [{ key: "hasilakhir", label: "Stok hasil" }] : []),
+    ...(stock.length > 0 ? [{ key: "stok", label: "Stok akhir" }] : []),
+    { key: "catatan", label: "Catatan & kirim" },
+  ];
+  const [step, setStep] = useState(0);
+  const [seen, setSeen] = useState(() => new Set([0]));
+  const cur = steps[Math.min(step, steps.length - 1)].key;
+  const last = step >= steps.length - 1;
+  const close = useCloseModal();
+  const formRef = useRef<HTMLDivElement>(null);
+  const bodyTop = useRef<HTMLElement>(null);
+  const go = (i: number) => {
+    setStep(i);
+    setSeen((x) => new Set(x).add(i));
+  };
+  // Pindah langkah → kembali ke atas popup
+  useEffect(() => {
+    const body = bodyTop.current?.closest(".modal-body");
+    if (body) body.scrollTop = 0;
+    bodyTop.current?.querySelector('[aria-current="step"]')?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [step]);
+  // Penilaian harian divisi dari checklist (dipakai di langkah terakhir & konfirmasi kirim)
+  const missingPhoto = p.checklist.filter((c) => c.photo && !c.photoPath);
+  const unchecked = p.checklist.filter((c, i) => !c.photo && !checks[i]);
+  const score = p.checklist.length ? Math.round((doneCount / p.checklist.length) * 100) : 100;
+  const [confirming, setConfirming] = useState(false);
+  const sending = useRef(false);
+  const router = useRouter();
+  const trySend = () => {
+    if (missingPhoto.length) {
+      toast(`Lampirkan foto dulu: ${missingPhoto.map((c) => c.label).join(", ")}`, false);
+      go(steps.findIndex((x) => x.key === "checklist"));
+      return;
+    }
+    setConfirming(true);
+  };
+  // Kolom wajib yang kosong di langkah lain: buka langkahnya lalu gulir & fokus ke kolom itu
+  useEffect(() => {
+    const el = formRef.current;
+    if (!el) return;
+    const onInvalid = (e: Event) => {
+      const box = (e.target as HTMLElement).closest<HTMLElement>("[data-step]");
+      const i = steps.findIndex((x) => x.key === box?.dataset.step);
+      if (i < 0 || steps[i].key === cur) return;
+      go(i);
+      const target = e.target as HTMLElement;
+      window.setTimeout(() => revealField(target), 60);
+    };
+    el.addEventListener("invalid", onInvalid, true);
+    return () => el.removeEventListener("invalid", onInvalid, true);
+  });
+  const show = (key: string) => (key === cur ? "" : "hidden");
+
   return (
-    <ActionForm action={saveReport} className="space-y-4">
+    <div ref={formRef}>
+      <nav ref={bodyTop} aria-label="Langkah laporan" className="sticky -top-4 z-10 -mx-5 -mt-4 mb-4 flex-none border-b border-slate-200 bg-white px-3 py-2">
+        <ol className="flex gap-1 overflow-x-auto">
+          {steps.map((x, i) => (
+            <li key={x.key} className="shrink-0">
+              <button type="button" onClick={() => go(i)} aria-current={i === step ? "step" : undefined} className={`flex min-h-10 items-center gap-1.5 rounded-full px-3 text-xs font-medium transition ${i === step ? "bg-brand-600 text-white" : seen.has(i) ? "bg-brand-50 text-brand-700" : "bg-slate-100 text-slate-600"}`}>
+                <span className={`grid h-5 w-5 place-items-center rounded-full text-[11px] ${i === step ? "bg-white/20" : "bg-white"}`}>{seen.has(i) && i !== step ? "✓" : i + 1}</span>
+                {x.label}
+              </button>
+            </li>
+          ))}
+        </ol>
+      </nav>
+    <ActionForm
+      action={async (prev, fd) => {
+        const r = await saveReport(prev, fd);
+        // Selebrasi dipicu langsung dari respons server: setelah terkirim, halaman mengunci laporan
+        // (form bisa hilang sebelum efek onSuccess sempat berjalan)
+        if (r.ok && fd.get("intent") === "send") {
+          sending.current = false;
+          celebrate("Laporan Berhasil Terkirim");
+          router.replace(`/laporan/${p.id}?jpg=1`, { scroll: true });
+        }
+        return r;
+      }}
+      className="space-y-4"
+      onSuccess={() => {
+        setConfirming(false);
+        window.setTimeout(close, 750);
+      }}
+      onError={(err) => {
+        if (!sending.current) return;
+        sending.current = false;
+        setConfirming(false);
+        toast(err, false);
+      }}
+    >
       <input type="hidden" name="id" value={p.id} />
-      <section className="card p-4">
+      <section data-step="hasil" className={`card p-4 ${show("hasil")}`}>
         <label className="block">
           <span className="label">PIC divisi (yang melaporkan)</span>
-          <input name="picName" defaultValue={p.picName} className="input" required />
+          <input value={p.picName} readOnly tabIndex={-1} className="input bg-slate-100 font-medium dark:bg-slate-800" aria-describedby="pic-hint" />
+          <span id="pic-hint" className="mt-1 block text-xs text-slate-500">Otomatis dari akun yang sedang masuk</span>
         </label>
       </section>
 
       {t && t.sections.some((s) => !(s.kind === "grid" && s.legacy) || gridRows(p.work, s as GridSection).length > 0) && (
-        <section className="card space-y-4 p-4">
+        <section data-step="hasil" className={`card space-y-4 p-4 ${show("hasil")}`}>
           <h3 className="font-semibold text-slate-800">Detail hasil kerja</h3>
           {t.sections.map((s) => {
             if (s.kind === "grid" && s.legacy && !gridRows(p.work, s).some((r) => r.v.some((v) => v != null))) return null;
@@ -258,7 +361,7 @@ export function ReportForm(p: Props) {
         </section>
       )}
 
-      <section className="card p-4">
+      <section data-step="checklist" className={`card p-4 ${show("checklist")}`}>
         <h3 className="mb-2 font-semibold text-slate-800">Checklist penutupan {doneCount}/{p.checklist.length}</h3>
         <ul className="space-y-2">
           {p.checklist.map((c, i) => (
@@ -276,10 +379,10 @@ export function ReportForm(p: Props) {
         </ul>
       </section>
 
-      {p.materials.length > 0 && <ReceiptSection id={p.id} receipts={p.receipts} materials={p.materials} applied={p.applied} orders={p.orders} banks={p.banks} />}
+
 
       {p.resultTitle && p.resultCount.length > 0 && (
-        <section className="card p-4">
+        <section data-step="hasilakhir" className={`card p-4 ${show("hasilakhir")}`}>
           <h3 className="mb-1 font-semibold text-slate-800">{p.resultTitle}</h3>
           <p className="mb-3 text-xs text-slate-500">Hitung fisik sisa di gudang setelah hasil kerja dihitung. Kosongkan bila tidak dihitung.</p>
           <div className="keep-cols grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -294,9 +397,13 @@ export function ReportForm(p: Props) {
       )}
 
       {stock.length > 0 && (
-        <section className="card p-4">
+        <section data-step="stok" className={`card p-4 ${show("stok")}`}>
           <h3 className="mb-1 font-semibold text-slate-800">Stok akhir shift</h3>
           <p className="mb-3 text-xs text-slate-500">Hitung fisik sisa bahan baku divisi. Bahan dengan stok ≤ limit otomatis masuk daftar order.</p>
+          <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            {p.receipts.length > 0 ? <>✓ {p.receipts.length} barang masuk hari ini sudah dicatat. </> : null}
+            Ada barang datang dari supplier/toko? Catat dulu lewat tombol <b>+ Barang masuk</b> (di luar form ini) <b>sebelum</b> menghitung stok akhir, agar tidak dobel.
+          </p>
           <ul className="divide-y divide-slate-100">
             {stock.map((row, i) => {
               const low = needsOrder(row);
@@ -330,21 +437,77 @@ export function ReportForm(p: Props) {
         </section>
       )}
 
-      <section className="card space-y-3 p-4">
-        <label className="block"><span className="label">Catatan / kendala</span><textarea name="complaints" defaultValue={p.complaints} className="input" rows={3} /></label>
-        <label className="block"><span className="label">Tindak lanjut</span><textarea name="followUp" defaultValue={p.followUp} className="input" rows={2} /></label>
-        <label className="block"><span className="label">Status tindak lanjut</span>
-          <select name="followUpStatus" defaultValue={p.followUpStatus} className="input"><option value="BELUM">Belum</option><option value="PROSES">Proses</option><option value="SELESAI">Selesai</option></select>
-        </label>
+      <section data-step="catatan" className={`card space-y-3 p-4 ${show("catatan")}`}>
+        <label className="block"><span className="label">Catatan / kendala (opsional)</span><textarea name="complaints" defaultValue={p.complaints} className="input" rows={3} /></label>
+        <p className="text-xs text-slate-500">Bila ada kendala, Supervisor, Finance, dan Owner mendapat peringatan untuk menindaklanjuti.</p>
       </section>
-      <div className="sticky bottom-20 z-10 lg:bottom-4">
-        <Submit className="btn-primary w-full shadow-lg">Simpan laporan</Submit>
+      <section data-step="catatan" className={`card p-4 ${show("catatan")}`}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-slate-800">Penilaian harian divisi</h3>
+            <p className="text-xs text-slate-500">Dari checklist penutupan: {doneCount}/{p.checklist.length} selesai</p>
+          </div>
+          <span className={`text-2xl font-bold tabular-nums ${score >= 90 ? "text-emerald-600" : score >= 70 ? "text-amber-600" : "text-rose-600"}`}>{score}</span>
+        </div>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className={`h-full rounded-full transition-all ${score >= 90 ? "bg-emerald-500" : score >= 70 ? "bg-amber-500" : "bg-rose-500"}`} style={{ width: `${score}%` }} /></div>
+        {missingPhoto.length > 0 && <p className="mt-2 text-xs font-medium text-rose-600">⚠ Foto wajib belum dilampirkan: {missingPhoto.map((c) => c.label).join(", ")}. Laporan belum bisa dikirim.</p>}
+        {missingPhoto.length === 0 && unchecked.length > 0 && <p className="mt-2 text-xs text-amber-700">{unchecked.length} checklist belum dicentang dan akan mengurangi nilai.</p>}
+      </section>
+      {p.flow && (
+        <section data-step="catatan" className={`rounded-lg bg-slate-50 p-3 text-sm ${show("catatan")}`}>
+          <div className="mb-1 font-medium text-slate-700">Hasil kerja masuk stok saat dikirim{p.sent ? " (posting lama dibatalkan dulu)" : ""}:</div>
+          {p.flow.length ? <ul className="space-y-0.5 text-slate-600">{p.flow.map((l) => <li key={l}>{l}</li>)}</ul> : <p className="text-slate-500">Tidak ada (hasil kerja kosong)</p>}
+        </section>
+      )}
+      <p data-step="catatan" className={`text-xs text-slate-500 ${show("catatan")}`}>
+        Saat dikirim, laporan diteruskan ke penerima rekap di Telegram (bila bot aktif) dan stok akhir shift dicatat sebagai stock opname bahan baku divisi.
+      </p>
+      {/* Tombol selalu terlihat di bawah popup */}
+      <div className="modal-foot">
+        {step > 0 && (
+          <button type="button" className="btn-secondary btn-icon" aria-label="Langkah sebelumnya" onClick={() => go(step - 1)}>‹</button>
+        )}
+        <span className="flex flex-1" onClickCapture={() => (sending.current = false)}>
+          <Submit className="btn-secondary flex-1" name="intent" value="draft" pendingText="Menyimpan…">Simpan draf</Submit>
+        </span>
+        {last ? (
+          <button type="button" className="btn-success flex-1" onClick={trySend}>{p.sent ? "Kirim ulang" : "Kirim laporan"}</button>
+        ) : (
+          <button type="button" className="btn-primary flex-1" onClick={() => go(step + 1)}>Berikutnya ›</button>
+        )}
       </div>
+      {/* Konfirmasi kirim: nilai checklist + daftar yang belum dicentang */}
+      {confirming && (
+        <div role="alertdialog" aria-labelledby="kirim-judul" className="anim-fade fixed inset-0 z-30 grid place-items-center bg-slate-900/50 p-4">
+          <div className="anim-pop w-full max-w-sm rounded-xl border border-slate-300 bg-white p-4 shadow-2xl">
+            <p id="kirim-judul" className="font-semibold text-slate-900">Kirim laporan sekarang?</p>
+            <p className="mt-1 text-sm text-slate-600">Nilai checklist hari ini: <b className={score >= 90 ? "text-emerald-600" : score >= 70 ? "text-amber-600" : "text-rose-600"}>{score}</b> ({doneCount}/{p.checklist.length})</p>
+            {unchecked.length > 0 && (
+              <div className="mt-2 rounded-lg bg-amber-50 p-2 text-sm text-amber-800">
+                <p className="font-medium">{unchecked.length} checklist belum dicentang:</p>
+                <ul className="mt-1 list-disc pl-5 text-xs">{unchecked.map((c) => <li key={c.label}>{c.label}</li>)}</ul>
+              </div>
+            )}
+            <p className="mt-2 text-xs text-slate-500">Stok akhir shift akan menjadi stok sistem (stock opname). {reportLockNote}</p>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button type="button" className="btn-secondary" onClick={() => { setConfirming(false); if (unchecked.length) go(steps.findIndex((x) => x.key === "checklist")); }}>{unchecked.length ? "Lengkapi checklist" : "Batal"}</button>
+              <span onClickCapture={() => (sending.current = true)}>
+                <Submit className="btn-success" name="intent" value="send" pendingText="Mengirim…">Ya, kirim</Submit>
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
     </ActionForm>
+    </div>
   );
 }
 
-function ReceiptSection({ id, receipts, materials, applied, orders, banks }: { id: string; receipts: ReceiptView[]; materials: { id: string; name: string; unit: string }[]; applied: boolean; orders: OrderOption[]; banks: { id: string; name: string }[] }) {
+const reportLockNote = "Setelah terkirim, anggota tidak bisa mengubah laporan.";
+
+
+
+export function ReceiptSection({ id, receipts, materials, applied, orders, banks }: { id: string; receipts: ReceiptView[]; materials: { id: string; name: string; unit: string }[]; applied: boolean; orders: OrderOption[]; banks: { id: string; name: string }[] }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [itemId, setItemId] = useState("");
@@ -356,6 +519,12 @@ function ReceiptSection({ id, receipts, materials, applied, orders, banks }: { i
   const [orderLine, setOrderLine] = useState("");
   const [bank, setBank] = useState(banks[0]?.id ?? "");
   const order = itemOrders.find((o) => o.lineId === orderLine);
+  // Pilih barang manual: bukan dari pesanan → kolom supplier tidak ditampilkan & dikosongkan
+  const pick = (id: string) => {
+    setItemId(id);
+    setOrderLine("");
+    setShop("");
+  };
   const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, ok: string) => {
     setBusy(true);
     try {
@@ -422,22 +591,54 @@ function ReceiptSection({ id, receipts, materials, applied, orders, banks }: { i
           ))}
         </ul>
       )}
+      {orders.length > 0 && (
+        <div className="mb-3">
+          <p className="mb-1.5 text-xs font-medium text-slate-600">Rekomendasi: pesanan yang sedang dalam perjalanan</p>
+          <ul className="space-y-1.5">
+            {orders.map((o) => {
+              const on = orderLine === o.lineId;
+              return (
+                <li key={o.lineId}>
+                  <button
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => {
+                      if (on) return pick("");
+                      setItemId(o.itemId);
+                      setOrderLine(o.lineId);
+                      setShop(o.vendor);
+                      setQty(String(o.remaining).replace(".", ","));
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition ${on ? "border-brand-500 bg-brand-50 ring-2 ring-brand-100" : "border-slate-200 hover:bg-slate-50"}`}
+                  >
+                    <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[11px] ${on ? "border-brand-600 bg-brand-600 text-white" : "border-slate-300"}`}>{on ? "✓" : ""}</span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block font-medium text-slate-800">{o.itemName} · {fmt(o.remaining)} {o.unit}</span>
+                      <span className="block text-xs text-slate-500">{o.vendor}{o.cod ? " · COD" : ""}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="mt-1.5 text-xs text-slate-500">Atau pilih barang lain secara manual di bawah.</p>
+        </div>
+      )}
       <div className="grid grid-cols-12 gap-2 rounded-lg border border-slate-200 p-2 [&>*]:min-w-0">
-        <label className="col-span-12 sm:col-span-5"><span className="text-xs text-slate-500">Barang</span>
-          <select value={itemId} onChange={(e) => { setItemId(e.target.value); const o = orders.find((x) => x.itemId === e.target.value); setOrderLine(o?.lineId ?? ""); if (o) setQty(String(o.remaining).replace(".", ",")); }} className="input py-1.5">
+        <label className="col-span-12 sm:col-span-6"><span className="text-xs text-slate-500">Barang</span>
+          <select value={itemId} onChange={(e) => pick(e.target.value)} className="input py-1.5">
             <option value="">— pilih bahan —</option>
-            {materials.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.unit})</option>)}
+            {materials.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </label>
-        <label className="col-span-5 sm:col-span-2"><span className="text-xs text-slate-500">Jumlah{unit ? ` (${unit})` : ""}</span><input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" className="input py-1.5" placeholder="0" /></label>
-        <label className="col-span-7 sm:col-span-5"><span className="text-xs text-slate-500">Toko / supplier (opsional)</span><input value={shop} onChange={(e) => setShop(e.target.value)} className="input py-1.5" /></label>
-        {itemOrders.length > 0 && (
-          <label className="col-span-12 sm:col-span-7"><span className="text-xs text-slate-500">Dari pesanan yang dikirim?</span>
-            <select value={orderLine} onChange={(e) => setOrderLine(e.target.value)} className="input py-1.5">
-              <option value="">Bukan pesanan (beli langsung di toko)</option>
-              {itemOrders.map((o) => <option key={o.lineId} value={o.lineId}>{o.label}</option>)}
-            </select>
-          </label>
+        <label className={order ? "col-span-5 sm:col-span-3" : "col-span-12 sm:col-span-6"}><span className="text-xs text-slate-500">Jumlah</span>
+          <span className="relative block">
+            <input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" className={`input py-1.5 ${unit ? "pr-14" : ""}`} placeholder="0" />
+            {unit && <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-slate-800 opacity-25" aria-hidden>{unit}</span>}
+          </span>
+        </label>
+        {order && (
+          <label className="col-span-7 sm:col-span-3"><span className="text-xs text-slate-500">Supplier</span><input value={shop} readOnly tabIndex={-1} className="input bg-slate-100 py-1.5 dark:bg-slate-800" /></label>
         )}
         {order?.cod && (
           <label className="col-span-12 sm:col-span-5"><span className="text-xs text-slate-500">Bayar COD dari</span>
