@@ -103,7 +103,7 @@ export function ReportForm(p: Props) {
   const steps: Step[] = [
     { key: "hasil", label: t ? "PIC & hasil kerja" : "PIC" },
     { key: "checklist", label: "Checklist" },
-    ...(p.resultTitle && p.resultCount.length > 0 ? [{ key: "hasilakhir", label: "Stok hasil" }] : []),
+    ...(p.resultTitle && p.resultCount.length > 0 ? [{ key: "hasilakhir", label: "Stok jadi" }] : []),
     ...(stock.length > 0 ? [{ key: "stok", label: "Stok akhir" }] : []),
     { key: "catatan", label: "Catatan & kirim" },
   ];
@@ -384,7 +384,7 @@ export function ReportForm(p: Props) {
       {p.resultTitle && p.resultCount.length > 0 && (
         <section data-step="hasilakhir" className={`card p-4 ${show("hasilakhir")}`}>
           <h3 className="mb-1 font-semibold text-slate-800">{p.resultTitle}</h3>
-          <p className="mb-3 text-xs text-slate-500">Hitung fisik sisa di gudang setelah hasil kerja dihitung. Kosongkan bila tidak dihitung.</p>
+          <p className="mb-3 text-xs text-slate-500">Hitung fisik barang setengah jadi / produk jadi tanggung jawab divisi ini di gudang, setelah hasil kerja dihitung. Kosongkan bila tidak dihitung.</p>
           <div className="keep-cols grid grid-cols-2 gap-2 sm:grid-cols-4">
             {p.resultCount.map((r) => (
               <label key={r.key} className="block">

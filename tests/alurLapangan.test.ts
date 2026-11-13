@@ -89,9 +89,9 @@ describe("Barang masuk di laporan shift", () => {
 describe("Stok akhir hasil (patung kering / produk jadi per karakter)", () => {
   it("sebelum sakelar menyala hanya ditandai; sesudahnya stok disamakan, revisi hanya selisih", async () => {
     const divisionId = (await div("PRODUKSI")).id;
-    const rc = parseResultCount("PRODUKSI", (k) => ({ "rc.Hewan": "1.200" })[k] ?? null)!;
-    expect(rc).toEqual({ Hewan: 1200, Cowok: null, Transportasi: null, Cewek: null });
-    expect(parseResultCount("PACKING", () => null)).toBeNull();
+    const rc = parseResultCount(["a", "b"], (k) => ({ "rc.a": "1.200" })[k] ?? null)!;
+    expect(rc).toEqual({ a: 1200 });
+    expect(parseResultCount([], () => null)).toBeNull();
     const kering = await prisma.$transaction((tx) => flowItem(tx, { kind: "kering", key: "Hewan" }));
     await prisma.item.update({ where: { id: kering }, data: { avgCost: BigInt(100) } });
     const sys0 = await qtyAt(prisma, kering, wip, at("2027-05-01", "15:00"));
@@ -99,7 +99,7 @@ describe("Stok akhir hasil (patung kering / produk jadi per karakter)", () => {
     const rep = await prisma.shiftReport.create({ data: { date: dateOnly("2027-05-01"), shiftId: s1, divisionId, createdBy: "uji", work: { _hasil: { Hewan: sys0 + 30 } } } });
     expect(await applyResultCount(rep.id, actor, at("2027-05-01", "16:00"))).toEqual({ adjusted: 0, skipped: "nonaktif" });
     const st = (await resultCountStatus(rep.id, at("2027-05-01", "16:00")))!;
-    expect(st.rows).toEqual([expect.objectContaining({ variant: "Hewan", diff: 30 })]);
+    expect(st.rows).toEqual([expect.objectContaining({ name: "Patung kering Hewan", diff: 30 })]);
     expect(resultLines(st).join("\n")).toMatch(/selisih \+30[\s\S]*hanya ditandai/);
 
     await prisma.setting.upsert({ where: { key: FLOW_SETTING }, create: { key: FLOW_SETTING, value: "true" }, update: { value: "true" } });

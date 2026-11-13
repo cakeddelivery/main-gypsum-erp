@@ -152,3 +152,18 @@ export const saveOpening = action(
   },
   ["/stok"],
 );
+
+/** Ubah divisi penanggung jawab banyak barang sekaligus (Master data: centang barang → pilih divisi) */
+export const setItemsDivision = action(
+  "master.manage",
+  async (fd, user) => {
+    const ids = fd.getAll("ids").map(String).filter(Boolean);
+    if (!ids.length) throw new Error("Centang dulu barang yang mau diubah divisinya");
+    const divisionId = optStr(fd, "divisionId");
+    if (divisionId) await prisma.division.findUniqueOrThrow({ where: { id: divisionId } });
+    const r = await prisma.item.updateMany({ where: { id: { in: ids } }, data: { divisionId } });
+    await audit(user, "DIVISI_BARANG_MASSAL", "Item", null, { items: ids.length, divisionId });
+    return `Divisi ${r.count} barang diperbarui`;
+  },
+  ["/stok", "/laporan"],
+);

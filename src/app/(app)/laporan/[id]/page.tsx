@@ -7,8 +7,7 @@ import { STAGE_LABEL } from "@/lib/stock";
 import { flowLines, isTemplate, plannedFlow, toEntries, type StockCountRow, type WorkData } from "@/lib/shiftReport";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { flowEnabled } from "@/lib/shiftReportFlow";
-import { RESULT_COUNT, resultCountStatus, resultLines, resultValues } from "@/lib/shiftResultCount";
-import { VARIANTS } from "@/lib/shiftReport";
+import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
 import { divisionPendingReturns } from "@/lib/borongan";
 import { confirmReturnForReport } from "../actions";
 import Link from "next/link";
@@ -72,8 +71,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   }));
   const banks = [...bankRows].sort((a, b) => (a.code === "KAS" ? -1 : b.code === "KAS" ? 1 : 0)).map((b) => ({ id: b.id, name: b.name }));
   const extraLines = [...bLines, ...(resultStatus ? resultLines(resultStatus) : [])];
-  const resultDef = template ? RESULT_COUNT[template] : undefined;
-  const rv = resultValues(work);
+  const [rItems, rv] = await Promise.all([resultItems(r.divisionId), resultValues(work, r.division.reportTemplate)]);
   const receiptLines = receipts.map((x) => `${x.item.name}: ${Number(x.qty).toLocaleString("id-ID")} ${x.item.unit}${x.supplierName ? ` · ${x.supplierName}` : ""}${x.purchaseId ? "" : " (belum dicatat di Pembelian)"}`);
   const flow = flowOn && template ? flowLines(plannedFlow(template, work)) : [];
   const fname = `laporan-${r.division.code}-${r.shift.code}-${day}`;
@@ -113,9 +111,9 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   orders={orders}
                   banks={banks}
                   applied={r.stockApplied}
-                  resultTitle={resultDef?.title ?? null}
+                  resultTitle={rItems.length ? RESULT_TITLE : null}
                   catalogs={catalogs}
-                  resultCount={resultDef ? VARIANTS.map((v) => ({ key: v, label: `${resultDef.label} ${v}`, unit: resultDef.unit, qty: rv[v] ?? null })) : []}
+                  resultCount={rItems.map((i) => ({ key: i.id, label: `${i.name}${i.type === "BARANG_DALAM_PROSES" ? " (setengah jadi)" : ""}`, unit: i.unit, qty: rv[i.id] ?? null }))}
                   flow={flowOn && template ? flow : null}
                   sent={r.workPostedVersion > 0 || r.status !== "DRAFT"}
                 />
