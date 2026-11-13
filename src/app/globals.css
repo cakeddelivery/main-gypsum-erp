@@ -57,6 +57,7 @@ dialog { @apply bg-white text-slate-800; }
      Posisi kiri digeser lewat JS (ChoiceEnhancer) agar tidak keluar dari layar/popup. */
   /* Panel dropdown: posisi & lebar diatur ChoiceEnhancer (fixed, selebar kolom pemicu) agar tidak terpotong tabel/popup */
   .choice-panel { @apply fixed z-[60] rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg; animation: modal-in 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.05); }
+  .choice-panel-out { pointer-events: none; animation: choice-out 0.12s ease-in forwards !important; }
   .choice-list { @apply max-h-60 overflow-y-auto; }
   .choice-panel input[type="search"]:not([hidden]) + .choice-list { @apply mt-1.5; }
   .choice-list li { @apply cursor-pointer rounded-md px-2.5 py-2 text-sm leading-snug text-slate-700 hover:bg-slate-100; overflow-wrap: anywhere; }
@@ -263,6 +264,7 @@ dialog.modal[data-closing]::backdrop { animation: fade-out 0.16s ease-in forward
 @keyframes modal-in { from { opacity: 0; transform: translateY(12px) scale(0.96); } }
 @keyframes modal-out { to { opacity: 0; transform: translateY(8px) scale(0.97); } }
 @keyframes fade-in { from { opacity: 0; } }
+@keyframes choice-out { to { opacity: 0; transform: translateY(-4px) scale(0.98); } }
 @keyframes fade-out { to { opacity: 0; } }
 @media (max-width: 639px) {
   dialog.modal[open] { animation-name: modal-up; }
