@@ -7,6 +7,7 @@ import { NotificationBell, ProfileMenu, type HeaderAlert } from "./HeaderMenus";
 import { ThemeToggle } from "./ThemeToggle";
 import { Toaster } from "./Toaster";
 import { ChoiceEnhancer } from "./ChoiceEnhancer";
+import { FormFeedback } from "./FormFeedback";
 import { NavTracker } from "./FilterMemory";
 import { NavProgress } from "./NavProgress";
 import { LinkPending } from "./LinkPending";
@@ -66,7 +67,7 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
         <div className="theme-light no-print bg-amber-400 px-4 py-1 text-center text-xs font-semibold text-amber-950">LINGKUNGAN {env.toUpperCase()} — data uji, bukan produksi</div>
       )}
       <header className="no-print sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-slate-200 bg-white/95 px-3 backdrop-blur sm:gap-3 sm:px-4">
-        <button className="rounded-lg p-1.5 text-slate-600 hover:bg-slate-100 lg:hidden" aria-label="Semua menu" onClick={() => setOpen(true)}>
+        <button className="grid h-10 w-10 place-items-center rounded-lg text-slate-600 hover:bg-slate-100 lg:hidden" aria-label="Semua menu" onClick={() => setOpen(true)}>
           <Icon name="menu" />
         </button>
         <Link href="/" aria-label="Main Gypsum ERP — Beranda" className="flex min-w-0 items-center gap-2 font-semibold text-slate-900">
@@ -91,7 +92,7 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
                   <div className="truncate font-semibold text-slate-900">{user.name}</div>
                   <div className="text-slate-500">{user.role}</div>
                 </div>
-                <button className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100" aria-label="Tutup menu" onClick={() => setOpen(false)}>
+                <button className="grid h-10 w-10 place-items-center rounded-lg text-slate-500 hover:bg-slate-100" aria-label="Tutup menu" onClick={() => setOpen(false)}>
                   ✕
                 </button>
               </div>
@@ -118,6 +119,7 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
       </div>
       <Toaster />
       <ChoiceEnhancer />
+      <FormFeedback />
       <Suspense fallback={null}>
         <NavTracker />
       </Suspense>

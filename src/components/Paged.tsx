@@ -35,9 +35,9 @@ export function Paged({ children }: { children: React.ReactNode }) {
         <div className="no-print sticky left-0 flex w-full max-w-[calc(100vw-2rem)] items-center justify-between gap-2 border-t border-slate-100 px-3 py-2 text-sm text-slate-600">
           <span className="tabular-nums">{cur * PAGE + 1}–{Math.min(count, (cur + 1) * PAGE)} dari {count}</span>
           <span className="flex items-center gap-1">
-            <button type="button" className="btn-secondary btn-sm" disabled={cur === 0} onClick={() => setPage(cur - 1)} aria-label="Halaman sebelumnya">‹</button>
+            <button type="button" className="btn-secondary btn-sm btn-icon" disabled={cur === 0} onClick={() => setPage(cur - 1)} aria-label="Halaman sebelumnya">‹</button>
             <span className="px-1 tabular-nums">{cur + 1}/{pages}</span>
-            <button type="button" className="btn-secondary btn-sm" disabled={cur >= pages - 1} onClick={() => setPage(cur + 1)} aria-label="Halaman berikutnya">›</button>
+            <button type="button" className="btn-secondary btn-sm btn-icon" disabled={cur >= pages - 1} onClick={() => setPage(cur + 1)} aria-label="Halaman berikutnya">›</button>
           </span>
         </div>
       )}

@@ -35,8 +35,14 @@ const isPlaceholder = (o: HTMLOptionElement) => o.value === "" && o.disabled;
 const choices = (sel: HTMLSelectElement) => Array.from(sel.options).filter((o) => !isPlaceholder(o));
 const signature = (sel: HTMLSelectElement) => `${sel.disabled}|${Array.from(sel.options).map((o) => `${o.value}\u0001${o.text}\u0001${o.disabled}`).join("\u0002")}`;
 
+/** Kelas tata letak grid (col-span-*, sm:col-span-*, …) dari <select> asli ikut ke pengganti, agar lebarnya di grid tetap sama */
+const layoutClasses = (sel: HTMLSelectElement) =>
+  Array.from(sel.classList)
+    .filter((c) => /^([a-z0-9]+:)*(col-span|col-start|col-end|row-span|order|self|justify-self)-/.test(c))
+    .join(" ");
+
 function renderButtons(sel: HTMLSelectElement, host: HTMLDivElement) {
-  host.className = "choice-seg";
+  host.className = `choice-seg ${layoutClasses(sel)}`.trim();
   host.setAttribute("role", "radiogroup");
   host.replaceChildren(
     ...choices(sel).map((o) => {
@@ -69,7 +75,7 @@ export function panelBox(r: { left: number; top: number; bottom: number; width: 
 }
 
 function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
-  host.className = "choice-search";
+  host.className = `choice-search ${layoutClasses(sel)}`.trim();
   const trigger = document.createElement("button");
   trigger.type = "button";
   trigger.className = "input choice-trigger";
@@ -160,6 +166,16 @@ function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
     window.visualViewport?.removeEventListener("resize", fit);
     window.removeEventListener("scroll", onScroll, true);
     window.removeEventListener("resize", position);
+    // Animasi tutup: salinan panel memudar sebentar, panel asli langsung disembunyikan (logika tetap sama)
+    if (panel.parentNode && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      const ghost = panel.cloneNode(true) as HTMLElement;
+      ghost.querySelectorAll("[id]").forEach((n) => n.removeAttribute("id"));
+      ghost.removeAttribute("id");
+      ghost.setAttribute("aria-hidden", "true");
+      ghost.classList.add("choice-panel-out");
+      panel.after(ghost);
+      window.setTimeout(() => ghost.remove(), 130);
+    }
     panel.hidden = true;
     trigger.setAttribute("aria-expanded", "false");
     document.removeEventListener("pointerdown", onOutside, true);

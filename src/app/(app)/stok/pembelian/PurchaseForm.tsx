@@ -174,7 +174,7 @@ export function PurchaseFields({ items, suppliers, banks, today, defaultBank, re
               <label className="col-span-7 sm:col-span-4"><span className="sr-only">Total harga</span><input name="lineTotal" inputMode="numeric" placeholder="Total harga (Rp)" value={r.total} onChange={(e) => set(i, { total: e.target.value })} className="input" required />
                 <span className="mt-1 block text-xs text-emerald-700">{per > 0 ? `${rp(per)} / ${it?.unit ?? "satuan"}` : "harga per satuan otomatis"}</span>
               </label>
-              <button type="button" aria-label="Hapus baris" className="btn-secondary btn-sm col-span-12 justify-self-end sm:col-span-1 sm:justify-self-auto" onClick={() => setRows((x) => (x.length > 1 ? x.filter((_, j) => j !== i) : x))}>×</button>
+              <button type="button" aria-label="Hapus baris" className="btn-secondary btn-sm btn-icon col-span-12 justify-self-end sm:col-span-1 sm:justify-self-auto" onClick={() => setRows((x) => (x.length > 1 ? x.filter((_, j) => j !== i) : x))}>×</button>
             </div>
           );
         })}

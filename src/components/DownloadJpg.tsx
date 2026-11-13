@@ -91,16 +91,16 @@ export function DownloadJpg({ targetId, filename }: { targetId: string; filename
         className="modal w-[calc(100%-1.5rem)] max-w-3xl rounded-2xl bg-white p-0 text-slate-800 shadow-xl backdrop:bg-slate-900/50"
       >
         {url && (
-          <div>
-            <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-3">
+          <div className="modal-shell">
+            <div className="modal-head">
               <h2 className="min-w-0 truncate font-semibold text-slate-900">Pratinjau JPG</h2>
-              <button type="button" aria-label="Tutup" className="rounded p-1 text-slate-600 hover:bg-slate-100" onClick={close}>✕</button>
+              <button type="button" aria-label="Tutup" className="modal-x" onClick={close}>✕</button>
             </div>
-            <div className="max-h-[65vh] overflow-y-auto bg-slate-100 p-3">
+            <div className="modal-body bg-slate-100 p-3">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={url} alt={`Pratinjau ${name}`} className="mx-auto w-full max-w-2xl rounded-lg border border-slate-200 bg-[#fff] shadow" />
             </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-5 py-3">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-slate-200 px-5 py-3">
               <span className="min-w-0 truncate text-xs text-slate-500">{name}</span>
               <div className="flex gap-2">
                 <button type="button" className="btn-secondary" onClick={close}>Tutup</button>
