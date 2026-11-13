@@ -217,18 +217,31 @@ export const createAsset = action(
         throw new AccountingError(`Saldo ${bank.name} per ${dateStr} hanya Rp ${bank.balance.toLocaleString("id-ID")}; membayar Rp ${cost.toLocaleString("id-ID")} membuatnya minus. Periksa sumber dana, atau centang "Lanjutkan walau saldo rekening jadi minus".`);
       }
     }
+    // Dibeli dengan hutang: wajib pemasok & jatuh tempo, agar hutangnya muncul di Piutang & hutang (bisa dicicil, ada pengingat)
+    const dueDate = funding === "UTANG" ? str(fd, "dueDate") : "";
+    if (funding === "UTANG") {
+      if (!str(fd, "supplierId") && !str(fd, "vendor")) throw new AccountingError("Isi nama pemasok (penjual aset) untuk hutangnya");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) throw new AccountingError("Isi tanggal jatuh tempo hutang");
+      if (dueDate < dateStr) throw new AccountingError("Jatuh tempo tidak boleh sebelum tanggal perolehan");
+    }
     await prisma.$transaction(async (tx) => {
       let credit: LineInput;
       if (funding === "SALDO_AWAL") credit = { accountCode: COA.EKUITAS_SALDO_AWAL, credit: cost };
       else if (funding === "UTANG") credit = { accountCode: COA.UTANG_USAHA, credit: cost };
       else credit = { accountId: (await tx.bankAccount.findUniqueOrThrow({ where: { id: funding } })).coaAccountId, credit: cost };
       const name = z.string().min(2, "Nama aset wajib").parse(str(fd, "name"));
-      const j = await postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: `Perolehan aset ${name}`, source: "ASET", actor: user, lines: [{ accountId: str(fd, "assetAccountId"), debit: cost }, credit] });
+      const supplier = funding === "UTANG" ? await resolveSupplier(tx, { supplierId: optStr(fd, "supplierId"), name: str(fd, "vendor") }, user, "hutang aset") : null;
+      if (funding === "UTANG" && !supplier) throw new AccountingError("Pemasok wajib diisi");
+      const j = await postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: `Perolehan aset ${name}${supplier ? ` (hutang ke ${supplier.name})` : ""}`, source: "ASET", actor: user, lines: [{ accountId: str(fd, "assetAccountId"), debit: cost }, credit] });
       await tx.fixedAsset.create({ data: { name, storeId: j.storeId, acquiredAt: d(fd), cost: BigInt(cost), usefulLifeMonths: life, residual: BigInt(int(fd, "residual")), journalId: j.id } });
+      if (supplier) {
+        const number = await nextNumber(tx, "UTG", d(fd));
+        await tx.payable.create({ data: { number, vendor: supplier.name, supplierId: supplier.id, storeId: j.storeId, date: d(fd), dueDate: jakartaDateTime(dueDate, "12:00"), amount: BigInt(cost), note: `Pembelian aset ${name}`, journalId: j.id } });
+      }
     });
-    return "Aset dicatat";
+    return funding === "UTANG" ? "Aset dicatat, hutangnya masuk Piutang & hutang" : "Aset dicatat";
   },
-  ["/akuntansi/aset"],
+  ["/akuntansi/aset", "/akuntansi/piutang-utang", "/supplier"],
 );
 
 export const close = action(

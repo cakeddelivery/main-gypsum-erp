@@ -23,8 +23,8 @@ Tanda: ✅ = sudah diperbaiki di branch `claude/audit-menyeluruh` (beserta tes `
 
 | # | Temuan | Bukti | Dampak | Status |
 |---|---|---|---|---|
-| S1 | **Withdraw marketplace dicatat sebagai penjualan sebesar uang yang ditarik (neto)**, bukan omzet kotor. Biaya admin/komisi Shopee & TikTok tidak pernah tercatat sebagai beban. | `src/lib/finance.ts:335`, `withdrawIncomeLines` | Laba bersih tetap benar, tetapi "Penjualan" di laba rugi lebih kecil dari omzet sebenarnya dan biaya marketplace (±14–18%) tidak terlihat, sehingga margin per kanal tidak bisa dianalisis. Juga pendapatan diakui saat WD, bukan saat pesanan selesai. | ❓ lihat pertanyaan 1 |
-| S2 | **Aset tetap dibeli dengan "Hutang usaha" tidak membuat dokumen Hutang.** Jurnalnya Cr 2-1100, tetapi tidak muncul di daftar Piutang & hutang, tidak bisa dicicil lewat menu, dan saldo akun Hutang Usaha ≠ total daftar hutang (S4 lama). | `src/app/(app)/akuntansi/actions.ts:223` | Hutang ke penjual mesin/peralatan "tidak terlihat"; pengingat jatuh tempo tidak jalan; rekonsiliasi hutang selalu selisih. | ❓ pertanyaan 2 |
+| S1 | **Withdraw marketplace dicatat sebagai penjualan sebesar uang yang ditarik (neto)**, bukan omzet kotor. Biaya admin/komisi Shopee & TikTok tidak pernah tercatat sebagai beban. | `src/lib/finance.ts:335`, `withdrawIncomeLines` | Laba bersih tetap benar, tetapi "Penjualan" di laba rugi lebih kecil dari omzet sebenarnya dan biaya marketplace (±14–18%) tidak terlihat, sehingga margin per kanal tidak bisa dianalisis. Juga pendapatan diakui saat WD, bukan saat pesanan selesai. | ✅ Owner memilih 1a: menu Akuntansi → **Biaya marketplace** (catat potongan bulanan dari Laporan Penghasilan; Dr 6-1500 / Cr Penjualan, laba tetap) |
+| S2 | **Aset tetap dibeli dengan "Hutang usaha" tidak membuat dokumen Hutang.** Jurnalnya Cr 2-1100, tetapi tidak muncul di daftar Piutang & hutang, tidak bisa dicicil lewat menu, dan saldo akun Hutang Usaha ≠ total daftar hutang (S4 lama). | `src/app/(app)/akuntansi/actions.ts:223` | Hutang ke penjual mesin/peralatan "tidak terlihat"; pengingat jatuh tempo tidak jalan; rekonsiliasi hutang selalu selisih. | ✅ Owner memilih 2a: sumber dana "Hutang usaha" wajib pemasok & jatuh tempo, dokumen Hutang dibuat otomatis |
 | S3 | **Peralatan yang dibeli lewat Transaksi tidak menjadi Aset Tetap** (S5 lama), jadi tidak disusutkan; seluruh harga langsung jadi beban hari itu. | alur `bookInTx` di `src/lib/finance.ts` | Laba bulan pembelian terlalu kecil, bulan berikutnya terlalu besar. | 📝 saran fitur no. 4 |
 | S4 | **HPP penjualan marketplace baru diakui saat opname barang jadi akhir bulan.** Penjualan marketplace tidak mengeluarkan stok per pesanan. | `src/lib/stock.ts:279` `finishedGoodsOpname` | Laba rugi harian/mingguan tanpa HPP (terlihat terlalu untung) sampai opname; bila opname terlewat, HPP bulan itu kosong. | 📝 saran fitur no. 3 |
 | S5 | **Pekerja borongan bisa diberi kasbon** lewat web & bot, padahal aturan bisnis melarang. | `src/lib/payroll.ts` `giveAdvance` | Kasbon tidak pernah terpotong (klaim borongan jarang/terpisah) → piutang karyawan menggantung. | ✅ ditolak dengan pesan jelas |
@@ -92,7 +92,7 @@ Sudah benar: kode undangan acak 96-bit (tidak bisa ditebak), kedaluwarsa & bisa 
 
 ---
 
-## D. Pertanyaan untuk Owner
+## D. Keputusan Owner (13 Nov 2026): 1a, 2a — sudah dikerjakan
 
 1. **Penjualan marketplace (S1)**: catat tetap neto saat WD (sekarang), atau catat omzet kotor + biaya admin sebagai beban dari file "Laporan Penghasilan" Shopee/TikTok tiap bulan? Rekomendasi: tetap neto harian + **jurnal bulanan dari file penghasilan** (omzet kotor & biaya admin dipisah, laba tidak berubah).
 2. **Aset dibeli dengan hutang (S2)**: buat dokumen Hutang otomatis (wajib isi nama pemasok & jatuh tempo)? Rekomendasi: ya.

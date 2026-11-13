@@ -2,12 +2,13 @@
 import { useState } from "react";
 
 type Bank = { id: string; name: string };
+type Supplier = { id: string; name: string };
 
 /**
  * Tanggal perolehan + sumber dana. Aset yang dibeli sebelum go-live otomatis memakai "Saldo awal (aset lama)",
  * karena uangnya keluar sebelum memakai aplikasi (sudah termasuk saldo awal rekening).
  */
-export function AssetFunding({ banks, goLive, today }: { banks: Bank[]; goLive: string; today: string }) {
+export function AssetFunding({ banks, goLive, today, suppliers = [] }: { banks: Bank[]; goLive: string; today: string; suppliers?: Supplier[] }) {
   const [date, setDate] = useState(today);
   const old = date < goLive;
   const [funding, setFunding] = useState(old ? "SALDO_AWAL" : banks[0]?.id ?? "UTANG");
@@ -39,6 +40,20 @@ export function AssetFunding({ banks, goLive, today }: { banks: Bank[]; goLive: 
           </span>
         )}
       </label>
+      {funding === "UTANG" && (
+        <>
+          <label className="col-span-2 block">
+            <span className="label">Pemasok (penjual aset)</span>
+            <input name="vendor" list="aset-supplier" className="input" required placeholder="Ketik atau pilih supplier" />
+            <datalist id="aset-supplier">{suppliers.map((s) => <option key={s.id} value={s.name} />)}</datalist>
+          </label>
+          <label className="col-span-2 block">
+            <span className="label">Jatuh tempo hutang</span>
+            <input type="date" name="dueDate" min={date} className="input" required />
+            <span className="mt-1 block text-xs text-slate-500">Hutangnya otomatis masuk Akuntansi → Piutang &amp; hutang, bisa dicicil dan diingatkan saat jatuh tempo.</span>
+          </label>
+        </>
+      )}
     </>
   );
 }
