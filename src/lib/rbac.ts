@@ -111,6 +111,26 @@ export const RESTRICTED: Partial<Record<Permission, Role[]>> = {
   "attendance.location": ["OWNER", "ADMIN", "SUPERVISOR"],
 };
 
+/**
+ * Izin sensitif (uang, gaji, akuntansi, pengaturan): diberi label merah di Pengaturan, dan memberikannya ke role
+ * lapangan wajib dikonfirmasi Owner (lihat sensitiveGrants).
+ */
+export const SENSITIVE: Permission[] = [
+  "dashboard.finance", "finance.view", "finance.create", "finance.review", "finance.approve",
+  "accounting.view", "accounting.post", "accounting.close", "payroll.view", "payroll.manage", "payroll.approve",
+  "sales.manage", "borongan.pay", "settings.manage", "users.manage", "audit.view",
+];
+export const isSensitive = (p: string) => (SENSITIVE as string[]).includes(p);
+
+/** Role lapangan: tidak semestinya melihat keuangan/gaji/pengaturan */
+export const FIELD_ROLES_SENSITIVE: Role[] = ["OPERATOR", "KAPTEN_DIVISI", "SUPERVISOR", "KOORDINATOR", "PIC_CONTENT"];
+
+/** Izin sensitif yang BARU diberikan ke role lapangan (before → after); kosong = aman disimpan tanpa konfirmasi */
+export function sensitiveGrants(role: Role, before: Set<Permission>, after: Set<Permission>): Permission[] {
+  if (!FIELD_ROLES_SENSITIVE.includes(role)) return [];
+  return SENSITIVE.filter((p) => after.has(p) && !before.has(p));
+}
+
 export type PermissionOverride = { role: Role; permission: string; allowed: boolean };
 
 /** Hitung izin efektif: matriks default + override dari database. Owner selalu punya semua izin. */
