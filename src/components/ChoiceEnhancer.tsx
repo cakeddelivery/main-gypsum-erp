@@ -4,9 +4,14 @@ import { capitalizeWords, choiceMode, matchesQuery, shouldCapitalize, type Choic
 
 /**
  * Mengubah setiap <select> di aplikasi tanpa menyentuh form-nya satu per satu:
- * ≤ 3 opsi jadi tombol pilihan, > 3 opsi jadi dropdown dengan kotak cari.
+ * ≤ 3 opsi jadi tombol pilihan, > 3 opsi jadi dropdown dengan kotak cari (kotak cari hanya bila opsi > 6).
+ * Atribut `data-dropdown` memaksa bentuk dropdown walau opsinya sedikit (mis. di dalam tabel).
  * <select> aslinya tetap ada (disembunyikan) sehingga nilai form, validasi `required`,
  * dan onChange React tetap berjalan. Lewati dengan atribut `data-plain`.
+ *
+ * Panel dropdown memakai posisi fixed (tidak terpotong tabel yang bisa digeser / popup), lebarnya sama
+ * dengan kolom pemicu dan menempel tepat di bawahnya (atau di atasnya bila ruang di bawah kurang).
+ * Kotak cari tidak pernah otomatis aktif; di komputer, mengetik saat dropdown terbuka langsung mencari.
  */
 type State = { host: HTMLDivElement; mode: ChoiceMode; sig: string; close?: () => void };
 const states = new Map<HTMLSelectElement, State>();
@@ -19,8 +24,10 @@ function setValue(sel: HTMLSelectElement, v: string) {
   sel.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-/** Layar sentuh (HP/tablet): jangan langsung memunculkan keyboard, karena keyboard menutupi daftar pilihan */
-const isTouch = () => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches;
+/** Layar sentuh (HP/tablet, termasuk laptop layar sentuh) */
+const isTouch = () => typeof window !== "undefined" && (window.matchMedia?.("(any-pointer: coarse)").matches || navigator.maxTouchPoints > 0);
+/** Kotak cari hanya ditampilkan bila pilihannya banyak */
+export const SEARCH_MIN_OPTIONS = 7;
 
 const label = (o: HTMLOptionElement) => o.text.trim() || "—";
 /** Opsi petunjuk seperti "— pilih supplier —" (value kosong & disabled) tidak dihitung/ditampilkan sebagai pilihan */
@@ -45,20 +52,20 @@ function renderButtons(sel: HTMLSelectElement, host: HTMLDivElement) {
   );
 }
 
+/** Lebar minimum panel (px) untuk kolom yang sangat sempit */
+const MIN_PANEL = 140;
+
 /**
- * Panel lebih lebar dari kotaknya: geser ke kiri/kanan agar tetap di dalam layar
- * dan di dalam popup (modal/dialog) yang memotong isi yang meluber.
+ * Posisi panel (fixed, relatif layar): selebar kolom pemicu, tepat di bawahnya; ke atas bila ruang di bawah kurang.
+ * Tidak meluber keluar layar (di HP panel yang meluber membuat halaman ikut melebar).
  */
-function place(panel: HTMLDivElement, host: HTMLDivElement, vw: number) {
-  panel.style.left = "0px";
-  const box = host.closest("dialog, .modal")?.getBoundingClientRect();
-  const minX = Math.max(8, (box?.left ?? 0) + 8);
-  const maxX = Math.min(vw - 8, (box?.right ?? vw) - 8);
-  const r = panel.getBoundingClientRect();
-  let shift = 0;
-  if (r.right > maxX) shift = maxX - r.right;
-  if (r.left + shift < minX) shift = minX - r.left;
-  if (shift) panel.style.left = `${Math.round(shift)}px`;
+export function panelBox(r: { left: number; top: number; bottom: number; width: number }, vw: number, vh: number) {
+  const width = Math.min(Math.max(r.width, MIN_PANEL), vw - 16);
+  const left = Math.min(Math.max(8, r.left), vw - 8 - width);
+  const below = vh - r.bottom;
+  const up = below < 260 && r.top > below;
+  const room = (up ? r.top : below) - 12;
+  return { width, left, up, top: up ? null : r.bottom + 2, bottom: up ? vh - r.top + 2 : null, room };
 }
 
 function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
@@ -83,6 +90,9 @@ function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
   search.className = "input";
   search.placeholder = "Cari…";
   search.setAttribute("enterkeyhint", "done");
+  search.hidden = choices(sel).length < SEARCH_MIN_OPTIONS;
+  // Kelas .input memberi display sendiri, jadi atribut hidden saja tidak cukup
+  if (search.hidden) search.style.display = "none";
   const list = document.createElement("ul");
   list.className = "choice-list";
   list.setAttribute("role", "listbox");
@@ -114,23 +124,33 @@ function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
   const onOutside = (e: Event) => {
     if (!host.contains(e.target as Node)) close();
   };
+  const position = () => {
+    if (panel.hidden) return;
+    const vw = Math.min(window.innerWidth, document.documentElement.clientWidth || window.innerWidth);
+    const b = panelBox(trigger.getBoundingClientRect(), vw, window.innerHeight);
+    panel.style.width = `${b.width}px`;
+    panel.style.left = `${b.left}px`;
+    panel.style.top = b.top == null ? "" : `${b.top}px`;
+    panel.style.bottom = b.bottom == null ? "" : `${b.bottom}px`;
+    host.classList.toggle("choice-up", b.up);
+    const searchH = search.hidden ? 16 : 64;
+    if (!panel.contains(document.activeElement)) list.style.maxHeight = `${Math.max(120, Math.min(240, b.room - searchH))}px`;
+  };
+  // Halaman / tabel / popup digeser: panel ikut kolomnya (kecuali yang digeser daftar pilihan itu sendiri)
+  const onScroll = (e: Event) => {
+    if (e.target instanceof Node && panel.contains(e.target)) return;
+    position();
+  };
   const open = () => {
     search.value = "";
     fill();
-    // Buka ke atas bila ruang di bawah tidak cukup (mis. kolom di dekat dasar layar/popup)
-    const r = trigger.getBoundingClientRect();
-    const below = window.innerHeight - r.bottom;
-    host.classList.toggle("choice-up", below < 300 && r.top > below);
-    // Ukur lebar layar SEBELUM panel tampil: di HP, panel yang meluber membuat halaman ikut melebar
-    const vw = Math.min(window.innerWidth, document.documentElement.clientWidth || window.innerWidth);
-    panel.style.maxWidth = `${Math.max(200, vw - 16)}px`;
     panel.hidden = false;
-    place(panel, host, vw);
+    position();
     trigger.setAttribute("aria-expanded", "true");
     document.addEventListener("pointerdown", onOutside, true);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", position);
     window.visualViewport?.addEventListener("resize", fit);
-    // Di HP kotak cari tidak langsung aktif; ketuk kotak cari bila ingin mengetik
-    if (!isTouch()) search.focus();
     list.querySelector("[aria-selected]")?.scrollIntoView({ block: "nearest" });
   };
   const close = () => {
@@ -138,13 +158,22 @@ function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
     if (panel.contains(document.activeElement)) (document.activeElement as HTMLElement).blur();
     list.style.maxHeight = "";
     window.visualViewport?.removeEventListener("resize", fit);
-    panel.style.maxWidth = "";
+    window.removeEventListener("scroll", onScroll, true);
+    window.removeEventListener("resize", position);
     panel.hidden = true;
     trigger.setAttribute("aria-expanded", "false");
     document.removeEventListener("pointerdown", onOutside, true);
   };
   st.close = close;
   trigger.addEventListener("click", () => (panel.hidden ? open() : close()));
+  // Keyboard di komputer: panah bawah membuka; mengetik huruf saat terbuka langsung ke kotak cari
+  trigger.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" && panel.hidden) {
+      e.preventDefault();
+      open();
+    } else if (e.key === "Escape") close();
+    else if (!panel.hidden && !search.hidden && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) search.focus();
+  });
   search.addEventListener("input", fill);
   // HP: saat kotak cari diketuk dan keyboard muncul, geser kolom ke atas layar dan batasi tinggi daftar
   // agar pilihan tidak tertutup keyboard
@@ -203,7 +232,7 @@ function enhance(sel: HTMLSelectElement) {
   const sig = signature(sel);
   let st = states.get(sel);
   if (st && st.sig === sig && st.host.isConnected) return sync(sel, st);
-  const mode = choiceMode(choices(sel).length);
+  const mode: ChoiceMode = sel.hasAttribute("data-dropdown") ? "search" : choiceMode(choices(sel).length);
   if (!st || !st.host.isConnected) {
     const host = document.createElement("div");
     sel.after(host);

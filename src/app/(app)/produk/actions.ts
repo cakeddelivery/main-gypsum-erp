@@ -8,6 +8,7 @@ import { saveItemRecord } from "@/lib/items";
 import { itemCategories } from "@/lib/itemCategories";
 import { toRecipeQty } from "@/lib/itemCatalog";
 import { recipeUnit } from "@/lib/unitcost";
+import { monthlyOutputFromReports, salaryBreakdown } from "@/lib/salaryOverhead";
 import { OVERHEAD_CATEGORIES, monthlyDepreciation, parseFees, type FeeConfig } from "@/lib/pricing";
 import type { Prisma, ProductVariant } from "@prisma/client";
 
@@ -178,13 +179,20 @@ export const saveOverhead = action(
     const id = optStr(fd, "id");
     const category = str(fd, "category");
     if (!OVERHEAD_CATEGORIES.includes(category as (typeof OVERHEAD_CATEGORIES)[number])) throw new Error("Pilih kategori overhead");
-    const assetCost = int(fd, "assetCost");
-    const lifeMonths = int(fd, "lifeMonths");
+    // Otomatis dari gaji karyawan: biaya per bulan dihitung ulang setiap data gaji berubah
+    const autoSalary = fd.get("autoSalary") === "on";
+    const salaryDivisionIds = autoSalary ? fd.getAll("salaryDivisionIds").map(String).filter(Boolean) : [];
+    if (autoSalary && !salaryDivisionIds.length) throw new Error("Pilih minimal satu divisi yang gajinya dihitung");
+    const assetCost = autoSalary ? 0 : int(fd, "assetCost");
+    const lifeMonths = autoSalary ? 0 : int(fd, "lifeMonths");
     // Penyusutan dihitung dari harga aset / umur bila diisi
-    const monthly = assetCost > 0 && lifeMonths > 0 ? monthlyDepreciation(assetCost, lifeMonths) : int(fd, "monthlyAmount");
-    if (monthly <= 0) throw new Error("Isi biaya per bulan, atau harga aset dan umurnya");
-    const outputPerMonth = Math.max(0, int(fd, "outputPerMonth"));
-    const data = { category, name: str(fd, "name") || category, monthlyAmount: BigInt(monthly), outputPerMonth, note: optStr(fd, "note"), assetCost: assetCost > 0 ? BigInt(assetCost) : null, lifeMonths: lifeMonths > 0 ? lifeMonths : null, active: fd.get("active") !== "off" };
+    const monthly = autoSalary ? (await salaryBreakdown(salaryDivisionIds)).total : assetCost > 0 && lifeMonths > 0 ? monthlyDepreciation(assetCost, lifeMonths) : int(fd, "monthlyAmount");
+    if (monthly <= 0 && !autoSalary) throw new Error("Isi biaya per bulan, atau harga aset dan umurnya");
+    // Output otomatis dari laporan shift; bila belum ada laporan, angka manual tetap dipakai
+    const outputAuto = fd.get("outputAuto") === "auto";
+    const autoOut = outputAuto ? (await monthlyOutputFromReports()).perMonth : 0;
+    const outputPerMonth = autoOut > 0 ? autoOut : Math.max(0, int(fd, "outputPerMonth"));
+    const data = { category, name: str(fd, "name") || category, monthlyAmount: BigInt(monthly), outputPerMonth, note: optStr(fd, "note"), assetCost: assetCost > 0 ? BigInt(assetCost) : null, lifeMonths: lifeMonths > 0 ? lifeMonths : null, active: fd.get("active") !== "off", autoSalary, salaryDivisionIds, autoUpdatedAt: autoSalary || outputAuto ? new Date() : null, outputAuto };
     const o = id ? await prisma.overhead.update({ where: { id }, data }) : await prisma.overhead.create({ data });
     await audit(user, "OVERHEAD", "Overhead", o.id, { ...data, monthlyAmount: monthly, assetCost, lifeMonths });
     return `${o.name} tersimpan (Rp${monthly.toLocaleString("id-ID")}/bulan)`;
