@@ -65,7 +65,7 @@ export function SaleFields({ items, customers, banks, stores, today, defaultBank
               <label className="col-span-8 sm:col-span-4"><span className="sr-only">Harga satuan</span><input name="price" inputMode="numeric" placeholder="Harga satuan (Rp)" value={r.price} onChange={(e) => set(i, { price: e.target.value })} className="input" required />
                 <span className="mt-1 block text-xs text-emerald-700">{num(r.qty) * num(r.price) > 0 ? `Jumlah ${rp(num(r.qty) * num(r.price))}` : "harga offline terakhir terisi otomatis"}</span>
               </label>
-              <button type="button" aria-label="Hapus baris" className="btn-secondary btn-sm col-span-12 justify-self-end sm:col-span-1 sm:justify-self-auto" onClick={() => setRows((x) => (x.length > 1 ? x.filter((_, j) => j !== i) : x))}>×</button>
+              <button type="button" aria-label="Hapus baris" className="btn-secondary btn-sm btn-icon col-span-12 justify-self-end sm:col-span-1 sm:justify-self-auto" onClick={() => setRows((x) => (x.length > 1 ? x.filter((_, j) => j !== i) : x))}>×</button>
             </div>
           );
         })}

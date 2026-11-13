@@ -146,14 +146,14 @@ export function WdProcessPopup({ rows: initial, banks, action, userKey, date, ti
       className="modal w-[calc(100%-1.5rem)] max-w-2xl rounded-2xl bg-white p-0 text-slate-800 shadow-xl backdrop:bg-slate-900/50"
     >
       {open && (
-        <div>
-          <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-3">
-            <h2 className="font-semibold text-slate-900">⏳ Withdraw TikTok dalam proses</h2>
-            <button type="button" aria-label="Tutup" className="rounded p-1 text-slate-600 hover:bg-slate-100" onClick={close}>
+        <div className="modal-shell">
+          <div className="modal-head">
+            <h2 className="min-w-0 font-semibold text-slate-900">⏳ Withdraw TikTok dalam proses</h2>
+            <button type="button" aria-label="Tutup" className="modal-x" onClick={close}>
               ✕
             </button>
           </div>
-          <div className="max-h-[70vh] overflow-y-auto px-5 py-4 supports-[height:100dvh]:max-h-[70dvh]">
+          <div className="modal-body px-5 py-4">
             <p className="mb-3 text-sm text-slate-600">Uangnya belum masuk rekening, jadi belum menambah saldo. Tekan <b>Uang diterima</b> bila sudah masuk.</p>
             <ul className="space-y-2">
               {rows.map((r) => (
