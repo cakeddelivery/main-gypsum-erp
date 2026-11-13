@@ -12,6 +12,7 @@ import Link from "next/link";
 import { saveItem, saveLocation } from "../actions";
 import { fmtDateTime } from "@/lib/time";
 import { ItemFields } from "./ItemFields";
+import { BulkDivision } from "./BulkDivision";
 import { itemCategories } from "@/lib/itemCategories";
 import { Paged } from "@/components/Paged";
 
@@ -29,6 +30,7 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
     itemCategories(),
   ]);
   const opt = (x: { id: string; name: string }) => ({ id: x.id, name: x.name });
+  const divName = new Map(divisions.map((d) => [d.id, d.name]));
   const itemForm = (i?: (typeof items)[number]) => (
     <ModalForm action={saveItem}>
       <ItemFields
@@ -54,8 +56,8 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
   const groups = [
     ...divisions.map((d) => ({ key: d.id, label: `Bahan baku · ${d.name}`, hint: d.code, items: raw.filter((i) => i.divisionId === d.id) })),
     { key: "raw-none", label: "Bahan baku · tanpa divisi", hint: "atur divisinya lewat Ubah", items: raw.filter((i) => !i.divisionId) },
-    { key: "wip", label: ITEM_TYPE_LABEL.BARANG_DALAM_PROSES, hint: "hasil cetak / borongan sebelum jadi produk", items: items.filter((i) => i.type === "BARANG_DALAM_PROSES") },
-    { key: "fg", label: ITEM_TYPE_LABEL.BARANG_JADI, hint: "produk jadi, terhubung ke menu Produk", items: items.filter((i) => i.type === "BARANG_JADI") },
+    { key: "wip", bulk: true, label: ITEM_TYPE_LABEL.BARANG_DALAM_PROSES, hint: "hasil cetak / borongan sebelum jadi produk · divisi = yang menghitung stok akhirnya", items: items.filter((i) => i.type === "BARANG_DALAM_PROSES") },
+    { key: "fg", bulk: true, label: ITEM_TYPE_LABEL.BARANG_JADI, hint: "produk jadi, terhubung ke menu Produk · divisi = yang menghitung stok akhirnya", items: items.filter((i) => i.type === "BARANG_JADI") },
   ].filter((g) => g.items.length > 0);
   const add = { item: <Modal trigger="+ Item" title="Tambah item" wide>{itemForm()}</Modal>, lokasi: <Modal trigger="+ Lokasi" title="Lokasi baru">{locForm()}</Modal> }[tab];
   return (
@@ -78,10 +80,11 @@ export default async function MasterPage({ searchParams }: { searchParams: Promi
               </summary>
               <div className="table-wrap border-t border-slate-200">
                 <Paged><table className="tbl">
-                  <thead><tr><th>Nama</th><th>Kategori</th><th>Satuan</th><th className="num">Reorder</th><th className="num">Harga beli terbaru</th><th className="num">Harga rata²</th><th>Supplier</th><th /></tr></thead>
-                  <tbody>{g.items.map((i) => <tr key={i.id} className={i.active ? "" : "opacity-50"}><td>{i.name}{i.note && <div className="text-xs text-slate-400">{i.note}</div>}</td><td>{i.category ?? "-"}</td><td>{i.unit}{recipeUnit(i) !== i.unit && <div className="text-xs text-slate-400">= {Number(i.hppFactor).toLocaleString("id-ID")} {recipeUnit(i)}</div>}</td><td className="num">{Number(i.minStock)}</td><td className="num">{idr(latestCost(i))}<div className="flex justify-end gap-2"><TrendBadge t={trendOf(latestCost(i), previousCost(i))} />{recipeUnit(i) !== i.unit && <span className="text-xs text-slate-400">{fmtUnitPrice(costPerRecipeUnit(latestCost(i), i))}/{recipeUnit(i)}</span>}</div></td><td className="num">{idr(i.avgCost)}</td><td>{i.supplier?.name}{i.buyMode === "ONLINE" && <div className="text-xs"><Badge tone="blue">ONLINE</Badge>{i.productUrl && <> <a href={i.productUrl} target="_blank" rel="noopener noreferrer" className="underline">Link produk</a></>}</div>}</td><td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah item" wide>{itemForm(i)}</Modal></td></tr>)}</tbody>
+                  <thead><tr>{"bulk" in g && <th className="w-8" />}<th>Nama</th>{"bulk" in g && <th>Divisi</th>}<th>Kategori</th><th>Satuan</th><th className="num">Reorder</th><th className="num">Harga beli terbaru</th><th className="num">Harga rata²</th><th>Supplier</th><th /></tr></thead>
+                  <tbody>{g.items.map((i) => <tr key={i.id} className={i.active ? "" : "opacity-50"}>{"bulk" in g && <td><input type="checkbox" name="ids" value={i.id} form={`bulk-${g.key}`} aria-label={`Pilih ${i.name}`} className="h-4 w-4" /></td>}<td>{i.name}{i.note && <div className="text-xs text-slate-400">{i.note}</div>}</td>{"bulk" in g && <td>{divName.get(i.divisionId ?? "") ?? <span className="text-amber-600">belum</span>}</td>}<td>{i.category ?? "-"}</td><td>{i.unit}{recipeUnit(i) !== i.unit && <div className="text-xs text-slate-400">= {Number(i.hppFactor).toLocaleString("id-ID")} {recipeUnit(i)}</div>}</td><td className="num">{Number(i.minStock)}</td><td className="num">{idr(latestCost(i))}<div className="flex justify-end gap-2"><TrendBadge t={trendOf(latestCost(i), previousCost(i))} />{recipeUnit(i) !== i.unit && <span className="text-xs text-slate-400">{fmtUnitPrice(costPerRecipeUnit(latestCost(i), i))}/{recipeUnit(i)}</span>}</div></td><td className="num">{idr(i.avgCost)}</td><td>{i.supplier?.name}{i.buyMode === "ONLINE" && <div className="text-xs"><Badge tone="blue">ONLINE</Badge>{i.productUrl && <> <a href={i.productUrl} target="_blank" rel="noopener noreferrer" className="underline">Link produk</a></>}</div>}</td><td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title="Ubah item" wide>{itemForm(i)}</Modal></td></tr>)}</tbody>
                 </table></Paged>
               </div>
+              {"bulk" in g && <BulkDivision formId={`bulk-${g.key}`} divisions={divisions.map(opt)} />}
             </details>
           ))}
         </div>
