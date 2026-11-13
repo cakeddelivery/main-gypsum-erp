@@ -15,12 +15,13 @@ export const metadata = { title: "Aset Tetap" };
 
 export default async function AsetPage() {
   const user = await requirePerm("accounting.view");
-  const [assets, banks, assetAcc, dep, goLiveSetting] = await Promise.all([
+  const [assets, banks, assetAcc, dep, goLiveSetting, suppliers] = await Promise.all([
     prisma.fixedAsset.findMany({ orderBy: { acquiredAt: "desc" } }),
     prisma.bankAccount.findMany({ where: { active: true } }),
     prisma.coaAccount.findMany({ where: { code: { startsWith: "1-2" }, NOT: { code: "1-2900" } }, orderBy: { code: "asc" } }),
     prisma.journal.findMany({ where: { source: "PENYUSUTAN" }, include: { lines: true } }),
     prisma.setting.findUnique({ where: { key: "go_live_date" } }),
+    prisma.supplier.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
   ]);
   const goLive = goLiveSetting?.value && /^\d{4}-\d{2}-\d{2}$/.test(goLiveSetting.value) ? goLiveSetting.value : "2026-10-29";
   const accum = (id: string) => dep.filter((j) => j.sourceId?.startsWith(`${id}:`)).reduce((s, j) => s + j.lines.reduce((x, l) => x + Number(l.debit), 0), 0);
@@ -34,7 +35,7 @@ export default async function AsetPage() {
             <Field label="Harga perolehan (IDR)"><input name="cost" inputMode="numeric" className="input" required /></Field>
             <Field label="Umur manfaat (bulan)"><input name="usefulLifeMonths" inputMode="numeric" defaultValue="48" className="input" /></Field>
             <Field label="Nilai sisa (IDR)"><input name="residual" inputMode="numeric" defaultValue="0" className="input" /></Field>
-            <AssetFunding banks={banks.map((b) => ({ id: b.id, name: b.name }))} goLive={goLive} today={todayStr()} />
+            <AssetFunding banks={banks.map((b) => ({ id: b.id, name: b.name }))} goLive={goLive} today={todayStr()} suppliers={suppliers} />
             <label className="col-span-2 flex items-start gap-2 text-xs text-slate-500"><input type="checkbox" name="allowMinus" className="mt-0.5" /> Lanjutkan walau saldo rekening jadi minus pada tanggal itu</label>
             <div className="col-span-2"><Submit>Simpan</Submit></div>
           </ModalForm>
