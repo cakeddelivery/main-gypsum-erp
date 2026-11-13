@@ -102,7 +102,6 @@ export function ReportForm(p: Props) {
   const steps: Step[] = [
     { key: "hasil", label: t ? "PIC & hasil kerja" : "PIC" },
     { key: "checklist", label: "Checklist" },
-    ...(p.materials.length > 0 ? [{ key: "masuk", label: "Barang masuk" }] : []),
     ...(p.resultTitle && p.resultCount.length > 0 ? [{ key: "hasilakhir", label: "Stok hasil" }] : []),
     ...(stock.length > 0 ? [{ key: "stok", label: "Stok akhir" }] : []),
     { key: "catatan", label: "Catatan & kirim" },
@@ -158,7 +157,8 @@ export function ReportForm(p: Props) {
       <section data-step="hasil" className={`card p-4 ${show("hasil")}`}>
         <label className="block">
           <span className="label">PIC divisi (yang melaporkan)</span>
-          <input name="picName" defaultValue={p.picName} className="input" required />
+          <input value={p.picName} readOnly tabIndex={-1} className="input bg-slate-100 font-medium dark:bg-slate-800" aria-describedby="pic-hint" />
+          <span id="pic-hint" className="mt-1 block text-xs text-slate-500">Otomatis dari akun yang sedang masuk</span>
         </label>
       </section>
 
@@ -338,7 +338,7 @@ export function ReportForm(p: Props) {
         </ul>
       </section>
 
-      {p.materials.length > 0 && <div data-step="masuk" className={show("masuk")}><ReceiptSection id={p.id} receipts={p.receipts} materials={p.materials} applied={p.applied} orders={p.orders} banks={p.banks} /></div>}
+
 
       {p.resultTitle && p.resultCount.length > 0 && (
         <section data-step="hasilakhir" className={`card p-4 ${show("hasilakhir")}`}>
@@ -359,6 +359,10 @@ export function ReportForm(p: Props) {
         <section data-step="stok" className={`card p-4 ${show("stok")}`}>
           <h3 className="mb-1 font-semibold text-slate-800">Stok akhir shift</h3>
           <p className="mb-3 text-xs text-slate-500">Hitung fisik sisa bahan baku divisi. Bahan dengan stok ≤ limit otomatis masuk daftar order.</p>
+          <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            {p.receipts.length > 0 ? <>✓ {p.receipts.length} barang masuk hari ini sudah dicatat. </> : null}
+            Ada barang datang dari supplier/toko? Catat dulu lewat tombol <b>+ Barang masuk</b> (di luar form ini) <b>sebelum</b> menghitung stok akhir, agar tidak dobel.
+          </p>
           <ul className="divide-y divide-slate-100">
             {stock.map((row, i) => {
               const low = needsOrder(row);
@@ -429,7 +433,7 @@ export function ReportForm(p: Props) {
 
 
 
-function ReceiptSection({ id, receipts, materials, applied, orders, banks }: { id: string; receipts: ReceiptView[]; materials: { id: string; name: string; unit: string }[]; applied: boolean; orders: OrderOption[]; banks: { id: string; name: string }[] }) {
+export function ReceiptSection({ id, receipts, materials, applied, orders, banks }: { id: string; receipts: ReceiptView[]; materials: { id: string; name: string; unit: string }[]; applied: boolean; orders: OrderOption[]; banks: { id: string; name: string }[] }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [itemId, setItemId] = useState("");

@@ -8,6 +8,7 @@ import { action, str, optStr } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { dateOnly, fmtDay } from "@/lib/time";
 import { assertPerm, ForbiddenError } from "@/lib/auth";
+import { canSeeDivision } from "@/lib/reportScope";
 import { sendTelegram, telegramConfigured, esc } from "@/lib/telegram";
 import { STAGE_LABEL } from "@/lib/stock";
 import { applyShiftStockCount } from "@/lib/shiftReportStock";
@@ -24,13 +25,9 @@ const DEFAULT_CHECKLIST = ["Area kerja bersih & rapi", "Peralatan/cetakan dicek"
 
 type User = Awaited<ReturnType<typeof assertPerm>>;
 
-/** Kapten & operator hanya boleh melaporkan divisinya sendiri */
-function ownDivisionOnly(user: User) {
-  return user.role === "KAPTEN_DIVISI" || user.role === "OPERATOR";
-}
-
+/** Karyawan (kapten, operator, akun tertaut karyawan) hanya boleh melaporkan divisinya sendiri */
 function guardDivision(user: User, divisionId: string) {
-  if (ownDivisionOnly(user) && user.divisionId !== divisionId) throw new ForbiddenError();
+  if (!canSeeDivision(user, divisionId)) throw new ForbiddenError();
 }
 
 /** Daftar bahan baku divisi untuk stok akhir shift; hitungan lama dipertahankan */
@@ -61,13 +58,15 @@ export const openReport = action("report.create", async (fd, user) => {
       shiftId,
       divisionId,
       createdBy: user.name,
-      picName: user.employee?.name ?? user.name,
+      // PIC = username akun yang membuat/mengisi laporan (tidak bisa diketik)
+      picName: user.username,
       checklist,
       stockCount: await stockRows(divisionId),
     },
     update: {},
   });
-  redirect(`/laporan/${r.id}?isi=1`);
+  // go=masuk: langsung buka popup Barang masuk; selain itu buka form isian laporan
+  redirect(`/laporan/${r.id}?${fd.get("go") === "masuk" ? "masuk" : "isi"}=1`);
 });
 
 async function guardReport(id: string, user: User) {
@@ -102,7 +101,7 @@ async function saveReportData(fd: FormData, user: User) {
         checklist,
         work: work as Prisma.InputJsonValue,
         stockCount: stock,
-        picName: optStr(fd, "picName"),
+        picName: user.username,
         complaints: optStr(fd, "complaints"),
         followUp: optStr(fd, "followUp"),
         followUpStatus: str(fd, "followUpStatus") || "BELUM",

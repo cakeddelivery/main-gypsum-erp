@@ -1,14 +1,13 @@
 import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
+import { reportDivision } from "@/lib/reportScope";
 import { prisma } from "@/lib/db";
 import { addDays, dateOnly, fmtDate, todayStr } from "@/lib/time";
 import { Badge, Empty, Field, FilterBar, PageHeader } from "@/components/ui";
 import { isDone, needsOrder, toEntries, type StockCountRow } from "@/lib/shiftReport";
 import { Modal } from "@/components/Modal";
-import { ModalForm } from "@/components/ModalForm";
-import { Submit } from "@/components/ActionForm";
+import { ReportStartForm } from "@/components/ReportStartForm";
 import { Paged } from "@/components/Paged";
-import { openReport } from "./actions";
 
 export const metadata = { title: "Laporan Shift" };
 
@@ -29,7 +28,7 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
   const today = todayStr();
   const to = isDate(q.sampai) ? q.sampai! : today;
   const from = isDate(q.dari) ? q.dari! : addDays(to, -6);
-  const fixedDivision = user.role === "KAPTEN_DIVISI" || user.role === "OPERATOR" ? (user.divisionId ?? "-") : null;
+  const fixedDivision = reportDivision(user);
   const divFilter = fixedDivision ?? (q.divisi || undefined);
   const statusFilter = q.status && STATUS[q.status] ? q.status : undefined;
   const [shifts, divisions, reports] = await Promise.all([
@@ -51,30 +50,12 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
   const sentToday = todayReports.filter((r) => r.status !== "DRAFT").length;
   const canCreate = user.can("report.create") && divisions.length > 0;
 
+  const startData = { today, divisions: divisions.map((d) => ({ id: d.id, name: d.name, shiftCount: d.shiftCount })), shifts: shifts.map((s) => ({ id: s.id, name: s.name, startTime: s.startTime, endTime: s.endTime })) };
   const newForm = canCreate && (
-    <Modal trigger="+ Kirim laporan" title="Kirim laporan shift">
-      <ModalForm action={openReport} className="space-y-3">
-        <p className="text-sm text-slate-500">Pilih laporan yang akan diisi. Bila laporan itu sudah ada, isiannya dilanjutkan.</p>
-        <Field label="Tanggal"><input type="date" name="date" defaultValue={today} max={today} className="input" required /></Field>
-        {divisions.length === 1 ? (
-          <input type="hidden" name="divisionId" value={divisions[0].id} />
-        ) : (
-          <Field label="Divisi">
-            <select name="divisionId" className="input" required defaultValue="">
-              <option value="" disabled>— pilih divisi —</option>
-              {divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-          </Field>
-        )}
-        <Field label="Shift" hint={divisions.length === 1 ? `${divisions[0].name} · ${divisions[0].shiftCount} shift` : undefined}>
-          <select name="shiftId" className="input" required defaultValue={shifts.length === 1 ? shifts[0].id : ""}>
-            {shifts.length > 1 && <option value="" disabled>— pilih shift —</option>}
-            {(divisions.length === 1 ? shifts.slice(0, Math.max(1, divisions[0].shiftCount)) : shifts).map((s) => <option key={s.id} value={s.id}>{s.name} ({s.startTime}–{s.endTime})</option>)}
-          </select>
-        </Field>
-        <Submit pendingText="Membuka…">Lanjut isi laporan</Submit>
-      </ModalForm>
-    </Modal>
+    <>
+      <Modal trigger="+ Kirim laporan" title="Kirim laporan shift"><ReportStartForm data={startData} /></Modal>
+      <Modal trigger="+ Barang masuk" triggerClass="btn-secondary" title="Catat barang masuk"><ReportStartForm data={startData} go="masuk" /></Modal>
+    </>
   );
 
   return (

@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Fragment, Suspense, useEffect, useState } from "react";
 import { Icon } from "./Icon";
 import { NotificationBell, ProfileMenu, type HeaderAlert } from "./HeaderMenus";
 import { ThemeToggle } from "./ThemeToggle";
@@ -11,6 +11,8 @@ import { FormFeedback } from "./FormFeedback";
 import { NavTracker } from "./FilterMemory";
 import { NavProgress } from "./NavProgress";
 import { LinkPending } from "./LinkPending";
+import { Modal } from "./Modal";
+import { ReportStartForm, type ReportStartData } from "./ReportStartForm";
 
 type Item = { href: string; label: string; icon: string };
 
@@ -33,12 +35,12 @@ function backTarget(path: string, nav: Item[]) {
   return null;
 }
 
-export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: Item[]; bottomNav: Item[]; user: { name: string; username: string; role: string; division?: string | null }; env: string; children: React.ReactNode; alerts: HeaderAlert[] }) {
+export function Shell({ nav, bottomNav, user, env, children, alerts, quickReport }: { nav: Item[]; bottomNav: Item[]; user: { name: string; username: string; role: string; division?: string | null }; env: string; children: React.ReactNode; alerts: HeaderAlert[]; quickReport?: ReportStartData | null }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [path]);
   // Slot terakhir diisi tombol "Menu" bila menu prioritas kurang dari 5
-  const showMenuSlot = bottomNav.length < 5;
+  const showMenuSlot = bottomNav.length + (quickReport ? 1 : 0) < 5;
   const back = backTarget(path, nav);
   // Menu ☰ di HP hanya berisi menu yang belum ada di navigasi bawah; sidebar desktop tetap lengkap
   const inBottom = new Set(bottomNav.map((n) => n.href));
@@ -125,19 +127,44 @@ export function Shell({ nav, bottomNav, user, env, children, alerts }: { nav: It
       </Suspense>
       <nav
         aria-label="Menu utama"
-        style={{ gridTemplateColumns: `repeat(${bottomNav.length + (showMenuSlot ? 1 : 0)}, minmax(0,1fr))` }}
+        style={{ gridTemplateColumns: `repeat(${bottomNav.length + (showMenuSlot ? 1 : 0) + (quickReport ? 1 : 0)}, minmax(0,1fr))` }}
         className="no-print fixed inset-x-0 bottom-0 z-30 grid border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
       >
-        {bottomNav.map((n) => {
+        {bottomNav.map((n, i) => {
           const active = isActive(path, n.href);
-          return (
-            <Link key={n.href} href={n.href} aria-current={active ? "page" : undefined} className={`flex min-w-0 flex-col items-center gap-0.5 px-1 pb-1.5 pt-2 text-[11px] font-medium transition-colors active:text-brand-600 ${active ? "text-brand-600" : "text-slate-500"}`}>
+          const link = (
+            <Link href={n.href} aria-current={active ? "page" : undefined} className={`flex min-w-0 flex-col items-center gap-0.5 px-1 pb-1.5 pt-2 text-[11px] font-medium transition-colors active:text-brand-600 ${active ? "text-brand-600" : "text-slate-500"}`}>
               <span className={`relative grid h-7 w-12 place-items-center rounded-full transition ${active ? "bg-brand-50" : ""}`}>
                 <Icon name={n.icon} />
                 <LinkPending className="absolute -right-0.5 -top-0.5 !h-3 !w-3" />
               </span>
               <span className="w-full truncate text-center">{n.label}</span>
             </Link>
+          );
+          // Tombol "+ Laporan shift" menonjol di tengah navigasi
+          const mid = Math.floor(bottomNav.length / 2);
+          return quickReport && i === mid ? (
+            <Fragment key={n.href}>
+              <div className="relative flex justify-center">
+                <Modal
+                  grow
+                  trigger={
+                    <>
+                      <svg viewBox="0 0 24 24" className="h-7 w-7" fill="none" stroke="currentColor" strokeWidth={2.6} strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
+                    </>
+                  }
+                  triggerLabel="Kirim laporan shift"
+                  triggerClass="nav-fab"
+                  title="Kirim laporan shift"
+                >
+                  <ReportStartForm data={quickReport} />
+                </Modal>
+                <span className="pointer-events-none absolute bottom-1.5 w-full truncate text-center text-[11px] font-semibold text-brand-700">Lapor</span>
+              </div>
+              {link}
+            </Fragment>
+          ) : (
+            <Fragment key={n.href}>{link}</Fragment>
           );
         })}
         {showMenuSlot && (

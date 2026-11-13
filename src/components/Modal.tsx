@@ -11,7 +11,7 @@ export const CLOSE_MS = 160;
  * Popup form. Bila isian sudah diubah, menutup (✕, Esc, ketuk di luar popup) meminta konfirmasi dulu
  * agar isian tidak hilang tanpa sengaja. Setelah tersimpan, popup ditutup tanpa konfirmasi.
  */
-export function Modal({ trigger, title, children, triggerClass = "btn-primary", wide, full, defaultOpen = false, subtitle }: {
+export function Modal({ trigger, title, children, triggerClass = "btn-primary", wide, full, defaultOpen = false, subtitle, grow, triggerLabel }: {
   trigger: React.ReactNode;
   title: string;
   children: React.ReactNode;
@@ -21,16 +21,29 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
   full?: boolean;
   defaultOpen?: boolean;
   subtitle?: React.ReactNode;
+  /** Popup muncul membesar dari tombol pemicunya (dan mengecil kembali ke tombol saat ditutup) */
+  grow?: boolean;
+  /** Label aksesibel tombol pemicu (mis. tombol ikon) */
+  triggerLabel?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [dirty, setDirty] = useState(false);
   const [asking, setAsking] = useState(false);
   const [closing, setClosing] = useState(false);
   const ref = useRef<HTMLDialogElement>(null);
+  const btn = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
-    if (open && !d.open) d.showModal();
+    if (open && !d.open) {
+      d.showModal();
+      // Titik asal animasi = tengah tombol pemicu, relatif terhadap posisi popup
+      if (grow && btn.current) {
+        const b = btn.current.getBoundingClientRect();
+        const r = d.getBoundingClientRect();
+        d.style.transformOrigin = `${b.left + b.width / 2 - r.left}px ${b.top + b.height / 2 - r.top}px`;
+      }
+    }
     if (!open && d.open) d.close();
     if (!open) {
       setDirty(false);
@@ -46,12 +59,13 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
   const requestClose = () => (dirty ? setAsking(true) : forceClose());
   return (
     <>
-      <button type="button" className={triggerClass} onClick={() => setOpen(true)}>
+      <button ref={btn} type="button" className={triggerClass} aria-label={triggerLabel} onClick={() => setOpen(true)}>
         {trigger}
       </button>
       <dialog
         ref={ref}
         data-closing={closing || undefined}
+        data-grow={grow || undefined}
         onClose={() => setOpen(false)}
         onCancel={(e) => {
           e.preventDefault();

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
+import { reportDivision } from "@/lib/reportScope";
 import { fmtDay } from "@/lib/time";
 import { materialOrderList } from "@/lib/shiftReportStock";
 import { Badge, Card, Empty, PageHeader } from "@/components/ui";
@@ -9,7 +10,7 @@ export const metadata = { title: "Order Bahan Baku" };
 /** Rekap order bahan baku: hitungan stok terakhir tiap bahan dari laporan shift, yang ≤ limit perlu diorder */
 export default async function OrderBahanPage() {
   const user = await requirePerm("report.view");
-  const fixedDivision = user.role === "KAPTEN_DIVISI" || user.role === "OPERATOR" ? (user.divisionId ?? "-") : null;
+  const fixedDivision = reportDivision(user);
   const groups = (await materialOrderList(fixedDivision)).map((g) => ({ d: g.division, order: g.order, uncounted: g.uncounted }));
   const total = groups.reduce((a, g) => a + g.order.length, 0);
 

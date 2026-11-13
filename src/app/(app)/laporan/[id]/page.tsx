@@ -13,26 +13,27 @@ import { divisionPendingReturns } from "@/lib/borongan";
 import { confirmReturnForReport } from "../actions";
 import Link from "next/link";
 import { Suspense } from "react";
+import { canSeeDivision } from "@/lib/reportScope";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { DownloadJpg } from "@/components/DownloadJpg";
 import { Modal } from "@/components/Modal";
 import { ClearQuery } from "@/components/ClearQuery";
-import { ReportForm } from "./ReportForm";
+import { ReportForm, ReceiptSection } from "./ReportForm";
 import { ReportSheet } from "./ReportSheet";
 import { reportCatalogs } from "@/lib/productFamily";
 import { letterhead } from "@/lib/letterhead";
 
 export const metadata = { title: "Laporan Penutup Shift" };
 
-export default async function ReportDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ isi?: string }> }) {
+export default async function ReportDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ isi?: string; masuk?: string }> }) {
   const user = await requirePerm("report.view");
   const { id } = await params;
-  const { isi } = await searchParams;
+  const { isi, masuk } = await searchParams;
   const r = await prisma.shiftReport.findUnique({ where: { id }, include: { shift: true, division: true, sends: { orderBy: { sentAt: "desc" } } } });
   if (!r) notFound();
-  const ownOnly = user.role === "KAPTEN_DIVISI" || user.role === "OPERATOR";
-  if (ownOnly && user.divisionId !== r.divisionId) notFound();
+  // Karyawan hanya boleh membuka laporan divisinya sendiri (ditegakkan di server)
+  if (!canSeeDivision(user, r.divisionId)) notFound();
   const template = isTemplate(r.division.reportTemplate) ? r.division.reportTemplate : null;
   const [entries, people] = await Promise.all([
     template ? Promise.resolve([]) : prisma.productionEntry.groupBy({ by: ["stage"], where: { date: r.date, shiftId: r.shiftId, divisionId: r.divisionId }, _sum: { qtyGood: true, qtyReject: true } }),
@@ -46,7 +47,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const editStock: StockCountRow[] = items.map((i) => ({ itemId: i.id, name: i.name, unit: i.unit, limit: Number(i.minStock), qty: saved.find((x) => x.itemId === i.id)?.qty ?? null }));
   const stock = saved;
   const work = r.work as WorkData;
-  const canEdit = user.can("report.create") && !(ownOnly && user.divisionId !== r.divisionId);
+  const canEdit = user.can("report.create");
   const day = r.date.toISOString().slice(0, 10);
   const lh = await letterhead();
   const [bLines, flowOn, resultStatus, receipts, pendingReturns] = await Promise.all([
@@ -70,6 +71,10 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const receiptLines = receipts.map((x) => `${x.item.name}: ${Number(x.qty).toLocaleString("id-ID")} ${x.item.unit}${x.supplierName ? ` · ${x.supplierName}` : ""}${x.purchaseId ? "" : " (belum dicatat di Pembelian)"}`);
   const flow = flowOn && template ? flowLines(plannedFlow(template, work)) : [];
   const fname = `laporan-${r.division.code}-${r.shift.code}-${day}`;
+  // Pratinjau JPG & Unduh JPG hanya setelah laporan dikirim (saat mengisi tidak ditampilkan)
+  const sent = r.status !== "DRAFT";
+  const receiptViews = receipts.map((x) => ({ id: x.id, number: x.number, itemName: x.item.name, unit: x.item.unit, qty: Number(x.qty), supplierName: x.supplierName, hasPhoto: !!x.photoPath, linked: !!x.purchaseId }));
+  const materials = items.map((i) => ({ id: i.id, name: i.name, unit: i.unit }));
 
   return (
     <div className="space-y-5">
@@ -89,7 +94,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                 <ReportForm
                   id={r.id}
                   template={template}
-                  picName={r.picName ?? r.createdBy}
+                  picName={user.username}
                   work={work}
                   checklist={checklist}
                   stock={editStock}
@@ -97,8 +102,8 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   complaints={r.complaints ?? ""}
                   followUp={r.followUp ?? ""}
                   followUpStatus={r.followUpStatus}
-                  receipts={receipts.map((x) => ({ id: x.id, number: x.number, itemName: x.item.name, unit: x.item.unit, qty: Number(x.qty), supplierName: x.supplierName, hasPhoto: !!x.photoPath, linked: !!x.purchaseId }))}
-                  materials={items.map((i) => ({ id: i.id, name: i.name, unit: i.unit }))}
+                  receipts={receiptViews}
+                  materials={materials}
                   orders={orders}
                   banks={banks}
                   applied={r.stockApplied}
@@ -110,13 +115,22 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                 />
               </Modal>
             )}
-            <DownloadJpg targetId="report-preview" filename={fname} />
+            {canEdit && (
+              <Modal trigger={`+ Barang masuk${receipts.length ? ` (${receipts.length})` : ""}`} triggerClass="btn-secondary" title="Barang masuk hari ini" subtitle={`${r.division.name} · ${r.shift.name} · ${fmtDay(r.date)}`} defaultOpen={masuk === "1"} wide>
+                {materials.length > 0 ? (
+                  <ReceiptSection id={r.id} receipts={receiptViews} materials={materials} applied={r.stockApplied} orders={orders} banks={banks} />
+                ) : (
+                  <p className="text-sm text-slate-600">{r.division.name} belum punya daftar bahan baku. Minta Admin mengisi bahan divisi di Laporan Shift › Bahan & checklist divisi.</p>
+                )}
+              </Modal>
+            )}
+            {sent && <DownloadJpg targetId="report-preview" filename={fname} />}
           </>
         }
       />
       {canEdit && (
         <div className="space-y-4">
-          <Suspense fallback={null}><ClearQuery param="isi" /></Suspense>
+          <Suspense fallback={null}><ClearQuery param="isi" /><ClearQuery param="masuk" /></Suspense>
           {template === "ASSEMBLING" && (
             <div className="card p-4 text-sm">
               <h3 className="mb-1 font-semibold text-slate-800">Setoran borongan hari ini</h3>
@@ -140,33 +154,44 @@ export default async function ReportDetail({ params, searchParams }: { params: P
           )}
         </div>
       )}
-      <div className="grid gap-5 lg:grid-cols-5">
-        <div className="space-y-5 lg:col-span-3">
-          <ReportSheet
-            lh={lh}
-            id={r.id}
-            date={day}
-            division={r.division.name}
-            shift={r.shift.name}
-            pic={r.picName ?? r.createdBy}
-            template={template}
-            work={work}
-            checklist={checklist}
-            stock={stock}
-            complaints={r.complaints}
-            followUp={r.followUp}
-            followUpStatus={r.followUpStatus}
-            extraLines={extraLines}
-            receiptLines={receiptLines}
-            target={r.division.targetPerShift}
-            legacyLines={entries.map((e) => `${STAGE_LABEL[e.stage]}: ${e._sum.qtyGood ?? 0} pcs (reject ${e._sum.qtyReject ?? 0})`)}
-          />
+      {!sent ? (
+        <div className="card p-5 text-sm">
+          <div className="flex flex-wrap items-center gap-2"><Badge tone="amber">Draf</Badge><span className="text-slate-500">Dibuat oleh {r.createdBy} · PIC {r.picName ?? r.createdBy}</span></div>
+          <p className="mt-3 text-slate-600">Laporan belum dikirim. Lanjutkan mengisi lewat tombol <b>Lanjutkan isi laporan</b>, lalu tekan <b>Kirim laporan</b> di langkah terakhir. Pratinjau & JPG laporan muncul setelah terkirim.</p>
+          <ul className="mt-3 grid gap-1 text-slate-600 sm:grid-cols-3">
+            <li>Checklist: <b>{checklist.filter((c) => (c.photo ? !!c.photoPath : c.done)).length}/{checklist.length}</b></li>
+            <li>Barang masuk: <b>{receipts.length}</b></li>
+            <li>Stok akhir terisi: <b>{saved.filter((x) => x.qty != null).length}/{editStock.length}</b></li>
+          </ul>
         </div>
-        <div className="space-y-5 lg:col-span-2">
-          <div className="flex items-center gap-2"><Badge tone={r.status === "TERKIRIM" ? "green" : r.status === "DIREVISI" ? "purple" : "amber"}>{r.status === "DRAFT" ? "Draf" : r.status === "TERKIRIM" ? "Terkirim" : "Direvisi"}</Badge><span className="text-xs text-slate-500">Dibuat oleh {r.createdBy}</span></div>
-          <Card title="Riwayat pengiriman">
-            {r.sends.length === 0 ? <p className="text-sm text-slate-400">Belum pernah dikirim</p> : (
-              <ul className="space-y-2 text-sm">
+      ) : (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2"><Badge tone={r.status === "TERKIRIM" ? "green" : "purple"}>{r.status === "TERKIRIM" ? "Terkirim" : "Direvisi"}</Badge><span className="text-xs text-slate-500">Dibuat oleh {r.createdBy}</span></div>
+          <div className="mx-auto max-w-3xl">
+            <ReportSheet
+              lh={lh}
+              id={r.id}
+              date={day}
+              division={r.division.name}
+              shift={r.shift.name}
+              pic={r.picName ?? r.createdBy}
+              template={template}
+              work={work}
+              checklist={checklist}
+              stock={stock}
+              complaints={r.complaints}
+              followUp={r.followUp}
+              followUpStatus={r.followUpStatus}
+              extraLines={extraLines}
+              receiptLines={receiptLines}
+              target={r.division.targetPerShift}
+              legacyLines={entries.map((e) => `${STAGE_LABEL[e.stage]}: ${e._sum.qtyGood ?? 0} pcs (reject ${e._sum.qtyReject ?? 0})`)}
+            />
+          </div>
+          {r.sends.length > 0 && (
+            <details className="card mx-auto max-w-3xl p-4 text-sm">
+              <summary className="cursor-pointer font-medium text-slate-700">Riwayat pengiriman ({r.sends.length}) · terakhir {fmtDateTime(r.sends[0].sentAt)}</summary>
+              <ul className="mt-3 space-y-2">
                 {r.sends.map((s) => (
                   <li key={s.id} className="flex justify-between gap-2">
                     <span>{fmtDateTime(s.sentAt)} · {s.sentBy} <span className="text-xs text-slate-400">({s.channel})</span>{s.error && <span className="block text-xs text-rose-500">{s.error}</span>}</span>
@@ -174,10 +199,10 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   </li>
                 ))}
               </ul>
-            )}
-          </Card>
+            </details>
+          )}
         </div>
-      </div>
+      )}
     </div>
   );
 }

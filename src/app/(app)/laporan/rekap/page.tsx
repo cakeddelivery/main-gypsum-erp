@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
+import { reportDivision } from "@/lib/reportScope";
 import { prisma } from "@/lib/db";
 import { addDays, dateOnly, fmtDay, todayStr } from "@/lib/time";
 import { Paged } from "@/components/Paged";
@@ -34,7 +35,7 @@ export default async function RekapPage({ searchParams }: { searchParams: Promis
   const period = ["harian", "mingguan", "bulanan"].includes(sp.period ?? "") ? sp.period! : "harian";
   const date = sp.date && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : todayStr();
   const { start, end } = range(period, date);
-  const fixedDivision = user.role === "KAPTEN_DIVISI" || user.role === "OPERATOR" ? user.divisionId : null;
+  const fixedDivision = reportDivision(user);
   const where = { date: { gte: dateOnly(start), lte: dateOnly(end) }, ...(sp.shift ? { shiftId: sp.shift } : {}), ...(fixedDivision ? { divisionId: fixedDivision } : {}) };
   const [rows, divisions, shifts, reports] = await Promise.all([
     prisma.productionEntry.groupBy({ by: ["divisionId", "stage"], where, _sum: { qtyGood: true, qtyReject: true } }),
