@@ -2,7 +2,7 @@ import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
 import { reportDivision } from "@/lib/reportScope";
 import { prisma } from "@/lib/db";
-import { addDays, dateOnly, fmtDate, todayStr } from "@/lib/time";
+import { addDays, dateOnly, fmtDay, todayStr } from "@/lib/time";
 import { Badge, Empty, PageHeader } from "@/components/ui";
 import { isDone, needsOrder, toEntries, type StockCountRow } from "@/lib/shiftReport";
 import { Modal } from "@/components/Modal";
@@ -45,8 +45,16 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
       take: 300,
     }),
   ]);
-  // Draf yang belum terkirim tampil paling atas agar mudah dilanjutkan
-  const rows = [...reports].sort((a, b) => Number(a.status !== "DRAFT") - Number(b.status !== "DRAFT"));
+  // Tanggal terbaru di atas, lalu divisi, lalu shift (urutan query); satu laporan per divisi+shift+tanggal (unik di DB).
+  // Draf cukup ditandai badge. Baris dikelompokkan per tanggal.
+  const byDate: { key: string; date: Date; rows: typeof reports }[] = [];
+  for (const r of reports) {
+    const key = r.date.toISOString().slice(0, 10);
+    const g = byDate.at(-1);
+    if (g?.key === key) g.rows.push(r);
+    else byDate.push({ key, date: r.date, rows: [r] });
+  }
+  const rows = reports;
   const drafts = reports.filter((r) => r.status === "DRAFT").length;
   // Ringkasan hari ini: berapa slot divisi × shift yang sudah terkirim
   const todayReports = await prisma.shiftReport.findMany({ where: { date: dateOnly(today), ...(fixedDivision ? { divisionId: fixedDivision } : {}) }, select: { status: true } });
@@ -103,30 +111,40 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
           <Paged>
             <table className="tbl">
               <thead>
-                <tr><th>Tanggal</th><th>Status</th><th>Divisi · shift</th><th>PIC</th><th>Checklist</th><th></th></tr>
+                <tr><th>Divisi · shift</th><th>Status</th><th>PIC</th><th>Checklist</th><th></th></tr>
               </thead>
               <tbody>
-                {rows.map((r) => {
-                  const st = STATUS[r.status] ?? STATUS.DRAFT;
-                  const cl = toEntries(r.checklist);
-                  const low = (r.stockCount as StockCountRow[]).filter(needsOrder).length;
-                  const draft = r.status === "DRAFT";
-                  return (
-                    <tr key={r.id}>
-                      <td>{fmtDate(r.date)}</td>
-                      <td><Badge tone={st.tone}>{st.label}</Badge>{r.complaints && r.followUpStatus !== "SELESAI" && <span className="mt-1 block"><Badge tone="red">Kendala</Badge></span>}</td>
-                      <td>{r.division.name}<span className="block text-xs text-slate-500">{r.shift.name}</span></td>
-                      <td>{r.picName ?? r.createdBy}</td>
-                      <td className="text-xs text-slate-500">{cl.filter(isDone).length}/{cl.length}{low > 0 && <span className="block text-rose-600">{low} bahan perlu order</span>}</td>
-                      <td>
-                        {draft && user.can("report.create") ? (
-                          <Link href={`/laporan/${r.id}?isi=1`} className="btn-primary btn-sm">Lanjutkan</Link>
-                        ) : (
-                          <Link href={`/laporan/${r.id}`} className="btn-secondary btn-sm">Lihat</Link>
-                        )}
+                {byDate.flatMap((g) => {
+                  const sent = g.rows.filter((r) => r.status !== "DRAFT").length;
+                  return [
+                    <tr key={g.key} className="bg-slate-50">
+                      <td colSpan={5} className="font-semibold text-slate-800">
+                        {fmtDay(g.date)}
+                        <span className="ml-2 text-xs font-normal text-slate-500">{sent}/{g.rows.length} terkirim</span>
                       </td>
-                    </tr>
-                  );
+                    </tr>,
+                    ...g.rows.map((r) => {
+                      const st = STATUS[r.status] ?? STATUS.DRAFT;
+                      const cl = toEntries(r.checklist);
+                      const low = (r.stockCount as StockCountRow[]).filter(needsOrder).length;
+                      const draft = r.status === "DRAFT";
+                      return (
+                        <tr key={r.id}>
+                          <td>{r.division.name}<span className="block text-xs text-slate-500">{r.shift.name}</span></td>
+                          <td><Badge tone={st.tone}>{st.label}</Badge>{r.complaints && r.followUpStatus !== "SELESAI" && <span className="mt-1 block"><Badge tone="red">Kendala</Badge></span>}</td>
+                          <td>{r.picName ?? r.createdBy}</td>
+                          <td className="text-xs text-slate-500">{cl.filter(isDone).length}/{cl.length}{low > 0 && <span className="block text-rose-600">{low} bahan perlu order</span>}</td>
+                          <td>
+                            {draft && user.can("report.create") ? (
+                              <Link href={`/laporan/${r.id}?isi=1`} className="btn-primary btn-sm">Lanjutkan</Link>
+                            ) : (
+                              <Link href={`/laporan/${r.id}`} className="btn-secondary btn-sm">Lihat</Link>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    }),
+                  ];
                 })}
               </tbody>
             </table>

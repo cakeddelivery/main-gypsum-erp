@@ -238,41 +238,81 @@ export function summaryOf(template: ReportTemplate, work: WorkData) {
 
 const fmt = (v: number | null) => (v == null ? "—" : v.toLocaleString("id-ID"));
 
-/** Baris teks detail hasil kerja (untuk tampilan laporan & pesan Telegram) */
-export function workLines(template: ReportTemplate, work: WorkData): string[] {
+/** Satu grup isian (mis. "Reguler · Standard" atau paket "24 pcs") berisi beberapa series dengan totalnya */
+export type WorkGroup = { name: string; items: { label: string; value: number | null; pcs: number }[]; total: number };
+/** Detail hasil kerja: baris teks biasa, atau bagian berkelompok (katalog SKU) agar mudah dibaca */
+export type WorkBlock = { kind: "line"; text: string } | { kind: "groups"; title: string; unit: string; qtyLabel: string; showPcs: boolean; groups: WorkGroup[]; total: number };
+
+/**
+ * Kelompokkan isian menurut label baris katalog: "Reguler · Standard · Mix" → grup "Reguler · Standard", series "Mix".
+ * Urutan grup & series mengikuti urutan isian (urutan katalog).
+ */
+export function groupFields(vals: { label: string; value: number | null; pcs: number }[]): WorkGroup[] {
+  const groups: WorkGroup[] = [];
+  for (const v of vals) {
+    const cut = v.label.lastIndexOf(" · ");
+    const name = cut >= 0 ? v.label.slice(0, cut) : "";
+    const label = cut >= 0 ? v.label.slice(cut + 3) : v.label;
+    let g = groups.find((x) => x.name === name);
+    if (!g) groups.push((g = { name, items: [], total: 0 }));
+    g.items.push({ label, value: v.value, pcs: v.pcs });
+    g.total += v.pcs;
+  }
+  return groups;
+}
+
+/** Detail hasil kerja terstruktur (tampilan laporan & JPG); workLines = versi teks untuk Telegram */
+export function workBlocks(template: ReportTemplate, work: WorkData): WorkBlock[] {
   const t = TEMPLATES[template];
-  const out: string[] = [];
-  if (t.heading) out.push(t.heading.toUpperCase());
+  const out: WorkBlock[] = [];
+  const line = (text: string) => out.push({ kind: "line", text });
+  if (t.heading) line(t.heading.toUpperCase());
   for (const s of t.sections) {
     if (s.kind === "choice") {
       const v = choiceValue(t, work, s);
-      if (v) out.push(`${s.title.toUpperCase()}: ${v}`);
+      if (v) line(`${s.title.toUpperCase()}: ${v}`);
       continue;
     }
     if (s.kind === "grid") {
       // Bagian opsional (mis. reject) / format lama yang tidak diisi tidak ditampilkan
       if ((s.key === "reject" || s.legacy) && !sectionFilled(t, work, s.key)) continue;
-      if (!t.heading) out.push(s.title.toUpperCase());
+      if (!t.heading) line(s.title.toUpperCase());
       const rows = gridRows(work, s);
       for (const r of rows) {
-        if (s.cols.length === 1) out.push(`${r.name}: ${fmt(r.v[0] ?? null)} pcs`);
-        else out.push(`${r.name}: ${s.cols.map((c, i) => `${c} ${fmt(r.v[i] ?? null)}`).join(" · ")}${s.colTotals ? "" : ` · TOTAL ${fmt(rowTotal(r))} pcs`}`);
+        if (s.cols.length === 1) line(`${r.name}: ${fmt(r.v[0] ?? null)} pcs`);
+        else line(`${r.name}: ${s.cols.map((c, i) => `${c} ${fmt(r.v[i] ?? null)}`).join(" · ")}${s.colTotals ? "" : ` · TOTAL ${fmt(rowTotal(r))} pcs`}`);
       }
-      if (s.colTotals) out.push(`TOTAL: ${colTotals(rows, s.cols.length).map((v, i) => `${s.cols[i]} ${fmt(v)}`).join(" · ")}`);
-      out.push(`${s.totalLabel.toUpperCase()}: ${fmt(sectionTotal(t, work, s.key))} pcs`);
-    } else {
-      if (s.kind === "count" && s.replacedBy && !sectionFilled(t, work, s.key)) continue;
-      const vals = sectionFieldValues(t, work, s);
-      if (s.kind === "catalog") {
-        const per = s.total === "patung" ? (l: (typeof vals)[number]) => `${l.label} ${fmt(l.value)} ${s.qtyLabel}${l.pcs !== l.value ? ` (${fmt(l.pcs)} patung)` : ""}` : (l: (typeof vals)[number]) => `${l.label} ${fmt(l.value)}`;
-        out.push(`${s.title.toUpperCase()}: ${vals.length ? vals.map(per).join(" · ") : "—"} · TOTAL ${fmt(sectionTotal(t, work, s.key))} ${s.unit}`);
-        continue;
-      }
-      out.push(`${s.title.toUpperCase()}: ${vals.map((f) => `${f.label} ${fmt(f.value)}`).join(" · ")} · TOTAL ${fmt(sectionTotal(t, work, s.key))}`);
+      if (s.colTotals) line(`TOTAL: ${colTotals(rows, s.cols.length).map((v, i) => `${s.cols[i]} ${fmt(v)}`).join(" · ")}`);
+      line(`${s.totalLabel.toUpperCase()}: ${fmt(sectionTotal(t, work, s.key))} pcs`);
+      continue;
     }
+    if (s.kind === "count" && s.replacedBy && !sectionFilled(t, work, s.key)) continue;
+    const vals = sectionFieldValues(t, work, s);
+    // Katalog SKU (dan patung turunannya) dikelompokkan per Tipe+Paket agar tidak menjadi satu baris panjang
+    const fromCatalog = s.kind === "catalog" || (s.kind === "derived" && vals.some((v) => v.label.includes(" · ")));
+    if (fromCatalog) {
+      const showPcs = s.kind === "catalog" && s.total === "patung";
+      const unit = s.kind === "catalog" ? s.unit : "pcs";
+      out.push({ kind: "groups", title: s.title.toUpperCase(), unit, qtyLabel: s.kind === "catalog" ? s.qtyLabel : "pcs", showPcs, groups: groupFields(vals.filter((v) => v.value != null)), total: sectionTotal(t, work, s.key) });
+      continue;
+    }
+    line(`${s.title.toUpperCase()}: ${vals.map((f) => `${f.label} ${fmt(f.value)}`).join(" · ")} · TOTAL ${fmt(sectionTotal(t, work, s.key))}`);
   }
-  if (template === "PACKING") out.push(`TOTAL PATUNG: ${fmt(PACKING_PATUNG.reduce((a, k) => a + sectionTotal(t, work, k), 0))} pcs`);
+  if (template === "PACKING") line(`TOTAL PATUNG: ${fmt(PACKING_PATUNG.reduce((a, k) => a + sectionTotal(t, work, k), 0))} pcs`);
   return out;
+}
+
+/** Baris teks detail hasil kerja (pesan Telegram): bagian berkelompok jadi satu baris per grup */
+export function workLines(template: ReportTemplate, work: WorkData): string[] {
+  return workBlocks(template, work).flatMap((b) => {
+    if (b.kind === "line") return [b.text];
+    if (!b.groups.length) return [`${b.title}: — · TOTAL 0 ${b.unit}`];
+    const item = (i: WorkGroup["items"][number]) => `${i.label} ${fmt(i.value)}${b.showPcs && i.pcs !== i.value ? ` (${fmt(i.pcs)})` : ""}`;
+    return [
+      `${b.title}: TOTAL ${fmt(b.total)} ${b.unit}`,
+      ...b.groups.map((g) => `• ${g.name ? `${g.name}: ` : ""}${g.items.map(item).join(" · ")}${g.items.length > 1 || g.name ? ` = ${fmt(g.total)}` : ""}`),
+    ];
+  });
 }
 
 /** Katalog SKU per bagian katalog (diambil dari DB oleh pemanggil, lihat reportCatalogs di productFamily.ts) */
