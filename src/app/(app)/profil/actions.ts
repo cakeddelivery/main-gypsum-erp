@@ -52,7 +52,8 @@ export async function saveOwnEmail(_prev: ActionResult | null, fd: FormData): Pr
     if (email && (await prisma.user.findFirst({ where: { email, id: { not: user.id } } }))) throw new Error("Email sudah dipakai akun lain");
     await prisma.user.update({ where: { id: user.id }, data: { email } });
     await audit(user, "EMAIL_DIUBAH", "User", user.id, { dari: row.email, ke: email });
-    revalidatePath("/profil");
+    // Layout ikut dimuat ulang agar popup pengingat Gmail hilang setelah email diisi
+    revalidatePath("/", "layout");
     return { ok: true, message: email ? "Email tersimpan" : "Email dihapus", ts: Date.now() };
   } catch (e) {
     return { ok: false, error: friendly(e), ts: Date.now() };

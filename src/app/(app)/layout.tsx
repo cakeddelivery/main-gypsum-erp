@@ -4,6 +4,7 @@ import { reportDivision } from "@/lib/reportScope";
 import { todayStr } from "@/lib/time";
 import { ROLE_LABEL } from "@/lib/rbac";
 import { Shell } from "@/components/Shell";
+import { EmailReminder } from "@/components/EmailReminder";
 import { alertDivision, cachedAlerts } from "@/lib/alerts";
 import { prisma } from "@/lib/db";
 
@@ -28,6 +29,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const division = user.employee?.division.name ?? null;
   return (
     <Shell nav={nav} bottomNav={bottom} user={{ name: user.name, username: user.username, role: ROLE_LABEL[user.role], division }} env={process.env.APP_ENV || "development"} alerts={items} quickReport={quickReport}>
+      {!user.email && <EmailReminder />}
       {children}
     </Shell>
   );
