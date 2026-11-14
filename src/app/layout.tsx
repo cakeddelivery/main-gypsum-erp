@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { THEME_SCRIPT } from "@/components/ThemeToggle";
 import { PwaRegister } from "@/components/Pwa";
+import { AppUpdater } from "@/components/AppUpdater";
+import { CURRENT_BUILD } from "@/lib/appVersion";
 import { pwaInfo } from "@/lib/pwa";
 
 const PWA = pwaInfo();
@@ -43,10 +45,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         {/* Terapkan mode malam sebelum halaman tampil agar tidak berkedip */}
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+        <meta name="app-build" content={CURRENT_BUILD} />
       </head>
       <body>
         {children}
         <PwaRegister />
+        <AppUpdater />
       </body>
     </html>
   );

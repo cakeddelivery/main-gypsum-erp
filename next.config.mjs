@@ -1,6 +1,23 @@
+import { execSync } from "node:child_process";
+
+/**
+ * Versi build: commit + waktu build. Ditanam ke kode (APP_BUILD_ID) dan dipakai sebagai build id Next,
+ * sehingga aplikasi di HP bisa membandingkan versinya dengan /api/version lalu memuat ulang otomatis.
+ */
+const commit = (() => {
+  try {
+    return execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] }).toString().trim();
+  } catch {
+    return "nogit";
+  }
+})();
+const BUILD_ID = process.env.APP_BUILD_ID || `${commit}-${Date.now().toString(36)}`;
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
+  generateBuildId: async () => BUILD_ID,
+  env: { APP_BUILD_ID: BUILD_ID },
   serverExternalPackages: ["@prisma/client", "bcryptjs", "tesseract.js"],
   experimental: {
     serverActions: { bodySizeLimit: "16mb" },
@@ -20,6 +37,9 @@ const nextConfig = {
           { key: "Content-Type", value: "application/javascript; charset=utf-8" },
         ],
       },
+      // Manifest & versi selalu dicek ulang (tidak boleh disimpan browser/CDN)
+      { source: "/manifest.webmanifest", headers: [{ key: "Cache-Control", value: "no-cache, must-revalidate" }] },
+      { source: "/api/version", headers: [{ key: "Cache-Control", value: "no-store, max-age=0" }] },
       {
         source: "/(.*)",
         headers: [
