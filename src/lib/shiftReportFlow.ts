@@ -33,6 +33,7 @@ async function ensureItem(tx: Tx, sku: string, data: { name: string; type: "BARA
  */
 export async function flowItem(tx: Tx, s: Pick<FlowStep, "kind" | "key">): Promise<string> {
   if (s.kind === "kering") return ensureItem(tx, `SJ-PTG-${s.key.toUpperCase()}`, { name: `Patung kering ${s.key}`, type: "BARANG_DALAM_PROSES", unit: "pcs" });
+  if (s.kind === "basah") return ensureItem(tx, `SJ-CTK-${s.key.toUpperCase()}`, { name: `Patung cetak ${s.key}`, type: "BARANG_DALAM_PROSES", unit: "pcs" });
   if (s.kind === "giftbox") return ensureItem(tx, `BJ-GB-${s.key.toUpperCase()}`, { name: `Giftbox ${s.key}`, type: "BARANG_JADI", unit: "box" });
   if (s.kind === "produk") {
     // SKU katalog (Produk Induk): item barang jadi produk itu; dibuatkan bila belum ada
@@ -101,12 +102,13 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
     let toInventory = 0;
     for (const [i, s] of steps.entries()) {
       const itemId = itemIds[i];
-      const loc = s.kind === "kering" ? wip : finished;
+      const wipKind = s.kind === "kering" || s.kind === "basah";
+      const loc = wipKind ? wip : finished;
       if (s.dir === "in") {
-        const unitCost = s.kind === "kering" ? undefined : costs.get(itemId) ?? 0;
+        const unitCost = wipKind ? undefined : costs.get(itemId) ?? 0;
         await recordMovement(tx, { type: "HASIL_PRODUKSI", itemId, qty: s.qty, toLocationId: loc, unitCost, ref, note, date: at }, actor);
         if (unitCost) toInventory += unitCost * s.qty;
-      } else if (s.kind === "kering") {
+      } else if (wipKind) {
         await recordMovement(tx, { type: "KONSUMSI_PRODUKSI", itemId, qty: s.qty, fromLocationId: loc, allowNegative: true, ref, note, date: at }, actor);
       } else {
         const fb = costs.get(itemId) ?? 0;

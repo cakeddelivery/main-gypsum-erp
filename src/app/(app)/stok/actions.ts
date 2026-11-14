@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { autoCode } from "@/lib/codes";
 import { action, str, optStr, int, dec, bool } from "@/lib/action";
-import { finishedGoodsOpname, recordMovement } from "@/lib/stock";
+import { finishedGoodsOpname, manualMovementGuard, recordMovement } from "@/lib/stock";
 import { audit } from "@/lib/audit";
 import { saveItemRecord } from "@/lib/items";
 import { ForbiddenError } from "@/lib/auth";
@@ -17,6 +17,9 @@ export const createMovement = action(
   async (fd, user) => {
     const type = z.enum(TYPES).parse(str(fd, "type")) as MovementType;
     if (type === "PENYESUAIAN" && !user.can("stock.approve")) throw new ForbiddenError();
+    const reason = optStr(fd, "note");
+    // Mutasi manual dibatasi agar tidak dobel dengan alur lain (lihat manualMovementGuard)
+    await manualMovementGuard({ type, role: user.role, reason, fromLocationId: optStr(fd, "fromLocationId"), toLocationId: optStr(fd, "toLocationId") });
     const date = str(fd, "date") || todayStr();
     await prisma.$transaction((tx) =>
       recordMovement(
@@ -29,8 +32,9 @@ export const createMovement = action(
           toLocationId: optStr(fd, "toLocationId"),
           unitCost: type === "PENERIMAAN" ? int(fd, "unitCost") : undefined,
           increase: str(fd, "direction") === "plus",
-          ref: optStr(fd, "ref"),
-          note: optStr(fd, "note"),
+          // Penanda mutasi manual (dipakai Cek Konsistensi); nomor referensi isian tetap disimpan di belakangnya
+          ref: `MUT${optStr(fd, "ref") ? `:${optStr(fd, "ref")}` : ""}`,
+          note: reason,
           date: jakartaDateTime(date, "12:00"),
         },
         user,

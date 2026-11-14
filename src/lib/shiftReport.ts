@@ -4,8 +4,8 @@ import { REJECT_REASONS } from "./reject";
  * Modul murni (tanpa akses database) agar bisa dipakai di server, komponen klien, seed, dan skrip.
  */
 
-export type ReportTemplate = "PRODUKSI" | "GIFTBOX" | "PACKING" | "ASSEMBLING";
-export const REPORT_TEMPLATES: ReportTemplate[] = ["PRODUKSI", "GIFTBOX", "PACKING", "ASSEMBLING"];
+export type ReportTemplate = "PRODUKSI" | "CETAK" | "GIFTBOX" | "PACKING" | "ASSEMBLING";
+export const REPORT_TEMPLATES: ReportTemplate[] = ["PRODUKSI", "CETAK", "GIFTBOX", "PACKING", "ASSEMBLING"];
 
 /** Tabel angka: baris (oven / nama orang) × kolom (varian) */
 export type GridSection = {
@@ -68,10 +68,20 @@ export const TEMPLATES: Record<ReportTemplate, TemplateDef> = {
       { kind: "grid", key: "panen", title: "Hasil panen", rows: ["Oven Besar", "Oven Kecil"], cols: VARIANTS, totalLabel: "Total panen" },
       { kind: "grid", key: "reject", title: "Reject panen", rows: ["Oven Besar", "Oven Kecil"], cols: VARIANTS, totalLabel: "Total reject" },
       { kind: "choice", key: "rejectReason", title: "Alasan reject", options: REJECT_REASONS, showIf: "reject" },
-      { kind: "grid", key: "cetak", title: "Hasil cetak", rows: "people", cols: ["pcs"], totalLabel: "Total hasil cetak" },
+      // Hasil cetak per karyawan per series (baris = karyawan yang absen hadir di divisi & shift ini, bisa ditambah)
+      { kind: "grid", key: "cetakSeries", title: "Hasil cetak per karyawan", rows: "people", cols: VARIANTS, totalLabel: "Total hasil cetak", colTotals: true },
+      { kind: "grid", key: "cetak", title: "Hasil cetak (format lama)", rows: "people", cols: ["pcs"], totalLabel: "Total hasil cetak", legacy: true },
     ],
-    summary: [{ label: "Total panen", sections: ["panen"] }, { label: "Total reject", sections: ["reject"], ifFilled: true }, { label: "Total hasil cetak", sections: ["cetak"] }],
+    summary: [{ label: "Total panen", sections: ["panen"] }, { label: "Total reject", sections: ["reject"], ifFilled: true }, { label: "Total hasil cetak", sections: ["cetakSeries", "cetak"] }],
     target: { label: "panen", sections: ["panen"], unit: "pcs" },
+  },
+  // Divisi Cetak (terpisah dari Oven): hasil cetak per karyawan per series → stok patung cetak (basah)
+  CETAK: {
+    label: "Cetak",
+    heading: "",
+    sections: [{ kind: "grid", key: "cetakSeries", title: "Hasil cetak per karyawan", rows: "people", cols: VARIANTS, totalLabel: "Total hasil cetak", colTotals: true }],
+    summary: [{ label: "Total hasil cetak", sections: ["cetakSeries"] }],
+    target: { label: "hasil cetak", sections: ["cetakSeries"], unit: "pcs" },
   },
   GIFTBOX: {
     label: "Giftbox",
@@ -270,7 +280,7 @@ export function workBlocks(template: ReportTemplate, work: WorkData): WorkBlock[
       const rows = gridRows(work, s);
       for (const r of rows) {
         if (s.cols.length === 1) line(`${r.name}: ${fmt(r.v[0] ?? null)} pcs`);
-        else line(`${r.name}: ${s.cols.map((c, i) => `${c} ${fmt(r.v[i] ?? null)}`).join(" · ")}${s.colTotals ? "" : ` · TOTAL ${fmt(rowTotal(r))} pcs`}`);
+        else line(`${r.name}: ${s.cols.map((c, i) => `${c} ${fmt(r.v[i] ?? null)}`).join(" · ")} · TOTAL ${fmt(rowTotal(r))} pcs`);
       }
       if (s.colTotals) line(`TOTAL: ${colTotals(rows, s.cols.length).map((v, i) => `${s.cols[i]} ${fmt(v)}`).join(" · ")}`);
       line(`${s.totalLabel.toUpperCase()}: ${fmt(sectionTotal(t, work, s.key))} pcs`);
@@ -418,6 +428,13 @@ const photo = (label: string): ChecklistTask => ({ label, photo: true });
 const plain = (label: string): ChecklistTask => ({ label, photo: false });
 
 export const DIVISION_SETUP: Record<ReportTemplate, DivisionSetup> = {
+  CETAK: {
+    code: "CTK",
+    name: "Cetak",
+    shiftCount: 2,
+    checklist: ["Area cetak bersih", "Cetakan dicuci & ditata", "Lantai sudah dipel", "Patung cetak tertata di rak"].map(photo),
+    materials: [],
+  },
   PRODUKSI: {
     code: "PRD",
     name: "Produksi",
@@ -512,7 +529,7 @@ export const DIVISION_SETUP: Record<ReportTemplate, DivisionSetup> = {
  * - kering = patung kering polos per varian (setengah jadi), jadi = produk jadi satuan per varian, giftbox = giftbox per kode
  * - dir "in" = masuk stok, "out" = keluar stok
  */
-export type FlowStep = { kind: "kering" | "jadi" | "giftbox" | "produk"; key: string; qty: number; dir: "in" | "out"; label?: string };
+export type FlowStep = { kind: "basah" | "kering" | "jadi" | "giftbox" | "produk"; key: string; qty: number; dir: "in" | "out"; label?: string };
 
 /** Isi patung per giftbox */
 export const GIFTBOX_PATUNG = 5;
@@ -547,8 +564,16 @@ export function plannedFlow(template: ReportTemplate, work: WorkData): FlowStep[
     const s = t.sections.find((x) => x.key === key);
     return s && s.kind === "grid" ? colTotals(gridRows(work, s), s.cols.length) : [];
   };
-  if (template === "PRODUKSI") {
-    grid("panen").forEach((q, i) => add("kering", VARIANTS[i], q, "in"));
+  if (template === "PRODUKSI" || template === "CETAK") {
+    // Cetak → + patung cetak (basah); panen oven: patung cetak (bagus + reject) keluar, patung kering masuk
+    grid("cetakSeries").forEach((q, i) => add("basah", VARIANTS[i], q, "in"));
+    if (template === "PRODUKSI") {
+      const rej = grid("reject");
+      grid("panen").forEach((q, i) => {
+        add("kering", VARIANTS[i], q, "in");
+        add("basah", VARIANTS[i], q + (rej[i] ?? 0), "out");
+      });
+    }
   } else if (template === "GIFTBOX") {
     const v = countValues(work, "giftbox");
     for (const code of GIFTBOX_CODES) {
@@ -584,7 +609,7 @@ export function plannedFlow(template: ReportTemplate, work: WorkData): FlowStep[
   return [...acc.values()].sort((a, b) => order[a.dir] - order[b.dir]);
 }
 
-const FLOW_LABEL = { kering: "Patung kering", jadi: "Produk jadi", giftbox: "Giftbox", produk: "Giftbox" } as const;
+const FLOW_LABEL = { basah: "Patung cetak", kering: "Patung kering", jadi: "Produk jadi", giftbox: "Giftbox", produk: "Giftbox" } as const;
 
 /** Teks ringkas langkah stok, mis. "+ Patung kering Hewan 300" */
 export function flowLines(steps: FlowStep[]): string[] {
@@ -618,6 +643,33 @@ export function recapByDivision(rows: RecapInput[]): RecapDivision[] {
     out.set(r.division, d);
   }
   return [...out.values()].map(({ _t, _v, _tl, ...d }) => ({ ...d, target: _t > 0 && _tl ? { value: _v, target: _t, pct: Math.round((_v / _t) * 100), ..._tl } : null }));
+}
+
+export type PersonRecap = { name: string; division: string; cols: string[]; values: number[]; total: number; reports: number };
+
+/**
+ * Hasil kerja per karyawan dari bagian "per orang" (baris = nama) di laporan shift: dijumlah per nama & divisi.
+ * Bagian dengan kolom series (Cowok/Cewek/…) dirinci per series; bagian lama satu kolom masuk "pcs".
+ */
+export function personRecap(rows: RecapInput[]): PersonRecap[] {
+  const out = new Map<string, PersonRecap>();
+  for (const r of rows) {
+    if (!isTemplate(r.template)) continue;
+    const t = TEMPLATES[r.template];
+    for (const s of t.sections) {
+      if (s.kind !== "grid" || s.rows !== "people") continue;
+      const cols = s.cols.length > 1 ? s.cols : ["pcs"];
+      for (const row of gridRows(r.work, s)) {
+        const key = `${r.division}|${row.name.trim().toLowerCase()}|${cols.join(",")}`;
+        const cur = out.get(key) ?? { name: row.name.trim(), division: r.division, cols, values: cols.map(() => 0), total: 0, reports: 0 };
+        cols.forEach((_, i) => (cur.values[i] += n(row.v[i])));
+        cur.total = cur.values.reduce((a, b) => a + b, 0);
+        cur.reports++;
+        out.set(key, cur);
+      }
+    }
+  }
+  return [...out.values()].filter((p) => p.total > 0).sort((a, b) => a.division.localeCompare(b.division) || b.total - a.total);
 }
 
 /** Ringkasan satu laporan untuk tabel rekap harian */

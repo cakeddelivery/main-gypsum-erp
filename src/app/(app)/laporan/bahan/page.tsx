@@ -41,7 +41,7 @@ export default async function BahanDivisiPage({ searchParams }: { searchParams: 
           {REPORT_TEMPLATES.map((t) => <option key={t} value={t}>{TEMPLATES[t].label}</option>)}
         </select>
       </Field>
-      <Field label="Target hasil per shift" hint="Produksi: panen (pcs) · Giftbox: giftbox (box) · Packing: patung (pcs) · Assembling: produk jadi (pcs). Kosongkan bila tanpa target">
+      <Field label="Target hasil per shift" hint="Produksi: panen (pcs) · Cetak: hasil cetak (pcs) · Giftbox: giftbox (box) · Packing: patung (pcs) · Assembling: produk jadi (pcs). Kosongkan bila tanpa target">
         <input name="targetPerShift" defaultValue={d?.targetPerShift ?? ""} inputMode="numeric" className="input" placeholder="mis. 2400" />
       </Field>
       <Field label="Jumlah shift">
