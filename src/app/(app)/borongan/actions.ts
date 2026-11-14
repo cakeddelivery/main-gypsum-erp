@@ -6,7 +6,7 @@ import { clearLoginBlocks, passwordChangeData } from "@/lib/loginGuard";
 import { prisma } from "@/lib/db";
 import { autoCode } from "@/lib/codes";
 import { audit } from "@/lib/audit";
-import { BoronganError, assertPoint, boronganScope, canWarehouse, cancelHandover, checkSplit, createHandover, deleteResult, receiveHandover, recordResults, removePerson, savePerson, settlePoint, cancelSettlement } from "@/lib/borongan";
+import { BoronganError, assertPoint, boronganScope, canWarehouse, isSetoranOnly, cancelHandover, checkSplit, createHandover, deleteResult, receiveHandover, recordResults, removePerson, savePerson, settlePoint, cancelSettlement } from "@/lib/borongan";
 import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 
 const PATHS = ["/borongan", "/stok"];
@@ -25,7 +25,10 @@ export const sendHandover = action(
     const pointId = str(fd, "pointId");
     // Bahan dikirim dari gudang oleh pengelola; hasil dikirim balik oleh koordinator titik
     if (kind === "KIRIM" && !canWarehouse(scope)) throw new BoronganError("Pengiriman bahan dicatat oleh pengelola gudang / Kapten Assembling");
-    if (kind === "KEMBALI") assertPoint(scope, pointId);
+    if (kind === "KEMBALI") {
+      if (isSetoranOnly(scope)) throw new BoronganError("Kiriman hasil ke gudang dicatat koordinator titik");
+      assertPoint(scope, pointId);
+    }
     const h = await createHandover({ kind, pointId, driverId: optStr(fd, "driverId"), date: when(fd), note: optStr(fd, "note"), lines: lines(fd) }, user);
     return `Serah terima ${h.number} tercatat, menunggu dikonfirmasi penerima`;
   },
@@ -72,7 +75,7 @@ export const removeResult = action(
   ["borongan.manage", "borongan.point"],
   async (fd, user) => {
     await deleteResult(str(fd, "id"), user, await boronganScope(prisma, user));
-    return "Setoran dihapus, stok dikembalikan";
+    return "Setoran dibatalkan, stok & jurnal dikembalikan";
   },
   PATHS,
 );
@@ -129,7 +132,7 @@ export const saveTask = action(
     const name = str(fd, "name");
     if (!name) throw new BoronganError("Nama tugas wajib diisi");
     const inputs = lines(fd).filter((l) => l.itemId && l.qty > 0);
-    const data = { name, ratePerPcs: BigInt(total), workerRate: BigInt(split.workerRate), coordinatorRate: BigInt(split.coordinatorRate), driverRate: BigInt(split.driverRate), outputItemId: optStr(fd, "outputItemId"), active: fd.get("active") !== "off" };
+    const data = { name, divisionId: optStr(fd, "divisionId"), ratePerPcs: BigInt(total), workerRate: BigInt(split.workerRate), coordinatorRate: BigInt(split.coordinatorRate), driverRate: BigInt(split.driverRate), outputItemId: optStr(fd, "outputItemId"), active: fd.get("active") !== "off" };
     const t = await prisma.$transaction(async (tx) => {
       const t = id
         ? await tx.pieceTask.update({ where: { id }, data })

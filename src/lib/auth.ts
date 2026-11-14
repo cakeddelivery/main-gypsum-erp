@@ -77,9 +77,13 @@ export async function loadUser(userId: string, sv = 0) {
   if (!user || !user.active || user.sessionVersion !== sv) return null;
   const overrides = await prisma.rolePermission.findMany({ where: { role: user.role } });
   const perms = effectivePermissions(user.role, overrides);
-  // Kapten divisi Assembling ikut mengurus borongan (kirim bahan, setoran, terima hasil) tanpa mengatur tarif/upah
+  // Kapten Assembling ikut mengurus borongan (kirim bahan, setoran, terima hasil); anggota divisi (Kapten/Operator) yang
+  // divisinya punya tugas borongan boleh mencatat setoran tugas itu. Tarif, pekerja & upah tetap pengelola (dicek di scope).
   const division = user.division ?? user.employee?.division ?? null;
-  if (user.role === "KAPTEN_DIVISI" && division?.reportTemplate === "ASSEMBLING") for (const p of ["borongan.view", "borongan.point"] as const) perms.add(p);
+  if ((user.role === "KAPTEN_DIVISI" || user.role === "OPERATOR") && division) {
+    const grant = (user.role === "KAPTEN_DIVISI" && division.reportTemplate === "ASSEMBLING") || (await prisma.pieceTask.count({ where: { divisionId: division.id, active: true } })) > 0;
+    if (grant) for (const p of ["borongan.view", "borongan.point"] as const) perms.add(p);
+  }
   return {
     id: user.id,
     name: user.name,
