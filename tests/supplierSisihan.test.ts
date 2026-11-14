@@ -27,9 +27,21 @@ beforeAll(async () => {
   ownerFunds = await prisma.reserveFund.findMany({ where: { kind: "OWNER", active: true } });
 });
 
-// Tanggal unik di masa depan agar tidak bentrok dengan sisihan tes lain
+// Tanggal unik di masa depan yang BELUM dipakai tes lain. Rentang acak bisa jatuh pada tanggal tetap milik
+// tes lain (mis. 2031-11-09 di botSisihanOps) sehingga sisihan/transfer bentrok → tes gagal sesekali.
+// Karena itu hari yang sudah punya sisihan atau transaksi (±1 hari, jangkauan cek duplikat) dilewati.
 let dayOffset = 300 + Math.floor(Math.random() * 2000);
-const freshDay = () => addDays(todayStr(), (dayOffset += 3));
+async function freshDay() {
+  for (;;) {
+    const day = addDays(todayStr(), (dayOffset += 3));
+    const from = new Date(`${addDays(day, -1)}T00:00:00Z`);
+    const to = new Date(`${addDays(day, 2)}T00:00:00Z`);
+    const busy =
+      (await prisma.reserveEntry.count({ where: { date: { gte: from, lt: to } } })) +
+      (await prisma.financeTransaction.count({ where: { date: { gte: jakartaDateTime(addDays(day, -1), "00:00"), lt: jakartaDateTime(addDays(day, 2), "00:00") } } }));
+    if (!busy) return day;
+  }
+}
 
 async function transfer(date: string, amount: number, to: string, note = "ops", proof = true) {
   const { transaction } = await createTransaction({ direction: "TRANSFER", amount, date: jakartaDateTime(date, "20:44"), accountId: seabank, toAccountId: to, note, proofPath: proof ? `uji/${tag}-${date}.jpg` : null, proofMime: proof ? "image/jpeg" : null }, "TELEGRAM", owner);
@@ -72,7 +84,7 @@ describe("Transfer ↔ dana sisihan", () => {
   });
 
   it("transfer Seabank → ShopeePay 200rb dibukukan = sisihan Cak Ed + Jojo, beban kompensasi, bukti ikut", async () => {
-    const day = freshDay();
+    const day = await freshDay();
     const t = await transfer(day, 200_000, shopeepay);
     const { journal } = await approveAndBook(t.id, owner);
     const entries = await prisma.reserveEntry.findMany({ where: { transactionId: t.id } });
@@ -87,7 +99,7 @@ describe("Transfer ↔ dana sisihan", () => {
   });
 
   it("sisihan tanpa bukti yang dicatat dulu memakai transfer ini (jurnal lama dibalik, tidak dobel)", async () => {
-    const day = freshDay();
+    const day = await freshDay();
     for (const f of ownerFunds) await postReserve(f.id, day, owner);
     const old = await prisma.reserveEntry.findMany({ where: { fundId: { in: ownerFunds.map((f) => f.id) }, date: new Date(`${day}T00:00:00Z`) } });
     const t = await transfer(day, 200_000, shopeepay);
@@ -99,7 +111,7 @@ describe("Transfer ↔ dana sisihan", () => {
   });
 
   it("transfer lama ke Saldo Penjual Shopee disinkronkan: rekening tujuan dibetulkan + sisihan + bukti", async () => {
-    const day = freshDay();
+    const day = await freshDay();
     const t = await transfer(day, 200_000, saldoShopee, "Ops 5 Nov 26");
     await prisma.financeTransaction.update({ where: { id: t.id }, data: { reserveLink: { skip: true } } });
     await approveAndBook(t.id, owner);
@@ -122,7 +134,7 @@ describe("Transfer ↔ dana sisihan", () => {
     const tab = await prisma.bankAccount.create({ data: { code: `TAB_${tag}`, name: `Seabank Tabungan ${tag}`, coaAccountId: coa.id } });
     const fund = await prisma.reserveFund.create({ data: { name: `Nabung Bayar Hutang ${tag}`, kind: "LOAN_SAVING", dailyAmount: BigInt(300_000), fromBankId: seabank, toBankId: tab.id, storeId: store } });
     try {
-      const day = freshDay();
+      const day = await freshDay();
       const m = await reserveOptions(prisma, { amount: 450_000, fromBankId: seabank, toBankId: tab.id, date: day, text: "nabung spinjam" });
       expect(m?.sure).toBe(true);
       expect(m?.options[0].parts).toEqual([{ fundId: fund.id, date: day, amount: 450_000 }]);
@@ -130,7 +142,7 @@ describe("Transfer ↔ dana sisihan", () => {
       await approveAndBook(t.id, owner);
       expect(Number((await prisma.reserveEntry.findFirstOrThrow({ where: { transactionId: t.id } })).amount)).toBe(450_000);
       // Pengeluaran "nabung spinjam" (salah dicatat keluar) → transfer ke tabungan + sisihan
-      const day2 = freshDay();
+      const day2 = await freshDay();
       const cat = await prisma.txCategory.findFirstOrThrow({ where: { name: "Beban Lain-lain" } });
       const { transaction: k } = await createTransaction({ direction: "KELUAR", amount: 300_000, date: jakartaDateTime(day2, "10:00"), accountId: seabank, categoryId: cat.id, note: "nabung spinjam", proofPath: `uji/${tag}-k.jpg`, proofMime: "image/jpeg" }, "TELEGRAM", owner);
       await approveAndBook(k.id, owner);
