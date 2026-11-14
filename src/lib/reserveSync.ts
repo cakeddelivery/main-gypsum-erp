@@ -43,10 +43,18 @@ export const RESERVE_TITLE: Record<string, string> = { OWNER: "Sisihan Kompensas
  */
 export function reserveIntent(text: string): "OWNER" | "LOAN_SAVING" | null {
   const t = ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
-  const owner = /\s(ops|kompensasi|gaji owner|sisihan owner|sisihan pengelola)\s/.test(t);
-  const loan = /\s(nabung|menabung|spinjam|tabungan cicilan|nabung bayar hutang|nabung hutang)\s/.test(t);
+  const owner = /\s(ops|dana ops|sisihan ops|kompensasi|gaji owner|sisihan owner|sisihan pengelola|jatah pengelola)\s/.test(t);
+  // "Dana sisihan bayar hutang", "sisihan cicilan", "tabungan hutang" = tabungan cicilan (bukan pembayaran hutang langsung)
+  const loan = /\s(nabung|menabung|spinjam|tabungan cicilan|tabungan hutang|tabungan pinjaman|nabung bayar hutang|nabung hutang|(?:dana )?sisihan (?:untuk )?(?:bayar )?(?:hutang|utang|cicilan|pinjaman|angsuran)|(?:hutang|utang|cicilan) sisihan|bayar hutang sisihan)\s/.test(t);
   if (owner === loan) return null;
   return owner ? "OWNER" : "LOAN_SAVING";
+}
+
+/** Jenis dana sisihan dari alur rekening (asal → tujuan) bila semua dana aktif di alur itu sejenis, mis. 5984 → 0006 = tabungan cicilan */
+export async function routeIntent(db: Db, fromBankId: string | null | undefined, toBankId: string | null | undefined): Promise<"OWNER" | "LOAN_SAVING" | null> {
+  if (!fromBankId || !toBankId) return null;
+  const kinds = new Set((await db.reserveFund.findMany({ where: { active: true, fromBankId, toBankId }, select: { kind: true } })).map((f) => f.kind));
+  return kinds.size === 1 ? ([...kinds][0] === "OWNER" ? "OWNER" : [...kinds][0] === "LOAN_SAVING" ? "LOAN_SAVING" : null) : null;
 }
 
 /**

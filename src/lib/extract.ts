@@ -106,7 +106,10 @@ function stripNonAmounts(t: string) {
 }
 
 // "rp" harus awal kata: nama seperti "Sharp4" / "kreditrp4" bukan nominal Rp4 (tes hutang flaky 14 Nov 2026)
-const EXPLICIT_AMOUNT = [/\brp\.?\s*([\d.,]+(?:\s*(?:jt|juta|rb|ribu|k))?)/, /\b([\d.,]+\s*(?:jt|juta|rb|ribu|k))\b/, /(?:nominal|total|sebesar|jumlah|harga)\s*:?\s*(?:rp\.?\s*)?([\d.,]+)/];
+const EXPLICIT_AMOUNT = [/\brp\.?\s*([\d.,]+(?:\s*(?:jt|juta|rb|ribu|k))?)/, /\b([\d.,]+\s*(?:jt|juta|rb|ribu|k))\b/, /\b(?:nominal|total|sebesar|senilai|sejumlah|seharga|jumlah|harga|nilai)\s*:?\s*(?:rp\.?\s*)?([\d.,]+)/];
+
+/** Angka berpemisah apa saja (1250.000, 1,250,000, 1.250000, 1.250.000,00) yang bukan bagian kata */
+const LOOSE_NUMBER = /(?<![\w.,])\d[\d.,]*\d(?![\w]|[.,]\d)/g;
 
 /**
  * Nominal dari teks. Tanggal, tahun, jam, dan jumlah barang ("2000 pcs") diabaikan.
@@ -114,13 +117,24 @@ const EXPLICIT_AMOUNT = [/\brp\.?\s*([\d.,]+(?:\s*(?:jt|juta|rb|ribu|k))?)/, /\b
  */
 export function extractAmount(text: string): number | null {
   const t = stripNonAmounts(text.toLowerCase());
-  for (const p of [...EXPLICIT_AMOUNT, /\b(\d{1,3}(?:\.\d{3})+)\b/, /\b(\d{5,})\b/]) {
+  for (const p of EXPLICIT_AMOUNT) {
     const m = t.match(p);
     if (m) {
       const v = parseIDR(m[1].replace(/\s+/g, ""));
       if (v && v > 0) return v;
     }
   }
+  // Angka polos: berpemisah (pemisah tidak standar pun: "1250.000", "1,250,000", "1.250000") dan ≥ Rp1.000, atau ≥ 5 digit
+  for (const m of t.matchAll(LOOSE_NUMBER)) {
+    const tok = m[0];
+    if (!/[.,]/.test(tok)) {
+      if (tok.length >= 5) return Number(tok);
+      continue;
+    }
+    const v = parseIDR(tok);
+    if (v && v >= 1000) return v;
+  }
+  for (const m of t.matchAll(/(?<![\w.,])\d{5,}(?![\w.,])/g)) return Number(m[0]);
   return null;
 }
 
