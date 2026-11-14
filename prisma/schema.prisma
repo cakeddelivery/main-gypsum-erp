@@ -45,27 +45,28 @@ model Store {
 }
 
 model Division {
-  id             String             @id @default(cuid())
-  code           String             @unique
-  name           String
-  active         Boolean            @default(true)
+  id               String             @id @default(cuid())
+  code             String             @unique
+  name             String
+  active           Boolean            @default(true)
   /// Format laporan penutup shift: PRODUKSI | GIFTBOX | PACKING | ASSEMBLING (null = laporan umum)
-  reportTemplate String?
+  reportTemplate   String?
   /// Target hasil per shift (laporan shift menampilkan capaian %); kosong = tanpa target
-  targetPerShift Int?
+  targetPerShift   Int?
   /// Jumlah shift yang berlaku (1 = hanya Shift 1; Cetak & Oven/Produksi = 2)
-  shiftCount     Int                @default(1)
+  shiftCount       Int                @default(1)
   /// Checklist penutupan shift divisi: [{label, photo}] (photo = wajib foto bukti)
-  checklist      Json               @default("[]")
-  items          Item[]
-  employees      Employee[]
-  locations      Location[]
-  production     ProductionEntry[]
-  targets        ProductionTarget[]
-  reports        ShiftReport[]
-  stockReqs      StockRequest[]
-  pieceTasks     PieceTask[]
-  captains       User[]             @relation("DivisionCaptain")
+  checklist        Json               @default("[]")
+  items            Item[]
+  employees        Employee[]
+  locations        Location[]
+  production       ProductionEntry[]
+  targets          ProductionTarget[]
+  reports          ShiftReport[]
+  stockReqs        StockRequest[]
+  pieceTasks       PieceTask[]
+  boronganReceipts BoronganReceipt[]
+  captains         User[]             @relation("DivisionCaptain")
 }
 
 model Shift {
@@ -466,17 +467,18 @@ enum HandoverStatus {
 
 /// Titik kerja borongan (BMR, Mastrip); stok bahan & hasil di titik memakai lokasi stok sendiri
 model BoronganPoint {
-  id          String               @id @default(cuid())
-  code        String               @unique
-  name        String
-  locationId  String               @unique
-  location    Location             @relation(fields: [locationId], references: [id])
-  active      Boolean              @default(true)
-  createdAt   DateTime             @default(now())
-  people      BoronganPerson[]
-  handovers   BoronganHandover[]
-  results     BoronganResult[]
-  settlements BoronganSettlement[]
+  id           String                @id @default(cuid())
+  code         String                @unique
+  name         String
+  locationId   String                @unique
+  location     Location              @relation(fields: [locationId], references: [id])
+  active       Boolean               @default(true)
+  createdAt    DateTime              @default(now())
+  people       BoronganPerson[]
+  handovers    BoronganHandover[]
+  results      BoronganResult[]
+  settlements  BoronganSettlement[]
+  receiptLines BoronganReceiptLine[]
 }
 
 /// Tetangga yang bekerja borongan (bukan karyawan): pekerja & koordinator per titik, driver tanpa titik
@@ -569,6 +571,42 @@ model BoronganResult {
 }
 
 /// Pembayaran upah borongan satu titik (pekerja + koordinator + driver), dibayar bersamaan
+/// Penerimaan hasil borongan oleh divisi (rekap total per barang, gabungan semua titik).
+/// Barang pindah dari stok titik ke gudang; titik dibagi otomatis dari sisa setoran koordinator. Reject dibuang dari titik.
+/// Upah tetap dari setoran koordinator (BoronganResult); selisih setoran vs penerimaan hanya ditampilkan.
+model BoronganReceipt {
+  id          String                @id @default(cuid())
+  number      String                @unique
+  divisionId  String
+  division    Division              @relation(fields: [divisionId], references: [id])
+  date        DateTime              @db.Date
+  note        String?
+  createdBy   String
+  createdById String?
+  createdAt   DateTime              @default(now())
+  /// Dibatalkan: mutasi stok dibalik, dokumen tetap tersimpan
+  cancelledAt DateTime?
+  cancelBy    String?
+  lines       BoronganReceiptLine[]
+
+  @@index([divisionId, date])
+}
+
+/// Satu baris = satu barang dari satu titik (pembagian otomatis)
+model BoronganReceiptLine {
+  id        String          @id @default(cuid())
+  receiptId String
+  receipt   BoronganReceipt @relation(fields: [receiptId], references: [id], onDelete: Cascade)
+  itemId    String
+  item      Item            @relation(fields: [itemId], references: [id])
+  pointId   String
+  point     BoronganPoint   @relation(fields: [pointId], references: [id])
+  qty       Decimal         @default(0) @db.Decimal(14, 3)
+  reject    Decimal         @default(0) @db.Decimal(14, 3)
+
+  @@index([itemId, pointId])
+}
+
 model BoronganSettlement {
   id            String           @id @default(cuid())
   number        String           @unique
@@ -863,59 +901,60 @@ model Location {
 }
 
 model Item {
-  id                String                 @id @default(cuid())
-  sku               String                 @unique
-  name              String
-  type              ItemType
-  unit              String
-  minStock          Decimal                @default(0) @db.Decimal(14, 3)
-  avgCost           BigInt                 @default(0)
+  id                   String                 @id @default(cuid())
+  sku                  String                 @unique
+  name                 String
+  type                 ItemType
+  unit                 String
+  minStock             Decimal                @default(0) @db.Decimal(14, 3)
+  avgCost              BigInt                 @default(0)
   /// Satuan resep/HPP (mis. gram) bila berbeda dari satuan stok `unit` (mis. sak); BOM memakai satuan ini
-  hppUnit           String?
+  hppUnit              String?
   /// Jumlah hppUnit dalam 1 unit stok (1 sak gypsum = 18000 gram)
-  hppFactor         Decimal                @default(1) @db.Decimal(14, 4)
+  hppFactor            Decimal                @default(1) @db.Decimal(14, 4)
   /// Harga beli terbaru & sebelumnya per unit stok, untuk HPP realtime dan indikator naik/turun
-  lastCost          BigInt                 @default(0)
-  prevCost          BigInt                 @default(0)
-  lastCostAt        DateTime?
+  lastCost             BigInt                 @default(0)
+  prevCost             BigInt                 @default(0)
+  lastCostAt           DateTime?
   /// Harga pembelian terakhir (total Rp) & jumlahnya (satuan beli): lastCost = buyPrice ÷ buyQty
-  buyPrice          BigInt                 @default(0)
-  buyQty            Decimal                @default(1) @db.Decimal(14, 3)
+  buyPrice             BigInt                 @default(0)
+  buyQty               Decimal                @default(1) @db.Decimal(14, 3)
   /// Harga diisi manual oleh Owner (bukan dari pembelian): siapa & kapan
-  costManualBy      String?
-  costManualAt      DateTime?
+  costManualBy         String?
+  costManualAt         DateTime?
   /// OFFLINE / ONLINE; bila ONLINE, productUrl = link produk untuk order
-  buyMode           BuyMode                @default(OFFLINE)
-  productUrl        String?
+  buyMode              BuyMode                @default(OFFLINE)
+  productUrl           String?
   /// Jumlah order biasa (satuan beli) untuk permintaan stok otomatis
-  orderQty          Decimal                @default(0) @db.Decimal(14, 3)
-  supplierId        String?
-  supplier          Supplier?              @relation(fields: [supplierId], references: [id])
-  gypsumCharacterId String?
-  gypsumCharacter   GypsumCharacter?       @relation(fields: [gypsumCharacterId], references: [id])
-  active            Boolean                @default(true)
+  orderQty             Decimal                @default(0) @db.Decimal(14, 3)
+  supplierId           String?
+  supplier             Supplier?              @relation(fields: [supplierId], references: [id])
+  gypsumCharacterId    String?
+  gypsumCharacter      GypsumCharacter?       @relation(fields: [gypsumCharacterId], references: [id])
+  active               Boolean                @default(true)
   /// Divisi penanggung jawab stock opname bahan baku ini; minStock = limit order
-  divisionId        String?
-  division          Division?              @relation(fields: [divisionId], references: [id])
-  sortOrder         Int                    @default(0)
+  divisionId           String?
+  division             Division?              @relation(fields: [divisionId], references: [id])
+  sortOrder            Int                    @default(0)
   /// Klasifikasi item (mis. Bahan Utama); menentukan awalan kode otomatis
-  category          String?
-  note              String?
-  movements         StockMovement[]
-  bomLines          BomLine[]
-  requests          StockRequest[]
-  product           Product?               @relation("ProductFinishedItem")
-  purchaseLines     PurchaseLine[]
+  category             String?
+  note                 String?
+  movements            StockMovement[]
+  bomLines             BomLine[]
+  requests             StockRequest[]
+  product              Product?               @relation("ProductFinishedItem")
+  purchaseLines        PurchaseLine[]
   /// Resep barang setengah jadi: komponen, tenaga kerja & overhead per 1 unit stok
-  recipe            ItemRecipeLine[]       @relation("RecipeOf")
-  usedInRecipes     ItemRecipeLine[]       @relation("RecipeComponent")
-  pieceInputs       PieceTaskInput[]
-  pieceOutputs      PieceTask[]
-  handoverLines     BoronganHandoverLine[]
-  recipeLabor       RecipeLabor[]
-  recipeOverhead    RecipeOverhead[]
-  saleLines         SaleLine[]
-  shiftReceipts     ShiftReceipt[]
+  recipe               ItemRecipeLine[]       @relation("RecipeOf")
+  usedInRecipes        ItemRecipeLine[]       @relation("RecipeComponent")
+  pieceInputs          PieceTaskInput[]
+  pieceOutputs         PieceTask[]
+  handoverLines        BoronganHandoverLine[]
+  recipeLabor          RecipeLabor[]
+  recipeOverhead       RecipeOverhead[]
+  saleLines            SaleLine[]
+  shiftReceipts        ShiftReceipt[]
+  boronganReceiptLines BoronganReceiptLine[]
 }
 
 enum MovementType {
@@ -1584,6 +1623,7 @@ model Payable {
   /// Foto nota / bukti hutang (penyimpanan privat)
   proofPath     String?
   proofMime     String?
+
   @@index([dueDate])
 }
 
@@ -1651,6 +1691,7 @@ model Purchase {
   dueDate       DateTime?
   closedReason  String?
   deliveries    PurchaseReceipt[]
+
   @@index([delivery])
   @@index([date])
 }

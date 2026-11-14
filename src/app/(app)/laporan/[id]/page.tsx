@@ -24,6 +24,9 @@ import { ReportForm, ReceiptSection } from "./ReportForm";
 import { ResultRows } from "../../borongan/BoronganForms";
 import { addResults } from "../../borongan/actions";
 import { setoranData } from "@/lib/boronganSetoran";
+import { boronganScope } from "@/lib/borongan";
+import { receiptItems, receiptReportLines } from "@/lib/boronganReceipt";
+import { ReceiveForm } from "../../borongan/ReceiveForm";
 import { ReportSheet } from "./ReportSheet";
 import { reportCatalogs } from "@/lib/productFamily";
 import { letterhead } from "@/lib/letterhead";
@@ -59,7 +62,11 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const divTasks = await prisma.pieceTask.count({ where: { divisionId: r.divisionId, active: true } });
   // "+ Setoran borongan": form setoran (#93) di popup, hanya bila divisi punya tugas borongan & user berhak
   const canSetor = (template === "ASSEMBLING" || divTasks > 0) && (user.can("borongan.manage") || user.can("borongan.point"));
-  const setoran = canSetor ? await setoranData(user, r.divisionId) : null;
+  // Anggota divisi: penerimaan total per barang; setoran per pekerja (dasar upah) khusus koordinator/pengelola
+  const bScope = canSetor ? await boronganScope(prisma, user) : null;
+  const memberReceive = !!bScope && !bScope.all && !!bScope.division;
+  const setoran = canSetor && !memberReceive ? await setoranData(user, r.divisionId) : null;
+  const canDivReceive = canSetor && (bScope?.all || bScope?.division?.id === r.divisionId) && (await receiptItems(r.divisionId)).length > 0;
   const [bLines, flowOn, resultStatus, receipts, pendingReturns] = await Promise.all([
     boronganLines(template, r.date, r.divisionId),
     flowEnabled(),
@@ -77,7 +84,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
     return { lineId: l.id, itemId: l.itemId, remaining, cod: p.cod, vendor: p.vendor, itemName: l.item.name, unit: l.item.unit, label: `${p.number} · ${p.vendor} · sisa ${remaining.toLocaleString("id-ID")} ${l.item.unit}${p.cod ? " · COD" : ""}` };
   }));
   const banks = [...bankRows].sort((a, b) => (a.code === "KAS" ? -1 : b.code === "KAS" ? 1 : 0)).map((b) => ({ id: b.id, name: b.name }));
-  const extraLines = [...bLines, ...(resultStatus ? resultLines(resultStatus) : [])];
+  const extraLines = [...bLines, ...(await receiptReportLines(r.divisionId, r.date)), ...(resultStatus ? resultLines(resultStatus) : [])];
   const [rItems, rv] = await Promise.all([resultItems(r.divisionId), resultValues(work, r.division.reportTemplate)]);
   // Kelompok tahap "Stok jadi": per produk induk (mis. Giftbox) agar daftar panjang bisa dilipat
   const rFamilies = rItems.length
@@ -132,6 +139,11 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   flow={flowOn && template ? flow : null}
                   sent={r.workPostedVersion > 0 || r.status !== "DRAFT"}
                 />
+              </Modal>
+            )}
+            {canEdit && canDivReceive && (
+              <Modal trigger="+ Penerimaan borongan" triggerClass="btn-secondary" title="Penerimaan hasil borongan" subtitle={`${r.division.name} · ${fmtDay(r.date)}`} wide>
+                <ReceiveForm divisionId={r.divisionId} date={day} />
               </Modal>
             )}
             {canEdit && setoran && setoran.tasks.length > 0 && (
