@@ -168,3 +168,30 @@ export const cancelPayPoint = action(
   },
   [...PATHS, "/akuntansi"],
 );
+
+/** Penerimaan hasil borongan oleh divisi: total per barang (q_<itemId>, r_<itemId>), titik dibagi otomatis */
+export const addDivisionReceipt = action(
+  ["borongan.manage", "borongan.point"],
+  async (fd, user) => {
+    const { recordDivisionReceipt } = await import("@/lib/boronganReceipt");
+    const scope = await boronganScope(prisma, user);
+    const divisionId = str(fd, "divisionId");
+    const keys = [...fd.keys()].filter((k) => k.startsWith("q_") || k.startsWith("r_"));
+    const ids = [...new Set(keys.map((k) => k.slice(2)))];
+    const lines = ids.map((itemId) => ({ itemId, qty: num(fd.get(`q_${itemId}`) ?? ""), reject: num(fd.get(`r_${itemId}`) ?? "") }));
+    const rec = await recordDivisionReceipt({ divisionId, date: when(fd), note: optStr(fd, "note"), lines }, user, scope);
+    const total = rec.lines.reduce((a, l) => a + Number(l.qty), 0);
+    return `Penerimaan ${rec.number} tercatat (${total.toLocaleString("id-ID")} diterima)`;
+  },
+  [...PATHS, "/laporan"],
+);
+
+export const voidDivisionReceipt = action(
+  ["borongan.manage", "borongan.point"],
+  async (fd, user) => {
+    const { cancelDivisionReceipt } = await import("@/lib/boronganReceipt");
+    await cancelDivisionReceipt(str(fd, "id"), user, await boronganScope(prisma, user));
+    return "Penerimaan dibatalkan, barang kembali tercatat di titik";
+  },
+  [...PATHS, "/laporan"],
+);

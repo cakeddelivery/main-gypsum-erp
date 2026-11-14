@@ -15,6 +15,7 @@ import { applyShiftStockCount } from "@/lib/shiftReportStock";
 import { postShiftWork } from "@/lib/shiftReportFlow";
 import { sendShiftReportJpg } from "@/lib/shiftReportJpg";
 import { boronganLines } from "@/lib/shiftReportBorongan";
+import { receiptReportLines } from "@/lib/boronganReceipt";
 import { saveProof } from "@/lib/storage";
 import { addShiftReceipt, removeShiftReceipt } from "@/lib/shiftReceipt";
 import { RESULT_KEY, applyResultCount, parseResultCount, resultCountStatus, resultItems, resultLines } from "@/lib/shiftResultCount";
@@ -210,6 +211,7 @@ async function sendReportData(id: string, user: User): Promise<string> {
         "",
         ...workLines(template, work).map(esc),
         ...(await boronganLines(template, r.date, r.divisionId)).map(esc),
+        ...(await receiptReportLines(r.divisionId, r.date)).map((l) => (l.includes("⚠") ? `<b>${esc(l)}</b>` : esc(l))),
         ...(resultStatus ? resultLines(resultStatus).map((l) => (l.includes("⚠") ? `<b>${esc(l)}</b>` : esc(l))) : []),
         ...(receipts.length ? ["", `<b>Barang masuk (${receipts.length})</b>`, ...receipts.map((x) => `• ${esc(x.item.name)}: ${Number(x.qty).toLocaleString("id-ID")} ${esc(x.item.unit)}${x.supplierName ? ` · ${esc(x.supplierName)}` : ""}${x.purchaseId ? "" : " (belum dicatat di Pembelian)"}`)] : []),
         "",

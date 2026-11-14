@@ -2,8 +2,9 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { loadUser } from "@/lib/auth";
-import { boronganScope, canTask, deleteResult, isSetoranOnly, recordResults, receiveHandover, savePerson, type Scope } from "@/lib/borongan";
-import { recordMovement } from "@/lib/stock";
+import { boronganScope, canTask, createHandover, deleteResult, isSetoranOnly, recordResults, receiveHandover, savePerson, warehouseFor, type Scope } from "@/lib/borongan";
+import { allocate, cancelDivisionReceipt, diffLines, receiptDiff, receiptItems, receiptReportLines, recordDivisionReceipt } from "@/lib/boronganReceipt";
+import { qtyAt, recordMovement } from "@/lib/stock";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { dateOnly } from "@/lib/time";
 
@@ -55,29 +56,60 @@ describe("Setoran borongan oleh anggota divisi", () => {
     expect((await loadUser(b.id, 0))!.can("borongan.point")).toBe(false);
   });
 
-  it("catat & batalkan: pencatat sendiri atau kapten; bukan tugas divisi lain; tidak boleh atur pekerja/serah terima", async () => {
+  it("setoran per pekerja khusus koordinator/pengelola; divisi mencatat penerimaan per barang (stok titik → gudang, tidak dobel, selisih tampil)", async () => {
     const opA = await mkUser("op-gft-a", "OPERATOR", gft.id);
     const opB = await mkUser("op-gft-b", "OPERATOR", gft.id);
     const kap = await mkUser("kap-gft-uji", "KAPTEN_DIVISI", gft.id);
+    const owner = await prisma.user.findUniqueOrThrow({ where: { username: "owner" } });
+    const sOwner = await boronganScope(prisma, { id: owner.id, can: () => true });
     const scope = (u: { id: string; role: string }) => boronganScope(prisma, { id: u.id, can: never, role: u.role, divisionId: gft.id });
     const sA: Scope = await scope(opA);
-    const input = (taskId: string) => ({ pointId: bmr.id, workerId: worker.id, taskId, date: dateOnly("2027-09-10"), qty: 5 });
+    const day = dateOnly("2027-09-10");
+    const input = (taskId: string) => ({ pointId: bmr.id, workerId: worker.id, taskId, date: day, qty: 5 });
 
-    await expect(recordResults([input(asmTask.id)], opA, sA)).rejects.toThrow(/divisi lain/);
-    const [r1] = await recordResults([input(catGiftbox.id)], opA, sA);
-    expect(r1.createdById).toBe(opA.id);
-    // Rekap laporan shift Giftbox menampilkan setoran ini (tugas berdivisi Giftbox), Assembling tidak
-    expect((await boronganLines("GIFTBOX", dateOnly("2027-09-10"), gft.id)).join("\n")).toContain("TOTAL SETORAN: 5");
-    expect(await boronganLines("ASSEMBLING", dateOnly("2027-09-10"), asm.id)).toEqual([]);
+    // Anggota divisi tidak lagi mencatat setoran per pekerja (dasar upah)
+    await expect(recordResults([input(catGiftbox.id)], opA, sA)).rejects.toThrow(/koordinator titik/);
+    const [r1] = await recordResults([input(catGiftbox.id)], owner, sOwner);
+    expect((await boronganLines("GIFTBOX", day, gft.id)).join("\n")).toContain("TOTAL SETORAN: 5");
 
-    await expect(deleteResult(r1.id, opB, await scope(opB))).rejects.toThrow(/catat sendiri/);
-    await deleteResult(r1.id, kap, await scope(kap));
-    expect(await prisma.boronganResult.findUnique({ where: { id: r1.id } })).toBeNull();
+    const items = await receiptItems(gft.id);
+    const pot = items.find((i) => i.taskIds.includes(catGiftbox.id))!;
+    expect(pot).toBeTruthy();
+    const it = await prisma.item.findUniqueOrThrow({ where: { id: pot.id } });
+    const wh = await warehouseFor(prisma, it.type);
+    const at0 = await qtyAt(prisma, it.id, bmr.locationId);
+    const wh0 = await qtyAt(prisma, it.id, wh);
+
+    // Penerimaan divisi: 3 bagus + 1 reject, titik tidak diisi (otomatis BMR)
+    await expect(recordDivisionReceipt({ divisionId: asm.id, date: day, lines: [{ itemId: it.id, qty: 1 }] }, opA, sA)).rejects.toThrow(/anggota divisi penerima/);
+    const rec = await recordDivisionReceipt({ divisionId: gft.id, date: day, lines: [{ itemId: it.id, qty: 3, reject: 1 }] }, opA, sA);
+    expect(rec.lines).toEqual([expect.objectContaining({ pointId: bmr.id })]);
+    expect(await qtyAt(prisma, it.id, bmr.locationId)).toBe(at0 - 4);
+    expect(await qtyAt(prisma, it.id, wh)).toBe(wh0 + 3);
+    const diff = (await receiptDiff(gft.id, day, day)).find((r) => r.itemId === it.id)!;
+    expect(diff).toMatchObject({ setoran: 5, diterima: 3, rejectDiterima: 1, selisih: -1 });
+    expect(diffLines([diff])[0]).toMatch(/selisih -1 \(BMR -1\)/);
+    expect((await receiptReportLines(gft.id, day)).join("\n")).toContain("selisih -1");
+
+    // Tidak dobel: hasil tugas berdivisi tidak boleh lewat "Kirim hasil ke gudang"
+    await expect(createHandover({ kind: "KEMBALI", pointId: bmr.id, lines: [{ itemId: it.id, qty: 1 }] }, owner)).rejects.toThrow(/Penerimaan hasil borongan/);
+
+    // Batal: anggota lain ditolak, kapten boleh; stok kembali ke titik
+    await expect(cancelDivisionReceipt(rec.id, opB, await scope(opB))).rejects.toThrow(/catat sendiri/);
+    await cancelDivisionReceipt(rec.id, kap, await scope(kap));
+    expect(await qtyAt(prisma, it.id, bmr.locationId)).toBe(at0);
+    expect(await qtyAt(prisma, it.id, wh)).toBe(wh0);
+    expect((await receiptDiff(gft.id, day, day)).find((r) => r.itemId === it.id)).toMatchObject({ diterima: 0, selisih: -5 });
+
+    // Diterima lebih dari setoran: titik minus, selisih plus
+    await recordDivisionReceipt({ divisionId: gft.id, date: day, lines: [{ itemId: it.id, qty: at0 + 2 }] }, opA, sA);
+    expect(await qtyAt(prisma, it.id, bmr.locationId)).toBe(-2);
+    expect(allocate(10, [{ pointId: "a", qty: 3 }, { pointId: "b", qty: 5 }], "a")).toEqual(new Map([["b", 5], ["a", 5]]));
+
+    // Batal setoran per pekerja tetap mengikuti aturan #93 (pengelola boleh)
+    await deleteResult(r1.id, owner, sOwner);
     const log = await prisma.auditLog.findFirst({ where: { entityId: r1.id, action: "HASIL_BORONGAN_DIHAPUS" } });
     expect(log).toBeTruthy();
-
-    const [r2] = await recordResults([input(catGiftbox.id)], opA, sA);
-    await deleteResult(r2.id, opA, sA);
 
     await expect(savePerson({ name: "Pekerja Liar", role: "PEKERJA", pointId: bmr.id }, opA, sA)).rejects.toThrow(/pengelola borongan/);
     const h = await prisma.boronganHandover.create({ data: { number: "SRT-UJI-SETORAN", kind: "KIRIM", pointId: bmr.id, date: new Date(), createdBy: "uji" } });
