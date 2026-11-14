@@ -1,4 +1,5 @@
 "use server";
+import { refreshDraftChecklists } from "@/lib/shiftReportChecklist";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { action, bool, dec, int, optStr, str } from "@/lib/action";
@@ -64,7 +65,9 @@ export const saveChecklist = action(
     if (!tasks.length) throw new Error("Checklist minimal satu tugas");
     await prisma.division.update({ where: { id: divisionId }, data: { checklist: tasks } });
     await audit(user, "CHECKLIST_DIUBAH", "Division", divisionId, { tasks });
-    return "Checklist tersimpan (berlaku untuk laporan baru)";
+    // Draf yang belum terkirim ikut memakai checklist baru (centang/foto dengan label sama dipertahankan)
+    const drafts = await refreshDraftChecklists({ divisionId });
+    return `Checklist tersimpan${drafts ? ` · ${drafts} draf laporan ikut diperbarui` : ""}`;
   },
   PATHS,
 );
