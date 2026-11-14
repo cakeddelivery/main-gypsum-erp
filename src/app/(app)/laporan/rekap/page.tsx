@@ -11,7 +11,7 @@ import { DownloadJpg } from "@/components/DownloadJpg";
 import { DownloadCsv } from "@/components/DownloadCsv";
 import { DocExport, DocSheet, DocSummary, DocTable, fmtRange } from "@/components/DocSheet";
 import { letterhead } from "@/lib/letterhead";
-import { metricText, recapByDivision, recapLine, type RecapInput, type WorkData } from "@/lib/shiftReport";
+import { metricText, personRecap, recapByDivision, recapLine, type RecapInput, type WorkData } from "@/lib/shiftReport";
 
 export const metadata = { title: "Rekap Produksi" };
 
@@ -49,6 +49,7 @@ export default async function RekapPage({ searchParams }: { searchParams: Promis
   ]);
   const recapRows: RecapInput[] = reports.map((r) => ({ date: r.date, shift: r.shift.name, division: r.division.name, template: r.division.reportTemplate, target: r.division.targetPerShift, work: r.work as WorkData }));
   const byDiv = recapByDivision(recapRows);
+  const people = personRecap(recapRows);
   const daily = recapRows.map((r) => ({ ...r, ...recapLine(r) }));
   const pctCls = (p: number | null) => (p == null ? "" : p >= 100 ? "text-emerald-600" : "text-rose-600");
   const usedStages = STAGES.filter((s) => rows.some((r) => r.stage === s));
@@ -68,6 +69,18 @@ export default async function RekapPage({ searchParams }: { searchParams: Promis
         <Field label="Tanggal acuan"><input type="date" name="date" defaultValue={date} className="input" /></Field>
         <Field label="Shift"><select name="shift" defaultValue={sp.shift ?? ""} className="input"><option value="">Semua shift</option>{shifts.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
       </FilterBar>
+      {people.length > 0 && (
+        <Card className="mb-4" title="Hasil kerja per karyawan (dari laporan shift)">
+          <div className="table-wrap">
+            <Paged><table className="tbl">
+              <thead><tr><th>Karyawan</th><th>Divisi</th><th>Rincian</th><th className="num">Total</th><th className="num">Shift</th></tr></thead>
+              <tbody>{people.map((p) => (
+                <tr key={`${p.division}${p.name}${p.cols.join()}`}><td>{p.name}</td><td>{p.division}</td><td className="text-sm">{p.cols.length > 1 ? p.cols.map((c, i) => `${c} ${p.values[i].toLocaleString("id-ID")}`).join(" · ") : "—"}</td><td className="num font-semibold">{p.total.toLocaleString("id-ID")}</td><td className="num">{p.reports}</td></tr>
+              ))}</tbody>
+            </table></Paged>
+          </div>
+        </Card>
+      )}
       <Card className="mb-4" title={`Dari laporan shift · ${fmtDay(dateOnly(start))}${start !== end ? ` — ${fmtDay(dateOnly(end))}` : ""} · ${reports.length} laporan terkirim`}>
         {byDiv.length === 0 ? <p className="py-6 text-center text-sm text-slate-400">Belum ada laporan shift terkirim pada periode ini</p> : (
           <div className="space-y-4">

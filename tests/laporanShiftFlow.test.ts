@@ -2,20 +2,38 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { COA } from "@/lib/accounting";
 import { locationSettings, qtyAt, recordMovement } from "@/lib/stock";
-import { flowLines, parseWork, plannedFlow, splitEven, summaryOf, targetLine, targetOf, workLines, type WorkData } from "@/lib/shiftReport";
+import { flowLines, parseWork, personRecap, plannedFlow, splitEven, summaryOf, targetLine, targetOf, workLines, type WorkData } from "@/lib/shiftReport";
 import { FLOW_SETTING, flowItem, postShiftWork } from "@/lib/shiftReportFlow";
 import { recordProductionEntry } from "@/lib/productionEntry";
 import { dateOnly, jakartaDateTime } from "@/lib/time";
 
 describe("Rencana stok dari hasil kerja (murni)", () => {
-  it("Produksi: panen dua oven → patung kering per varian", () => {
+  it("Produksi: panen dua oven → patung kering per varian, patung cetak (basah) keluar", () => {
     const work: WorkData = { panen: [{ name: "Oven Besar", v: [300, 300, 700, 300] }, { name: "Oven Kecil", v: [null, null, null, 700] }] };
     expect(plannedFlow("PRODUKSI", work)).toEqual([
       { kind: "kering", key: "Hewan", qty: 300, dir: "in" },
       { kind: "kering", key: "Cowok", qty: 300, dir: "in" },
       { kind: "kering", key: "Transportasi", qty: 700, dir: "in" },
       { kind: "kering", key: "Cewek", qty: 1000, dir: "in" },
+      { kind: "basah", key: "Hewan", qty: 300, dir: "out" },
+      { kind: "basah", key: "Cowok", qty: 300, dir: "out" },
+      { kind: "basah", key: "Transportasi", qty: 700, dir: "out" },
+      { kind: "basah", key: "Cewek", qty: 1000, dir: "out" },
     ]);
+  });
+  it("Cetak: hasil per karyawan per series → patung cetak; reject oven ikut mengurangi patung cetak", () => {
+    const cetak: WorkData = { cetakSeries: [{ name: "Ani", v: [100, 50, null, 20] }, { name: "Budi", v: [30, null, 10, null] }] };
+    expect(flowLines(plannedFlow("CETAK", cetak))).toEqual(["+ Patung cetak Hewan 130", "+ Patung cetak Cowok 50", "+ Patung cetak Transportasi 10", "+ Patung cetak Cewek 20"]);
+    expect(workLines("CETAK", cetak).join("\n")).toMatch(/Ani: Hewan 100 · Cowok 50 · Transportasi — · Cewek 20/);
+    expect(summaryOf("CETAK", cetak)).toEqual([{ label: "Total hasil cetak", unit: "pcs", value: 210 }]);
+    const oven = plannedFlow("PRODUKSI", { panen: [{ name: "Oven Besar", v: [90, null, null, null] }], reject: [{ name: "Oven Besar", v: [10, null, null, 5] }] });
+    expect(oven.filter((x) => x.kind === "basah")).toEqual([{ kind: "basah", key: "Hewan", qty: 100, dir: "out" }, { kind: "basah", key: "Cewek", qty: 5, dir: "out" }]);
+    // Rekap per karyawan dari beberapa laporan
+    const rec = personRecap([
+      { date: new Date(), shift: "S1", division: "Cetak", template: "CETAK", target: null, work: cetak },
+      { date: new Date(), shift: "S2", division: "Cetak", template: "CETAK", target: null, work: { cetakSeries: [{ name: "ani ", v: [5, null, null, null] }] } },
+    ]);
+    expect(rec.find((p) => p.name === "Ani")).toMatchObject({ values: [105, 50, 0, 20], total: 175, reports: 2 });
   });
   it("Assembling dikerjakan borongan: laporan tidak mengubah stok (dari setoran Borongan)", () => {
     expect(flowLines(plannedFlow("ASSEMBLING", { jadi: [{ name: "Eva", v: [10, null, 5, null] }] }))).toEqual([]);
@@ -81,7 +99,7 @@ describe("Posting hasil kerja laporan shift ke stok", () => {
     const j0 = await qtyAt(prisma, jadi, finished);
 
     const panen = await report("PRODUKSI", "2027-10-02", { panen: [{ name: "Oven Besar", v: [300, null, null, null] }, { name: "Oven Kecil", v: [100, null, null, null] }] });
-    expect((await postShiftWork(panen.id, actor, jakartaDateTime("2027-10-03", "08:00"))).posted).toBe(1);
+    expect((await postShiftWork(panen.id, actor, jakartaDateTime("2027-10-03", "08:00"))).posted).toBe(2); // + kering, − patung cetak
     expect(await qtyAt(prisma, kering, wip)).toBe(k0 + 400);
     const mv = await prisma.stockMovement.findFirstOrThrow({ where: { ref: `LPH:${panen.id}:1` } });
     expect(mv.date.toISOString()).toBe(jakartaDateTime("2027-10-02", "15:00").toISOString());
