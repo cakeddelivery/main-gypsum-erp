@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
-import { cancelSettlement, checkSplit, createHandover, deleteResult, payLines, receiveHandover, recordResult, removePerson, resultShares, savePerson, settlePoint, type Scope } from "@/lib/borongan";
+import { cancelSettlement, checkSplit, createHandover, deleteResult, payLines, pointCapacity, receiveHandover, recordResult, removePerson, resultShares, savePerson, settlePoint, type Scope } from "@/lib/borongan";
 import { saveItemRecord } from "@/lib/items";
 import { stockBalances } from "@/lib/stock";
 import { dateOnly } from "@/lib/time";
@@ -75,6 +75,20 @@ describe("Alur borongan tetangga", () => {
     await removePerson(w3.id, actor, all);
     expect(await at(polos.id, bmr.locationId)).toBe(10);
     expect(await at(cat.id, bmr.locationId)).toBeCloseTo(1, 5); // 50 pcs × 20 gram = 1 botol
+    expect(await at(jadi.id, bmr.locationId)).toBe(50);
+    // Reject: bahan ikut terpakai, tidak masuk stok hasil, tidak dibayar, nilainya jadi beban
+    expect((await pointCapacity([bmr], [task.id]))[bmr.id][task.id]).toBe(10);
+    const rj = await recordResult({ pointId: bmr.id, workerId: w2.id, taskId: task.id, date, qty: 5, reject: 3 }, actor, coordScope);
+    expect(await at(polos.id, bmr.locationId)).toBe(2);
+    expect(await at(jadi.id, bmr.locationId)).toBe(55);
+    expect((await pointCapacity([bmr], [task.id]))[bmr.id][task.id]).toBe(2);
+    expect(payLines([{ ...rj, worker: { id: w2.id, name: w2.name }, coordinator: null, driver: null }]).find((l) => l.role === "PEKERJA")?.qty).toBe(5);
+    const jr = await prisma.journal.findFirstOrThrow({ where: { source: "BORONGAN", sourceId: rj.id }, include: { lines: { include: { account: true } } } });
+    expect(Number(jr.lines.find((l) => l.account.code === COA.BEBAN_SELISIH_PERSEDIAAN)?.debit ?? 0)).toBeGreaterThan(0);
+    await expect(recordResult({ pointId: bmr.id, workerId: w2.id, taskId: task.id, date, qty: 1, reject: 2 }, actor, coordScope)).rejects.toThrow(/termasuk reject/);
+    await expect(recordResult({ pointId: bmr.id, workerId: w2.id, taskId: task.id, date, qty: 0, reject: 0 }, actor, coordScope)).rejects.toThrow(/lebih dari 0/);
+    await deleteResult(rj.id, actor, all);
+    expect(await at(polos.id, bmr.locationId)).toBe(10);
     expect(await at(jadi.id, bmr.locationId)).toBe(50);
     // Nilai cat pindah ke persediaan barang dalam proses
     const j = await prisma.journal.findFirstOrThrow({ where: { source: "BORONGAN", sourceId: r1.id }, include: { lines: { include: { account: true } } } });

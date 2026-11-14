@@ -12,14 +12,18 @@ export async function boronganLines(template: ReportTemplate | null, date: Date,
   const re = template ? TASK_MATCH[template] : undefined;
   const rows = await prisma.boronganResult.findMany({ where: { date }, include: { point: { select: { name: true } }, task: { select: { name: true, divisionId: true } } } });
   const sum = new Map<string, number>();
+  const rej = new Map<string, number>();
   for (const r of rows) {
     // Tugas yang punya divisi pencatat → laporan divisi itu; tugas tanpa divisi → menurut nama (cara lama)
     const mine = r.task.divisionId ? r.task.divisionId === divisionId : !!re?.test(r.task.name);
     if (!mine) continue;
     const k = `${r.point.name} · ${r.task.name}`;
     sum.set(k, (sum.get(k) ?? 0) + r.qty);
+    if (r.reject) rej.set(k, (rej.get(k) ?? 0) + r.reject);
   }
   if (!sum.size) return [];
   const total = [...sum.values()].reduce((a, q) => a + q, 0);
-  return ["SETORAN BORONGAN (dari menu Borongan, stok sudah tercatat)", ...[...sum].map(([k, q]) => `${k}: ${q.toLocaleString("id-ID")} pcs`), `TOTAL SETORAN: ${total.toLocaleString("id-ID")} pcs`];
+  const totalRej = [...rej.values()].reduce((a, q) => a + q, 0);
+  const rj = (n?: number) => (n ? ` (reject ${n.toLocaleString("id-ID")})` : "");
+  return ["SETORAN BORONGAN (dari menu Borongan, stok sudah tercatat)", ...[...sum].map(([k, q]) => `${k}: ${q.toLocaleString("id-ID")} pcs${rj(rej.get(k))}`), `TOTAL SETORAN: ${total.toLocaleString("id-ID")} pcs${rj(totalRej)}`];
 }

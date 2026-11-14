@@ -550,7 +550,10 @@ model BoronganResult {
   taskId          String
   task            PieceTask           @relation(fields: [taskId], references: [id])
   date            DateTime            @db.Date
+  /// Patung bagus (dasar upah)
   qty             Int
+  /// Patung reject: bahan tetap terpakai, tidak dibayar, dibuang (beban selisih persediaan)
+  reject          Int                 @default(0)
   workerRate      BigInt
   coordinatorRate BigInt
   driverRate      BigInt

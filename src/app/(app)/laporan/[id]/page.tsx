@@ -137,7 +137,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
             {canEdit && setoran && setoran.tasks.length > 0 && (
               <Modal trigger="+ Setoran borongan" triggerClass="btn-secondary" title="Catat setoran borongan" subtitle={`${r.division.name} · ${fmtDay(r.date)}`} wide>
                 <ModalForm action={addResults} className="space-y-3">
-                  <ResultRows pointTasks={setoran.pointTasks} points={setoran.points} workers={setoran.workers} tasks={setoran.tasks} />
+                  <ResultRows pointTasks={setoran.pointTasks} points={setoran.points} workers={setoran.workers} tasks={setoran.tasks} capacity={setoran.capacity} />
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="block"><span className="label">Tanggal</span><input type="date" name="date" defaultValue={day} className="input" /></label>
                     <label className="block"><span className="label">Catatan</span><input name="note" className="input" /></label>

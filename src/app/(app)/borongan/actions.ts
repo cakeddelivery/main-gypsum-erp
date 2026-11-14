@@ -62,12 +62,15 @@ export const addResults = action(
     const pointId = str(fd, "pointId");
     const taskId = str(fd, "taskId");
     const date = dateOnly(str(fd, "date") || todayStr());
-    const rows = [...fd.entries()].filter(([k, v]) => k.startsWith("qty_") && String(v).trim()).map(([k, v]) => ({ workerId: k.slice(4), qty: num(v) }));
+    // Per pekerja: qty_<id> = patung bagus, rej_<id> = patung reject
+    const ids = new Set([...fd.keys()].filter((k) => /^(qty|rej)_/.test(k) && String(fd.get(k)).trim()).map((k) => k.slice(4)));
+    const rows = [...ids].map((workerId) => ({ workerId, qty: num(fd.get(`qty_${workerId}`) ?? "0"), reject: num(fd.get(`rej_${workerId}`) ?? "0") })).filter((r) => r.qty + r.reject !== 0);
     if (!rows.length) throw new BoronganError("Isi jumlah hasil minimal satu pekerja");
     // Satu transaksi: semua setoran tersimpan, atau tidak sama sekali bila ada yang gagal
-    await recordResults(rows.map((r) => ({ pointId, taskId, date, workerId: r.workerId, qty: r.qty, note: optStr(fd, "note") })), user, scope);
+    await recordResults(rows.map((r) => ({ pointId, taskId, date, workerId: r.workerId, qty: r.qty, reject: r.reject, note: optStr(fd, "note") })), user, scope);
     const total = rows.reduce((s, r) => s + r.qty, 0);
-    return `Setoran ${rows.length} pekerja tercatat (${total.toLocaleString("id-ID")} pcs)`;
+    const rej = rows.reduce((s, r) => s + r.reject, 0);
+    return `Setoran ${rows.length} pekerja tercatat (${total.toLocaleString("id-ID")} pcs bagus${rej ? `, ${rej.toLocaleString("id-ID")} reject` : ""})`;
   },
   PATHS,
 );

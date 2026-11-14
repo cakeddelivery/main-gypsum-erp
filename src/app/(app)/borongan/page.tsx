@@ -5,7 +5,7 @@ import { idr } from "@/lib/money";
 import { fmtDay, todayStr } from "@/lib/time";
 import { stockBalances } from "@/lib/stock";
 import { recipeUnit } from "@/lib/unitcost";
-import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, canTask, canWarehouse, isSetoranOnly, payLines, resultShares } from "@/lib/borongan";
+import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, canTask, canWarehouse, isSetoranOnly, payLines, pointCapacity, resultShares } from "@/lib/borongan";
 import { Badge, Card, Empty, Field, PageHeader, Tabs } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
@@ -107,7 +107,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
   const resultForm = (
     <Modal trigger="+ Setoran Hasil" title="Catat setoran hasil kerja" wide>
       <ModalForm action={addResults} className="space-y-3">
-        <ResultRows pointTasks={Object.fromEntries(Object.entries(cfg).map(([k, v]) => [k, v.tasks]))} points={points.map((p) => ({ id: p.id, name: p.name }))} workers={workers.map((w) => ({ id: w.id, name: w.name, pointId: w.pointId!, taskIds: w.taskIds }))} tasks={activeTasks.map((x) => ({ id: x.id, name: x.name, workerRate: Number(x.workerRate), coordinatorRate: Number(x.coordinatorRate), driverRate: Number(x.driverRate) }))} />
+        <ResultRows pointTasks={Object.fromEntries(Object.entries(cfg).map(([k, v]) => [k, v.tasks]))} points={points.map((p) => ({ id: p.id, name: p.name }))} workers={workers.map((w) => ({ id: w.id, name: w.name, pointId: w.pointId!, taskIds: w.taskIds }))} capacity={await pointCapacity(points, activeTasks.map((x) => x.id))} tasks={activeTasks.map((x) => ({ id: x.id, name: x.name, workerRate: Number(x.workerRate), coordinatorRate: Number(x.coordinatorRate), driverRate: Number(x.driverRate) }))} />
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Tanggal"><input type="date" name="date" defaultValue={t} className="input" /></Field>
           <Field label="Catatan"><input name="note" className="input" /></Field>
@@ -182,7 +182,7 @@ function PointCard({ point, stock, people }: { point: { name: string }; stock: {
   return (
     <Card title={`Titik ${point.name}`}>
       <p className="text-sm text-slate-600">Koordinator: <b>{coord.map((c) => c.name).join(", ") || "belum ada"}</b> · {workers.length} pekerja aktif</p>
-      <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Stok di titik</p>
+      <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Sisa bahan &amp; barang di titik</p>
       {stock.length === 0 ? <p className="text-sm text-slate-400">Kosong</p> : (
         <ul className="divide-y divide-slate-100 text-sm">
           {stock.map((s) => <li key={s.itemId} className="flex justify-between py-1"><span>{s.item!.name}</span><span className={`tabular-nums ${s.qty < 0 ? "font-semibold text-rose-600" : ""}`}>{(Math.round(s.qty * 1000) / 1000).toLocaleString("id-ID")} {s.item!.unit}</span></li>)}
@@ -225,13 +225,13 @@ async function ResultsTab({ filter, scope, userId }: { filter: object; scope: Sc
     <Card title="Setoran hasil kerja">
       {rows.length === 0 ? <Empty title="Belum ada setoran" /> : (
         <Paged><table className="tbl">
-          <thead><tr><th>Tanggal</th><th>Titik</th><th>Pekerja</th><th>Tugas</th><th className="num">Pcs</th><th className="num">Upah Pekerja</th><th className="num">Total Budget</th><th>Status</th><th>Dicatat</th><th /></tr></thead>
+          <thead><tr><th>Tanggal</th><th>Titik</th><th>Pekerja</th><th>Tugas</th><th className="num">Bagus</th><th className="num">Reject</th><th className="num">Upah Pekerja</th><th className="num">Total Budget</th><th>Status</th><th>Dicatat</th><th /></tr></thead>
           <tbody>{rows.map((r) => {
             const s = resultShares(r.qty, { workerRate: Number(r.workerRate), coordinatorRate: Number(r.coordinatorRate), driverRate: Number(r.driverRate) });
             return (
               <tr key={r.id}>
                 <td>{fmtDay(r.date)}</td><td>{r.point.name}</td><td>{r.worker.name}</td><td>{r.task.name}</td>
-                <td className="num">{r.qty.toLocaleString("id-ID")}</td><td className="num">{idr(s.worker)}</td><td className="num">{idr(s.total)}</td>
+                <td className="num">{r.qty.toLocaleString("id-ID")}</td><td className={`num ${r.reject ? "text-rose-600" : "text-slate-400"}`}>{r.reject.toLocaleString("id-ID")}</td><td className="num">{idr(s.worker)}</td><td className="num">{idr(s.total)}</td>
                 <td>{r.settlementId ? <Badge tone="green">Dibayar</Badge> : <Badge tone="amber">Belum Dibayar</Badge>}</td>
                 <td className="text-xs text-slate-500">{r.createdBy}</td>
                 <td>{!r.settlementId && canDelete(r) && <ActionForm action={removeResult} confirm="Batalkan setoran ini? Stok bahan & hasil dikembalikan, tercatat di audit."><input type="hidden" name="id" value={r.id} /><Submit className="btn-secondary btn-sm" pendingText="…">Batalkan</Submit></ActionForm>}</td>
