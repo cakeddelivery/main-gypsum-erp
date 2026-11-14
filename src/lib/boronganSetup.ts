@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { autoCode } from "./codes";
+import { defaultTaskTemplate } from "./taskDivision";
 import { VARIANTS } from "./shiftReport";
 import { flowItem } from "./shiftReportFlow";
 
@@ -86,7 +87,9 @@ export async function setupBorongan(db: PrismaClient, apply: boolean): Promise<s
         return ex.id;
       }
       say(`+ Tugas ${name} (Rp${rate[0]}/${rate[1]}/${rate[2]} per pcs)`);
-      const t = await tx.pieceTask.create({ data: { code: await autoCode.pieceTask(tx), name, ratePerPcs: BigInt(rate[0] + rate[1] + rate[2]), workerRate: BigInt(rate[0]), coordinatorRate: BigInt(rate[1]), driverRate: BigInt(rate[2]), outputItemId, inputs: { create: inputs.map((l) => ({ itemId: l.itemId, qty: l.qty })) } } });
+      const tpl = defaultTaskTemplate(name);
+      const divisionId = tpl ? (await tx.division.findFirst({ where: { reportTemplate: tpl } }))?.id ?? null : null;
+      const t = await tx.pieceTask.create({ data: { code: await autoCode.pieceTask(tx), name, divisionId, ratePerPcs: BigInt(rate[0] + rate[1] + rate[2]), workerRate: BigInt(rate[0]), coordinatorRate: BigInt(rate[1]), driverRate: BigInt(rate[2]), outputItemId, inputs: { create: inputs.map((l) => ({ itemId: l.itemId, qty: l.qty })) } } });
       return t.id;
     };
     const asmRate = rateOf(/^assembling$/i, [30, 15, 15]);

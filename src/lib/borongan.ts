@@ -36,10 +36,20 @@ export function resultShares(qty: number, s: Split) {
 
 /**
  * all = pengelola borongan (semua titik, semua aksi).
- * warehouse = divisi penanggung jawab borongan (Kapten Assembling): semua titik, boleh kirim bahan, catat setoran,
- * dan terima hasil ke gudang, tapi tidak mengatur tugas/tarif, akun koordinator, atau membayar upah.
+ * warehouse = Kapten Assembling: semua titik, boleh kirim bahan & terima hasil ke gudang (tanpa tarif/upah/akun).
+ * division = anggota divisi pencatat setoran (Kapten/Operator): hanya mencatat & membatalkan setoran TUGAS divisinya
+ *   (taskIds), di titik yang mengerjakan tugas itu. Tidak mengatur tarif, pekerja, kirim bahan, atau bayar upah.
+ *   captain = kapten boleh membatalkan semua setoran divisinya; anggota lain hanya setoran yang ia catat sendiri.
+ * taskIds = null berarti semua tugas (pengelola, koordinator titik).
  */
-export type Scope = { all: boolean; pointIds: string[]; personId: string | null; warehouse?: boolean };
+export type Scope = {
+  all: boolean;
+  pointIds: string[];
+  personId: string | null;
+  warehouse?: boolean;
+  taskIds?: string[] | null;
+  division?: { id: string; captain: boolean } | null;
+};
 type ScopeUser = { id: string; can: (p: "borongan.manage") => boolean; role?: string; divisionId?: string | null };
 
 /** Kapten divisi Assembling ikut mengurus borongan (Assembling & Cat Plastik: bahan dikirim & setoran masuk) */
@@ -49,15 +59,42 @@ export async function isBoronganDivisionCaptain(db: DB, user: { role?: string; d
   return d?.reportTemplate === "ASSEMBLING";
 }
 
-/** Pengelola melihat semua titik; Kapten Assembling semua titik (operasional); koordinator hanya titiknya sendiri */
+/** Anggota divisi (Kapten/Operator) yang divisinya punya tugas borongan aktif boleh mencatat setoran tugas itu */
+export function isDivisionMemberRole(role?: string) {
+  return role === "KAPTEN_DIVISI" || role === "OPERATOR";
+}
+
+export { assignDefaultTaskDivisions, defaultTaskTemplate } from "./taskDivision";
+
+/** Pengelola melihat semua titik; Kapten Assembling & anggota divisi: titik yang mengerjakan tugas divisinya; koordinator hanya titiknya */
 export async function boronganScope(db: DB, user: ScopeUser): Promise<Scope> {
-  if (user.can("borongan.manage")) return { all: true, pointIds: [], personId: null };
-  if (await isBoronganDivisionCaptain(db, user)) {
-    const points = await db.boronganPoint.findMany({ where: { active: true }, select: { id: true } });
-    return { all: false, pointIds: points.map((p) => p.id), personId: null, warehouse: true };
+  if (user.can("borongan.manage")) return { all: true, pointIds: [], personId: null, taskIds: null };
+  const coord = await db.boronganPerson.findFirst({ where: { userId: user.id, role: "KOORDINATOR", active: true } });
+  if (coord) return { all: false, pointIds: coord.pointId ? [coord.pointId] : [], personId: coord.id, taskIds: null };
+  if (isDivisionMemberRole(user.role) && user.divisionId) {
+    const tasks = await db.pieceTask.findMany({ where: { divisionId: user.divisionId, active: true }, select: { id: true } });
+    const captain = user.role === "KAPTEN_DIVISI";
+    const warehouse = await isBoronganDivisionCaptain(db, user);
+    if (tasks.length || warehouse) {
+      const taskIds = tasks.map((t) => t.id);
+      const points = await db.boronganPoint.findMany({ where: { active: true }, select: { id: true } });
+      // Titik yang mengerjakan tugas divisi (menurut pengaturan tugas per titik); tanpa pengaturan = semua titik aktif
+      const cfg = await pointConfig(db);
+      const pointIds = points.map((p) => p.id).filter((id) => warehouse || !cfg[id]?.tasks.length || cfg[id].tasks.some((t) => taskIds.includes(t)));
+      return { all: false, pointIds, personId: null, warehouse, taskIds, division: { id: user.divisionId, captain } };
+    }
   }
-  const p = await db.boronganPerson.findFirst({ where: { userId: user.id, role: "KOORDINATOR", active: true } });
-  return { all: false, pointIds: p?.pointId ? [p.pointId] : [], personId: p?.id ?? null };
+  return { all: false, pointIds: [], personId: null, taskIds: null };
+}
+
+/** Tugas boleh dicatat oleh scope ini */
+export function canTask(scope: Scope, taskId: string) {
+  return scope.all || scope.taskIds == null || scope.taskIds.includes(taskId);
+}
+
+/** Anggota divisi (bukan pengelola/Kapten Assembling): hanya setoran, tidak boleh serah terima, pekerja, tarif, upah */
+export function isSetoranOnly(scope: Scope) {
+  return !scope.all && !!scope.division && !scope.warehouse;
 }
 
 /** Boleh mengirim bahan dari gudang / menerima hasil ke gudang */
@@ -139,8 +176,10 @@ export async function receiveHandover(id: string, actor: Actor, scope: Scope, op
     const h = await tx.boronganHandover.findUniqueOrThrow({ where: { id }, include: { lines: true, point: true } });
     if (h.status !== "DIKIRIM") throw new BoronganError("Serah terima ini sudah diproses");
     // Bahan diterima koordinator titik; hasil diterima pengelola gudang
-    if (h.kind === "KIRIM") assertPoint(scope, h.pointId);
-    else if (!canWarehouse(scope)) {
+    if (h.kind === "KIRIM") {
+      if (isSetoranOnly(scope)) throw new BoronganError("Bahan di titik diterima oleh koordinator titik");
+      assertPoint(scope, h.pointId);
+    } else if (!canWarehouse(scope)) {
       const items = opts.divisionId ? await tx.item.findMany({ where: { id: { in: h.lines.map((l) => l.itemId) } }, select: { divisionId: true } }) : [];
       if (!opts.divisionId || !items.length || items.some((i) => i.divisionId !== opts.divisionId)) throw new BoronganError("Hasil borongan diterima oleh pengelola gudang atau kapten divisi pemilik barang");
     }
@@ -160,7 +199,7 @@ export async function cancelHandover(id: string, actor: Actor, scope: Scope) {
     await tx.$queryRaw`SELECT id FROM "BoronganHandover" WHERE id = ${id} FOR UPDATE`;
     const h = await tx.boronganHandover.findUniqueOrThrow({ where: { id }, include: { lines: true, point: true } });
     if (h.status !== "DIKIRIM") throw new BoronganError("Hanya serah terima yang belum diterima yang bisa dibatalkan");
-    if (h.kind === "KIRIM" ? !canWarehouse(scope) : !canPoint(scope, h.pointId)) throw new BoronganError("Hanya pembuat serah terima yang bisa membatalkan");
+    if (isSetoranOnly(scope) || (h.kind === "KIRIM" ? !canWarehouse(scope) : !canPoint(scope, h.pointId))) throw new BoronganError("Hanya pembuat serah terima yang bisa membatalkan");
     const drv = await driverLocation(tx);
     for (const l of h.lines) {
       const back = h.kind === "KIRIM" ? l.warehouseId : h.point.locationId;
@@ -213,6 +252,7 @@ async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: S
     if (worker.role !== "PEKERJA" || worker.pointId !== point.id || !worker.active) throw new BoronganError("Pekerja tidak terdaftar aktif di titik ini");
     const task = await tx.pieceTask.findUniqueOrThrow({ where: { id: input.taskId }, include: { inputs: { include: { item: true } }, outputItem: true } });
     if (!task.active) throw new BoronganError("Tugas ini sudah nonaktif");
+    if (!canTask(scope, task.id)) throw new BoronganError(`Setoran ${task.name} dicatat oleh divisi lain`);
     const cfg = (await pointConfig(tx))[point.id];
     if (cfg?.tasks.length && !cfg.tasks.includes(task.id)) throw new BoronganError(`Tugas ${task.name} tidak dikerjakan di titik ${point.name}`);
     const split = { workerRate: Number(task.workerRate), coordinatorRate: Number(task.coordinatorRate), driverRate: Number(task.driverRate) };
@@ -225,7 +265,7 @@ async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: S
       data: {
         number, pointId: point.id, workerId: worker.id, coordinatorId: coordinator?.id ?? null, driverId: driver?.id ?? null, taskId: task.id,
         date: input.date, qty: input.qty, workerRate: BigInt(split.workerRate), coordinatorRate: BigInt(split.coordinatorRate), driverRate: BigInt(split.driverRate),
-        note: input.note ?? null, createdBy: actor.name,
+        note: input.note ?? null, createdBy: actor.name, createdById: actor.id,
       },
     });
     const when = new Date(`${input.date.toISOString().slice(0, 10)}T05:00:00.000Z`);
@@ -270,14 +310,17 @@ export async function deleteResult(id: string, actor: Actor, scope: Scope) {
     // Kunci baris: dua permintaan hapus bersamaan tidak boleh membalik stok dua kali
     const locked = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "BoronganResult" WHERE id = ${id} FOR UPDATE`;
     if (!locked.length) throw new BoronganError("Setoran sudah dihapus");
-    const r = await tx.boronganResult.findUniqueOrThrow({ where: { id } });
+    const r = await tx.boronganResult.findUniqueOrThrow({ where: { id }, include: { task: { select: { name: true } } } });
     assertPoint(scope, r.pointId);
+    if (!canTask(scope, r.taskId)) throw new BoronganError(`Setoran ${r.task.name} milik divisi lain`);
+    // Anggota divisi hanya membatalkan setoran yang ia catat sendiri; kapten semua setoran divisinya
+    if (scope.division && !scope.division.captain && !scope.warehouse && r.createdById !== actor.id) throw new BoronganError("Anda hanya bisa membatalkan setoran yang Anda catat sendiri. Minta kapten divisi.");
     if (r.settlementId) throw new BoronganError("Upah setoran ini sudah dibayar, tidak bisa dihapus");
     await reverseMovementsByRef(tx, `HSB:${id}`, `BATAL-HSB:${id}`, "Setoran borongan dihapus", actor);
     const journals = await tx.journal.findMany({ where: { source: "BORONGAN", sourceId: id, reversalOfId: null } });
     for (const j of journals) await reverseJournal(tx, j.id, new Date(), actor, "Setoran borongan dihapus");
     await tx.boronganResult.delete({ where: { id } });
-    await audit(actor, "HASIL_BORONGAN_DIHAPUS", "BoronganResult", id, { number: r.number }, tx);
+    await audit(actor, "HASIL_BORONGAN_DIHAPUS", "BoronganResult", id, { number: r.number, task: r.task.name, qty: r.qty, pencatat: r.createdBy }, tx);
   });
 }
 
@@ -376,6 +419,7 @@ export async function savePerson(input: PersonInput, actor: Actor, scope: Scope)
   if (!name) throw new BoronganError("Nama wajib diisi");
   const pointId = input.role === "DRIVER" ? null : input.pointId || null;
   if (input.role !== "DRIVER" && !pointId) throw new BoronganError("Pilih titik borongan");
+  if (isSetoranOnly(scope)) throw new BoronganError("Data pekerja diatur pengelola borongan / koordinator titik");
   if (!scope.all) {
     if (input.role !== "PEKERJA") throw new BoronganError("Koordinator hanya bisa menambah pekerja");
     assertPoint(scope, pointId!);
@@ -399,6 +443,7 @@ export async function savePerson(input: PersonInput, actor: Actor, scope: Scope)
 
 /** Hapus orang; yang sudah punya riwayat setoran dinonaktifkan saja */
 export async function removePerson(id: string, actor: Actor, scope: Scope) {
+  if (isSetoranOnly(scope)) throw new BoronganError("Data pekerja diatur pengelola borongan / koordinator titik");
   const p = await prisma.boronganPerson.findUniqueOrThrow({ where: { id } });
   if (!scope.all && (p.role !== "PEKERJA" || !canPoint(scope, p.pointId ?? ""))) throw new BoronganError("Anda hanya bisa menghapus pekerja di titik Anda");
   const used = await prisma.boronganResult.count({ where: { OR: [{ workerId: id }, { coordinatorId: id }, { driverId: id }] } });
