@@ -220,6 +220,20 @@ const depreciationGaps: Check = async () => {
   return issue("penyusutan", "UANG", "INFO", "Aset tetap belum disusutkan di bulan yang sudah ditutup", "Penyusutan dibukukan saat tutup buku; aset yang dicatat sesudah bulannya ditutup tidak ikut. Buka-tutup ulang bulan itu atau catat penyusutan susulan.", items);
 };
 
+const reserveMissing: Check = async (c) => {
+  const { reserveSummary } = await import("./reserve");
+  const rows = (await reserveSummary(c.now)).filter((f) => f.active && f.missing.some((d) => d < c.today));
+  return issue("sisihan-terlewat", "UANG", "INFO", "Hari sisihan yang belum dicatat (7 hari terakhir)", "Sisihan harian (OPS, Nabung Bayar Hutang) belum tercatat di hari itu: kirim bukti transfer ke bot atau tekan Sisihkan.",
+    rows.map((f) => ({ label: f.name, detail: f.missing.filter((d) => d < c.today).sort().join(", "), href: "/finance/sisihan" })));
+};
+
+const talanganOpen: Check = async () => {
+  const { talanganSummary } = await import("./talangan");
+  const rows = (await talanganSummary()).filter((w) => w.outstanding > 0);
+  return issue("talangan-terbuka", "UANG", "INFO", "Dana talangan belum dikembalikan", "Uang dompet simpanan (0006/ShopeePay) yang dipakai operasional wajib dikembalikan dari rekening operasional dengan bukti.",
+    rows.map((w) => ({ label: w.bank.name, detail: `belum kembali ${idr(w.outstanding)}`, href: "/finance/talangan" })));
+};
+
 // =============================== BARANG ===============================
 
 const inventoryVsLedger: Check = async () => {
@@ -375,7 +389,7 @@ const pendingRegistrations: Check = async (c) => {
 
 export const CHECKS: Check[] = [
   unbalancedJournals, duplicateJournals, bookedWithoutJournal, cancelledNotReversed, cancelledDocsNotReversed, bankNegative, transitBalance, salesPaid,
-  payablesVsLedger, receivablesVsLedger, prepaidVsLedger, advances, reserveFunds, mirrorOfReversed, staleDrafts, staleWdProcess, purchaseIssues, depreciationGaps,
+  payablesVsLedger, receivablesVsLedger, prepaidVsLedger, advances, reserveFunds, reserveMissing, talanganOpen, mirrorOfReversed, staleDrafts, staleWdProcess, purchaseIssues, depreciationGaps,
   inventoryVsLedger, negative, unlinkedReceipts, handovers, stockRequests, unpaidBorongan, movementsWithoutRef,
   missingPayroll, doublePay, payrollAccruals, unvalidatedAttendance, missingAttendance,
   accessAfterResign, pendingRegistrations,
