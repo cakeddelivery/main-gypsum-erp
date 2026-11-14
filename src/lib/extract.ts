@@ -105,7 +105,8 @@ function stripNonAmounts(t: string) {
     .replace(/\b(?:tahun|thn|th)\.?\s*\d{4}\b/g, " ");
 }
 
-const EXPLICIT_AMOUNT = [/rp\.?\s*([\d.,]+(?:\s*(?:jt|juta|rb|ribu|k))?)/, /\b([\d.,]+\s*(?:jt|juta|rb|ribu|k))\b/, /(?:nominal|total|sebesar|jumlah|harga)\s*:?\s*(?:rp\.?\s*)?([\d.,]+)/];
+// "rp" harus awal kata: nama seperti "Sharp4" / "kreditrp4" bukan nominal Rp4 (tes hutang flaky 14 Nov 2026)
+const EXPLICIT_AMOUNT = [/\brp\.?\s*([\d.,]+(?:\s*(?:jt|juta|rb|ribu|k))?)/, /\b([\d.,]+\s*(?:jt|juta|rb|ribu|k))\b/, /(?:nominal|total|sebesar|jumlah|harga)\s*:?\s*(?:rp\.?\s*)?([\d.,]+)/];
 
 /**
  * Nominal dari teks. Tanggal, tahun, jam, dan jumlah barang ("2000 pcs") diabaikan.
