@@ -280,7 +280,7 @@ export function workBlocks(template: ReportTemplate, work: WorkData): WorkBlock[
       const rows = gridRows(work, s);
       for (const r of rows) {
         if (s.cols.length === 1) line(`${r.name}: ${fmt(r.v[0] ?? null)} pcs`);
-        else line(`${r.name}: ${s.cols.map((c, i) => `${c} ${fmt(r.v[i] ?? null)}`).join(" · ")}${s.colTotals ? "" : ` · TOTAL ${fmt(rowTotal(r))} pcs`}`);
+        else line(`${r.name}: ${s.cols.map((c, i) => `${c} ${fmt(r.v[i] ?? null)}`).join(" · ")} · TOTAL ${fmt(rowTotal(r))} pcs`);
       }
       if (s.colTotals) line(`TOTAL: ${colTotals(rows, s.cols.length).map((v, i) => `${s.cols[i]} ${fmt(v)}`).join(" · ")}`);
       line(`${s.totalLabel.toUpperCase()}: ${fmt(sectionTotal(t, work, s.key))} pcs`);
