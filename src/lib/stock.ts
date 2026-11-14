@@ -133,6 +133,33 @@ export async function valuationByLocation(db: DB = prisma) {
   return { rows: shown, total: { BAHAN_BAKU: sum("BAHAN_BAKU"), BARANG_DALAM_PROSES: sum("BARANG_DALAM_PROSES"), BARANG_JADI: sum("BARANG_JADI"), total: sum("total") } };
 }
 
+/** Lokasi borongan (titik & driver): stoknya hanya berubah lewat Serah terima / Setoran / Penerimaan divisi */
+export async function boronganLocationIds(db: DB = prisma) {
+  const [points, drv, set] = await Promise.all([
+    db.boronganPoint.findMany({ select: { locationId: true } }),
+    db.location.findUnique({ where: { code: "DRV" }, select: { id: true } }),
+    db.setting.findUnique({ where: { key: "loc_borongan_driver" } }),
+  ]);
+  return new Set([...points.map((p) => p.locationId), ...(drv ? [drv.id] : []), ...(set?.value ? [set.value] : [])]);
+}
+
+/**
+ * Mutasi stok manual (Stok → Mutasi) dibatasi agar tidak dobel dengan alur lain:
+ * - ke/dari titik borongan atau driver → pakai Borongan → Serah terima (kirim bahan / hasil) / Penerimaan divisi
+ * - Penerimaan manual → biasanya lewat Stok → Pembelian atau Barang masuk laporan shift; hanya Owner, alasan wajib
+ * - Penyesuaian → yang berwenang (stock.approve), alasan wajib
+ */
+export async function manualMovementGuard(m: { type: MovementType; role: string; reason: string | null; fromLocationId: string | null; toLocationId: string | null }, db: DB = prisma) {
+  const locs = await boronganLocationIds(db);
+  if ((m.fromLocationId && locs.has(m.fromLocationId)) || (m.toLocationId && locs.has(m.toLocationId)))
+    throw new StockError("Stok di titik borongan / driver hanya lewat menu Borongan (Serah terima kirim bahan, setoran, penerimaan divisi), agar tidak dobel");
+  if (m.type === "PENERIMAAN") {
+    if (m.role !== "OWNER") throw new StockError("Barang masuk dicatat lewat Stok → Pembelian atau + Barang masuk di laporan shift. Penerimaan manual hanya Owner.");
+    if (!m.reason?.trim()) throw new StockError("Isi alasan penerimaan manual (mis. hibah / sampel / koreksi)");
+  }
+  if (m.type === "PENYESUAIAN" && !m.reason?.trim()) throw new StockError("Isi alasan penyesuaian stok");
+}
+
 async function defaultStore(db: DB) {
   const s = await db.setting.findUnique({ where: { key: "default_store_id" } });
   if (!s) throw new StockError("Toko default belum diatur di Pengaturan");

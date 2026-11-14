@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { COA } from "./accounting";
 import { activeDuplicateJournals } from "./auditChecks";
-import { inventoryValuation, negativeStock } from "./stock";
+import { MOVEMENT_LABEL, boronganLocationIds, inventoryValuation, negativeStock } from "./stock";
 import { addDays, dateOnly, dateStr, todayStr } from "./time";
 import { lastCompletedCycle } from "./payroll";
 
@@ -255,9 +255,28 @@ const negative: Check = async () => {
 };
 
 const movementsWithoutRef: Check = async (c) => {
-  const n = await prisma.stockMovement.count({ where: { ref: null, date: { gte: daysAgo(c, 30) } } });
+  const n = await prisma.stockMovement.count({ where: { OR: [{ ref: null }, { ref: "MUT" }], date: { gte: daysAgo(c, 30) } } });
   return issue("mutasi-tanpa-ref", "BARANG", "INFO", "Mutasi stok manual tanpa nomor referensi (30 hari)", "Mutasi manual tanpa ref sulit ditelusuri ke dokumennya; isi kolom Ref (nomor nota/dokumen) saat mencatat mutasi.",
     n ? [{ label: `${n} mutasi`, href: "/stok/mutasi" }] : []);
+};
+
+/** Mutasi manual (Stok → Mutasi) yang menyentuh titik borongan / driver: bisa dobel dengan Serah terima / Penerimaan divisi */
+const manualBorongan: Check = async () => {
+  const locs = [...(await boronganLocationIds())];
+  if (!locs.length) return null;
+  const rows = await prisma.stockMovement.findMany({
+    where: { OR: [{ ref: null }, { ref: { startsWith: "MUT" } }], AND: [{ OR: [{ fromLocationId: { in: locs } }, { toLocationId: { in: locs } }] }] },
+    include: { item: { select: { name: true } } }, orderBy: { date: "desc" }, take: 50,
+  });
+  return issue("mutasi-manual-borongan", "BARANG", "SEDANG", "Mutasi manual ke/dari titik borongan atau driver", "Stok titik & driver seharusnya hanya berubah lewat Borongan (Serah terima, setoran, penerimaan divisi). Mutasi manual bisa membuat stok dobel; periksa apakah barang yang sama juga dicatat di Serah terima, lalu koreksi.",
+    rows.map((m) => ({ label: `${m.item.name} × ${Number(m.qty).toLocaleString("id-ID")}`, detail: `${MOVEMENT_LABEL[m.type]} · ${dateStr(m.date)} · ${m.createdBy}`, href: "/stok/mutasi" })));
+};
+
+/** Penerimaan manual (tanpa Pembelian / Barang masuk) 30 hari terakhir: bisa dobel dengan Pembelian */
+const manualReceipts: Check = async (c) => {
+  const rows = await prisma.stockMovement.findMany({ where: { type: "PENERIMAAN", OR: [{ ref: null }, { ref: { startsWith: "MUT" } }], date: { gte: daysAgo(c, 30) } }, include: { item: { select: { name: true } } }, orderBy: { date: "desc" }, take: 30 });
+  return issue("penerimaan-manual", "BARANG", "INFO", "Penerimaan stok manual (30 hari)", "Barang dari supplier sebaiknya lewat Stok → Pembelian atau + Barang masuk agar harga & hutang tercatat dan tidak dobel.",
+    rows.map((m) => ({ label: `${m.item.name} × ${Number(m.qty).toLocaleString("id-ID")}`, detail: `${dateStr(m.date)} · ${m.createdBy}${m.note ? ` · ${m.note}` : ""}`, href: "/stok/mutasi" })));
 };
 
 const unlinkedReceipts: Check = async (c) => {
@@ -401,7 +420,7 @@ const pendingRegistrations: Check = async (c) => {
 export const CHECKS: Check[] = [
   unbalancedJournals, duplicateJournals, bookedWithoutJournal, cancelledNotReversed, cancelledDocsNotReversed, bankNegative, transitBalance, salesPaid,
   payablesVsLedger, receivablesVsLedger, prepaidVsLedger, advances, reserveFunds, reserveMissing, talanganOpen, mirrorOfReversed, staleDrafts, staleWdProcess, purchaseIssues, depreciationGaps,
-  inventoryVsLedger, flowSwitch, negative, unlinkedReceipts, handovers, stockRequests, unpaidBorongan, movementsWithoutRef,
+  inventoryVsLedger, flowSwitch, negative, unlinkedReceipts, handovers, stockRequests, unpaidBorongan, movementsWithoutRef, manualBorongan, manualReceipts,
   missingPayroll, doublePay, payrollAccruals, unvalidatedAttendance, missingAttendance,
   accessAfterResign, pendingRegistrations,
 ];

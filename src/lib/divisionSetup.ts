@@ -19,8 +19,10 @@ export async function applyDivisionSetup(db: PrismaClient, opts: { replaceOld?: 
     const setup = DIVISION_SETUP[t];
     let div =
       all.find((d) => d.reportTemplate === t) ??
-      all.find((d) => d.code === setup.code) ??
-      all.find((d) => d.name.toLowerCase().includes(setup.name.toLowerCase()));
+      all.find((d) => d.code === setup.code && !d.reportTemplate) ??
+      all.find((d) => d.name.toLowerCase().includes(setup.name.toLowerCase()) && !d.reportTemplate);
+    // Divisi Cetak hanya diberi format bila divisinya sudah ada (tidak dibuat otomatis)
+    if (!div && t === "CETAK") continue;
     if (!div) {
       div = await db.division.create({ data: { code: setup.code, name: `Divisi ${setup.name}`, reportTemplate: t, shiftCount: setup.shiftCount, checklist: setup.checklist } });
       all.push(div);

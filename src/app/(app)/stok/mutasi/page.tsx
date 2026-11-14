@@ -1,3 +1,4 @@
+import { boronganLocationIds } from "@/lib/stock";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { MOVEMENT_LABEL } from "@/lib/stock";
@@ -16,6 +17,7 @@ export const metadata = { title: "Mutasi Stok" };
 export default async function MutasiPage({ searchParams }: { searchParams: Promise<{ type?: string; item?: string }> }) {
   const user = await requirePerm("stock.move", "stock.view");
   const sp = await searchParams;
+  const blocked = await boronganLocationIds();
   const [items, locations, moves] = await Promise.all([
     prisma.item.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     prisma.location.findMany({ orderBy: { code: "asc" } }),
@@ -26,16 +28,17 @@ export default async function MutasiPage({ searchParams }: { searchParams: Promi
       <PageHeader title="Mutasi stok" subtitle="Penerimaan, pengeluaran, transfer, penyesuaian, dan histori mutasi" actions={user.can("stock.move") && (
         <Modal trigger="+ Mutasi" title="Catat mutasi stok" wide>
           <ModalForm action={createMovement} className="grid grid-cols-2 gap-3">
-            <Field label="Jenis"><select name="type" className="input"><option value="PENERIMAAN">Penerimaan</option><option value="PENGELUARAN">Pengeluaran</option><option value="TRANSFER">Transfer lokasi</option>{user.can("stock.approve") && <option value="PENYESUAIAN">Penyesuaian (opname)</option>}</select></Field>
+            <Field label="Jenis"><select name="type" className="input">{user.role === "OWNER" && <option value="PENERIMAAN">Penerimaan (khusus Owner)</option>}<option value="PENGELUARAN">Pengeluaran</option><option value="TRANSFER">Transfer lokasi</option>{user.can("stock.approve") && <option value="PENYESUAIAN">Penyesuaian (opname)</option>}</select></Field>
             <Field label="Tanggal"><input type="date" name="date" defaultValue={todayStr()} className="input" /></Field>
             <Field label="Item" className="col-span-2"><select name="itemId" className="input" required>{items.map((i) => <option key={i.id} value={i.id}>{i.name} ({i.unit})</option>)}</select></Field>
             <Field label="Jumlah"><input name="qty" inputMode="decimal" className="input" required /></Field>
-            <Field label="Dari lokasi" hint="Pengeluaran / transfer / penyesuaian"><select name="fromLocationId" className="input"><option value="">—</option>{locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
-            <Field label="Ke lokasi" hint="Penerimaan / transfer"><select name="toLocationId" className="input"><option value="">—</option>{locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
+            <Field label="Dari lokasi" hint="Pengeluaran / transfer / penyesuaian"><select name="fromLocationId" className="input"><option value="">—</option>{locations.filter((l) => !blocked.has(l.id)).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
+            <Field label="Ke lokasi" hint="Penerimaan / transfer"><select name="toLocationId" className="input"><option value="">—</option>{locations.filter((l) => !blocked.has(l.id)).map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}</select></Field>
             <Field label="Harga/unit (penerimaan)" hint="IDR, untuk harga rata-rata"><input name="unitCost" inputMode="numeric" className="input" /></Field>
             <Field label="Penyesuaian"><select name="direction" className="input"><option value="plus">Tambah (+)</option><option value="minus">Kurang (−)</option></select></Field>
             <Field label="No. referensi"><input name="ref" className="input" placeholder="No. nota / SJ" /></Field>
-            <Field label="Catatan" className="col-span-2"><input name="note" className="input" /></Field>
+            <Field label="Catatan / alasan" className="col-span-2" hint="Wajib untuk penerimaan & penyesuaian"><input name="note" className="input" /></Field>
+            <p className="col-span-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Agar stok tidak dobel: barang dari supplier lewat <b>Stok → Pembelian</b> atau <b>+ Barang masuk</b> di laporan shift; bahan ke/dari titik borongan lewat <b>Borongan → Serah terima</b>; hasil borongan lewat <b>Penerimaan borongan</b>. Lokasi titik & driver tidak bisa dipilih di sini.</p>
             <p className="col-span-2 text-xs text-slate-500">Pembayaran pembelian bahan dicatat di menu Transaksi (kategori Pembelian Bahan Baku) agar tidak terjadi pembukuan ganda. Pengeluaran barang jadi otomatis membukukan HPP; pengeluaran bahan baku dibukukan ke Beban Selisih Persediaan. Barang jadi yang terjual dihitung lewat Stok › Opname barang jadi tiap akhir bulan.</p>
             <div className="col-span-2 flex justify-end"><Submit>Simpan mutasi</Submit></div>
           </ModalForm>

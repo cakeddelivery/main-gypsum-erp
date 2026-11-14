@@ -44,7 +44,8 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const template = isTemplate(r.division.reportTemplate) ? r.division.reportTemplate : null;
   const [entries, people] = await Promise.all([
     template ? Promise.resolve([]) : prisma.productionEntry.groupBy({ by: ["stage"], where: { date: r.date, shiftId: r.shiftId, divisionId: r.divisionId }, _sum: { qtyGood: true, qtyReject: true } }),
-    prisma.employee.findMany({ where: { divisionId: r.divisionId, status: "AKTIF" }, orderBy: { name: "asc" }, select: { name: true } }),
+    // Baris hasil per karyawan: yang absen hadir/terlambat di divisi & shift laporan ini (PIC bisa menambah nama manual)
+    prisma.attendance.findMany({ where: { date: r.date, shiftId: r.shiftId, status: { in: ["HADIR", "TERLAMBAT"] }, employee: { divisionId: r.divisionId } }, orderBy: { employee: { name: "asc" } }, select: { employee: { select: { name: true } } } }).then((a) => a.map((x) => x.employee)),
   ]);
   const checklist = toEntries(r.checklist);
   const catalogs = await reportCatalogs(template);
