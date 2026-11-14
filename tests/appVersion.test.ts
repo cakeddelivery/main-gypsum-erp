@@ -39,4 +39,20 @@ describe("Pembaruan otomatis aplikasi (PWA)", () => {
     expect(res.headers.get("Cache-Control")).toContain("no-store");
     expect(typeof (await res.json()).build).toBe("string");
   });
+
+  it("next.config memberi versi yang sama di setiap proses build (klien = server)", async () => {
+    const before = process.env.APP_BUILD_ID;
+    delete process.env.APP_BUILD_ID;
+    try {
+      // Dimuat dua kali seperti build worker server & klien
+      const a = (await import("../next.config.mjs?w=1" as string)).default;
+      const b = (await import("../next.config.mjs?w=2" as string)).default;
+      expect(a.env.APP_BUILD_ID).toBeTruthy();
+      expect(b.env.APP_BUILD_ID).toBe(a.env.APP_BUILD_ID);
+      expect(await a.generateBuildId()).toBe(a.env.APP_BUILD_ID);
+    } finally {
+      if (before === undefined) delete process.env.APP_BUILD_ID;
+      else process.env.APP_BUILD_ID = before;
+    }
+  });
 });

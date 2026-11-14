@@ -11,7 +11,11 @@ const commit = (() => {
     return "nogit";
   }
 })();
-const BUILD_ID = process.env.APP_BUILD_ID || `${commit}-${Date.now().toString(36)}`;
+// next build memuat file ini di beberapa proses (build worker server & klien). Nilai disimpan ke process.env
+// sekali di proses utama agar semua worker mewarisi versi yang SAMA; tanpa ini versi klien ≠ server
+// dan aplikasi selalu mengira ada versi baru.
+process.env.APP_BUILD_ID ||= `${commit}-${Date.now().toString(36)}`;
+const BUILD_ID = process.env.APP_BUILD_ID;
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
