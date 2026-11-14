@@ -10,6 +10,8 @@ import { ReportStartForm } from "@/components/ReportStartForm";
 import { ReportFilters } from "@/components/ReportFilters";
 import { Suspense } from "react";
 import { Paged } from "@/components/Paged";
+import { ReceiveForm } from "../borongan/ReceiveForm";
+import { receiptItems } from "@/lib/boronganReceipt";
 
 export const metadata = { title: "Laporan Shift" };
 
@@ -54,6 +56,9 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
 
   const startData = { auto: fixedDivision !== null, today, divisions: divisions.map((d) => ({ id: d.id, name: d.name, shiftCount: d.shiftCount })), shifts: shifts.map((s) => ({ id: s.id, name: s.name, startTime: s.startTime, endTime: s.endTime })) };
   const member = fixedDivision !== null;
+  // Anggota divisi penerima hasil borongan (Assembling/Giftbox): "+ Penerimaan borongan" (total per barang)
+  const canReceive = member && (user.can("borongan.point") || user.can("borongan.manage")) && (await receiptItems(fixedDivision!)).length > 0;
+  const penerimaan = canReceive && <Modal trigger="+ Penerimaan borongan" triggerClass="btn-secondary" title="Penerimaan hasil borongan" wide><ReceiveForm divisionId={fixedDivision!} date={today} /></Modal>;
   const barangMasuk = canCreate && <Modal trigger="+ Barang masuk" triggerClass="btn-secondary" title="Catat barang masuk"><ReportStartForm data={startData} go="masuk" /></Modal>;
   const newForm = canCreate && (
     <>
@@ -71,6 +76,7 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
           <>
             {/* Anggota mengirim laporan lewat tombol + Lapor di navigasi bawah; Rekap & Resi khusus pengelola */}
             {member ? barangMasuk : newForm}
+            {penerimaan}
             <Link href="/laporan/order" className="btn-secondary">Order bahan baku</Link>
             {!member && <Link href="/laporan/rekap" className="btn-secondary">Rekap</Link>}
             {!member && <Link href="/laporan/monitoring" className="btn-secondary">Resi &amp; patung</Link>}

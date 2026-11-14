@@ -6,7 +6,7 @@ import { normEmail } from "@/lib/email";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int, bool } from "@/lib/action";
 import { audit } from "@/lib/audit";
-import { hashPassword, ForbiddenError } from "@/lib/auth";
+import { hashPassword, ForbiddenError, revokeAllSessions } from "@/lib/auth";
 import { clearLoginBlocks, passwordChangeData } from "@/lib/loginGuard";
 import { ALL_PERMISSIONS, ROLES, DEFAULT_MATRIX, PERMISSIONS, ROLE_LABEL, effectivePermissions, sensitiveGrants, type Permission } from "@/lib/rbac";
 import { generateApiKey, API_SCOPES } from "@/lib/apiAuth";
@@ -244,3 +244,11 @@ export const testRecap = action("telegram.manage", async (_fd, user) => {
   await audit(user, "UJI_REKAP_TELEGRAM", "NotificationLog", null, r);
   return `Rekap diproses: ${r.sent} terkirim, ${r.failed} gagal (lihat log)`;
 }, ["/pengaturan/telegram"]);
+
+/** Keluarkan akun dari semua perangkat (HP hilang/dipinjam). Password tetap; Owner hanya bisa dikeluarkan oleh Owner. */
+export const revokeSessionsAction = action("users.manage", async (fd, user) => {
+  const target = await prisma.user.findUniqueOrThrow({ where: { id: str(fd, "id") } });
+  if (target.role === "OWNER" && user.role !== "OWNER") throw new ForbiddenError();
+  await revokeAllSessions(target.id, user);
+  return target.id === user.id ? "Semua perangkat Anda dikeluarkan. Silakan masuk lagi." : `${target.name} dikeluarkan dari semua perangkat`;
+}, ["/pengaturan/pengguna"]);

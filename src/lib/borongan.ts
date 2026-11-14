@@ -149,6 +149,11 @@ export async function createHandover(input: HandoverInput, actor: Actor) {
     const date = input.date ?? new Date();
     const number = await nextNumber(tx, "SRT", date);
     const items = await tx.item.findMany({ where: { id: { in: lines.map((l) => l.itemId) } } });
+    if (input.kind === "KEMBALI") {
+      // Hasil tugas berdivisi masuk gudang lewat Penerimaan divisi (bukan kiriman hasil), agar stok tidak dobel
+      const outs = await tx.pieceTask.findMany({ where: { divisionId: { not: null }, outputItemId: { in: items.map((i) => i.id) } }, select: { outputItemId: true } });
+      if (outs.length) throw new BoronganError(`${items.filter((i) => outs.some((o) => o.outputItemId === i.id)).map((i) => i.name).join(", ")} diterima divisi lewat Penerimaan hasil borongan, bukan Kirim hasil ke gudang`);
+    }
     const rows = [];
     for (const l of lines) {
       const item = items.find((i) => i.id === l.itemId);
@@ -244,6 +249,8 @@ export async function recordResults(inputs: ResultInput[], actor: Actor, scope: 
 }
 
 async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: Scope) {
+  // Setoran per pekerja (dasar upah) dicatat koordinator titik / pengelola; anggota divisi memakai Penerimaan per barang
+  if (!scope.all && scope.division) throw new BoronganError("Setoran per pekerja dicatat koordinator titik. Divisi mencatat penerimaan per barang.");
   assertPoint(scope, input.pointId);
   const reject = input.reject ?? 0;
   if (!Number.isInteger(input.qty) || input.qty < 0 || !Number.isInteger(reject) || reject < 0) throw new BoronganError("Jumlah bagus dan reject harus bilangan bulat, tidak minus");

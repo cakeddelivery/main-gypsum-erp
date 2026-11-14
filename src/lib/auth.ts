@@ -1,7 +1,7 @@
 import "server-only";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { SignJWT, jwtVerify } from "jose";
+import { jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
 import { cache } from "react";
 import { prisma } from "./db";
@@ -9,21 +9,13 @@ import { effectivePermissions, type Permission } from "./rbac";
 import { audit } from "./audit";
 import { checkLogin, ipFromHeaders } from "./loginGuard";
 
-export const SESSION_COOKIE = "mg_session";
-const SESSION_HOURS = 12;
+import { SESSION_COOKIE, sessionCookieOptions, sessionSecret as secret, signSession } from "./session";
 
-function secret() {
-  const s = process.env.AUTH_SECRET;
-  if (!s || s.length < 32) throw new Error("AUTH_SECRET belum diatur (min. 32 karakter)");
-  return new TextEncoder().encode(s);
-}
+export { SESSION_COOKIE, sessionCookieOptions };
 
+/** Token sesi 90 hari (diperpanjang otomatis di middleware selama user aktif) */
 export async function createSessionToken(userId: string, sessionVersion = 0) {
-  return new SignJWT({ sub: userId, sv: sessionVersion })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime(`${SESSION_HOURS}h`)
-    .sign(secret());
+  return signSession(userId, sessionVersion);
 }
 
 /** Isi token sesi: id user + versi sesi (token lama tanpa `sv` dianggap versi 0). */
@@ -38,10 +30,6 @@ export async function verifySessionToken(token: string): Promise<{ userId: strin
 }
 
 export type LoginResult = { ok: true } | { ok: false; error: string };
-
-export function sessionCookieOptions() {
-  return { httpOnly: true, sameSite: "lax" as const, secure: process.env.NODE_ENV === "production", path: "/", maxAge: SESSION_HOURS * 3600 };
-}
 
 export async function setSessionCookie(userId: string, sessionVersion: number) {
   const token = await createSessionToken(userId, sessionVersion);
@@ -88,6 +76,7 @@ export async function loadUser(userId: string, sv = 0) {
     id: user.id,
     name: user.name,
     username: user.username,
+    email: user.email,
     role: user.role,
     employeeId: user.employeeId,
     employee: user.employee,
@@ -139,4 +128,14 @@ export async function clientIp() {
 export async function hashPassword(pw: string) {
   if (pw.length < 8) throw new Error("Password minimal 8 karakter");
   return bcrypt.hash(pw, 10);
+}
+
+/**
+ * Keluarkan akun dari semua perangkat (mis. HP hilang): versi sesi dinaikkan sehingga semua token lama ditolak.
+ * Password tidak berubah; user cukup login ulang.
+ */
+export async function revokeAllSessions(userId: string, actor: { id: string; name: string }) {
+  const u = await prisma.user.update({ where: { id: userId }, data: { sessionVersion: { increment: 1 } } });
+  await audit(actor, "SESI_DICABUT_SEMUA", "User", userId, { username: u.username });
+  return u;
 }

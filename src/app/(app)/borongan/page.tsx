@@ -13,8 +13,11 @@ import { ModalForm } from "@/components/ModalForm";
 import { Paged } from "@/components/Paged";
 import { ItemLines } from "@/components/ItemLines";
 import { KitSend, ResultRows } from "./BoronganForms";
+import { ReceiveForm } from "./ReceiveForm";
+import { diffLines, receiptDiff } from "@/lib/boronganReceipt";
+import { dateOnly } from "@/lib/time";
 import { pointConfig } from "@/lib/boronganSetup";
-import { addResults, cancelPayPoint, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, saveTask, sendHandover, voidHandover } from "./actions";
+import { addResults, cancelPayPoint, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, saveTask, sendHandover, voidDivisionReceipt, voidHandover } from "./actions";
 
 export const metadata = { title: "Borongan" };
 
@@ -22,12 +25,13 @@ const TABS = [
   { key: "ringkasan", label: "Ringkasan" },
   { key: "serah", label: "Serah Terima" },
   { key: "hasil", label: "Setoran Hasil" },
+  { key: "terima", label: "Penerimaan & Selisih" },
   { key: "upah", label: "Upah" },
   { key: "orang", label: "Orang" },
   { key: "tugas", label: "Tugas & Tarif" },
 ];
 
-export default async function BoronganPage({ searchParams }: { searchParams: Promise<{ tab?: string }> }) {
+export default async function BoronganPage({ searchParams }: { searchParams: Promise<{ tab?: string; dari?: string; sampai?: string }> }) {
   const user = await requirePerm("borongan.view");
   const sp = await searchParams;
   const scope = await boronganScope(prisma, user);
@@ -39,7 +43,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
   const taskFilter = scope.taskIds ? { taskId: { in: scope.taskIds } } : {};
   const tabs = TABS.filter((t) => manage || !["tugas"].includes(t.key))
     .filter((t) => t.key !== "upah" || manage || user.can("borongan.pay"))
-    .filter((t) => !setoranOnly || ["ringkasan", "hasil"].includes(t.key));
+    .filter((t) => !setoranOnly || ["ringkasan", "hasil", "terima"].includes(t.key));
   const tab = tabs.some((t) => t.key === sp.tab) ? sp.tab! : "ringkasan";
 
   const [points, people, tasks, items, banks, pending, balances] = await Promise.all([
@@ -123,7 +127,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
       <PageHeader
         title="Borongan"
         subtitle={canWarehouse(scope) ? "Bahan dikirim lewat driver ke titik borongan, hasil disetor per pekerja, upah dibagi pekerja, koordinator, dan driver" : `Titik ${points.map((p) => p.name).join(", ")}`}
-        actions={<div className="flex flex-wrap gap-2">{sendMaterial}{resultForm}{!setoranOnly && sendBack}</div>}
+        actions={<div className="flex flex-wrap gap-2">{sendMaterial}{!scope.division && resultForm}{!setoranOnly && sendBack}</div>}
       />
       <Tabs current={tab} tabs={tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: x.key === "serah" ? pending.length || undefined : undefined }))} />
 
@@ -136,6 +140,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
         </>
       )}
       {tab === "serah" && <HandoverTab scope={scope} pending={pending} filter={resultFilter} />}
+      {tab === "terima" && <ReceiptTab scope={scope} userId={user.id} from={sp.dari} to={sp.sampai} />}
       {tab === "hasil" && <ResultsTab filter={{ ...resultFilter, ...taskFilter }} scope={scope} userId={user.id} />}
       {tab === "upah" && <WagesTab points={points} banks={banks} canPay={user.can("borongan.pay")} />}
       {tab === "orang" && <PeopleTab people={people} points={points} manage={manage} canLogin={manage} tasks={tasks.filter((t) => t.active).map((t) => ({ id: t.id, name: t.name, division: divisionName.get(t.divisionId ?? "") ?? null }))} />}
@@ -250,8 +255,22 @@ async function WagesTab({ points, banks, canPay }: { points: { id: string; name:
     prisma.boronganSettlement.findMany({ where: { pointId: { in: points.map((p) => p.id) } }, include: { point: true, results: { include: { worker: true, coordinator: true, driver: true } } }, orderBy: { date: "desc" }, take: 30 }),
   ]);
   const t = todayStr();
+  // Peringatan sebelum pelunasan: setoran koordinator (belum dibayar) vs penerimaan divisi berbeda
+  const warn: string[] = [];
+  if (unpaid.length) {
+    const from = unpaid[0].date;
+    const divs = await prisma.division.findMany({ where: { pieceTasks: { some: { active: true, outputItemId: { not: null } } } } });
+    for (const d of divs) warn.push(...diffLines(await receiptDiff(d.id, from, dateOnly(t))).map((l) => `${d.name}: ${l}`));
+  }
   return (
     <div className="space-y-5">
+      {warn.length > 0 && (
+        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+          <div className="mb-1 font-semibold">⚠ Setoran koordinator berbeda dengan penerimaan divisi (sejak setoran belum dibayar tertua)</div>
+          <ul className="list-disc space-y-0.5 pl-5">{warn.map((w) => <li key={w}>{w}</li>)}</ul>
+          <p className="mt-1 text-xs">Upah dihitung dari catatan koordinator. Periksa dulu sebelum melunasi (lihat tab Penerimaan &amp; Selisih).</p>
+        </div>
+      )}
       <div className="grid gap-5 lg:grid-cols-2">
         {points.map((p) => {
           const rs = unpaid.filter((r) => r.pointId === p.id);
@@ -459,3 +478,75 @@ function TasksTab({ tasks, items, divisions }: { tasks: TaskRow[]; items: ItemRo
   );
 }
 
+
+/**
+ * Penerimaan hasil borongan oleh divisi + selisih terhadap setoran koordinator (per barang & per titik).
+ * Pengelola: semua divisi; anggota divisi: divisinya; koordinator: hanya titiknya.
+ */
+async function ReceiptTab({ scope, userId, from, to }: { scope: Scope; userId: string; from?: string; to?: string }) {
+  const isD = (x?: string) => !!x && /^\d{4}-\d{2}-\d{2}$/.test(x);
+  const end = isD(to) ? to! : todayStr();
+  const start = isD(from) ? from! : `${end.slice(0, 8)}01`;
+  const divisions = await prisma.division.findMany({ where: { active: true, pieceTasks: { some: { active: true, outputItemId: { not: null } } }, ...(scope.all || !scope.division ? {} : { id: scope.division.id }) }, orderBy: { code: "asc" } });
+  const pointFilter = (p: { pointId: string }) => scope.all || !!scope.division || scope.pointIds.includes(p.pointId);
+  const f = (n: number) => n.toLocaleString("id-ID");
+  const canAdd = (d: string) => scope.all || scope.division?.id === d;
+  const blocks = await Promise.all(divisions.map(async (d) => ({
+    d,
+    diff: await receiptDiff(d.id, dateOnly(start), dateOnly(end)),
+    receipts: await prisma.boronganReceipt.findMany({ where: { divisionId: d.id, date: { gte: dateOnly(start), lte: dateOnly(end) } }, include: { lines: { include: { item: true, point: true } } }, orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: 50 }),
+  })));
+  return (
+    <div className="space-y-5">
+      <form className="flex flex-wrap items-end gap-2">
+        <input type="hidden" name="tab" value="terima" />
+        <label><span className="label">Dari</span><input type="date" name="dari" defaultValue={start} className="input" /></label>
+        <label><span className="label">Sampai</span><input type="date" name="sampai" defaultValue={end} className="input" /></label>
+        <button className="btn-secondary">Tampilkan</button>
+      </form>
+      <p className="text-sm text-slate-500">Setoran = catatan koordinator per pekerja (dasar upah). Diterima = rekap divisi per barang (masuk gudang). Selisih minus = belum/kurang diterima, plus = diterima lebih dari setoran. Sisa di titik = setoran yang belum diterima (semua tanggal).</p>
+      {blocks.map(({ d, diff, receipts }) => (
+        <Card key={d.id} title={`Divisi ${d.name.replace(/^Divisi /, "")}`} actions={canAdd(d.id) && <Modal trigger="+ Penerimaan" triggerClass="btn-primary btn-sm" title="Penerimaan hasil borongan" subtitle={d.name} wide><ReceiveForm divisionId={d.id} date={todayStr()} /></Modal>}>
+          {diff.length === 0 ? <p className="text-sm text-slate-400">Belum ada tugas dengan barang hasil.</p> : (
+            <div className="table-wrap">
+              <table className="tbl">
+                <thead><tr><th>Barang</th><th className="num">Setoran koordinator</th><th className="num">Diterima divisi</th><th className="num">Selisih</th><th className="num">Sisa di titik</th><th>Per titik</th></tr></thead>
+                <tbody>{diff.map((r) => {
+                  const pts = r.points.filter(pointFilter);
+                  return (
+                    <tr key={r.itemId}>
+                      <td>{r.name}</td>
+                      <td className="num">{f(r.setoran)}{r.setoranReject > 0 && <div className="text-xs text-slate-400">reject {f(r.setoranReject)}</div>}</td>
+                      <td className="num">{f(r.diterima)}{r.rejectDiterima > 0 && <div className="text-xs text-rose-500">reject {f(r.rejectDiterima)}</div>}</td>
+                      <td className="num">{r.selisih === 0 ? <Badge tone="green">✓ 0</Badge> : <Badge tone={r.selisih < 0 ? "amber" : "red"}>{r.selisih > 0 ? "+" : ""}{f(r.selisih)}</Badge>}</td>
+                      <td className="num">{f(r.atPoint)}</td>
+                      <td className="text-xs text-slate-600">{pts.map((p) => `${p.name}: setor ${f(p.setoran)} · terima ${f(p.diterima)}${p.selisih ? ` (${p.selisih > 0 ? "+" : ""}${f(p.selisih)})` : ""}`).join(" | ") || "—"}</td>
+                    </tr>
+                  );
+                })}</tbody>
+              </table>
+            </div>
+          )}
+          {receipts.length > 0 && (
+            <details className="mt-3">
+              <summary className="cursor-pointer text-sm font-medium text-slate-700">Riwayat penerimaan ({receipts.length})</summary>
+              <ul className="mt-2 divide-y divide-slate-100 text-sm">
+                {receipts.map((x) => (
+                  <li key={x.id} className={`flex flex-wrap items-start justify-between gap-2 py-2 ${x.cancelledAt ? "opacity-50" : ""}`}>
+                    <div className="min-w-0">
+                      <p><span className="font-mono text-xs">{x.number}</span> · {fmtDay(x.date)} · {x.createdBy}{x.cancelledAt && <> · <Badge tone="gray">Dibatalkan {x.cancelBy}</Badge></>}</p>
+                      <p className="text-xs text-slate-600">{x.lines.map((l) => `${l.item.name} ${f(Number(l.qty))}${Number(l.reject) ? ` (+reject ${f(Number(l.reject))})` : ""} dari ${l.point.name}`).join(" · ")}</p>
+                    </div>
+                    {!x.cancelledAt && (scope.all || scope.division?.captain || x.createdById === userId) && canAdd(d.id) && (
+                      <ActionForm action={voidDivisionReceipt} confirm="Batalkan penerimaan ini? Barang kembali tercatat di titik."><input type="hidden" name="id" value={x.id} /><Submit className="btn-secondary btn-sm" pendingText="…">Batalkan</Submit></ActionForm>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </Card>
+      ))}
+    </div>
+  );
+}

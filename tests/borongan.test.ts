@@ -53,7 +53,8 @@ describe("Alur borongan tetangga", () => {
     const cat = await saveItemRecord({ name: "Cat Uji Borongan", type: "BAHAN_BAKU", category: "Cat & Pewarna", unit: "botol", hppUnit: "gram", hppFactor: 1000, minStock: 0, price: 50_000, openingQty: 4 }, actor);
     const polos = await saveItemRecord({ name: "Giftbox Polos Uji", type: "BARANG_DALAM_PROSES", category: "Barang Setengah Jadi", unit: "pcs", hppFactor: 1, minStock: 0, price: 1_000, openingQty: 100 }, actor);
     const jadi = await saveItemRecord({ name: "Giftbox Dicat Uji", type: "BARANG_DALAM_PROSES", category: "Barang Setengah Jadi", unit: "pcs", hppFactor: 1, minStock: 0 }, actor);
-    const task = await prisma.pieceTask.update({ where: { code: "ASSEMBLING" }, data: { outputItemId: jadi.id, inputs: { create: [{ itemId: polos.id, qty: 1 }, { itemId: cat.id, qty: 20 }] } } });
+    // Tugas tanpa divisi pencatat: hasil masuk gudang lewat "Kirim hasil ke gudang" (alur lama)
+    const task = await prisma.pieceTask.update({ where: { code: "ASSEMBLING" }, data: { outputItemId: jadi.id, divisionId: null, inputs: { create: [{ itemId: polos.id, qty: 1 }, { itemId: cat.id, qty: 20 }] } } });
 
     const h = await createHandover({ kind: "KIRIM", pointId: bmr.id, driverId: driver.id, lines: [{ itemId: cat.id, qty: 2 }, { itemId: polos.id, qty: 60 }] }, actor);
     const raw = (await prisma.setting.findUniqueOrThrow({ where: { key: "loc_raw" } })).value;

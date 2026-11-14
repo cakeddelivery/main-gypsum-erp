@@ -14,7 +14,9 @@ import { changeOwnPassword, saveOwnEmail } from "./actions";
 
 export const metadata = { title: "Profil" };
 
-export default async function ProfilPage() {
+export default async function ProfilPage({ searchParams }: { searchParams: Promise<{ isi?: string }> }) {
+  // Dari popup pengingat Gmail: form email langsung terbuka
+  const openEmail = (await searchParams).isi === "email";
   const me = await requireUser();
   const u = await prisma.user.findUniqueOrThrow({ where: { id: me.id }, include: { employee: { include: { division: true } }, division: true, telegram: true } });
   const division = u.division?.name ?? u.employee?.division.name;
@@ -36,9 +38,9 @@ export default async function ProfilPage() {
         subtitle="Data akun yang sedang login"
         actions={
           <div className="flex flex-wrap gap-2">
-          <Modal trigger={u.email ? "Ubah email" : "Isi email"} triggerClass="btn-secondary" title="Email akun">
+          <Modal trigger={u.email ? "Ubah email" : "Isi email"} triggerClass="btn-secondary" title="Email akun" defaultOpen={openEmail && !u.email}>
             <ModalForm action={saveOwnEmail} className="space-y-3">
-              <p className="text-xs text-slate-500">Email dipakai untuk menerima link lupa password dan untuk tombol &quot;Masuk dengan Google&quot; (email Google harus sama). Kosongkan untuk menghapus.</p>
+              <p className="text-xs text-slate-500">Isi dengan Gmail Anda. Dipakai untuk menerima link lupa password dan untuk tombol &quot;Masuk dengan Google&quot; (Gmail harus sama). Kosongkan untuk menghapus.</p>
               <Field label="Email"><input type="email" name="email" defaultValue={u.email ?? ""} className="input" autoCapitalize="none" autoComplete="email" placeholder="nama@gmail.com" /></Field>
               <Field label="Password saat ini"><PasswordInput name="current" autoComplete="current-password" required /></Field>
               <Submit>Simpan email</Submit>
