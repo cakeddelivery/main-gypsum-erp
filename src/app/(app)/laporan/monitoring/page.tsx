@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
 import { reportDivision } from "@/lib/reportScope";
@@ -29,6 +30,8 @@ function range(month?: string) {
 
 export default async function MonitoringPage({ searchParams }: { searchParams: Promise<{ bulan?: string }> }) {
   const user = await requirePerm("report.view");
+  // Rekap & monitoring khusus pengelola (Owner/Admin/Supervisor/…); anggota divisi ditolak di server
+  if (reportDivision(user) !== null) redirect("/forbidden");
   const sp = await searchParams;
   const { start, end, label } = range(sp.bulan);
   const fixedDivision = reportDivision(user);

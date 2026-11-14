@@ -1,5 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { prisma } from "./db";
+import { reportDivision } from "./reportScope";
 import { lowStockItems, negativeStock } from "./stock";
 import { addDays, dateOnly, todayStr } from "./time";
 import type { Permission } from "./rbac";
@@ -48,7 +49,7 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
         // Jumlah shift per divisi (Produksi 2, lainnya 1); laporan yang belum dibuat ikut terhitung
         const { unsentReportCount } = await import("./shiftReportStock");
         const missing = await unsentReportCount(yesterday, divisionId);
-        if (missing > 0) out.push({ key: "report", label: "Laporan shift kemarin belum dikirim", count: missing, href: `/laporan?date=${yesterday}`, tone: "amber" });
+        if (missing > 0) out.push({ key: "report", label: "Laporan shift kemarin belum dikirim", count: missing, href: `/laporan?dari=${yesterday}&sampai=${yesterday}`, tone: "amber" });
       })(),
     );
   }
@@ -108,6 +109,14 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
  * puluhan hitungan (termasuk saldo stok seluruh mutasi) — cukup dihitung ulang tiap 30 detik.
  * Dibersihkan lebih awal oleh revalidateTag("alerts") / revalidatePath dari aksi yang mengubah data.
  */
+/**
+ * Divisi untuk peringatan: anggota (kapten/operator/akun tertaut karyawan) hanya divisinya sendiri —
+ * dari User.divisionId, atau divisi data karyawannya. Tanpa divisi → "-" (tidak menghitung semua divisi).
+ */
+export function alertDivision(user: Parameters<typeof reportDivision>[0]) {
+  return reportDivision(user);
+}
+
 export const cachedAlerts = unstable_cache(
   async (perms: string[], divisionId: string | null) => alertsFor((p) => perms.includes(p), divisionId),
   ["alerts-v1"],

@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
 import { reportDivision } from "@/lib/reportScope";
@@ -31,6 +32,8 @@ function range(period: string, date: string) {
 
 export default async function RekapPage({ searchParams }: { searchParams: Promise<{ period?: string; date?: string; shift?: string }> }) {
   const user = await requirePerm("report.view");
+  // Rekap & monitoring khusus pengelola (Owner/Admin/Supervisor/…); anggota divisi ditolak di server
+  if (reportDivision(user) !== null) redirect("/forbidden");
   const sp = await searchParams;
   const period = ["harian", "mingguan", "bulanan"].includes(sp.period ?? "") ? sp.period! : "harian";
   const date = sp.date && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : todayStr();

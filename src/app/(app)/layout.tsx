@@ -4,7 +4,7 @@ import { reportDivision } from "@/lib/reportScope";
 import { todayStr } from "@/lib/time";
 import { ROLE_LABEL } from "@/lib/rbac";
 import { Shell } from "@/components/Shell";
-import { cachedAlerts } from "@/lib/alerts";
+import { alertDivision, cachedAlerts } from "@/lib/alerts";
 import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +22,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, select: { id: true, name: true, startTime: true, endTime: true } }),
       ]).then(([divisions, shifts]) => ({ today: todayStr(), divisions, shifts, auto: scope !== null }))
     : null;
-  const [alerts, reads] = await Promise.all([cachedAlerts([...user.perms].sort(), user.role === "KAPTEN_DIVISI" ? user.divisionId : null), prisma.alertRead.findMany({ where: { userId: user.id } })]);
+  const [alerts, reads] = await Promise.all([cachedAlerts([...user.perms].sort(), alertDivision(user)), prisma.alertRead.findMany({ where: { userId: user.id } })]);
   // Dibaca = sudah dibuka/ditandai dan jumlahnya tidak bertambah sejak itu
   const items = alerts.map((a) => ({ ...a, read: (reads.find((r) => r.key === a.key)?.count ?? -1) >= a.count }));
   const division = user.employee?.division.name ?? null;

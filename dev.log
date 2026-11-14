@@ -1,0 +1,39 @@
+
+> main-gypsum-erp@1.0.0 dev
+> node scripts/copy-ocr.mjs && next dev
+
+OCR disalin ke public/ocr
+   ▲ Next.js 15.5.28
+   - Local:        http://localhost:3000
+   - Network:      http://192.0.2.2:3000
+   - Environments: .env
+   - Experiments (use with caution):
+     · staleTimes
+     · serverActions
+
+ ✓ Starting...
+ ✓ Ready in 1848ms
+ ✓ Compiled /middleware in 296ms (234 modules)
+ ○ Compiling /login ...
+ ✓ Compiled /login in 3.9s (971 modules)
+ GET /login 200 in 4469ms
+ ○ Compiling / ...
+ ✓ Compiled / in 4.2s (3115 modules)
+ GET / 200 in 4743ms
+ POST /login 303 in 5604ms
+ GET / 200 in 98ms
+ ○ Compiling /laporan ...
+ ✓ Compiled /laporan in 836ms (3115 modules)
+ GET /laporan 200 in 1219ms
+ GET /laporan?dari=2026-11-01&sampai=2026-11-14 200 in 57ms
+ ○ Compiling /laporan/rekap ...
+ ✓ Compiled /laporan/rekap in 797ms (3150 modules)
+ GET /laporan/rekap 200 in 1089ms
+ ○ Compiling /forbidden ...
+ ✓ Compiled /forbidden in 696ms (3152 modules)
+ GET /forbidden 200 in 826ms
+ ○ Compiling /laporan/monitoring ...
+ ✓ Compiled /laporan/monitoring in 525ms (3157 modules)
+ GET /laporan/monitoring 200 in 779ms
+ GET /forbidden 200 in 65ms
+ ✓ Compiled in 1810ms (3171 modules)

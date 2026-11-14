@@ -136,6 +136,9 @@ describe("Webhook Telegram", () => {
   });
 
   it("isian bertahap: operator input produksi + reject lewat tombol & teks", async () => {
+    // Bawaan Operator tidak lagi boleh input produksi (hasil kerja lewat Laporan Shift);
+    // izin yang diberikan Owner lewat Hak akses (override) tetap berlaku
+    await prisma.rolePermission.upsert({ where: { role_permission: { role: "OPERATOR", permission: "production.create" } }, create: { role: "OPERATOR", permission: "production.create", allowed: true }, update: { allowed: true } });
     const cb = (data: string, n: number) => post({ update_id: 100 + n, callback_query: { id: `cb${n}`, from: { id: 42 }, data, message: { message_id: 200, chat: { id: 42 } } } });
     const msg = (text: string, n: number) => post({ update_id: 100 + n, message: { message_id: 300 + n, date: Math.floor(Date.now() / 1000), chat: { id: 42 }, from: { id: 42 }, text } });
     const shift = await prisma.shift.findFirstOrThrow({ where: { active: true }, orderBy: { code: "asc" } });
@@ -156,6 +159,7 @@ describe("Webhook Telegram", () => {
     expect(await prisma.botSession.findUnique({ where: { chatId: "42" } })).toBeNull();
     // teks transaksi setelah isian selesai kembali dibaca sebagai transaksi
     expect(await prisma.financeTransaction.count({ where: { telegramChatId: "42", telegramMessageId: "307" } })).toBe(0);
+    await prisma.rolePermission.deleteMany({ where: { role: "OPERATOR", permission: "production.create" } });
   });
 
   it("absen lewat lokasi Telegram: tolak lokasi diteruskan & di luar area, terima di dalam area", async () => {
