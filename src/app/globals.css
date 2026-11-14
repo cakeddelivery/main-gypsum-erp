@@ -371,3 +371,13 @@ button.is-done.btn-secondary { @apply border-emerald-300 text-emerald-700; }
   animation: fade-in 0.15s ease-out 0.1s backwards, spin 0.7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Lembar Panduan divisi: A4 tegak 1240 × 1754 (diunduh 2× = 2480 × 3508 px, 300 dpi) */
+.panduan .doc { width: 1240px; max-width: none; min-height: 1754px; display: flex; flex-direction: column; }
+.panduan .doc-body { flex: 1 1 auto; align-content: start; }
+.panduan .doc-rule { margin: 16px 0 18px; }
+.panduan .doc-head { margin-bottom: 16px; }
+.panduan .doc-foot { margin-top: 14px; }
+.panduan .doc-title { font-size: 46px; }
+.panduan .doc-subtitle { font-size: 24px; }
+.panduan .doc-meta-value { font-size: 20px; font-weight: 700; }

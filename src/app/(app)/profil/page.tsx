@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { ROLE_LABEL } from "@/lib/rbac";
@@ -38,6 +39,7 @@ export default async function ProfilPage({ searchParams }: { searchParams: Promi
         subtitle="Data akun yang sedang login"
         actions={
           <div className="flex flex-wrap gap-2">
+          <Link href="/profil/panduan" className="btn-secondary">📘 Panduan divisi</Link>
           <Modal trigger={u.email ? "Ubah email" : "Isi email"} triggerClass="btn-secondary" title="Email akun" defaultOpen={openEmail && !u.email}>
             <ModalForm action={saveOwnEmail} className="space-y-3">
               <p className="text-xs text-slate-500">Isi dengan Gmail Anda. Dipakai untuk menerima link lupa password dan untuk tombol &quot;Masuk dengan Google&quot; (Gmail harus sama). Kosongkan untuk menghapus.</p>
