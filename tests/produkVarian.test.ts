@@ -51,7 +51,10 @@ describe("Katalog varian (murni)", () => {
     expect((work.pk as unknown[]).length).toBe(2);
     expect(monitorOf("PACKING", work)).toMatchObject({ resi: 10, patung: 48 + 24 + 7 });
     expect(workLines("PACKING", work)).toContain("TOTAL PATUNG: 79 pcs");
-    expect(workLines("PACKING", work).some((l) => l.startsWith("PATUNG MIX (PAKET): 24 pcs · Mix 2 paket (48 patung)"))).toBe(true);
+    // Dikelompokkan per paket: satu baris per grup dengan totalnya
+    expect(workLines("PACKING", work)).toContain("PATUNG MIX (PAKET): TOTAL 72 pcs");
+    expect(workLines("PACKING", work)).toContain("• 24 pcs: Mix 2 (48) · Hewan 1 (24) = 72");
+    expect(workLines("PACKING", work)).toContain("PATUNG SATUAN: TOTAL 7 pcs");
     // Isian lama yang kosong tidak tampil lagi
     expect(workLines("PACKING", work).some((l) => l.startsWith("PATUNG MIX:"))).toBe(false);
     const q = Object.fromEntries(plannedFlow("PACKING", work).map((s) => [s.key, s.qty]));

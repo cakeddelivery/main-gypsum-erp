@@ -1,6 +1,6 @@
 import type { Letterhead } from "@/lib/letterhead";
 import { DocExport, DocSheet, fmtLong } from "@/components/DocSheet";
-import { TEMPLATES, isDone, needsOrder, summaryOf, targetLine, targetOf, workLines, type ChecklistEntry, type ReportTemplate, type StockCountRow, type WorkData } from "@/lib/shiftReport";
+import { TEMPLATES, isDone, needsOrder, summaryOf, targetLine, targetOf, workBlocks, type ChecklistEntry, type ReportTemplate, type StockCountRow, type WorkBlock, type WorkData } from "@/lib/shiftReport";
 
 type Props = {
   id: string;
@@ -34,7 +34,8 @@ export function ReportSheet(p: Props) {
   const photos = p.checklist.filter((c) => c.photoPath).length;
   const order = p.stock.filter(needsOrder);
   const summary = p.template ? summaryOf(p.template, p.work) : [];
-  const lines = p.template ? [...workLines(p.template, p.work), ...(p.extraLines ?? [])] : (p.legacyLines ?? []);
+  const toLine = (text: string): WorkBlock => ({ kind: "line", text });
+  const blocks: WorkBlock[] = p.template ? [...workBlocks(p.template, p.work), ...(p.extraLines ?? []).map(toLine)] : (p.legacyLines ?? []).map(toLine);
   const tgt = p.template ? targetOf(p.template, p.work, p.target) : null;
   const label = p.template ? TEMPLATES[p.template].label : p.division;
   const sum = summary.length > 0 && (
@@ -43,11 +44,12 @@ export function ReportSheet(p: Props) {
       {tgt && <div className={`text-sm font-semibold ${tgt.reached ? "text-[#059669]" : "text-[#dc2626]"}`}>{targetLine(tgt)}</div>}
     </>
   );
-  const body = (
+  // wide = versi JPG (lebar 1000px): grup selalu 3 kolom; di layar 2 kolom di HP, 3 kolom di layar lebar
+  const body = (wide: boolean) => (
     <>
         <Heading tone="blue">Detail hasil kerja</Heading>
-        <div className="space-y-0.5 px-2 text-[13px] leading-relaxed text-[#374151]">
-          {lines.length ? lines.map((l, i) => <div key={i} className="break-words">{l}</div>) : <div className="text-[#9ca3af]">Belum diisi</div>}
+        <div className="space-y-1 px-2 text-[13px] leading-relaxed text-[#374151]">
+          {blocks.length ? blocks.map((b, i) => (b.kind === "line" ? <div key={i} className="break-words">{b.text}</div> : <WorkGroups key={i} b={b} wide={wide} />)) : <div className="text-[#9ca3af]">Belum diisi</div>}
         </div>
 
         <Heading tone="blue">Checklist penutupan {done}/{p.checklist.length}</Heading>
@@ -137,7 +139,7 @@ export function ReportSheet(p: Props) {
             <div className="text-base font-bold sm:text-lg">{p.date} | PIC Divisi: {p.pic}</div>
             {sum}
           </div>
-          {body}
+          {body(false)}
           <div className="pt-4 text-xs text-[#6b7280]">Dibuat dari Laporan Shift • {photos} foto bukti</div>
         </div>
       </div>
@@ -150,11 +152,51 @@ export function ReportSheet(p: Props) {
         >
           <div className="space-y-3 text-[#1f2937]">
             {sum}
-            {body}
+            {body(true)}
           </div>
         </DocSheet>
       </DocExport>
     </>
+  );
+}
+
+/** Bagian katalog (mis. Giftbox, Patung, Patung mix): kartu per Tipe+Paket berisi series, angka, dan total grup */
+function WorkGroups({ b, wide }: { b: Extract<WorkBlock, { kind: "groups" }>; wide: boolean }) {
+  return (
+    <div className="py-1">
+      <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-3 font-bold text-[#1f2937]">
+        <span>{b.title}</span>
+        <span>TOTAL {fmt(b.total)} {b.unit}</span>
+      </div>
+      {b.groups.length === 0 ? (
+        <div className="text-[#9ca3af]">—</div>
+      ) : (
+        <div className={`grid gap-2 ${wide ? "grid-cols-3" : "grid-cols-2 sm:grid-cols-3"}`}>
+          {b.groups.map((g) => (
+            <div key={g.name} className="rounded-md border border-[#e5e7eb] bg-[#ffffff] px-2.5 py-1.5">
+              {g.name && <div className="mb-0.5 text-xs font-bold text-[#1e4f8a]">{g.name}</div>}
+              <table className="w-full">
+                <tbody>
+                  {g.items.map((it) => (
+                    <tr key={it.label}>
+                      <td className="py-px pr-2">{it.label}</td>
+                      <td className="whitespace-nowrap py-px text-right font-semibold tabular-nums">
+                        {it.value == null ? "—" : fmt(it.value)}
+                        {b.showPcs && it.pcs !== it.value && <span className="font-normal text-[#6b7280]"> ({fmt(it.pcs)})</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="mt-1 flex justify-between border-t border-[#e5e7eb] pt-1 text-xs font-bold">
+                <span>Total</span>
+                <span className="tabular-nums">{fmt(g.total)}{b.showPcs ? " patung" : ""}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

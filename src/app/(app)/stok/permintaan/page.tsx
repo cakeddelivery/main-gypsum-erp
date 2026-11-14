@@ -7,6 +7,7 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { decideRequest } from "../actions";
 import { Paged } from "@/components/Paged";
+import { requestWaText, waShareUrl, type WaRequest } from "@/lib/stockRequestWa";
 
 export const metadata = { title: "Permintaan Stok" };
 const TONE = { DIAJUKAN: "amber", DISETUJUI: "blue", DITOLAK: "red", DIPENUHI: "green" } as const;
@@ -18,20 +19,27 @@ export default async function PermintaanPage() {
     prisma.stockRequest.findMany({ where: own, include: { item: { include: { supplier: true } }, division: true }, orderBy: { createdAt: "desc" }, take: 200 }),
     prisma.location.findMany({ orderBy: { code: "asc" } }),
   ]);
+  // Bagikan ke WhatsApp: permintaan yang belum dipenuhi (Diajukan / Disetujui)
+  const wa = (list: typeof reqs) => waShareUrl(requestWaText(list.map((r): WaRequest => ({ qty: Number(r.qty), note: r.note, division: r.division, item: r.item }))));
+  const waiting = reqs.filter((r) => r.status === "DIAJUKAN" || r.status === "DISETUJUI");
   return (
     <div className="space-y-5">
-      <PageHeader title="Permintaan stok" subtitle="Dibuat otomatis saat laporan shift mencatat stok bahan ≤ batas minimum (jumlah = kekurangan + jumlah order biasa). Ditandai Dipenuhi otomatis saat pembelian bahan itu dicatat." />
+      <PageHeader
+        title="Permintaan stok"
+        subtitle="Dibuat otomatis saat laporan shift mencatat stok bahan ≤ batas minimum (jumlah = kekurangan + jumlah order biasa). Ditandai Dipenuhi otomatis saat pembelian bahan itu dicatat."
+        actions={waiting.length > 0 && <a href={wa(waiting)} target="_blank" rel="noopener noreferrer" className="btn-success">Kirim ke WhatsApp ({waiting.length} menunggu)</a>}
+      />
       {reqs.length === 0 ? <Empty title="Belum ada permintaan" /> : (
         <div className="table-wrap">
           <Paged><table className="tbl">
-            <thead><tr><th>Waktu</th><th>Divisi</th><th>Item</th><th className="num">Qty</th><th>Pemohon</th><th>Status</th><th>Catatan</th>{user.can("stock.approve") && <th>Tindakan</th>}</tr></thead>
+            <thead><tr><th>Waktu</th><th>Divisi</th><th>Item</th><th className="num">Qty</th><th>Pemohon</th><th>Status</th><th>Catatan</th>{user.can("stock.approve") && <th>Tindakan</th>}<th>WhatsApp</th></tr></thead>
             <tbody>
               {reqs.map((r) => (
                 <tr key={r.id}>
                   <td>{fmtDateTime(r.createdAt)}</td><td>{r.division.name}</td><td>{r.item.name}{r.auto && <span className="ml-1"><Badge tone="blue">Otomatis</Badge></span>}{r.item.buyMode === "ONLINE" && r.item.productUrl ? <div><a href={r.item.productUrl} target="_blank" rel="noopener noreferrer" className="text-xs font-medium underline">🛒 Order online</a></div> : r.item.supplier && <div className="text-xs text-slate-400">{r.item.supplier.name}</div>}</td><td className="num">{Number(r.qty)} {r.item.unit}</td><td>{r.requestedBy}</td>
                   <td><Badge tone={TONE[r.status]}>{r.status}</Badge>{r.decidedBy && <div className="text-xs text-slate-400">{r.decidedBy}</div>}</td><td className="text-xs">{r.note}</td>
                   {user.can("stock.approve") && (
-                    <td><div className="flex gap-1">
+                    <td><div className="flex flex-wrap gap-1">
                       {r.status === "DIAJUKAN" && (
                         <>
                           <ActionForm action={decideRequest}><input type="hidden" name="id" value={r.id} /><Submit className="btn-success btn-sm" name="decision" value="setujui" pendingText="…">Setujui</Submit></ActionForm>
@@ -50,6 +58,7 @@ export default async function PermintaanPage() {
                       )}
                     </div></td>
                   )}
+                  <td>{(r.status === "DIAJUKAN" || r.status === "DISETUJUI") && <a href={wa([r])} target="_blank" rel="noopener noreferrer" className="btn-secondary btn-sm" aria-label={`Kirim permintaan ${r.item.name} ke WhatsApp`}>Kirim WA</a>}</td>
                 </tr>
               ))}
             </tbody>
