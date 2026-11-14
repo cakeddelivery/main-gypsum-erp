@@ -1,5 +1,6 @@
 /* Data awal Main Gypsum Unified ERP. Jalankan: npm run db:seed (aman diulang / idempoten untuk master). */
 import { PrismaClient, type AccountType, type Role, type ProductionStage } from "@prisma/client";
+import { assignDefaultTaskDivisions } from "../src/lib/taskDivision";
 import bcrypt from "bcryptjs";
 import { applyDivisionSetup } from "../src/lib/divisionSetup";
 
@@ -240,6 +241,8 @@ async function main() {
   }
   // Divisi laporan shift (Produksi, Giftbox, Packing, Assembling) + checklist & bahan baku per divisi
   await applyDivisionSetup(prisma);
+  // Tugas borongan → divisi pencatat setoran (Assembling & Cat Plastik → Assembling, Cat Giftbox → Giftbox)
+  await assignDefaultTaskDivisions(prisma);
   void s1;
   console.log(`Seed selesai. Login: owner / finance / admin / adminprod / adminmp / kapten / content / operator — password: ${process.env.SEED_PASSWORD ? "(SEED_PASSWORD)" : PASSWORD}`);
 }

@@ -53,8 +53,9 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const canEdit = user.can("report.create") && !locked;
   const day = r.date.toISOString().slice(0, 10);
   const lh = await letterhead();
+  const divTasks = await prisma.pieceTask.count({ where: { divisionId: r.divisionId, active: true } });
   const [bLines, flowOn, resultStatus, receipts, pendingReturns] = await Promise.all([
-    boronganLines(template, r.date),
+    boronganLines(template, r.date, r.divisionId),
     flowEnabled(),
     resultCountStatus(r.id),
     prisma.shiftReceipt.findMany({ where: { reportId: r.id }, include: { item: true }, orderBy: { number: "asc" } }),
@@ -140,11 +141,11 @@ export default async function ReportDetail({ params, searchParams }: { params: P
       {canEdit && (
         <div className="space-y-4">
           <Suspense fallback={null}><ClearQuery param="isi" /><ClearQuery param="masuk" /></Suspense>
-          {template === "ASSEMBLING" && (
+          {(template === "ASSEMBLING" || divTasks > 0) && (
             <div className="card p-4 text-sm">
               <h3 className="mb-1 font-semibold text-slate-800">Setoran borongan hari ini</h3>
               {bLines.length ? <ul className="text-slate-600">{bLines.slice(1).map((l) => <li key={l}>{l}</li>)}</ul> : <p className="text-slate-500">Belum ada setoran tercatat untuk tanggal ini.</p>}
-              {user.can("borongan.view") && <Link href="/borongan" className="btn-secondary btn-sm mt-2">Catat setoran / kirim bahan di menu Borongan</Link>}
+              {user.can("borongan.view") && <Link href="/borongan?tab=hasil" className="btn-secondary btn-sm mt-2">+ Catat setoran di menu Borongan</Link>}
             </div>
           )}
           {pendingReturns.length > 0 && (

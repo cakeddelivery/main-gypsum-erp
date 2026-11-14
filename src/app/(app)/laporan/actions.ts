@@ -209,7 +209,7 @@ async function sendReportData(id: string, user: User): Promise<string> {
         ...(tgt ? [tgt.reached ? targetLine(tgt) : `<b>${targetLine(tgt)}</b>`] : []),
         "",
         ...workLines(template, work).map(esc),
-        ...(await boronganLines(template, r.date)).map(esc),
+        ...(await boronganLines(template, r.date, r.divisionId)).map(esc),
         ...(resultStatus ? resultLines(resultStatus).map((l) => (l.includes("⚠") ? `<b>${esc(l)}</b>` : esc(l))) : []),
         ...(receipts.length ? ["", `<b>Barang masuk (${receipts.length})</b>`, ...receipts.map((x) => `• ${esc(x.item.name)}: ${Number(x.qty).toLocaleString("id-ID")} ${esc(x.item.unit)}${x.supplierName ? ` · ${esc(x.supplierName)}` : ""}${x.purchaseId ? "" : " (belum dicatat di Pembelian)"}`)] : []),
         "",

@@ -64,6 +64,7 @@ model Division {
   targets        ProductionTarget[]
   reports        ShiftReport[]
   stockReqs      StockRequest[]
+  pieceTasks     PieceTask[]
   captains       User[]             @relation("DivisionCaptain")
 }
 
@@ -424,6 +425,9 @@ model PieceTask {
   /// Barang hasil kerja (mis. Giftbox Sudah Dicat) yang bertambah di stok titik
   outputItemId    String?
   outputItem      Item?            @relation(fields: [outputItemId], references: [id])
+  /// Divisi yang mencatat setoran tugas ini (anggotanya boleh mencatat/membatalkan setoran); null = hanya pengelola & koordinator
+  divisionId      String?
+  division        Division?        @relation(fields: [divisionId], references: [id])
   active          Boolean          @default(true)
   works           PieceWork[]
   inputs          PieceTaskInput[]
@@ -550,6 +554,8 @@ model BoronganResult {
   note            String?
   settlementId    String?
   settlement      BoronganSettlement? @relation(fields: [settlementId], references: [id])
+  /// Akun yang mencatat (pencatat boleh membatalkan setorannya sendiri selama belum dibayar)
+  createdById     String?
   createdBy       String
   createdAt       DateTime            @default(now())
 
