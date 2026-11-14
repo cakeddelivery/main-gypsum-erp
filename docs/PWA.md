@@ -19,4 +19,25 @@ Aturan service worker:
 - SW hanya didaftarkan pada build produksi (`npm run build`), tidak saat `npm run dev`.
 - Bila `public/sw.js` diubah, naikkan `VERSION` di dalamnya; cache lama dihapus otomatis saat versi baru aktif (skipWaiting + clients.claim).
 
-Nginx tidak perlu diubah: semua permintaan diteruskan ke Next.js yang sudah memberi header yang benar.
+## Pembaruan otomatis setelah deploy
+
+Aplikasi terpasang jarang ditutup, jadi HP bisa terus menjalankan JS lama setelah deploy. Penanganannya:
+
+| Bagian | File |
+|---|---|
+| Versi build (commit + waktu build; bisa ditimpa env `APP_BUILD_ID`) ditanam ke kode & dipakai sebagai build id Next | `next.config.mjs` |
+| Versi server yang sedang jalan (publik, `no-store`) | `src/app/api/version/route.ts` → `/api/version` |
+| Versi halaman yang terbuka | `<meta name="app-build">` di `src/app/layout.tsx` |
+| Logika (versi baru?, error versi lama?, cegah muat ulang berulang, sedang mengisi?) | `src/lib/appVersion.ts` (tes: `tests/appVersion.test.ts`) |
+| Pengecek di HP + pemberitahuan | `src/components/AppUpdater.tsx` (dipasang di root layout) |
+
+- Dicek saat aplikasi dibuka lagi (visibilitychange/focus/pageshow/online), tiap 5 menit selama terlihat, dan saat muncul error versi lama. Setiap cek juga memanggil `registration.update()` service worker.
+- Versi baru + tidak sedang mengisi → langsung dimuat ulang diam-diam.
+- Ada popup terbuka / kolom sedang diketik / form yang sudah diubah → tampil "Versi baru tersedia" (tombol **Muat ulang**), isian tidak dihapus, dan dimuat ulang otomatis begitu popup ditutup. Popup pemberitahuan tanpa isian diberi `data-update-safe` agar tidak menahan pembaruan (pengingat Gmail, pratinjau JPG).
+- `ChunkLoadError` dan "Server Action … was not found" (error karena versi lama) → muat ulang satu kali; muat ulang otomatis paling sering sekali per menit sehingga tidak berulang.
+- Uji manual dua build: `node <skrip uji>` membangun `APP_BUILD_ID=A`, membuka halaman, lalu menjalankan build B; halaman A harus berganti ke B.
+
+Nginx tidak perlu diubah: semua permintaan diteruskan ke Next.js (tanpa proxy_cache) yang sudah memberi header yang benar
+(`/sw.js` no-store, `/manifest.webmanifest` no-cache, `/api/version` no-store).
+Cloudflare bawaan menghormati header itu dan tidak menyimpan HTML. Bila suatu saat dibuat Cache Rule "Cache Everything",
+tambahkan pengecualian (Bypass cache) untuk path `/sw.js`, `/manifest.webmanifest`, dan `/api/`.

@@ -91,6 +91,7 @@ export function DownloadJpg({ targetId, filename, autoOpen, label = "⬇ Unduh J
       </button>
       <dialog
         ref={ref}
+        data-update-safe
         data-closing={closing || undefined}
         onClose={() => setUrl(null)}
         onCancel={(e) => {

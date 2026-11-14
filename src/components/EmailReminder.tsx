@@ -39,6 +39,7 @@ export function EmailReminder() {
   return (
     <dialog
       ref={ref}
+      data-update-safe
       data-closing={closing || undefined}
       onCancel={(e) => {
         e.preventDefault();
