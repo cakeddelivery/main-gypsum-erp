@@ -20,7 +20,7 @@ export type DuplicateGroup = { kind: "SUMBER" | "PENJUALAN_WD"; source: string; 
 export async function activeDuplicateJournals(db: Pick<PrismaClient, "journal" | "coaAccount">, start: Date): Promise<DuplicateGroup[]> {
   const rows = await db.journal.findMany({
     where: { sourceId: { not: null }, reversalOfId: null, date: { gte: start }, source: { in: SINGLE } },
-    select: { id: true, number: true, source: true, sourceId: true, lines: { select: { accountId: true, credit: true } } },
+    select: { id: true, number: true, source: true, sourceId: true, description: true, lines: { select: { accountId: true, credit: true } } },
     orderBy: { number: "asc" },
   });
   const reversed = new Set(
@@ -29,7 +29,9 @@ export async function activeDuplicateJournals(db: Pick<PrismaClient, "journal" |
   const active = rows.filter((r) => !reversed.has(r.id));
   const out: DuplicateGroup[] = [];
   const bySource = new Map<string, typeof active>();
-  for (const r of active) bySource.set(`${r.source}|${r.sourceId}`, [...(bySource.get(`${r.source}|${r.sourceId}`) ?? []), r]);
+  // Pesanan pembelian: jurnal DP pesanan dan jurnal "Sisa pesanan … tidak datang" (Tutup pesanan) memang dua jurnal
+  const keyOf = (r: (typeof active)[number]) => `${r.source}|${r.sourceId}${r.source === "PEMBELIAN" && r.description.startsWith("Sisa pesanan") ? ":TUTUP" : ""}`;
+  for (const r of active) bySource.set(keyOf(r), [...(bySource.get(keyOf(r)) ?? []), r]);
   for (const g of bySource.values()) if (g.length > 1) out.push({ kind: "SUMBER", source: g[0].source, sourceId: g[0].sourceId!, numbers: g.map((r) => r.number) });
 
   const sales = await db.coaAccount.findUnique({ where: { code: COA.PENJUALAN }, select: { id: true } });

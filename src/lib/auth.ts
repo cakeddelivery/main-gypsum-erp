@@ -8,6 +8,7 @@ import { prisma } from "./db";
 import { effectivePermissions, type Permission } from "./rbac";
 import { audit } from "./audit";
 import { checkLogin, ipFromHeaders } from "./loginGuard";
+import { resignEffective } from "./time";
 
 import { SESSION_COOKIE, sessionCookieOptions, sessionSecret as secret, signSession } from "./session";
 
@@ -63,6 +64,8 @@ export async function loadUser(userId: string, sv = 0) {
     include: { employee: { include: { division: true } }, division: true },
   });
   if (!user || !user.active || user.sessionVersion !== sv) return null;
+  // Tanggal resign sudah tiba: akses berhenti hari itu juga (job 06.00 lalu mematikan akunnya)
+  if (resignEffective(user.employee?.resignDate)) return null;
   const overrides = await prisma.rolePermission.findMany({ where: { role: user.role } });
   const perms = effectivePermissions(user.role, overrides);
   // Kapten Assembling ikut mengurus borongan (kirim bahan, setoran, terima hasil); anggota divisi (Kapten/Operator) yang
