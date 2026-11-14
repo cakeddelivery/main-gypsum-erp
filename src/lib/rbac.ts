@@ -68,7 +68,9 @@ export const PERMISSIONS = {
 export type Permission = keyof typeof PERMISSIONS;
 export const ALL_PERMISSIONS = Object.keys(PERMISSIONS) as Permission[];
 
-const OPERATOR_BASE: Permission[] = ["dashboard.view", "production.view", "production.create", "attendance.self", "attendance.view", "payroll.self", "stock.request", "report.view"];
+// Anggota (Operator/Kapten) tidak lagi input hasil produksi sendiri: hasil kerja dicatat lewat Laporan Shift
+// (semua karyawan bergaji bulanan). Override yang tersimpan di Hak akses tetap berlaku.
+const OPERATOR_BASE: Permission[] = ["dashboard.view", "production.view", "attendance.self", "attendance.view", "payroll.self", "stock.request", "report.view"];
 
 export const DEFAULT_MATRIX: Record<Role, Permission[]> = {
   OWNER: ALL_PERMISSIONS,

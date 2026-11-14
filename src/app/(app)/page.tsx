@@ -2,7 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requirePerm, requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { cachedAlerts, type Alert } from "@/lib/alerts";
+import { alertDivision, cachedAlerts, type Alert } from "@/lib/alerts";
 import { productionSummary, productionTrend, productivity, financeMonth, financeTrend, salesByStore } from "@/lib/dashboard";
 import { bankBalances } from "@/lib/finance";
 import { idr } from "@/lib/money";
@@ -30,11 +30,12 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const scope = isOperator ? { employeeId: user.employeeId ?? "__none__" } : isCaptain ? { divisionId: user.divisionId } : {};
   const showFinance = user.can("dashboard.finance");
   const showProduction = user.can("production.view");
+  const canInput = user.can("production.create");
   const stores = await prisma.store.findMany({ orderBy: { code: "asc" } });
   const storeId = sp.store && stores.some((s) => s.id === sp.store) ? sp.store : null;
 
   const [alerts, prod, trend, people, fin, finTrend, banks, sales, attendance] = await Promise.all([
-    cachedAlerts([...user.perms].sort(), isCaptain ? user.divisionId : null),
+    cachedAlerts([...user.perms].sort(), alertDivision(user)),
     showProduction ? productionSummary(today, scope) : null,
     showProduction ? productionTrend(14, scope) : null,
     showProduction && !isOperator ? productivity(today, isCaptain ? user.divisionId : null) : null,
@@ -82,9 +83,10 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       {(isOperator || isCaptain || role === "PIC_CONTENT") && user.employeeId && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="Absensi hari ini" value={attendance ? ATT_LABEL[attendance.status] : "Belum absen"} tone={attendance ? (attendance.status === "TERLAMBAT" ? "amber" : "green") : "red"} hint={attendance ? attendance.shift.name : "Ketuk untuk absen"} href="/absensi" />
-          {prod && <Stat label="Hasil saya hari ini" value={`${prod.good} pcs`} hint={prod.target ? `Target ${prod.target}` : undefined} tone="blue" href="/produksi" />}
-          {prod && <Stat label="Reject" value={`${prod.reject} pcs`} hint={`${prod.rejectRate}%`} tone={prod.reject ? "red" : "slate"} />}
-          <Link href="/produksi?baru=1" className="card flex items-center justify-center p-4 text-center text-sm font-semibold text-brand-700 hover:bg-brand-50">+ Input hasil produksi</Link>
+          {/* Hasil pribadi & tombol input hanya bila akun masih boleh input hasil produksi (izin production.create) */}
+          {prod && canInput && <Stat label="Hasil saya hari ini" value={`${prod.good} pcs`} hint={prod.target ? `Target ${prod.target}` : undefined} tone="blue" href="/produksi" />}
+          {prod && canInput && <Stat label="Reject" value={`${prod.reject} pcs`} hint={`${prod.rejectRate}%`} tone={prod.reject ? "red" : "slate"} />}
+          {canInput && <Link href="/produksi?baru=1" className="card flex items-center justify-center p-4 text-center text-sm font-semibold text-brand-700 hover:bg-brand-50">+ Input hasil produksi</Link>}
         </div>
       )}
 
@@ -111,7 +113,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       )}
 
       <div className="grid gap-5 lg:grid-cols-2">
-        {trend && (
+        {/* Operator tanpa input produksi: tren hasil pribadi selalu kosong → tidak ditampilkan */}
+        {trend && !(isOperator && !canInput) && (
           <Card title="Tren produksi 14 hari">
             <BarsChart data={trend} series={[{ key: "hasil", label: "Hasil", color: "#2f6fde" }, { key: "reject", label: "Reject", color: "#e11d48" }]} />
           </Card>

@@ -19,3 +19,13 @@ describe("Laporan shift: karyawan hanya divisinya sendiri", () => {
     expect(reportDivision({ role: "PIC_CONTENT", divisionId: null, employeeId: null })).toBeNull();
   });
 });
+
+import { effectivePermissions } from "@/lib/rbac";
+describe("Anggota tidak input hasil produksi sendiri", () => {
+  it("bawaan Operator & Kapten tanpa production.create; override Owner tetap berlaku", () => {
+    expect(effectivePermissions("OPERATOR", []).has("production.create")).toBe(false);
+    expect(effectivePermissions("KAPTEN_DIVISI", []).has("production.create")).toBe(false);
+    expect(effectivePermissions("SUPERVISOR", []).has("production.create")).toBe(true);
+    expect(effectivePermissions("OPERATOR", [{ role: "OPERATOR", permission: "production.create", allowed: true }] as never).has("production.create")).toBe(true);
+  });
+});
