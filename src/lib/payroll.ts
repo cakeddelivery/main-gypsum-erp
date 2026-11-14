@@ -654,3 +654,19 @@ export async function cancelAdvance(advanceId: string, reason: string, actor: Ac
     await audit(actor, "KASBON_DIBATALKAN", "CashAdvance", advanceId, { number: a.number, reason }, tx);
   });
 }
+
+/**
+ * Resign yang dijadwalkan (tanggal resign di masa depan saat dicatat) diterapkan saat tanggalnya tiba:
+ * status karyawan Nonaktif dan akun loginnya dimatikan. Dijalankan job harian 06.00 (aman diulang).
+ */
+export async function applyDueResignations(now: Date = new Date()) {
+  const due = await prisma.employee.findMany({ where: { resignDate: { lte: dateOnly(todayStr(now)) }, OR: [{ status: { not: "NONAKTIF" } }, { user: { is: { active: true } } }] }, select: { id: true, name: true, resignDate: true } });
+  for (const e of due) {
+    await prisma.$transaction(async (tx) => {
+      await tx.employee.update({ where: { id: e.id }, data: { status: "NONAKTIF" } });
+      await tx.user.updateMany({ where: { employeeId: e.id }, data: { active: false } });
+      await audit({ id: "system", name: "Sistem (terjadwal)" }, "KARYAWAN_RESIGN_BERLAKU", "Employee", e.id, { resignDate: dateStr(e.resignDate!) }, tx);
+    });
+  }
+  return { applied: due.map((e) => e.name) };
+}

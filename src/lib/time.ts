@@ -89,3 +89,8 @@ export function toMinutes(hhmm: string): number {
 }
 
 export const MONTHS = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+
+/** Tanggal resign (kolom @db.Date) sudah tiba (hari ini WIB atau sebelumnya): akses karyawan berhenti */
+export function resignEffective(resignDate: Date | null | undefined, now: Date = new Date()) {
+  return !!resignDate && dateStr(resignDate) <= todayStr(now);
+}

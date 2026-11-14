@@ -1,3 +1,4 @@
+import { AUTO_NOTE } from "@/lib/attendanceAuto";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { addDays, dateOnly, fmtDateTime, fmtDay, todayStr } from "@/lib/time";
@@ -191,7 +192,7 @@ async function Validation({ divFilter }: { divFilter: object }) {
           <thead><tr><th /><th>Tanggal</th><th>Karyawan</th><th>Shift</th><th>Status</th><th>Masuk</th></tr></thead>
           <tbody>
             {rows.map((a) => (
-              <tr key={a.id}><td><input type="checkbox" name="ids" value={a.id} defaultChecked className="h-4 w-4" /></td><td>{fmtDay(a.date)}</td><td>{a.employee.name}</td><td>{a.shift.name}</td><td><Badge tone={TONE[a.status]}>{ATT_LABEL[a.status]}{a.lateMinutes > 0 && ` ${a.lateMinutes}m`}</Badge></td><td>{fmtDateTime(a.checkIn)}</td></tr>
+              <tr key={a.id}><td><input type="checkbox" name="ids" value={a.id} defaultChecked={a.note !== AUTO_NOTE} className="h-4 w-4" /></td><td>{fmtDay(a.date)}</td><td>{a.employee.name}{a.note === AUTO_NOTE && <div className="text-xs text-rose-600">Tanpa keterangan: ubah jadi Libur/Izin/Sakit lewat Atur absensi, atau centang untuk dihitung tidak masuk</div>}</td><td>{a.shift.name}</td><td><Badge tone={TONE[a.status]}>{ATT_LABEL[a.status]}{a.lateMinutes > 0 && ` ${a.lateMinutes}m`}</Badge></td><td>{fmtDateTime(a.checkIn)}</td></tr>
             ))}
           </tbody>
         </table></Paged>

@@ -1,3 +1,4 @@
+import { resignEffective } from "./time";
 import { prisma } from "./db";
 import { effectivePermissions } from "./rbac";
 import { DEFAULT_MANAGER_NAMES, detectManagerLoan, extractDate, extractTransaction, hasExplicitAmount, matchStore, mergeReceipt } from "./extract";
@@ -56,8 +57,8 @@ type TgUpdate = {
 };
 
 async function identityOf(tgId: number) {
-  const ident = await prisma.telegramIdentity.findUnique({ where: { telegramUserId: String(tgId) }, include: { user: true } });
-  if (!ident || !ident.active || !ident.user.active) return null;
+  const ident = await prisma.telegramIdentity.findUnique({ where: { telegramUserId: String(tgId) }, include: { user: { include: { employee: { select: { resignDate: true } } } } } });
+  if (!ident || !ident.active || !ident.user.active || resignEffective(ident.user.employee?.resignDate)) return null;
   const overrides = await prisma.rolePermission.findMany({ where: { role: ident.user.role } });
   const perms = effectivePermissions(ident.user.role, overrides);
   return { ...ident, perms };
