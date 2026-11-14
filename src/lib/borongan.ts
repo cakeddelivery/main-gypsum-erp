@@ -218,7 +218,7 @@ async function defaultStore(db: DB) {
   return s.value;
 }
 
-export type ResultInput = { pointId: string; workerId: string; taskId: string; date: Date; qty: number; note?: string | null };
+export type ResultInput = { pointId: string; workerId: string; taskId: string; date: Date; qty: number; reject?: number; note?: string | null };
 
 /**
  * Catat hasil kerja satu pekerja:
@@ -245,12 +245,18 @@ export async function recordResults(inputs: ResultInput[], actor: Actor, scope: 
 
 async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: Scope) {
   assertPoint(scope, input.pointId);
-  if (!Number.isInteger(input.qty) || input.qty <= 0) throw new BoronganError("Jumlah hasil harus bilangan bulat lebih dari 0");
+  const reject = input.reject ?? 0;
+  if (!Number.isInteger(input.qty) || input.qty < 0 || !Number.isInteger(reject) || reject < 0) throw new BoronganError("Jumlah bagus dan reject harus bilangan bulat, tidak minus");
+  if (input.qty + reject <= 0) throw new BoronganError("Isi jumlah bagus atau reject lebih dari 0");
+  // Bahan terpakai untuk patung bagus + reject
+  const made = input.qty + reject;
   {
     const point = await tx.boronganPoint.findUniqueOrThrow({ where: { id: input.pointId } });
     const worker = await tx.boronganPerson.findUniqueOrThrow({ where: { id: input.workerId } });
     if (worker.role !== "PEKERJA" || worker.pointId !== point.id || !worker.active) throw new BoronganError("Pekerja tidak terdaftar aktif di titik ini");
     const task = await tx.pieceTask.findUniqueOrThrow({ where: { id: input.taskId }, include: { inputs: { include: { item: true } }, outputItem: true } });
+    // Pekerja yang sudah diatur jenis pekerjaannya hanya boleh disetor untuk tugas itu ("tidak salah kamar")
+    if (worker.taskIds.length && !worker.taskIds.includes(task.id)) throw new BoronganError(`${worker.name} tidak mengerjakan ${task.name}`);
     if (!task.active) throw new BoronganError("Tugas ini sudah nonaktif");
     if (!canTask(scope, task.id)) throw new BoronganError(`Setoran ${task.name} dicatat oleh divisi lain`);
     const cfg = (await pointConfig(tx))[point.id];
@@ -264,7 +270,7 @@ async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: S
     const r = await tx.boronganResult.create({
       data: {
         number, pointId: point.id, workerId: worker.id, coordinatorId: coordinator?.id ?? null, driverId: driver?.id ?? null, taskId: task.id,
-        date: input.date, qty: input.qty, workerRate: BigInt(split.workerRate), coordinatorRate: BigInt(split.coordinatorRate), driverRate: BigInt(split.driverRate),
+        date: input.date, qty: input.qty, reject, workerRate: BigInt(split.workerRate), coordinatorRate: BigInt(split.coordinatorRate), driverRate: BigInt(split.driverRate),
         note: input.note ?? null, createdBy: actor.name, createdById: actor.id,
       },
     });
@@ -278,28 +284,35 @@ async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: S
       const per = bomStockQty(inp.qty, inp.item);
       if (per <= 0) continue;
       const avail = await qtyAt(tx, inp.itemId, point.locationId);
-      if (per * input.qty > avail + 1e-6) {
+      if (per * made > avail + 1e-6) {
         const cukup = Math.max(0, Math.floor((avail + 1e-6) / per));
-        throw new BoronganError(`Bahan ${inp.item.name} di ${point.name} tinggal ${Number(avail.toFixed(3)).toLocaleString("id-ID")} ${inp.item.unit}, cukup untuk ${cukup} pcs (${worker.name} ${input.qty} pcs). Kirim bahan dulu lewat serah terima.`);
+        throw new BoronganError(`Bahan ${inp.item.name} di ${point.name} tinggal ${Number(avail.toFixed(3)).toLocaleString("id-ID")} ${inp.item.unit}, cukup untuk ${cukup} pcs (${worker.name} ${made} pcs termasuk reject). Kirim bahan dulu lewat serah terima.`);
       }
     }
+    const rejByType = new Map<ItemType, number>();
     for (const inp of task.inputs) {
-      const q = bomStockQty(inp.qty, inp.item) * input.qty;
+      const q = bomStockQty(inp.qty, inp.item) * made;
       if (q <= 0) continue;
-      await recordMovement(tx, { type: "KONSUMSI_PRODUKSI", itemId: inp.itemId, qty: q, fromLocationId: point.locationId, ref: `HSB:${r.id}`, note: `${task.name} ${worker.name}`, date: when }, actor);
+      await recordMovement(tx, { type: "KONSUMSI_PRODUKSI", itemId: inp.itemId, qty: q, fromLocationId: point.locationId, ref: `HSB:${r.id}`, note: `${task.name} ${worker.name}${reject ? ` (reject ${reject})` : ""}`, date: when }, actor);
       const v = Math.round(q * Number(inp.item.avgCost));
-      material += v;
-      byType.set(inp.item.type, (byType.get(inp.item.type) ?? 0) + v);
+      // Bagian bahan untuk patung reject dibebankan, sisanya menjadi nilai barang hasil
+      const vRej = Math.round((v * reject) / made);
+      material += v - vRej;
+      byType.set(inp.item.type, (byType.get(inp.item.type) ?? 0) + v - vRej);
+      if (vRej > 0) rejByType.set(inp.item.type, (rejByType.get(inp.item.type) ?? 0) + vRej);
     }
-    if (task.outputItemId) {
+    if (task.outputItemId && input.qty > 0) {
       await recordMovement(tx, { type: "HASIL_PRODUKSI", itemId: task.outputItemId, qty: input.qty, toLocationId: point.locationId, unitCost: Math.round(material / input.qty), ref: `HSB:${r.id}`, note: `${task.name} ${worker.name}`, date: when }, actor);
     }
-    // Nilai bahan pindah dari akun persediaan bahan ke akun persediaan barang hasil
-    const lines = [...byType].filter(([t, v]) => t !== outType && v > 0).flatMap(([t, v]) => [{ accountCode: INVENTORY_COA[outType], debit: v }, { accountCode: INVENTORY_COA[t], credit: v }]);
+    // Nilai bahan pindah dari akun persediaan bahan ke akun persediaan barang hasil; bahan reject jadi beban
+    const lines = [
+      ...[...byType].filter(([t, v]) => t !== outType && v > 0).flatMap(([t, v]) => [{ accountCode: INVENTORY_COA[outType], debit: v }, { accountCode: INVENTORY_COA[t], credit: v }]),
+      ...[...rejByType].flatMap(([t, v]) => [{ accountCode: COA.BEBAN_SELISIH_PERSEDIAAN, debit: v, memo: `Reject borongan ${reject} pcs` }, { accountCode: INVENTORY_COA[t], credit: v }]),
+    ];
     if (lines.length) {
-      await postJournal(tx, { date: when, storeId: await defaultStore(tx), description: `Borongan ${point.name}: ${task.name} × ${input.qty} (${worker.name})`, source: "BORONGAN", sourceId: r.id, actor, lines });
+      await postJournal(tx, { date: when, storeId: await defaultStore(tx), description: `Borongan ${point.name}: ${task.name} × ${input.qty}${reject ? ` + reject ${reject}` : ""} (${worker.name})`, source: "BORONGAN", sourceId: r.id, actor, lines });
     }
-    await audit(actor, "HASIL_BORONGAN", "BoronganResult", r.id, { number, point: point.code, worker: worker.name, task: task.code, qty: input.qty }, tx);
+    await audit(actor, "HASIL_BORONGAN", "BoronganResult", r.id, { number, point: point.code, worker: worker.name, task: task.code, qty: input.qty, reject }, tx);
     return r;
   }
 }
@@ -320,7 +333,7 @@ export async function deleteResult(id: string, actor: Actor, scope: Scope) {
     const journals = await tx.journal.findMany({ where: { source: "BORONGAN", sourceId: id, reversalOfId: null } });
     for (const j of journals) await reverseJournal(tx, j.id, new Date(), actor, "Setoran borongan dihapus");
     await tx.boronganResult.delete({ where: { id } });
-    await audit(actor, "HASIL_BORONGAN_DIHAPUS", "BoronganResult", id, { number: r.number, task: r.task.name, qty: r.qty, pencatat: r.createdBy }, tx);
+    await audit(actor, "HASIL_BORONGAN_DIHAPUS", "BoronganResult", id, { number: r.number, task: r.task.name, qty: r.qty, reject: r.reject, pencatat: r.createdBy }, tx);
   });
 }
 
@@ -411,7 +424,7 @@ export async function cancelSettlement(id: string, reason: string, actor: Actor,
 
 // ---------------- ORANG ----------------
 
-export type PersonInput = { id?: string | null; name: string; phone?: string | null; role: BoronganRole; pointId?: string | null; active?: boolean; note?: string | null };
+export type PersonInput = { id?: string | null; name: string; phone?: string | null; role: BoronganRole; pointId?: string | null; active?: boolean; note?: string | null; taskIds?: string[] };
 
 /** Koordinator hanya boleh menambah/mengubah pekerja di titiknya sendiri */
 export async function savePerson(input: PersonInput, actor: Actor, scope: Scope) {
@@ -424,7 +437,13 @@ export async function savePerson(input: PersonInput, actor: Actor, scope: Scope)
     if (input.role !== "PEKERJA") throw new BoronganError("Koordinator hanya bisa menambah pekerja");
     assertPoint(scope, pointId!);
   }
-  const data = { name, phone: input.phone || null, role: input.role, pointId, active: input.active ?? true, note: input.note || null };
+  // Jenis pekerjaan hanya untuk pekerja (koordinator/driver dibayar dari semua tugas titiknya)
+  const taskIds = input.role === "PEKERJA" ? [...new Set(input.taskIds ?? [])] : [];
+  if (taskIds.length) {
+    const ok = await prisma.pieceTask.count({ where: { id: { in: taskIds } } });
+    if (ok !== taskIds.length) throw new BoronganError("Jenis pekerjaan tidak dikenal");
+  }
+  const data = { name, phone: input.phone || null, role: input.role, pointId, active: input.active ?? true, note: input.note || null, ...(input.taskIds ? { taskIds } : {}) };
   // Pekerja baru dari koordinator menunggu persetujuan pengelola (diaktifkan pengelola), agar upah tidak dibayar ke nama fiktif
   if (!scope.all && !input.id) data.active = false;
   if (input.id) {
@@ -456,4 +475,30 @@ export async function removePerson(id: string, actor: Actor, scope: Scope) {
   await prisma.boronganPerson.delete({ where: { id } });
   await audit(actor, "ORANG_BORONGAN_DIHAPUS", "BoronganPerson", id, { name: p.name });
   return "dihapus" as const;
+}
+
+/**
+ * Sisa bahan di titik dalam satuan pcs per tugas: berapa patung (bagus + reject) lagi yang masih bisa disetor.
+ * null = tugas tanpa resep bahan (tidak dibatasi).
+ */
+export async function pointCapacity(points: { id: string; locationId: string }[], taskIds: string[]) {
+  const tasks = await prisma.pieceTask.findMany({ where: { id: { in: taskIds } }, include: { inputs: { include: { item: true } } } });
+  const out: Record<string, Record<string, number | null>> = {};
+  const cache = new Map<string, number>();
+  for (const p of points) {
+    out[p.id] = {};
+    for (const t of tasks) {
+      let cap: number | null = null;
+      for (const inp of t.inputs) {
+        const per = bomStockQty(inp.qty, inp.item);
+        if (per <= 0) continue;
+        const k = `${inp.itemId}:${p.locationId}`;
+        if (!cache.has(k)) cache.set(k, await qtyAt(prisma, inp.itemId, p.locationId));
+        const n = Math.max(0, Math.floor((cache.get(k)! + 1e-6) / per));
+        cap = cap === null ? n : Math.min(cap, n);
+      }
+      out[p.id][t.id] = cap;
+    }
+  }
+  return out;
 }

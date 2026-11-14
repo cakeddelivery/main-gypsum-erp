@@ -5,7 +5,7 @@ import { idr } from "@/lib/money";
 import { fmtDay, todayStr } from "@/lib/time";
 import { stockBalances } from "@/lib/stock";
 import { recipeUnit } from "@/lib/unitcost";
-import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, canTask, canWarehouse, isSetoranOnly, payLines, resultShares } from "@/lib/borongan";
+import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, canTask, canWarehouse, isSetoranOnly, payLines, pointCapacity, resultShares } from "@/lib/borongan";
 import { Badge, Card, Empty, Field, PageHeader, Tabs } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
@@ -66,6 +66,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
   for (const b of balances) if (!points.some((p) => p.locationId === b.locationId)) warehouseStock.set(b.itemId, (warehouseStock.get(b.itemId) ?? 0) + b.qty);
   const activeTasks = tasks.filter((t) => t.active && canTask(scope, t.id));
   const divisions = manage ? await prisma.division.findMany({ where: { active: true }, orderBy: { code: "asc" }, select: { id: true, name: true } }) : [];
+  const divisionName = new Map((await prisma.division.findMany({ select: { id: true, name: true } })).map((d) => [d.id, d.name]));
   const workers = people.filter((p) => p.role === "PEKERJA" && p.active && p.pointId);
   const drivers = people.filter((p) => p.role === "DRIVER" && p.active);
   const t = todayStr();
@@ -106,7 +107,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
   const resultForm = (
     <Modal trigger="+ Setoran Hasil" title="Catat setoran hasil kerja" wide>
       <ModalForm action={addResults} className="space-y-3">
-        <ResultRows pointTasks={Object.fromEntries(Object.entries(cfg).map(([k, v]) => [k, v.tasks]))} points={points.map((p) => ({ id: p.id, name: p.name }))} workers={workers.map((w) => ({ id: w.id, name: w.name, pointId: w.pointId! }))} tasks={activeTasks.map((x) => ({ id: x.id, name: x.name, workerRate: Number(x.workerRate), coordinatorRate: Number(x.coordinatorRate), driverRate: Number(x.driverRate) }))} />
+        <ResultRows pointTasks={Object.fromEntries(Object.entries(cfg).map(([k, v]) => [k, v.tasks]))} points={points.map((p) => ({ id: p.id, name: p.name }))} workers={workers.map((w) => ({ id: w.id, name: w.name, pointId: w.pointId!, taskIds: w.taskIds }))} capacity={await pointCapacity(points, activeTasks.map((x) => x.id))} tasks={activeTasks.map((x) => ({ id: x.id, name: x.name, workerRate: Number(x.workerRate), coordinatorRate: Number(x.coordinatorRate), driverRate: Number(x.driverRate) }))} />
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Tanggal"><input type="date" name="date" defaultValue={t} className="input" /></Field>
           <Field label="Catatan"><input name="note" className="input" /></Field>
@@ -137,7 +138,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
       {tab === "serah" && <HandoverTab scope={scope} pending={pending} filter={resultFilter} />}
       {tab === "hasil" && <ResultsTab filter={{ ...resultFilter, ...taskFilter }} scope={scope} userId={user.id} />}
       {tab === "upah" && <WagesTab points={points} banks={banks} canPay={user.can("borongan.pay")} />}
-      {tab === "orang" && <PeopleTab people={people} points={points} manage={manage} canLogin={manage} />}
+      {tab === "orang" && <PeopleTab people={people} points={points} manage={manage} canLogin={manage} tasks={tasks.filter((t) => t.active).map((t) => ({ id: t.id, name: t.name, division: divisionName.get(t.divisionId ?? "") ?? null }))} />}
       {tab === "tugas" && manage && <TasksTab tasks={tasks} items={items} divisions={divisions} />}
     </div>
   );
@@ -181,7 +182,7 @@ function PointCard({ point, stock, people }: { point: { name: string }; stock: {
   return (
     <Card title={`Titik ${point.name}`}>
       <p className="text-sm text-slate-600">Koordinator: <b>{coord.map((c) => c.name).join(", ") || "belum ada"}</b> · {workers.length} pekerja aktif</p>
-      <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Stok di titik</p>
+      <p className="mt-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Sisa bahan &amp; barang di titik</p>
       {stock.length === 0 ? <p className="text-sm text-slate-400">Kosong</p> : (
         <ul className="divide-y divide-slate-100 text-sm">
           {stock.map((s) => <li key={s.itemId} className="flex justify-between py-1"><span>{s.item!.name}</span><span className={`tabular-nums ${s.qty < 0 ? "font-semibold text-rose-600" : ""}`}>{(Math.round(s.qty * 1000) / 1000).toLocaleString("id-ID")} {s.item!.unit}</span></li>)}
@@ -224,13 +225,13 @@ async function ResultsTab({ filter, scope, userId }: { filter: object; scope: Sc
     <Card title="Setoran hasil kerja">
       {rows.length === 0 ? <Empty title="Belum ada setoran" /> : (
         <Paged><table className="tbl">
-          <thead><tr><th>Tanggal</th><th>Titik</th><th>Pekerja</th><th>Tugas</th><th className="num">Pcs</th><th className="num">Upah Pekerja</th><th className="num">Total Budget</th><th>Status</th><th>Dicatat</th><th /></tr></thead>
+          <thead><tr><th>Tanggal</th><th>Titik</th><th>Pekerja</th><th>Tugas</th><th className="num">Bagus</th><th className="num">Reject</th><th className="num">Upah Pekerja</th><th className="num">Total Budget</th><th>Status</th><th>Dicatat</th><th /></tr></thead>
           <tbody>{rows.map((r) => {
             const s = resultShares(r.qty, { workerRate: Number(r.workerRate), coordinatorRate: Number(r.coordinatorRate), driverRate: Number(r.driverRate) });
             return (
               <tr key={r.id}>
                 <td>{fmtDay(r.date)}</td><td>{r.point.name}</td><td>{r.worker.name}</td><td>{r.task.name}</td>
-                <td className="num">{r.qty.toLocaleString("id-ID")}</td><td className="num">{idr(s.worker)}</td><td className="num">{idr(s.total)}</td>
+                <td className="num">{r.qty.toLocaleString("id-ID")}</td><td className={`num ${r.reject ? "text-rose-600" : "text-slate-400"}`}>{r.reject.toLocaleString("id-ID")}</td><td className="num">{idr(s.worker)}</td><td className="num">{idr(s.total)}</td>
                 <td>{r.settlementId ? <Badge tone="green">Dibayar</Badge> : <Badge tone="amber">Belum Dibayar</Badge>}</td>
                 <td className="text-xs text-slate-500">{r.createdBy}</td>
                 <td>{!r.settlementId && canDelete(r) && <ActionForm action={removeResult} confirm="Batalkan setoran ini? Stok bahan & hasil dikembalikan, tercatat di audit."><input type="hidden" name="id" value={r.id} /><Submit className="btn-secondary btn-sm" pendingText="…">Batalkan</Submit></ActionForm>}</td>
@@ -315,7 +316,11 @@ function PayTable({ lines }: { lines: ReturnType<typeof payLines> }) {
 
 type PersonRow = Awaited<ReturnType<typeof prisma.boronganPerson.findMany<{ include: { point: true; user: true } }>>>[number];
 
-function PersonForm({ p, points, manage }: { p?: PersonRow; points: { id: string; name: string }[]; manage: boolean }) {
+type TaskOpt = { id: string; name: string; division: string | null };
+
+function PersonForm({ p, points, manage, tasks }: { p?: PersonRow; points: { id: string; name: string }[]; manage: boolean; tasks: TaskOpt[] }) {
+  // Jenis pekerjaan dikelompokkan per divisi pencatat setoran (divisi tugas)
+  const byDiv = Object.entries(tasks.reduce<Record<string, TaskOpt[]>>((m, t) => ((m[t.division ?? "Tanpa divisi"] ??= []).push(t), m), {}));
   return (
     <ModalForm action={savePersonAction} className="space-y-3">
       {p && <input type="hidden" name="id" value={p.id} />}
@@ -327,6 +332,25 @@ function PersonForm({ p, points, manage }: { p?: PersonRow; points: { id: string
           <Field label="Titik" hint="Driver tidak terikat titik"><select name="pointId" defaultValue={p?.pointId ?? points[0]?.id} className="input">{points.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
         </>
       ) : <input type="hidden" name="role" value="PEKERJA" />}
+      {(!p || p.role === "PEKERJA") && tasks.length > 0 && (
+        <fieldset className="rounded-lg border border-slate-200 p-3">
+          <legend className="px-1 text-xs font-medium text-slate-600">Jenis pekerjaan (khusus pekerja)</legend>
+          <input type="hidden" name="tasksSent" value="1" />
+          <p className="mb-2 text-xs text-slate-500">Setoran pekerja ini hanya bisa dicatat untuk pekerjaan yang dicentang, di laporan divisinya. Kosongkan semua = boleh semua pekerjaan di titiknya.</p>
+          <div className="space-y-2">
+            {byDiv.map(([div, ts]) => (
+              <div key={div}>
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{div}</p>
+                <div className="mt-1 grid gap-1 sm:grid-cols-2">
+                  {ts.map((t) => (
+                    <label key={t.id} className="flex min-h-9 items-center gap-2 text-sm"><input type="checkbox" name="taskIds" value={t.id} defaultChecked={p?.taskIds.includes(t.id)} className="h-4 w-4" /> {t.name}</label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </fieldset>
+      )}
       {p && <Field label="Status"><select name="active" defaultValue={p.active ? "on" : "off"} className="input"><option value="on">Aktif</option><option value="off">Nonaktif</option></select></Field>}
       <Field label="Catatan"><input name="note" defaultValue={p?.note ?? ""} className="input" /></Field>
       <Submit>Simpan</Submit>
@@ -334,12 +358,13 @@ function PersonForm({ p, points, manage }: { p?: PersonRow; points: { id: string
   );
 }
 
-function PeopleTab({ people, points, manage, canLogin }: { people: PersonRow[]; points: { id: string; name: string }[]; manage: boolean; canLogin: boolean }) {
+function PeopleTab({ people, points, manage, canLogin, tasks }: { people: PersonRow[]; points: { id: string; name: string }[]; manage: boolean; canLogin: boolean; tasks: TaskOpt[] }) {
+  const taskName = new Map(tasks.map((t) => [t.id, t]));
   const groups = [...points.map((p) => ({ key: p.id, title: `Titik ${p.name}`, rows: people.filter((x) => x.pointId === p.id) })), { key: "drv", title: "Driver", rows: people.filter((x) => x.role === "DRIVER") }];
   return (
     <div className="space-y-5">
       <div className="flex justify-end">
-        <Modal trigger={manage ? "+ Orang" : "+ Pekerja"} title={manage ? "Tambah orang borongan" : "Tambah pekerja"}><PersonForm points={points} manage={manage} /></Modal>
+        <Modal trigger={manage ? "+ Orang" : "+ Pekerja"} title={manage ? "Tambah orang borongan" : "Tambah pekerja"}><PersonForm points={points} manage={manage} tasks={tasks} /></Modal>
       </div>
       <p className="text-sm text-slate-500">Pekerja borongan adalah tetangga, bukan karyawan: tidak masuk absensi, gaji bulanan, atau kasbon.</p>
       <div className="grid gap-5 lg:grid-cols-2">
@@ -354,6 +379,11 @@ function PeopleTab({ people, points, manage, canLogin }: { people: PersonRow[]; 
                       <span className={p.active ? "" : "text-slate-400 line-through"}>
                         {p.name} <Badge tone={p.role === "KOORDINATOR" ? "blue" : p.role === "DRIVER" ? "amber" : "gray"}>{BORONGAN_ROLE_LABEL[p.role]}</Badge>
                         {p.user && <span className="ml-1 text-xs text-slate-500">login: {p.user.username}</span>}
+                        {p.role === "PEKERJA" && (
+                          <span className="block text-xs text-slate-500">
+                            {p.taskIds.length ? p.taskIds.map((id) => taskName.get(id)).filter(Boolean).map((t) => `${t!.name}${t!.division ? ` (${t!.division})` : ""}`).join(", ") : "Jenis pekerjaan belum diatur"}
+                          </span>
+                        )}
                       </span>
                       {editable && (
                         <span className="flex gap-2">
@@ -368,7 +398,7 @@ function PeopleTab({ people, points, manage, canLogin }: { people: PersonRow[]; 
                               </ModalForm>
                             </Modal>
                           )}
-                          <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${p.name}`}><PersonForm p={p} points={points} manage={manage} /></Modal>
+                          <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${p.name}`}><PersonForm p={p} points={points} manage={manage} tasks={tasks} /></Modal>
                           {p.active && <ActionForm action={removePersonAction} confirm={`Hapus ${p.name}? Yang sudah punya riwayat setoran hanya dinonaktifkan.`}><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary btn-sm" pendingText="…">Hapus</Submit></ActionForm>}
                         </span>
                       )}

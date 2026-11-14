@@ -99,9 +99,11 @@ export function ReportForm(p: Props) {
   const order = stock.filter(needsOrder);
   const doneCount = p.checklist.filter((c, i) => (c.photo ? !!c.photoPath : checks[i])).length;
 
+  const hasWork = !!(t && t.sections.some((s) => !(s.kind === "grid" && s.legacy) || gridRows(p.work, s as GridSection).length > 0));
   // Langkah (stepper): bagian yang tidak tampil tetap ada di form (disembunyikan) sehingga ikut tersimpan
   const steps: Step[] = [
-    { key: "hasil", label: t ? "PIC & hasil kerja" : "PIC" },
+    // PIC tidak ditampilkan (diisi otomatis di server dari akun pengirim); tahap hasil kerja hanya bila divisi punya isiannya
+    ...(hasWork ? [{ key: "hasil", label: "Hasil kerja" }] : []),
     { key: "checklist", label: "Checklist" },
     ...(p.resultTitle && p.resultCount.length > 0 ? [{ key: "hasilakhir", label: "Stok jadi" }] : []),
     ...(stock.length > 0 ? [{ key: "stok", label: "Stok akhir" }] : []),
@@ -214,15 +216,8 @@ export function ReportForm(p: Props) {
       }}
     >
       <input type="hidden" name="id" value={p.id} />
-      <section data-step="hasil" className={`card p-4 ${show("hasil")}`}>
-        <label className="block">
-          <span className="label">PIC divisi (yang melaporkan)</span>
-          <input value={p.picName} readOnly tabIndex={-1} className="input bg-slate-100 font-medium dark:bg-slate-800" aria-describedby="pic-hint" />
-          <span id="pic-hint" className="mt-1 block text-xs text-slate-500">Otomatis dari akun yang sedang masuk</span>
-        </label>
-      </section>
 
-      {t && t.sections.some((s) => !(s.kind === "grid" && s.legacy) || gridRows(p.work, s as GridSection).length > 0) && (
+      {hasWork && (
         <section data-step="hasil" className={`card space-y-4 p-4 ${show("hasil")}`}>
           <h3 className="font-semibold text-slate-800">Detail hasil kerja</h3>
           {t.sections.map((s) => {

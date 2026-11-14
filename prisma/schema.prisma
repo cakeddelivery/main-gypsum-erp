@@ -492,6 +492,9 @@ model BoronganPerson {
   user          User?              @relation(fields: [userId], references: [id])
   active        Boolean            @default(true)
   note          String?
+  /// Jenis pekerjaan (PieceTask.id) yang dikerjakan pekerja ini; divisinya mengikuti divisi tugas.
+  /// Kosong = belum diatur (boleh semua tugas di titiknya, seperti sebelumnya)
+  taskIds       String[]           @default([])
   createdAt     DateTime           @default(now())
   works         BoronganResult[]   @relation("ResultWorker")
   coordinated   BoronganResult[]   @relation("ResultCoordinator")
@@ -547,7 +550,10 @@ model BoronganResult {
   taskId          String
   task            PieceTask           @relation(fields: [taskId], references: [id])
   date            DateTime            @db.Date
+  /// Patung bagus (dasar upah)
   qty             Int
+  /// Patung reject: bahan tetap terpakai, tidak dibayar, dibuang (beban selisih persediaan)
+  reject          Int                 @default(0)
   workerRate      BigInt
   coordinatorRate BigInt
   driverRate      BigInt

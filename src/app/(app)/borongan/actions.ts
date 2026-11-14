@@ -9,7 +9,8 @@ import { audit } from "@/lib/audit";
 import { BoronganError, assertPoint, boronganScope, canWarehouse, isSetoranOnly, cancelHandover, checkSplit, createHandover, deleteResult, receiveHandover, recordResults, removePerson, savePerson, settlePoint, cancelSettlement } from "@/lib/borongan";
 import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 
-const PATHS = ["/borongan", "/stok"];
+// /laporan: setoran juga dicatat dari popup di halaman Laporan Shift (ringkasan setoran ikut segar)
+const PATHS = ["/borongan", "/stok", "/laporan"];
 const num = (x: FormDataEntryValue) => Number(String(x).replace(/\./g, "").replace(",", ".")) || 0;
 const lines = (fd: FormData) => {
   const qty = fd.getAll("qty").map(num);
@@ -61,12 +62,15 @@ export const addResults = action(
     const pointId = str(fd, "pointId");
     const taskId = str(fd, "taskId");
     const date = dateOnly(str(fd, "date") || todayStr());
-    const rows = [...fd.entries()].filter(([k, v]) => k.startsWith("qty_") && String(v).trim()).map(([k, v]) => ({ workerId: k.slice(4), qty: num(v) }));
+    // Per pekerja: qty_<id> = patung bagus, rej_<id> = patung reject
+    const ids = new Set([...fd.keys()].filter((k) => /^(qty|rej)_/.test(k) && String(fd.get(k)).trim()).map((k) => k.slice(4)));
+    const rows = [...ids].map((workerId) => ({ workerId, qty: num(fd.get(`qty_${workerId}`) ?? "0"), reject: num(fd.get(`rej_${workerId}`) ?? "0") })).filter((r) => r.qty + r.reject !== 0);
     if (!rows.length) throw new BoronganError("Isi jumlah hasil minimal satu pekerja");
     // Satu transaksi: semua setoran tersimpan, atau tidak sama sekali bila ada yang gagal
-    await recordResults(rows.map((r) => ({ pointId, taskId, date, workerId: r.workerId, qty: r.qty, note: optStr(fd, "note") })), user, scope);
+    await recordResults(rows.map((r) => ({ pointId, taskId, date, workerId: r.workerId, qty: r.qty, reject: r.reject, note: optStr(fd, "note") })), user, scope);
     const total = rows.reduce((s, r) => s + r.qty, 0);
-    return `Setoran ${rows.length} pekerja tercatat (${total.toLocaleString("id-ID")} pcs)`;
+    const rej = rows.reduce((s, r) => s + r.reject, 0);
+    return `Setoran ${rows.length} pekerja tercatat (${total.toLocaleString("id-ID")} pcs bagus${rej ? `, ${rej.toLocaleString("id-ID")} reject` : ""})`;
   },
   PATHS,
 );
@@ -84,7 +88,7 @@ export const savePersonAction = action(
   ["borongan.manage", "borongan.point"],
   async (fd, user) => {
     const scope = await boronganScope(prisma, user);
-    const p = await savePerson({ id: optStr(fd, "id"), name: str(fd, "name"), phone: optStr(fd, "phone"), role: (str(fd, "role") || "PEKERJA") as BoronganRole, pointId: optStr(fd, "pointId") ?? scope.pointIds[0], active: fd.get("active") !== "off", note: optStr(fd, "note") }, user, scope);
+    const p = await savePerson({ id: optStr(fd, "id"), name: str(fd, "name"), phone: optStr(fd, "phone"), role: (str(fd, "role") || "PEKERJA") as BoronganRole, pointId: optStr(fd, "pointId") ?? scope.pointIds[0], active: fd.get("active") !== "off", note: optStr(fd, "note"), taskIds: fd.has("tasksSent") ? fd.getAll("taskIds").map(String).filter(Boolean) : undefined }, user, scope);
     return p.active || scope.all ? `${p.name} tersimpan` : `${p.name} tersimpan, menunggu diaktifkan pengelola borongan`;
   },
   PATHS,

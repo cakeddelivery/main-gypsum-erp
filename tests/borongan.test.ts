@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
-import { cancelSettlement, checkSplit, createHandover, deleteResult, payLines, receiveHandover, recordResult, removePerson, resultShares, savePerson, settlePoint, type Scope } from "@/lib/borongan";
+import { cancelSettlement, checkSplit, createHandover, deleteResult, payLines, pointCapacity, receiveHandover, recordResult, removePerson, resultShares, savePerson, settlePoint, type Scope } from "@/lib/borongan";
 import { saveItemRecord } from "@/lib/items";
 import { stockBalances } from "@/lib/stock";
 import { dateOnly } from "@/lib/time";
@@ -66,8 +66,29 @@ describe("Alur borongan tetangga", () => {
     const date = dateOnly("2027-04-10");
     const r1 = await recordResult({ pointId: bmr.id, workerId: w1.id, taskId: task.id, date, qty: 40 }, actor, coordScope);
     await recordResult({ pointId: bmr.id, workerId: w2.id, taskId: task.id, date, qty: 10 }, actor, coordScope);
+    // Jenis pekerjaan: pekerja yang hanya ditugasi pekerjaan lain tidak bisa disetor untuk tugas ini
+    const other = await prisma.pieceTask.findFirstOrThrow({ where: { id: { not: task.id } } });
+    const w3 = await savePerson({ name: "Pekerja Kamar Lain", role: "PEKERJA", pointId: bmr.id, taskIds: [other.id] }, actor, all);
+    expect(w3.taskIds).toEqual([other.id]);
+    await expect(recordResult({ pointId: bmr.id, workerId: w3.id, taskId: task.id, date, qty: 1 }, actor, coordScope)).rejects.toThrow(/tidak mengerjakan/);
+    await expect(savePerson({ name: "Tugas Palsu", role: "PEKERJA", pointId: bmr.id, taskIds: ["bukan-id"] }, actor, all)).rejects.toThrow(/Jenis pekerjaan/);
+    await removePerson(w3.id, actor, all);
     expect(await at(polos.id, bmr.locationId)).toBe(10);
     expect(await at(cat.id, bmr.locationId)).toBeCloseTo(1, 5); // 50 pcs × 20 gram = 1 botol
+    expect(await at(jadi.id, bmr.locationId)).toBe(50);
+    // Reject: bahan ikut terpakai, tidak masuk stok hasil, tidak dibayar, nilainya jadi beban
+    expect((await pointCapacity([bmr], [task.id]))[bmr.id][task.id]).toBe(10);
+    const rj = await recordResult({ pointId: bmr.id, workerId: w2.id, taskId: task.id, date, qty: 5, reject: 3 }, actor, coordScope);
+    expect(await at(polos.id, bmr.locationId)).toBe(2);
+    expect(await at(jadi.id, bmr.locationId)).toBe(55);
+    expect((await pointCapacity([bmr], [task.id]))[bmr.id][task.id]).toBe(2);
+    expect(payLines([{ ...rj, worker: { id: w2.id, name: w2.name }, coordinator: null, driver: null }]).find((l) => l.role === "PEKERJA")?.qty).toBe(5);
+    const jr = await prisma.journal.findFirstOrThrow({ where: { source: "BORONGAN", sourceId: rj.id }, include: { lines: { include: { account: true } } } });
+    expect(Number(jr.lines.find((l) => l.account.code === COA.BEBAN_SELISIH_PERSEDIAAN)?.debit ?? 0)).toBeGreaterThan(0);
+    await expect(recordResult({ pointId: bmr.id, workerId: w2.id, taskId: task.id, date, qty: 1, reject: 2 }, actor, coordScope)).rejects.toThrow(/termasuk reject/);
+    await expect(recordResult({ pointId: bmr.id, workerId: w2.id, taskId: task.id, date, qty: 0, reject: 0 }, actor, coordScope)).rejects.toThrow(/lebih dari 0/);
+    await deleteResult(rj.id, actor, all);
+    expect(await at(polos.id, bmr.locationId)).toBe(10);
     expect(await at(jadi.id, bmr.locationId)).toBe(50);
     // Nilai cat pindah ke persediaan barang dalam proses
     const j = await prisma.journal.findFirstOrThrow({ where: { source: "BORONGAN", sourceId: r1.id }, include: { lines: { include: { account: true } } } });
