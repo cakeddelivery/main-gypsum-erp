@@ -10,7 +10,7 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { SensitiveGuard } from "@/components/SensitiveGuard";
 import { ActionForm, Submit } from "@/components/ActionForm";
-import { saveMatrix, saveUser } from "../actions";
+import { revokeSessionsAction, saveMatrix, saveUser } from "../actions";
 import type { Role } from "@prisma/client";
 import { Paged } from "@/components/Paged";
 
@@ -63,7 +63,7 @@ export default async function PenggunaPage({ searchParams }: { searchParams: Pro
         <div className="table-wrap">
           <Paged><table className="tbl">
             <thead><tr><th>Username</th><th>Nama</th><th>Role</th><th>Karyawan/Divisi</th><th>Login terakhir</th><th>Status</th><th /></tr></thead>
-            <tbody>{users.map((u) => <tr key={u.id}><td className="font-mono text-xs">{u.username}</td><td>{u.name}{u.email && <div className="text-xs text-slate-500">{u.email}</div>}</td><td><Badge tone="blue">{ROLE_LABEL[u.role]}</Badge></td><td className="text-xs">{u.employee?.code}{u.division && ` · ${u.division.name}`}</td><td className="text-xs">{fmtDateTime(u.lastLoginAt)}</td><td>{u.active ? (u.lockedUntil && u.lockedUntil > new Date() ? <Badge tone="red">Terkunci</Badge> : <Badge tone="green">Aktif</Badge>) : <Badge>Nonaktif</Badge>}</td><td>{(u.role !== "OWNER" || me.role === "OWNER") && <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${u.username}`}>{form(u)}</Modal>}</td></tr>)}</tbody>
+            <tbody>{users.map((u) => <tr key={u.id}><td className="font-mono text-xs">{u.username}</td><td>{u.name}{u.email && <div className="text-xs text-slate-500">{u.email}</div>}</td><td><Badge tone="blue">{ROLE_LABEL[u.role]}</Badge></td><td className="text-xs">{u.employee?.code}{u.division && ` · ${u.division.name}`}</td><td className="text-xs">{fmtDateTime(u.lastLoginAt)}</td><td>{u.active ? (u.lockedUntil && u.lockedUntil > new Date() ? <Badge tone="red">Terkunci</Badge> : <Badge tone="green">Aktif</Badge>) : <Badge>Nonaktif</Badge>}</td><td>{(u.role !== "OWNER" || me.role === "OWNER") && <div className="flex gap-1"><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${u.username}`}>{form(u)}</Modal><ActionForm action={revokeSessionsAction} confirm={`Keluarkan ${u.name} dari semua HP/komputer? Password tidak berubah; ${u.name} cukup masuk lagi.`}><input type="hidden" name="id" value={u.id} /><Submit className="btn-secondary btn-sm" pendingText="…">Keluarkan semua perangkat</Submit></ActionForm></div>}</td></tr>)}</tbody>
           </table></Paged>
         </div>
       ) : (
