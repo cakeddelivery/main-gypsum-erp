@@ -83,7 +83,7 @@ Cek konsistensi berhasil menemukan: jurnal ganda yang sengaja dibuat tes, transa
 
 ---
 
-## C. Keputusan Owner (ditanyakan di utas R)
-1. **Hari tanpa absensi**: tandai otomatis "Tanpa keterangan" tiap malam (bisa diubah jadi Libur/Izin/Sakit), atau cukup dipantau di Cek konsistensi?
-2. **Stok barang jadi marketplace**: keluarkan harian dari rekap resi (HPP harian), atau tetap opname akhir bulan?
-3. **Bayar gaji lewat bot**: tambah tombol "Bayar gaji" di bot untuk slip yang sudah disetujui, atau tetap lewat web Penggajian?
+## C. Keputusan Owner (14 Nov 2026: 1a, 2a, 3b)
+1. **Hari tanpa absensi → 1a dikerjakan.** Job 06.00 (`src/lib/attendanceAuto.ts`) memberi status Alpa "Tanpa keterangan (otomatis)" untuk hari yang lewat (3 hari ke belakang) bagi karyawan aktif non-borongan yang tidak punya catatan (tidak untuk sebelum tanggal masuk/go-live atau sesudah resign). Di antrean validasi Absensi baris ini tidak tercentang bawaan; ubah menjadi Libur/Izin/Sakit lewat Atur absensi. Slip gaji tidak berubah perhitungannya. Cek konsistensi menghitung hari "tanpa keterangan" yang melebihi jatah libur.
+2. **Stok & HPP marketplace harian → 2a: fitur sudah ada.** Laporan shift Packing & Giftbox mengurangi barang jadi + HPP setiap hari bila sakelar **Laporan Shift → Bahan baku → Hasil kerja → stok** (Owner) menyala; opname akhir bulan hanya mengoreksi selisih. Syarat: Stok awal riil diisi dulu. Cek konsistensi mengingatkan bila sakelar masih mati.
+3. **Bayar gaji lewat bot → 3b:** tetap lewat web Penggajian; bot hanya memberi peringatan bila gaji sudah disetujui (#98).

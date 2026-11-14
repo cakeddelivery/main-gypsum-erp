@@ -210,6 +210,9 @@ export async function runDueJobs(now: Date = new Date()) {
     // Resign terjadwal yang tanggalnya tiba: Nonaktif + akun dimatikan (sebelum slip dibuat)
     const { applyDueResignations } = await import("./payroll");
     results.resign = await logFailure("RESIGN_BERLAKU", date, () => applyDueResignations(now));
+    // Hari kemarin tanpa catatan absen → Alpa "Tanpa keterangan (otomatis)" (sebelum slip & cek konsistensi)
+    const { markMissingAttendance } = await import("./attendanceAuto");
+    results.absenOtomatis = await logFailure("ABSEN_TANPA_KETERANGAN", date, () => markMissingAttendance(now));
     results.monthlyPayroll = await logFailure("GAJI_OTOMATIS", date, () => generateMonthlyPayroll(SYSTEM_ACTOR, now));
     results.allowancePayroll = await logFailure("TUNJANGAN_OTOMATIS", date, () => generateAllowancePayroll(SYSTEM_ACTOR, now));
     // Overhead "Gaji Produksi" ikut gaji terbaru (mis. karyawan resign hari ini)

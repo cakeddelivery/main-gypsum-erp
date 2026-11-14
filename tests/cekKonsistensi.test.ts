@@ -94,3 +94,39 @@ describe("Cek konsistensi: gaji", () => {
     expect((await find("gaji-dobel"))?.items.map((x) => x.label)).toContain(e.name);
   });
 });
+
+describe("Absen tanpa keterangan otomatis (keputusan Owner 1a)", () => {
+  it("hari tanpa catatan → Alpa 'Tanpa keterangan (otomatis)'; yang sudah absen, belum masuk kerja, resign, borongan tidak diisi; aman diulang", async () => {
+    const { markMissingAttendance, AUTO_NOTE } = await import("@/lib/attendanceAuto");
+    const div = await prisma.division.findFirstOrThrow();
+    const shift = await prisma.shift.findFirstOrThrow({ where: { active: true } });
+    const mk = (code: string, extra: object) => prisma.employee.create({ data: { code: `${code}-${tag}`, name: `${code} ${tag}`, divisionId: div.id, joinDate: dateOnly("2032-01-01"), ...extra } });
+    const kosong = await mk("ABS-KOSONG", {});
+    const hadir = await mk("ABS-HADIR", {});
+    const baru = await mk("ABS-BARU", { joinDate: dateOnly("2032-03-09") });
+    const keluar = await mk("ABS-KELUAR", { resignDate: dateOnly("2032-03-08") });
+    const brg = await mk("ABS-BRG", { wageType: "BORONGAN" });
+    await prisma.attendance.create({ data: { employeeId: hadir.id, shiftId: shift.id, date: dateOnly("2032-03-09"), status: "HADIR" } });
+    const now = jakartaDateTime("2032-03-10", "06:00");
+    await markMissingAttendance(now);
+    const rows = await prisma.attendance.findMany({ where: { employeeId: { in: [kosong.id, hadir.id, baru.id, keluar.id, brg.id] } } });
+    const of = (id: string) => rows.filter((r) => r.employeeId === id).map((r) => `${r.date.toISOString().slice(0, 10)} ${r.status}`).sort();
+    expect(of(kosong.id)).toEqual(["2032-03-07 ALPA", "2032-03-08 ALPA", "2032-03-09 ALPA"]);
+    expect(rows.find((r) => r.employeeId === kosong.id)?.note).toBe(AUTO_NOTE);
+    expect(of(hadir.id)).toEqual(["2032-03-07 ALPA", "2032-03-08 ALPA", "2032-03-09 HADIR"]);
+    expect(of(baru.id)).toEqual(["2032-03-09 ALPA"]);
+    expect(of(keluar.id)).toEqual(["2032-03-07 ALPA"]);
+    expect(of(brg.id)).toEqual([]);
+    expect((await markMissingAttendance(now)).created).toBe(0);
+  });
+});
+
+describe("Stok marketplace harian (keputusan Owner 2a)", () => {
+  it("sakelar Hasil kerja → stok mati diingatkan; nyala = tidak ada temuan", async () => {
+    await prisma.setting.upsert({ where: { key: "laporan_shift_ke_stok" }, create: { key: "laporan_shift_ke_stok", value: "false" }, update: { value: "false" } });
+    expect((await find("stok-marketplace-harian"))?.items).toHaveLength(1);
+    await prisma.setting.update({ where: { key: "laporan_shift_ke_stok" }, data: { value: "true" } });
+    expect(await find("stok-marketplace-harian")).toBeUndefined();
+    await prisma.setting.update({ where: { key: "laporan_shift_ke_stok" }, data: { value: "false" } });
+  });
+});

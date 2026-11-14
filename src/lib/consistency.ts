@@ -294,26 +294,37 @@ const unvalidatedAttendance: Check = async (c) => {
     rows.map((r) => ({ label: emps.find((e) => e.id === r.employeeId)?.name ?? r.employeeId, detail: `${r._count} hari`, href: "/absensi" })));
 };
 
-/** Hari kerja tanpa catatan absensi apa pun (7 hari terakhir), lebih dari jatah libur */
+/** Hari "Tanpa keterangan (otomatis)" atau tanpa catatan absen sama sekali (7 hari terakhir), melebihi jatah libur */
 const missingAttendance: Check = async (c) => {
+  const { AUTO_NOTE } = await import("./attendanceAuto");
   const goLive = (await prisma.setting.findUnique({ where: { key: "go_live_date" } }))?.value ?? "2000-01-01";
   const quota = Number((await prisma.setting.findUnique({ where: { key: "weekly_off_quota" } }))?.value) || 1;
   const from = [addDays(c.today, -7), goLive].sort().at(-1)!;
   const to = addDays(c.today, -1);
   if (from > to) return null;
-  const emps = await prisma.employee.findMany({ where: { status: "AKTIF", wageType: { not: "BORONGAN" } }, select: { id: true, name: true, joinDate: true, resignDate: true } });
-  const att = await prisma.attendance.findMany({ where: { date: { gte: dateOnly(from), lte: dateOnly(to) } }, select: { employeeId: true, date: true } });
+  const emps = await prisma.employee.findMany({ where: { status: "AKTIF", wageType: { not: "BORONGAN" } }, select: { id: true, name: true, joinDate: true } });
+  const att = await prisma.attendance.findMany({ where: { date: { gte: dateOnly(from), lte: dateOnly(to) } }, select: { employeeId: true, date: true, note: true } });
   const items: IssueItem[] = [];
   for (const e of emps) {
     const start = [from, e.joinDate ? dateStr(e.joinDate) : from].sort().at(-1)!;
     let days = 0;
     for (let d = start; d <= to; d = addDays(d, 1)) days++;
     if (days <= 0) continue;
-    const have = new Set(att.filter((a) => a.employeeId === e.id).map((a) => dateStr(a.date))).size;
-    const missing = days - have;
-    if (missing > Math.ceil((quota * days) / 7)) items.push({ label: e.name, detail: `${missing} dari ${days} hari tanpa catatan absen (${start} – ${to})`, href: "/absensi" });
+    const mine = att.filter((a) => a.employeeId === e.id && dateStr(a.date) >= start);
+    const known = new Set(mine.filter((a) => a.note !== AUTO_NOTE).map((a) => dateStr(a.date))).size;
+    const missing = days - known;
+    if (missing > Math.ceil((quota * days) / 7)) items.push({ label: e.name, detail: `${missing} dari ${days} hari tanpa keterangan (${start} – ${to})`, href: "/absensi" });
   }
-  return issue("hari-tanpa-absen", "ABSENSI_GAJI", "INFO", "Hari kerja tanpa status absensi (7 hari terakhir)", "Hari tanpa catatan dihitung tidak masuk (lebih dari jatah libur = bolos). Isi Libur/Izin/Sakit bila memang tidak masuk.", items);
+  return issue("hari-tanpa-absen", "ABSENSI_GAJI", "INFO", "Hari kerja tanpa keterangan melebihi jatah libur (7 hari terakhir)", "Hari tanpa absen diberi status \"Tanpa keterangan\" otomatis tiap pagi. Ubah menjadi Libur/Izin/Sakit di menu Absensi bila memang tidak masuk; sisanya dihitung bolos di slip.", items);
+};
+
+/** Keputusan Owner 14 Nov: HPP penjualan marketplace harian dari laporan Packing/Giftbox (sakelar Hasil kerja → stok) */
+const flowSwitch: Check = async () => {
+  const on = (await prisma.setting.findUnique({ where: { key: "laporan_shift_ke_stok" } }))?.value === "true";
+  const opening = await prisma.setting.findUnique({ where: { key: "stok_awal_tanggal" } });
+  const items: IssueItem[] = [];
+  if (!on) items.push({ label: "Sakelar \"Hasil kerja → stok\" masih mati", detail: opening ? "stok awal riil sudah diisi: sakelar siap dinyalakan" : "isi Stok awal riil dulu, lalu nyalakan sakelar", href: opening ? "/laporan/bahan" : "/stok/awal" });
+  return issue("stok-marketplace-harian", "BARANG", "INFO", "Stok & HPP penjualan marketplace belum harian", "Laporan Packing & Giftbox mengurangi barang jadi + HPP setiap hari bila sakelar menyala; opname akhir bulan hanya mengoreksi selisih.", items);
 };
 
 const missingPayroll: Check = async (c) => {
@@ -390,7 +401,7 @@ const pendingRegistrations: Check = async (c) => {
 export const CHECKS: Check[] = [
   unbalancedJournals, duplicateJournals, bookedWithoutJournal, cancelledNotReversed, cancelledDocsNotReversed, bankNegative, transitBalance, salesPaid,
   payablesVsLedger, receivablesVsLedger, prepaidVsLedger, advances, reserveFunds, reserveMissing, talanganOpen, mirrorOfReversed, staleDrafts, staleWdProcess, purchaseIssues, depreciationGaps,
-  inventoryVsLedger, negative, unlinkedReceipts, handovers, stockRequests, unpaidBorongan, movementsWithoutRef,
+  inventoryVsLedger, flowSwitch, negative, unlinkedReceipts, handovers, stockRequests, unpaidBorongan, movementsWithoutRef,
   missingPayroll, doublePay, payrollAccruals, unvalidatedAttendance, missingAttendance,
   accessAfterResign, pendingRegistrations,
 ];
