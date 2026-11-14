@@ -3,6 +3,9 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 
 const Ctx = createContext<() => void>(() => {});
 export const useCloseModal = () => useContext(Ctx);
+/** Isi popup bisa mengambil alih permintaan tutup (✕, Esc, ketuk di luar) untuk konfirmasinya sendiri */
+const GuardCtx = createContext<(fn: (() => void) | null) => void>(() => {});
+export const useCloseGuard = () => useContext(GuardCtx);
 
 /** Lama animasi tutup popup, samakan dengan dialog.modal[data-closing] di globals.css */
 export const CLOSE_MS = 160;
@@ -56,7 +59,9 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
     setClosing(true);
     window.setTimeout(() => setOpen(false), CLOSE_MS);
   }, []);
-  const requestClose = () => (dirty ? setAsking(true) : forceClose());
+  const guard = useRef<(() => void) | null>(null);
+  const setGuard = useCallback((fn: (() => void) | null) => void (guard.current = fn), []);
+  const requestClose = () => (guard.current ? guard.current() : dirty ? setAsking(true) : forceClose());
   return (
     <>
       <button ref={btn} type="button" className={triggerClass} aria-label={triggerLabel} onClick={() => setOpen(true)}>
@@ -79,6 +84,7 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
       >
         {open && (
           <Ctx.Provider value={forceClose}>
+          <GuardCtx.Provider value={setGuard}>
             <div className="modal-shell" onInput={() => setDirty(true)} onChange={() => setDirty(true)}>
               <div className="modal-head">
                 <div className="min-w-0">
@@ -108,6 +114,7 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
                 </div>
               )}
             </div>
+          </GuardCtx.Provider>
           </Ctx.Provider>
         )}
       </dialog>

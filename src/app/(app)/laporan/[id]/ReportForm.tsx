@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ActionForm, Submit } from "@/components/ActionForm";
-import { useCloseModal } from "@/components/Modal";
+import { useCloseGuard, useCloseModal } from "@/components/Modal";
 import { revealField } from "@/components/FormFeedback";
 import { celebrate } from "@/components/Celebrate";
 import { toast } from "@/components/Toaster";
@@ -33,7 +33,7 @@ import { addReceipt, removeChecklistPhoto, removeReceipt, saveReport, uploadChec
 /** Baris pesanan yang sedang dikirim (Stok → Pembelian) untuk barang divisi ini */
 export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean; vendor: string; itemName: string; unit: string };
 export type ReceiptView = { id: string; number: string; itemName: string; unit: string; qty: number; supplierName: string | null; hasPhoto: boolean; linked: boolean };
-export type ResultCountRow = { key: string; label: string; unit: string; qty: number | null };
+export type ResultCountRow = { key: string; label: string; unit: string; qty: number | null; group?: string };
 
 type Props = {
   id: string;
@@ -139,6 +139,23 @@ export function ReportForm(p: Props) {
     }
     setConfirming(true);
   };
+  // Tahap "Stok jadi": nilai terkontrol (untuk jumlah terisi), dikelompokkan per produk induk + kotak cari
+  const [rc, setRc] = useState<Record<string, string>>(() => Object.fromEntries(p.resultCount.map((r) => [r.key, r.qty == null ? "" : String(r.qty)])));
+  const rcFilled = Object.values(rc).filter((v) => v !== "").length;
+  const [rcQuery, setRcQuery] = useState("");
+  const matches = (label: string) => !rcQuery.trim() || label.toLowerCase().includes(rcQuery.trim().toLowerCase());
+  const rcGroups = Object.entries(
+    p.resultCount.reduce<Record<string, ResultCountRow[]>>((m, r) => ((m[r.group ?? "Lainnya"] ??= []).push(r), m), {}),
+  );
+  // Tutup (✕ di bawah atau di judul popup): konfirmasi simpan draf / buang perubahan bila ada isian berubah
+  const [dirty, setDirty] = useState(false);
+  const [closeAsk, setCloseAsk] = useState(false);
+  const askClose = () => (dirty ? setCloseAsk(true) : close());
+  const setGuard = useCloseGuard();
+  useEffect(() => {
+    setGuard(askClose);
+    return () => setGuard(null);
+  });
   // Kolom wajib yang kosong di langkah lain: buka langkahnya lalu gulir & fokus ke kolom itu
   useEffect(() => {
     const el = formRef.current;
@@ -157,7 +174,7 @@ export function ReportForm(p: Props) {
   const show = (key: string) => (key === cur ? "" : "hidden");
 
   return (
-    <div ref={formRef}>
+    <div ref={formRef} onInput={() => setDirty(true)} onChange={() => setDirty(true)}>
       <nav ref={bodyTop} aria-label="Langkah laporan" className="sticky -top-4 z-10 -mx-5 -mt-4 mb-4 flex-none border-b border-slate-200 bg-white px-3 py-2">
         <ol className="flex gap-1 overflow-x-auto">
           {steps.map((x, i) => (
@@ -185,6 +202,8 @@ export function ReportForm(p: Props) {
       className="space-y-4"
       onSuccess={() => {
         setConfirming(false);
+        setCloseAsk(false);
+        setDirty(false);
         window.setTimeout(close, 750);
       }}
       onError={(err) => {
@@ -383,22 +402,51 @@ export function ReportForm(p: Props) {
 
       {p.resultTitle && p.resultCount.length > 0 && (
         <section data-step="hasilakhir" className={`card p-4 ${show("hasilakhir")}`}>
-          <h3 className="mb-1 font-semibold text-slate-800">{p.resultTitle}</h3>
+          <div className="mb-1 flex items-baseline justify-between gap-2">
+            <h3 className="font-semibold text-slate-800">{p.resultTitle}</h3>
+            <span className="shrink-0 text-xs font-medium text-slate-500 tabular-nums">{rcFilled}/{p.resultCount.length} terisi</span>
+          </div>
           <p className="mb-3 text-xs text-slate-500">Hitung fisik barang setengah jadi / produk jadi tanggung jawab divisi ini di gudang, setelah hasil kerja dihitung. Kosongkan bila tidak dihitung.</p>
-          <div className="keep-cols grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {p.resultCount.map((r) => (
-              <label key={r.key} className="block">
-                <span className="text-xs text-slate-500">{r.label} ({r.unit})</span>
-                <input name={`rc.${r.key}`} inputMode="numeric" defaultValue={r.qty ?? ""} placeholder="—" className="input py-1.5" />
-              </label>
-            ))}
+          {p.resultCount.length > 12 && (
+            <input type="search" value={rcQuery} onChange={(e) => setRcQuery(e.target.value)} placeholder="Cari barang…" aria-label="Cari barang" data-raw className="input mb-2 py-1.5" />
+          )}
+          <div className="space-y-2">
+            {rcGroups.map(([g, rows]) => {
+              const shown = rows.filter((r) => matches(r.label));
+              const filled = rows.filter((r) => (rc[r.key] ?? "") !== "").length;
+              return (
+                <details key={g} open={rcGroups.length <= 2 || !!rcQuery} className={`group rounded-lg border border-slate-200 ${shown.length ? "" : "hidden"}`}>
+                  <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-slate-700 [&::-webkit-details-marker]:hidden">
+                    <span className="min-w-0">{g}</span>
+                    <span className="flex shrink-0 items-center gap-2 text-xs text-slate-500 tabular-nums">{filled}/{rows.length}<span className="transition group-open:rotate-180" aria-hidden>▾</span></span>
+                  </summary>
+                  <ul className="divide-y divide-slate-100 border-t border-slate-100 px-3">
+                    {rows.map((r) => (
+                      <CountRow
+                        key={r.key}
+                        hidden={!matches(r.label)}
+                        name={r.label}
+                        unit={r.unit}
+                        inputName={`rc.${r.key}`}
+                        inputMode="numeric"
+                        value={rc[r.key] ?? ""}
+                        onChange={(v) => setRc((x) => ({ ...x, [r.key]: v }))}
+                      />
+                    ))}
+                  </ul>
+                </details>
+              );
+            })}
           </div>
         </section>
       )}
 
       {stock.length > 0 && (
         <section data-step="stok" className={`card p-4 ${show("stok")}`}>
-          <h3 className="mb-1 font-semibold text-slate-800">Stok akhir shift</h3>
+          <div className="mb-1 flex items-baseline justify-between gap-2">
+            <h3 className="font-semibold text-slate-800">Stok akhir shift</h3>
+            <span className="shrink-0 text-xs font-medium text-slate-500 tabular-nums">{stock.filter((x) => x.qty != null).length}/{stock.length} terisi</span>
+          </div>
           <p className="mb-3 text-xs text-slate-500">Hitung fisik sisa bahan baku divisi. Bahan dengan stok ≤ limit otomatis masuk daftar order.</p>
           <p className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
             {p.receipts.length > 0 ? <>✓ {p.receipts.length} barang masuk hari ini sudah dicatat. </> : null}
@@ -408,23 +456,17 @@ export function ReportForm(p: Props) {
             {stock.map((row, i) => {
               const low = needsOrder(row);
               return (
-                <li key={row.itemId} className="flex items-center gap-3 py-2">
-                  <div className="min-w-0 flex-1">
-                    <div className={`text-sm ${low ? "font-medium text-amber-700" : ""}`}>{low && "⚠ "}{row.name}</div>
-                    <div className="text-xs text-slate-500">limit {fmt(row.limit)} {row.unit}</div>
-                  </div>
-                  <div className="flex w-36 shrink-0 items-center gap-1.5">
-                    <input
-                      name={`s.${row.itemId}`}
-                      inputMode="decimal"
-                      value={row.qty ?? ""}
-                      onChange={(e) => { const s = e.target.value.trim(); const q = s === "" ? null : Math.max(0, Number(s.replace(",", ".")) || 0); setStock((x) => x.map((r, j) => (j === i ? { ...r, qty: q } : r))); }}
-                      className="input py-1.5 text-right"
-                      placeholder="0"
-                    />
-                    <span className="w-12 truncate text-xs text-slate-500">{row.unit}</span>
-                  </div>
-                </li>
+                <CountRow
+                  key={row.itemId}
+                  name={<>{low && "⚠ "}{row.name}</>}
+                  warn={low}
+                  sub={`limit ${fmt(row.limit)} ${row.unit}`}
+                  unit={row.unit}
+                  inputName={`s.${row.itemId}`}
+                  inputMode="decimal"
+                  value={row.qty == null ? "" : String(row.qty)}
+                  onChange={(v) => { const t = v.trim(); const q = t === "" ? null : Math.max(0, Number(t.replace(",", ".")) || 0); setStock((x) => x.map((r, j) => (j === i ? { ...r, qty: q } : r))); }}
+                />
               );
             })}
           </ul>
@@ -464,18 +506,30 @@ export function ReportForm(p: Props) {
       </p>
       {/* Tombol selalu terlihat di bawah popup */}
       <div className="modal-foot">
-        {step > 0 && (
-          <button type="button" className="btn-secondary btn-icon" aria-label="Langkah sebelumnya" onClick={() => go(step - 1)}>‹</button>
-        )}
-        <span className="flex flex-1" onClickCapture={() => (sending.current = false)}>
-          <Submit className="btn-secondary flex-1" name="intent" value="draft" pendingText="Menyimpan…">Simpan draf</Submit>
-        </span>
+        <button type="button" className="btn-secondary btn-icon" aria-label="Tutup laporan" onClick={askClose}>✕</button>
+        <button type="button" className="btn-secondary flex-1" disabled={step === 0} onClick={() => go(step - 1)}>‹ Kembali</button>
         {last ? (
           <button type="button" className="btn-success flex-1" onClick={trySend}>{p.sent ? "Kirim ulang" : "Kirim laporan"}</button>
         ) : (
           <button type="button" className="btn-primary flex-1" onClick={() => go(step + 1)}>Berikutnya ›</button>
         )}
       </div>
+      {/* Tutup laporan: simpan draf dulu atau buang perubahan */}
+      {closeAsk && (
+        <div role="alertdialog" aria-labelledby="tutup-lap-judul" className="anim-fade fixed inset-0 z-30 grid place-items-center bg-slate-900/50 p-4">
+          <div className="anim-pop w-full max-w-sm rounded-xl border border-slate-300 bg-white p-4 shadow-2xl">
+            <p id="tutup-lap-judul" className="font-semibold text-slate-900">Tutup laporan?</p>
+            <p className="mt-1 text-sm text-slate-600">Ada isian yang belum disimpan. Simpan sebagai draf agar bisa dilanjutkan nanti.</p>
+            <div className="mt-4 grid gap-2">
+              <span className="flex" onClickCapture={() => (sending.current = false)}>
+                <Submit className="btn-primary flex-1" name="intent" value="draft" pendingText="Menyimpan…">Simpan draf</Submit>
+              </span>
+              <button type="button" className="btn-danger" onClick={() => { setCloseAsk(false); close(); }}>Buang perubahan</button>
+              <button type="button" className="btn-secondary" onClick={() => setCloseAsk(false)} autoFocus>Batal</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Konfirmasi kirim: nilai checklist + daftar yang belum dicentang */}
       {confirming && (
         <div role="alertdialog" aria-labelledby="kirim-judul" className="anim-fade fixed inset-0 z-30 grid place-items-center bg-slate-900/50 p-4">
@@ -722,5 +776,21 @@ function PhotoTask({ id, index, entry }: { id: string; index: number; entry: Che
         )}
       </div>
     </div>
+  );
+}
+
+/** Satu baris hitung stok: nama (boleh 2 baris) + keterangan kecil di kiri, kolom angka kecil + satuan di kanan */
+function CountRow({ name, sub, unit, inputName, inputMode, value, onChange, warn, hidden }: { name: React.ReactNode; sub?: string; unit: string; inputName: string; inputMode: "numeric" | "decimal"; value: string; onChange: (v: string) => void; warn?: boolean; hidden?: boolean }) {
+  return (
+    <li className={`flex items-center gap-3 py-2 ${hidden ? "hidden" : ""}`}>
+      <div className="min-w-0 flex-1">
+        <div className={`line-clamp-2 text-sm leading-snug ${warn ? "font-medium text-amber-700" : "text-slate-800"}`}>{name}</div>
+        {sub && <div className="text-xs text-slate-500">{sub}</div>}
+      </div>
+      <label className="flex shrink-0 items-center gap-1.5">
+        <input name={inputName} inputMode={inputMode} value={value} onChange={(e) => onChange(e.target.value)} className="input w-20 py-1.5 text-right" placeholder="0" aria-label={typeof name === "string" ? name : undefined} />
+        <span className="w-14 truncate text-xs text-slate-500" title={unit}>{unit}</span>
+      </label>
+    </li>
   );
 }
