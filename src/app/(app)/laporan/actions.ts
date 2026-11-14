@@ -17,12 +17,12 @@ import { sendShiftReportJpg } from "@/lib/shiftReportJpg";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { receiptReportLines } from "@/lib/boronganReceipt";
 import { saveProof } from "@/lib/storage";
+import { divisionChecklist, refreshDraftChecklists } from "@/lib/shiftReportChecklist";
 import { addShiftReceipt, removeShiftReceipt } from "@/lib/shiftReceipt";
 import { RESULT_KEY, applyResultCount, parseResultCount, resultCountStatus, resultItems, resultLines } from "@/lib/shiftResultCount";
 import { reportCatalogs } from "@/lib/productFamily";
 import { isDone, isTemplate, needsOrder, parseWork, summaryOf, targetLine, targetOf, toEntries, workLines, type ChecklistEntry, type StockCountRow } from "@/lib/shiftReport";
 
-const DEFAULT_CHECKLIST = ["Area kerja bersih & rapi", "Peralatan/cetakan dicek", "Bahan cukup untuk shift berikutnya", "Hasil sudah dihitung ulang", "Reject dipisahkan & dicatat"];
 
 type User = Awaited<ReturnType<typeof assertPerm>>;
 
@@ -47,11 +47,7 @@ export const openReport = action("report.create", async (fd, user) => {
   const division = await prisma.division.findUniqueOrThrow({ where: { id: divisionId } });
   const allowed = (await prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, take: Math.max(1, division.shiftCount) })).map((s) => s.id);
   if (!allowed.includes(shiftId)) throw new Error(`${division.name} hanya punya ${division.shiftCount} shift`);
-  let checklist = toEntries(division.checklist);
-  if (!checklist.length) {
-    const setting = await prisma.setting.findUnique({ where: { key: "report_checklist" } });
-    checklist = toEntries(setting ? setting.value.split("\n").map((s) => s.trim()).filter(Boolean) : DEFAULT_CHECKLIST);
-  }
+  const checklist = await divisionChecklist(division);
   const r = await prisma.shiftReport.upsert({
     where: { date_shiftId_divisionId: { date: dateOnly(date), shiftId, divisionId } },
     create: {
@@ -66,6 +62,8 @@ export const openReport = action("report.create", async (fd, user) => {
     },
     update: {},
   });
+  // Draf lama mengikuti checklist divisi terbaru (jawaban dengan label sama dipertahankan)
+  await refreshDraftChecklists({ id: r.id });
   // go=masuk: langsung buka popup Barang masuk; selain itu buka form isian laporan
   redirect(`/laporan/${r.id}?${fd.get("go") === "masuk" ? "masuk" : "isi"}=1`);
 });

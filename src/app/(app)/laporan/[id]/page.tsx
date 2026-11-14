@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { fmtDateTime, fmtDay } from "@/lib/time";
 import { STAGE_LABEL } from "@/lib/stock";
 import { flowLines, isTemplate, plannedFlow, toEntries, type StockCountRow, type WorkData } from "@/lib/shiftReport";
+import { refreshDraftChecklists } from "@/lib/shiftReportChecklist";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { flowEnabled } from "@/lib/shiftReportFlow";
 import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
@@ -37,6 +38,8 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const user = await requirePerm("report.view");
   const { id } = await params;
   const { isi, masuk, jpg } = await searchParams;
+  // Draf mengikuti checklist divisi terbaru sebelum ditampilkan (laporan terkirim tidak diubah)
+  await refreshDraftChecklists({ id });
   const r = await prisma.shiftReport.findUnique({ where: { id }, include: { shift: true, division: true, sends: { orderBy: { sentAt: "desc" } } } });
   if (!r) notFound();
   // Karyawan hanya boleh membuka laporan divisinya sendiri (ditegakkan di server)
