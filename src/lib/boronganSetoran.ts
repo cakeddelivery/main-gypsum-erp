@@ -12,10 +12,10 @@ export async function setoranData(user: User, divisionId: string) {
     pointConfig(prisma),
     prisma.pieceTask.findMany({ where: { active: true, divisionId }, orderBy: { name: "asc" } }),
   ]);
-  const workers = await prisma.boronganPerson.findMany({ where: { role: "PEKERJA", active: true, pointId: { in: points.map((p) => p.id) } }, orderBy: { name: "asc" }, select: { id: true, name: true, pointId: true } });
+  const workers = await prisma.boronganPerson.findMany({ where: { role: "PEKERJA", active: true, pointId: { in: points.map((p) => p.id) } }, orderBy: { name: "asc" }, select: { id: true, name: true, pointId: true, taskIds: true } });
   return {
     points,
-    workers: workers.map((w) => ({ id: w.id, name: w.name, pointId: w.pointId! })),
+    workers: workers.map((w) => ({ id: w.id, name: w.name, pointId: w.pointId!, taskIds: w.taskIds })),
     tasks: tasks.filter((t) => canTask(scope, t.id)).map((x) => ({ id: x.id, name: x.name, workerRate: Number(x.workerRate), coordinatorRate: Number(x.coordinatorRate), driverRate: Number(x.driverRate) })),
     pointTasks: Object.fromEntries(Object.entries(cfg).map(([k, v]) => [k, v.tasks])),
   };

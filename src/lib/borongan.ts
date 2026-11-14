@@ -251,6 +251,8 @@ async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: S
     const worker = await tx.boronganPerson.findUniqueOrThrow({ where: { id: input.workerId } });
     if (worker.role !== "PEKERJA" || worker.pointId !== point.id || !worker.active) throw new BoronganError("Pekerja tidak terdaftar aktif di titik ini");
     const task = await tx.pieceTask.findUniqueOrThrow({ where: { id: input.taskId }, include: { inputs: { include: { item: true } }, outputItem: true } });
+    // Pekerja yang sudah diatur jenis pekerjaannya hanya boleh disetor untuk tugas itu ("tidak salah kamar")
+    if (worker.taskIds.length && !worker.taskIds.includes(task.id)) throw new BoronganError(`${worker.name} tidak mengerjakan ${task.name}`);
     if (!task.active) throw new BoronganError("Tugas ini sudah nonaktif");
     if (!canTask(scope, task.id)) throw new BoronganError(`Setoran ${task.name} dicatat oleh divisi lain`);
     const cfg = (await pointConfig(tx))[point.id];
@@ -411,7 +413,7 @@ export async function cancelSettlement(id: string, reason: string, actor: Actor,
 
 // ---------------- ORANG ----------------
 
-export type PersonInput = { id?: string | null; name: string; phone?: string | null; role: BoronganRole; pointId?: string | null; active?: boolean; note?: string | null };
+export type PersonInput = { id?: string | null; name: string; phone?: string | null; role: BoronganRole; pointId?: string | null; active?: boolean; note?: string | null; taskIds?: string[] };
 
 /** Koordinator hanya boleh menambah/mengubah pekerja di titiknya sendiri */
 export async function savePerson(input: PersonInput, actor: Actor, scope: Scope) {
@@ -424,7 +426,13 @@ export async function savePerson(input: PersonInput, actor: Actor, scope: Scope)
     if (input.role !== "PEKERJA") throw new BoronganError("Koordinator hanya bisa menambah pekerja");
     assertPoint(scope, pointId!);
   }
-  const data = { name, phone: input.phone || null, role: input.role, pointId, active: input.active ?? true, note: input.note || null };
+  // Jenis pekerjaan hanya untuk pekerja (koordinator/driver dibayar dari semua tugas titiknya)
+  const taskIds = input.role === "PEKERJA" ? [...new Set(input.taskIds ?? [])] : [];
+  if (taskIds.length) {
+    const ok = await prisma.pieceTask.count({ where: { id: { in: taskIds } } });
+    if (ok !== taskIds.length) throw new BoronganError("Jenis pekerjaan tidak dikenal");
+  }
+  const data = { name, phone: input.phone || null, role: input.role, pointId, active: input.active ?? true, note: input.note || null, ...(input.taskIds ? { taskIds } : {}) };
   // Pekerja baru dari koordinator menunggu persetujuan pengelola (diaktifkan pengelola), agar upah tidak dibayar ke nama fiktif
   if (!scope.all && !input.id) data.active = false;
   if (input.id) {

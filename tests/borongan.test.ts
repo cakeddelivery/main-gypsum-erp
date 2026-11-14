@@ -66,6 +66,13 @@ describe("Alur borongan tetangga", () => {
     const date = dateOnly("2027-04-10");
     const r1 = await recordResult({ pointId: bmr.id, workerId: w1.id, taskId: task.id, date, qty: 40 }, actor, coordScope);
     await recordResult({ pointId: bmr.id, workerId: w2.id, taskId: task.id, date, qty: 10 }, actor, coordScope);
+    // Jenis pekerjaan: pekerja yang hanya ditugasi pekerjaan lain tidak bisa disetor untuk tugas ini
+    const other = await prisma.pieceTask.findFirstOrThrow({ where: { id: { not: task.id } } });
+    const w3 = await savePerson({ name: "Pekerja Kamar Lain", role: "PEKERJA", pointId: bmr.id, taskIds: [other.id] }, actor, all);
+    expect(w3.taskIds).toEqual([other.id]);
+    await expect(recordResult({ pointId: bmr.id, workerId: w3.id, taskId: task.id, date, qty: 1 }, actor, coordScope)).rejects.toThrow(/tidak mengerjakan/);
+    await expect(savePerson({ name: "Tugas Palsu", role: "PEKERJA", pointId: bmr.id, taskIds: ["bukan-id"] }, actor, all)).rejects.toThrow(/Jenis pekerjaan/);
+    await removePerson(w3.id, actor, all);
     expect(await at(polos.id, bmr.locationId)).toBe(10);
     expect(await at(cat.id, bmr.locationId)).toBeCloseTo(1, 5); // 50 pcs × 20 gram = 1 botol
     expect(await at(jadi.id, bmr.locationId)).toBe(50);

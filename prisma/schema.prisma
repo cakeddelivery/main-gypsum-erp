@@ -492,6 +492,9 @@ model BoronganPerson {
   user          User?              @relation(fields: [userId], references: [id])
   active        Boolean            @default(true)
   note          String?
+  /// Jenis pekerjaan (PieceTask.id) yang dikerjakan pekerja ini; divisinya mengikuti divisi tugas.
+  /// Kosong = belum diatur (boleh semua tugas di titiknya, seperti sebelumnya)
+  taskIds       String[]           @default([])
   createdAt     DateTime           @default(now())
   works         BoronganResult[]   @relation("ResultWorker")
   coordinated   BoronganResult[]   @relation("ResultCoordinator")

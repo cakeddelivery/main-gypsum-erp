@@ -85,7 +85,7 @@ export const savePersonAction = action(
   ["borongan.manage", "borongan.point"],
   async (fd, user) => {
     const scope = await boronganScope(prisma, user);
-    const p = await savePerson({ id: optStr(fd, "id"), name: str(fd, "name"), phone: optStr(fd, "phone"), role: (str(fd, "role") || "PEKERJA") as BoronganRole, pointId: optStr(fd, "pointId") ?? scope.pointIds[0], active: fd.get("active") !== "off", note: optStr(fd, "note") }, user, scope);
+    const p = await savePerson({ id: optStr(fd, "id"), name: str(fd, "name"), phone: optStr(fd, "phone"), role: (str(fd, "role") || "PEKERJA") as BoronganRole, pointId: optStr(fd, "pointId") ?? scope.pointIds[0], active: fd.get("active") !== "off", note: optStr(fd, "note"), taskIds: fd.has("tasksSent") ? fd.getAll("taskIds").map(String).filter(Boolean) : undefined }, user, scope);
     return p.active || scope.all ? `${p.name} tersimpan` : `${p.name} tersimpan, menunggu diaktifkan pengelola borongan`;
   },
   PATHS,

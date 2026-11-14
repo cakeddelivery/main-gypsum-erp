@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { ItemLines } from "@/components/ItemLines";
 
-type Worker = { id: string; name: string; pointId: string };
+type Worker = { id: string; name: string; pointId: string; taskIds?: string[] };
 type Task = { id: string; name: string; workerRate: number; coordinatorRate: number; driverRate: number };
 
 /** Setoran hasil: satu tugas & tanggal, jumlah per pekerja di titik terpilih */
@@ -17,7 +17,8 @@ export function ResultRows({ points, workers, tasks: allTasks, pointTasks = {} }
     if (!ts.some((t) => t.id === taskId)) setTaskId(ts[0]?.id ?? "");
   };
   const [qty, setQty] = useState<Record<string, string>>({});
-  const list = workers.filter((w) => w.pointId === pointId);
+  // Hanya pekerja titik ini yang mengerjakan tugas terpilih (pekerja tanpa jenis pekerjaan = semua tugas)
+  const list = workers.filter((w) => w.pointId === pointId && (!w.taskIds?.length || w.taskIds.includes(taskId)));
   const task = tasks.find((t) => t.id === taskId);
   const total = list.reduce((s, w) => s + (Number(qty[w.id]) || 0), 0);
   const rp = (n: number) => `Rp ${n.toLocaleString("id-ID")}`;
@@ -34,7 +35,7 @@ export function ResultRows({ points, workers, tasks: allTasks, pointTasks = {} }
       {task && <p className="text-xs text-slate-500">Per pcs: pekerja {rp(task.workerRate)}, koordinator {rp(task.coordinatorRate)}, driver {rp(task.driverRate)}</p>}
       <div className="rounded-xl border border-slate-200 p-3">
         <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Jumlah Hasil Per Pekerja (pcs)</p>
-        {list.length === 0 ? <p className="text-sm text-slate-500">Belum ada pekerja aktif di titik ini. Tambahkan dulu di tab Orang.</p> : (
+        {list.length === 0 ? <p className="text-sm text-slate-500">Belum ada pekerja aktif di titik ini untuk {task?.name ?? "tugas ini"}. Atur di menu Borongan › Orang (jenis pekerjaan).</p> : (
           <div className="space-y-2">
             {list.map((w) => (
               <label key={w.id} className="flex items-center gap-3">
