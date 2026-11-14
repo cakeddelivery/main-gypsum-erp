@@ -123,6 +123,7 @@ const SUPERVISOR: Guide = {
     ph("teal", { icon: "check", when: "Harian", title: "Validasi absensi", items: ["«Absensi» → tab «Validasi» → centang absen yang benar → «Validasi yang dipilih»."] }),
     ph("amber", { icon: "stock", when: "Harian", title: "Stok & bahan baku", items: ["«Stok & Persediaan» → «Permintaan»: «Setujui» / «Tolak», lalu «Penuhi». Kirim daftar ke grup: «Kirim ke WhatsApp».", "«Laporan Shift» → «Order bahan baku»: item online pakai «🛒 Order online» (Link Produk).", "Barang pembelian datang: «Stok & Persediaan» → «Pembelian» → «Terima barang»."] }),
     ph("violet", { icon: "truck", when: "Saat ada kiriman", title: "Borongan", items: ["«Borongan» → «+ Kirim Bahan» → «Serahkan Ke Driver».", "Cek tab «Penerimaan & Selisih»: selisih minus = setoran koordinator belum/kurang diterima divisi. Selesaikan sebelum upah dibayar."] }),
+    ph("red", { icon: "stock", when: "Paket retur datang", title: "Retur & video unboxing", items: ["«Retur & Komplain» → «+ Retur baru» → «📷 Foto label resi» → cek isian & produk → «Simpan & rekam video».", "Rekam tanpa jeda: tunjukkan label, buka paket → «■ Selesai rekam». Lalu «Periksa barang» (baik / rusak + foto) → «Ajukan klaim» bila ada yang rusak → «Tandai selesai»."] }),
   ],
   periodic: ["Mingguan: cek «Rekap» per divisi dan laporan berlabel Kendala yang belum selesai.", "Pastikan setiap divisi punya bahan & limit yang benar di «Bahan & checklist divisi» (minta Owner bila perlu diubah)."],
   infos: STAFF_INFOS,
@@ -138,7 +139,7 @@ const FINANCE: Guide = {
     ph("violet", { icon: "stock", when: "Saat belanja", title: "Pembelian & hutang", items: ["«Stok & Persediaan» → «Pembelian» → «+ Pembelian» → «Simpan pembelian».", "Hutang per supplier: «Supplier» → klik nama. Ringkasan: «Akuntansi» → «Piutang & hutang»."] }),
     ph("red", { icon: "wallet", when: "Jadwal gaji", title: "Penggajian & upah", items: ["«Penggajian» → «+ Periode harian» → «Buka» → periksa → «Setujui» → «Bayar gaji». Kasbon: «Kasbon» → «+ Kasbon» / «Lunasi».", "Tunjangan (tgl 15) di «Tunjangan»; BPJS mengikuti data karyawan. Upah borongan: «Borongan» → «Bayar Upah» (setelah selisih beres)."] }),
   ],
-  periodic: ["Bulanan: «Akuntansi» → «Biaya marketplace» → «+ Catat biaya».", "Bulanan: «Akuntansi» → «Cek konsistensi», selesaikan temuan sebelum Owner menutup buku."],
+  periodic: ["Klaim retur cair: «Retur & Komplain» → buka retur → «Klaim cair» (pemasukan otomatis tercatat di «Transaksi»).", "Bulanan: «Akuntansi» → «Biaya marketplace» → «+ Catat biaya».", "Bulanan: «Akuntansi» → «Cek konsistensi», selesaikan temuan sebelum Owner menutup buku."],
   infos: STAFF_INFOS,
 };
 

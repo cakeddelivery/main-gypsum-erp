@@ -400,6 +400,31 @@ const doublePay: Check = async () => {
   return issue("gaji-dobel", "ABSENSI_GAJI", "KRITIS", "Slip gaji tumpang tindih (bisa dibayar dua kali)", "Satu karyawan punya dua slip untuk hari yang sama. Batalkan salah satunya.", items);
 };
 
+// =========================== RETUR ===========================
+
+const staleReturns: Check = async (c) => {
+  const { returnSetting, RETURN_STATUS } = await import("./returns");
+  const days = await returnSetting("staleDays");
+  const rows = await prisma.returnCase.findMany({ where: { cancelledAt: null, status: { not: "SELESAI" }, receivedAt: { lt: daysAgo(c, days) } }, select: { id: true, number: true, trackingNo: true, status: true, receivedAt: true }, orderBy: { receivedAt: "asc" } });
+  return issue("retur-menggantung", "BARANG", "SEDANG", `Retur belum selesai lebih dari ${days} hari`, "Periksa barangnya, ajukan/tutup klaim, lalu tandai Selesai (video baru dihapus otomatis setelah Selesai).",
+    rows.map((r) => ({ label: r.number, detail: `${r.trackingNo} · ${RETURN_STATUS[r.status].label} sejak ${dateStr(r.receivedAt)}`, href: `/retur/${r.id}` })));
+};
+
+const failedReturnVideos: Check = async (c) => {
+  const rows = await prisma.returnMedia.findMany({
+    where: { kind: "VIDEO", ret: { cancelledAt: null }, OR: [{ status: "FAILED" }, { status: "UPLOADING", updatedAt: { lt: daysAgo(c, 1) } }, { status: "PROCESSING", updatedAt: { lt: daysAgo(c, 1) } }] },
+    select: { status: true, error: true, received: true, ret: { select: { id: true, number: true } } },
+  });
+  return issue("video-retur-gagal", "BARANG", "SEDANG", "Video unboxing retur gagal / belum selesai terunggah", "Buka retur di HP yang merekam lalu tekan Lanjutkan unggah, atau rekam ulang selama paket belum dibuang.",
+    rows.map((m) => ({ label: m.ret.number, detail: m.status === "FAILED" ? m.error ?? "gagal" : m.status === "UPLOADING" ? "unggahan berhenti" : "tertahan saat dikompres", href: `/retur/${m.ret.id}` })));
+};
+
+const returnsWithoutVideo: Check = async () => {
+  const rows = await prisma.returnCase.findMany({ where: { cancelledAt: null, status: { not: "DITERIMA" }, media: { none: { kind: "VIDEO", status: { in: ["READY", "PROCESSING", "DELETED"] } } } }, select: { id: true, number: true, trackingNo: true } });
+  return issue("retur-tanpa-video", "BARANG", "INFO", "Retur diperiksa tanpa video unboxing", "Klaim ke marketplace biasanya ditolak tanpa video unboxing. Rekam video setiap membuka paket retur.",
+    rows.map((r) => ({ label: r.number, detail: r.trackingNo, href: `/retur/${r.id}` })));
+};
+
 // =========================== KARYAWAN ===========================
 
 const accessAfterResign: Check = async (c) => {
@@ -422,6 +447,7 @@ export const CHECKS: Check[] = [
   payablesVsLedger, receivablesVsLedger, prepaidVsLedger, advances, reserveFunds, reserveMissing, talanganOpen, mirrorOfReversed, staleDrafts, staleWdProcess, purchaseIssues, depreciationGaps,
   inventoryVsLedger, flowSwitch, negative, unlinkedReceipts, handovers, stockRequests, unpaidBorongan, movementsWithoutRef, manualBorongan, manualReceipts,
   missingPayroll, doublePay, payrollAccruals, unvalidatedAttendance, missingAttendance,
+  staleReturns, failedReturnVideos, returnsWithoutVideo,
   accessAfterResign, pendingRegistrations,
 ];
 

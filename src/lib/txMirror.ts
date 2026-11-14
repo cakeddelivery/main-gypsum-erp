@@ -23,6 +23,7 @@ export const MIRROR_SOURCES: Record<string, { label: string; href: (ref: string 
   SISIHAN: { label: "Dana sisihan", href: () => "/finance/sisihan" },
   PENJUALAN: { label: "Penjualan", href: () => "/penjualan" },
   ASET: { label: "Aset tetap", href: () => "/akuntansi/aset" },
+  RETUR: { label: "Klaim retur", href: (r) => (r ? `/retur?q=${encodeURIComponent(r.split(":")[0])}` : "/retur") },
 };
 
 /** Label asal baris tertaut. Sisihan harian yang dicatat sistem (transfer rekening asal → simpanan) = "Sisihan otomatis" */

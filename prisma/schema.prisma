@@ -955,6 +955,8 @@ model Item {
   saleLines            SaleLine[]
   shiftReceipts        ShiftReceipt[]
   boronganReceiptLines BoronganReceiptLine[]
+  returnLines          ReturnLine[]
+  skuMaps              MarketplaceSkuMap[]
 }
 
 enum MovementType {
@@ -1901,4 +1903,141 @@ model SalePayment {
   cancelReason  String?
 
   @@index([saleId])
+}
+
+// ============ RETUR (video unboxing) ============
+
+enum ReturnStatus {
+  DITERIMA
+  DIPERIKSA
+  KLAIM_DIAJUKAN
+  KLAIM_CAIR
+  KLAIM_DITOLAK
+  SELESAI
+}
+
+/// Paket retur dari pembeli marketplace. Data pribadi pembeli (nama, alamat lengkap, no. HP) TIDAK disimpan:
+/// hanya kota/kabupaten + provinsi tujuan. Foto label hanya dipakai untuk membaca data lalu dibuang.
+model ReturnCase {
+  id                 String        @id @default(cuid())
+  /// Nomor otomatis RTR-202611-0001
+  number             String        @unique
+  receivedAt         DateTime
+  /// SHOPEE / TIKTOK / TOKOPEDIA / LAINNYA
+  marketplace        String?
+  courier            String?
+  trackingNo         String
+  orderNo            String?
+  city               String?
+  province           String?
+  reason             String?
+  note               String?
+  storeId            String?
+  status             ReturnStatus  @default(DITERIMA)
+  /// Cara data label didapat {source: AI/OCR/MANUAL, codes: [...]} (tanpa data pribadi)
+  labelRead          Json?
+  createdBy          String
+  createdById        String?
+  createdAt          DateTime      @default(now())
+  inspectedAt        DateTime?
+  inspectedBy        String?
+  /// Jurnal hasil periksa: barang baik kembali ke persediaan (Cr HPP), rusak → Kerugian Barang Retur Rusak
+  inspectJournalId   String?
+  /// Ref mutasi stok hasil periksa terakhir (RTR-…-P1, -P2 bila diperiksa ulang)
+  inspectRef         String?
+  goodValue          BigInt        @default(0)
+  lossValue          BigInt        @default(0)
+  claimAmount        BigInt        @default(0)
+  claimAt            DateTime?
+  claimNote          String?
+  claimPaidAmount    BigInt        @default(0)
+  claimPaidAt        DateTime?
+  claimBankAccountId String?
+  claimJournalId     String?
+  claimRejectedAt    DateTime?
+  claimRejectReason  String?
+  doneAt             DateTime?
+  doneBy             String?
+  /// Dibatalkan (salah input): jurnalnya dibalik, stok kembali, dokumen tetap tersimpan
+  cancelledAt        DateTime?
+  cancelReason       String?
+  lines              ReturnLine[]
+  media              ReturnMedia[]
+
+  @@index([trackingNo])
+  @@index([status])
+  @@index([receivedAt])
+}
+
+model ReturnLine {
+  id             String     @id @default(cuid())
+  returnId       String
+  ret            ReturnCase @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  /// SKU, variasi & nama persis seperti di label marketplace
+  labelSku       String?
+  labelVariation String?
+  labelName      String?
+  /// Jumlah di label
+  qty            Int
+  /// Barang jadi ERP (hasil pemetaan SKU, dikonfirmasi pengguna)
+  itemId         String?
+  item           Item?      @relation(fields: [itemId], references: [id])
+  goodQty        Int        @default(0)
+  damagedQty     Int        @default(0)
+  /// Harga pokok per unit saat diperiksa
+  unitCost       BigInt     @default(0)
+  note           String?
+  sortOrder      Int        @default(0)
+}
+
+enum ReturnMediaKind {
+  VIDEO
+  THUMB
+  FRAME
+  DAMAGE
+}
+
+enum ReturnMediaStatus {
+  UPLOADING
+  PROCESSING
+  READY
+  FAILED
+  DELETED
+}
+
+/// Video unboxing, thumbnail, potongan gambar & foto kerusakan. File disimpan lewat lapisan mediaStore (lokal VPS,
+/// bisa dipindah ke R2/Drive). Video dihapus otomatis N hari setelah retur Selesai; thumbnail & potongan gambar permanen.
+model ReturnMedia {
+  id          String            @id @default(cuid())
+  returnId    String
+  ret         ReturnCase        @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  lineId      String?
+  kind        ReturnMediaKind
+  status      ReturnMediaStatus @default(READY)
+  storageKey  String?
+  mime        String?
+  size        Int               @default(0)
+  /// Unggah bertahap: byte yang sudah diterima server
+  received    Int               @default(0)
+  durationSec Int?
+  recordedAt  DateTime?
+  meta        Json?
+  error       String?
+  createdBy   String
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  deletedAt   DateTime?
+
+  @@index([returnId])
+  @@index([status])
+}
+
+/// Pemetaan SKU + variasi marketplace → barang jadi ERP (dipelajari saat pengguna mengonfirmasi)
+model MarketplaceSkuMap {
+  /// SKU|VARIASI yang dinormalkan (huruf besar, tanpa spasi ganda)
+  key       String   @id
+  itemId    String
+  item      Item     @relation(fields: [itemId], references: [id])
+  updatedBy String
+  updatedAt DateTime @updatedAt
 }

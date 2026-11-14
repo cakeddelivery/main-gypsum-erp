@@ -259,6 +259,13 @@ export async function runDueJobs(now: Date = new Date()) {
     const { sendMaterialOrderReminder } = await import("./shiftReportStock");
     results.materialOrder = await logFailure("ORDER_BAHAN", date, () => sendMaterialOrderReminder(now));
   }
+  // 03.00 WIB: hapus video retur lama, tandai unggahan macet, proses ulang video tertahan; cek sisa disk
+  if (minutes >= 3 * 60 && !(await ranToday("job_retur_media_last", date))) {
+    await markRan("job_retur_media_last", date);
+    const { returnMediaMaintenance, diskWarning } = await import("./returnJobs");
+    results.returMedia = await logFailure("RETUR_MEDIA", date, () => returnMediaMaintenance(now));
+    results.disk = await logFailure("DISK", date, () => diskWarning(now));
+  }
   const closeDay = await autoCloseDay();
   if (p.day === closeDay && minutes >= 9 * 60 && !(await ranToday("job_month_close_last", date))) {
     const auto = await prisma.setting.findUnique({ where: { key: "auto_close_enabled" } });

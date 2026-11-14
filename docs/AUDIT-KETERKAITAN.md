@@ -41,6 +41,7 @@ Tanda: ✅ diperbaiki di branch `claude/cek-konsistensi` · 🔎 dipantau Cek ko
 | Setoran koordinator → penerimaan divisi (#96) | `HSB:` di titik → `PND:` titik → gudang; reject = penyesuaian | Beban selisih untuk reject | selisih tampil di menu Borongan & laporan shift |
 | Penjualan offline | PENGELUARAN ref JUAL | HPP | — |
 | Penjualan marketplace | (opname barang jadi akhir bulan) | HPP opname | ❓ lihat C2 |
+| Retur marketplace (#retur) | barang baik: PENERIMAAN ref `RTR-…-P1` ke gudang barang jadi | Dr Persediaan Barang Jadi + Dr 6-1810 Kerugian Barang Retur Rusak / Cr HPP (sumber `RETUR`); klaim cair Dr rekening / Cr 4-9200 → baris tertaut Transaksi | 🔎 retur menggantung > 14 hari, video gagal unggah, retur tanpa video |
 | Permintaan stok otomatis | — | — | 🔎 terbuka > 7 hari |
 | Semua | — | nilai stok vs akun persediaan | 🔎 selisih > Rp1.000, 🔎 stok minus, 🔎 mutasi manual tanpa ref |
 
