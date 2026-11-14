@@ -30,7 +30,7 @@ export function PanduanView({ guide, wa, shots = {} }: { guide: Guide; wa: strin
                 )}
                 {shot && (
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={shot} alt={`Contoh layar: ${ph.title}`} className="mx-auto w-full max-w-xs rounded-xl border border-slate-200" loading="lazy" />
+                  <img src={shot} alt={`Contoh layar: ${ph.title}`} className="mx-auto w-full max-w-xs rounded-xl border border-slate-200" />
                 )}
               </div>
             </li>

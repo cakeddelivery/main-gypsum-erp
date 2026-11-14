@@ -59,7 +59,7 @@ export function PanduanSheet({ id, guide, lh, date, shots = {}, page }: { id: st
   return (
     <div className="panduan">
       <DocSheet
-        id={id} lh={lh} exportWidth={PANDUAN_W} eyebrow="Panduan penggunaan ERP" title={guide.title}
+        id={id} lh={lh} exportWidth={PANDUAN_W} className="panduan-doc" eyebrow="Panduan penggunaan ERP" title={guide.title}
         subtitle={guide.subtitle} meta={{ label: "Untuk", value: guide.audience }} signer="Manajemen" signDate={date}
       >
         <div className="text-[#0f172a]">

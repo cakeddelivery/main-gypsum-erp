@@ -32,7 +32,7 @@ export function DocExport({ children }: { children: React.ReactNode }) {
  * Tampil terang juga di mode malam. Saat diunduh, dokumen digambar ulang selebar `exportWidth` (lihat DownloadJpg).
  */
 export function DocSheet({
-  id, lh, eyebrow, title, subtitle, meta, notes = [], signer = "Manajemen", signerOrg, signDate, exportWidth = 1000, children,
+  id, lh, eyebrow, title, subtitle, meta, notes = [], signer = "Manajemen", signerOrg, signDate, exportWidth = 1000, className, children,
 }: {
   id: string;
   lh: Letterhead;
@@ -46,10 +46,12 @@ export function DocSheet({
   signerOrg?: string;
   signDate?: string;
   exportWidth?: number;
+  /** Kelas tambahan di elemen dokumen (ikut tersalin saat diunduh JPG, mis. gaya lembar A4 panduan) */
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div id={id} data-export-width={exportWidth} className="doc theme-light">
+    <div id={id} data-export-width={exportWidth} className={`doc theme-light${className ? ` ${className}` : ""}`}>
       <svg className="doc-wave doc-wave-top" viewBox="0 0 400 200" preserveAspectRatio="none" aria-hidden>
         <path d="M120 0C170 40 210 70 280 80c60 9 90 50 120 120V0Z" fill="#dbeafe" />
         <path d="M230 0c20 30 50 45 95 50 40 5 60 30 75 60V0Z" fill="#93c5fd" opacity=".55" />
