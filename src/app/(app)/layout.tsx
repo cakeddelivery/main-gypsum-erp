@@ -7,12 +7,15 @@ import { Shell } from "@/components/Shell";
 import { EmailReminder } from "@/components/EmailReminder";
 import { alertDivision, cachedAlerts } from "@/lib/alerts";
 import { prisma } from "@/lib/db";
+import { guidesFor } from "@/lib/panduanAccess";
 
 export const dynamic = "force-dynamic";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
-  const nav = NAV.filter((n) => n.perms.some((p) => user.can(p))).map(({ href, label, icon }) => ({ href, label, icon }));
+  const guides = await guidesFor(user);
+  // Menu Panduan untuk semua yang punya panduan (isi & izinnya dicek lagi di halaman /panduan)
+  const nav = [...NAV.filter((n) => n.perms.some((p) => user.can(p))).map(({ href, label, icon }) => ({ href, label, icon })), ...(guides.allowed.length ? [{ href: "/panduan", label: "Panduan", icon: "book" }] : [])];
   // Tombol "+ Laporan shift" di tengah navigasi bawah (khusus yang boleh membuat laporan)
   const canReport = user.can("report.create");
   const bottom = canReport ? bottomNavWithReport(user.role, user.can) : bottomNavFor(user.role, user.can);
