@@ -48,7 +48,7 @@ export function Rich({ text, wa, btn }: { text: string; wa: string; btn: string 
   );
 }
 
-const SHEET_BTN = "whitespace-nowrap rounded-md bg-[#1e3a8a] px-2 py-0.5 font-bold text-[#ffffff]";
+const SHEET_BTN = "whitespace-nowrap rounded-md border border-[#c7d7f5] bg-[#eef3fd] px-1.5 font-semibold text-[#1e3a8a]";
 
 /**
  * Lembar Panduan A4 (divisi atau role): alur harian bernomor + tugas berkala + info penting, dengan kop surat.
@@ -64,7 +64,7 @@ export function PanduanSheet({ id, guide, lh, date, shots = {}, page }: { id: st
       >
         <div className="text-[#0f172a]">
           <ol className="relative grid gap-2.5">
-            <span className="absolute bottom-10 left-[29px] top-10 w-1 rounded bg-[#cbd5e1]" aria-hidden />
+            <span className="absolute bottom-10 left-[30px] top-10 w-0.5 rounded bg-[#e2e8f0]" aria-hidden />
             {guide.phases.map((ph, n) => {
               const shot = ph.shot ? shots[ph.shot] : undefined;
               return (
@@ -74,21 +74,21 @@ export function PanduanSheet({ id, guide, lh, date, shots = {}, page }: { id: st
                       <GuideIco name={ph.icon} size={30} />
                     </span>
                   </div>
-                  <div className="flex min-w-0 flex-1 gap-4 rounded-2xl border-2 px-5 py-2.5" style={{ borderColor: ph.color, background: ph.soft }}>
+                  <div className="flex min-w-0 flex-1 gap-4 rounded-2xl border border-l-[6px] bg-[#ffffff] px-5 py-2.5 shadow-[0_1px_2px_rgba(15,23,42,0.06)]" style={{ borderColor: "#e2e8f0", borderLeftColor: ph.color }}>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-baseline gap-x-3">
                         <span className="text-[27px] font-extrabold leading-tight" style={{ color: ph.color }}>{n + 1}. {ph.title}</span>
-                        <span className="rounded-full px-3 py-0.5 text-[15px] font-bold uppercase tracking-wide text-[#ffffff]" style={{ background: ph.color }}>{ph.when}</span>
+                        <span className="rounded-full px-3 py-0.5 text-[14px] font-bold uppercase tracking-wide" style={{ background: ph.soft, color: ph.color }}>{ph.when}</span>
                       </div>
-                      <ul className="mt-1 list-disc space-y-1 pl-6 text-[19px] leading-snug">
+                      <ul className="mt-1 list-disc space-y-1 pl-6 text-[19px] leading-[1.4] text-[#334155] marker:text-[#94a3b8]">
                         {ph.items.slice(0, 1).map((t, i) => <li key={i}><Rich text={t} wa={wa} btn={SHEET_BTN} /></li>)}
                         {ph.flow && (
                           <li className="list-none">
                             <div className="-ml-6 my-1 flex flex-wrap items-center gap-1.5">
                               {ph.flow.map((s, i) => (
                                 <span key={s} className="flex items-center gap-1.5">
-                                  <span className="rounded-full border-2 bg-[#ffffff] px-2.5 py-0.5 text-[16.5px] font-bold" style={{ borderColor: ph.color, color: ph.color }}>{i + 1}. {s}</span>
-                                  {i < ph.flow!.length - 1 && <span className="text-[22px] font-bold" style={{ color: ph.color }}>→</span>}
+                                  <span className="rounded-full px-2.5 py-0.5 text-[16px] font-semibold" style={{ background: ph.soft, color: ph.color }}>{i + 1}. {s}</span>
+                                  {i < ph.flow!.length - 1 && <span className="text-[18px] text-[#94a3b8]">→</span>}
                                 </span>
                               ))}
                             </div>
@@ -99,7 +99,7 @@ export function PanduanSheet({ id, guide, lh, date, shots = {}, page }: { id: st
                     </div>
                     {shot && (
                       // eslint-disable-next-line @next/next/no-img-element
-                      <img src={shot} alt="" className="my-1 w-[230px] shrink-0 self-center rounded-xl border-2 border-[#cbd5e1] bg-[#ffffff]" />
+                      <img src={shot} alt="" className="my-1 w-[230px] shrink-0 self-center rounded-xl border border-[#e2e8f0] bg-[#ffffff] shadow-[0_2px_6px_rgba(15,23,42,0.08)]" />
                     )}
                   </div>
                 </li>
@@ -108,21 +108,21 @@ export function PanduanSheet({ id, guide, lh, date, shots = {}, page }: { id: st
           </ol>
 
           {guide.periodic && (
-            <div className="mt-3 rounded-2xl border-2 border-[#94a3b8] bg-[#f8fafc] px-5 py-2.5">
+            <div className="mt-3 rounded-2xl border border-[#e2e8f0] bg-[#f8fafc] px-5 py-2.5">
               <div className="text-[22px] font-extrabold text-[#334155]">Tugas mingguan / bulanan</div>
-              <ul className="mt-1 list-disc space-y-1 pl-6 text-[18px] leading-snug">
+              <ul className="mt-1 list-disc space-y-1 pl-6 text-[18px] leading-[1.45] text-[#334155] marker:text-[#94a3b8]">
                 {guide.periodic.map((t, i) => <li key={i}><Rich text={t} wa={wa} btn={SHEET_BTN} /></li>)}
               </ul>
             </div>
           )}
 
-          <div className="mt-3 rounded-2xl border-2 border-[#f59e0b] bg-[#fffbeb] px-5 py-3">
+          <div className="mt-3 rounded-2xl border border-[#fde68a] bg-[#fffbeb] px-5 py-3">
             <div className="mb-1.5 text-[24px] font-extrabold text-[#92400e]">Info penting</div>
             <div className="grid grid-cols-2 gap-x-6 gap-y-2">
               {guide.infos.map((x) => (
                 <div key={x.title} className="flex gap-3">
                   <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#fde68a] text-[#92400e]"><GuideIco name={x.icon} size={22} /></span>
-                  <div className="min-w-0 text-[16.5px] leading-snug">
+                  <div className="min-w-0 text-[16.5px] leading-[1.45]">
                     <div className="text-[17.5px] font-bold text-[#0f172a]">{x.title}</div>
                     <div className="text-[#334155]"><Rich text={x.text} wa={wa} btn={SHEET_BTN} /></div>
                   </div>

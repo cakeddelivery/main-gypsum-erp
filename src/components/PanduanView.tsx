@@ -1,7 +1,7 @@
 import { type Guide } from "@/lib/panduan";
 import { GuideIco, Rich } from "./PanduanSheet";
 
-const BTN = "whitespace-nowrap rounded-md bg-brand-700 px-1.5 py-0.5 font-semibold text-white";
+const BTN = "whitespace-nowrap rounded-md border border-brand-200 bg-brand-50 px-1.5 font-semibold text-brand-700";
 
 /** Panduan versi layar HP (isi sama dengan lembar A4): langkah bernomor yang mudah dibaca */
 export function PanduanView({ guide, wa, shots = {} }: { guide: Guide; wa: string; shots?: Record<string, string> }) {
