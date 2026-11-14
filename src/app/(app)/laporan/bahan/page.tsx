@@ -11,6 +11,18 @@ import { flowEnabled } from "@/lib/shiftReportFlow";
 
 export const metadata = { title: "Bahan Baku & Checklist Divisi" };
 
+const FORMAT_HINT: Partial<Record<keyof typeof TEMPLATES, string>> = {
+  CETAK: "Cetak (hasil cetak per karyawan per series)",
+  PRODUKSI: "Produksi / Oven (panen per oven + hasil cetak per karyawan)",
+};
+
+/** Saran format untuk divisi produksi yang masih Umum (hasil kerja tidak muncul tanpa format) */
+function suggestFormat(name: string): keyof typeof TEMPLATES | null {
+  if (/cetak/i.test(name)) return "CETAK";
+  if (/oven|produksi|panen/i.test(name)) return "PRODUKSI";
+  return null;
+}
+
 export default async function BahanDivisiPage({ searchParams }: { searchParams: Promise<{ div?: string }> }) {
   const user = await requirePerm("material.manage");
   const flowOn = await flowEnabled();
@@ -38,7 +50,7 @@ export default async function BahanDivisiPage({ searchParams }: { searchParams: 
       <Field label="Format laporan shift">
         <select name="reportTemplate" defaultValue={d?.reportTemplate ?? ""} className="input">
           <option value="">Umum (tanpa detail hasil kerja)</option>
-          {REPORT_TEMPLATES.map((t) => <option key={t} value={t}>{TEMPLATES[t].label}</option>)}
+          {REPORT_TEMPLATES.map((t) => <option key={t} value={t}>{FORMAT_HINT[t] ?? TEMPLATES[t].label}</option>)}
         </select>
       </Field>
       <Field label="Target hasil per shift" hint="Produksi: panen (pcs) · Cetak: hasil cetak (pcs) · Giftbox: giftbox (box) · Packing: patung (pcs) · Assembling: produk jadi (pcs). Kosongkan bila tanpa target">
@@ -59,7 +71,7 @@ export default async function BahanDivisiPage({ searchParams }: { searchParams: 
         subtitle="Bahan baku tiap divisi untuk stock opname di laporan shift, limit order, dan checklist penutupan"
         actions={<><Modal trigger="+ Divisi" title="Divisi baru">{divForm()}</Modal></>}
       />
-      <Tabs current={current?.id ?? ""} tabs={divisions.map((d) => ({ key: d.id, label: d.active ? d.name : `${d.name} (nonaktif)`, href: `?div=${d.id}`, count: d._count.items }))} />
+      <Tabs current={current?.id ?? ""} tabs={divisions.map((d) => ({ key: d.id, label: `${!d.reportTemplate && suggestFormat(d.name) ? "⚠ " : ""}${d.active ? d.name : `${d.name} (nonaktif)`}`, href: `?div=${d.id}`, count: d._count.items }))} />
       {!current ? <Empty title="Belum ada divisi" /> : (
         <div className="grid gap-4 lg:grid-cols-5">
           <Card
@@ -97,6 +109,11 @@ export default async function BahanDivisiPage({ searchParams }: { searchParams: 
                   {current.targetPerShift ? <Badge tone="purple">Target {current.targetPerShift.toLocaleString("id-ID")}/shift</Badge> : null}
                   <Badge tone={current.active ? "green" : "red"}>{current.active ? "Aktif" : "Nonaktif"}</Badge>
                 </div>
+                {!current.reportTemplate && suggestFormat(current.name) && (
+                  <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-xs text-rose-800">
+                    ⚠ <b>Pilih format laporan</b> agar isian hasil kerja muncul di laporan shift divisi ini. Tekan <b>Ubah</b> → Format laporan shift = <b>{TEMPLATES[suggestFormat(current.name)!].label}</b>.
+                  </div>
+                )}
               </div>
             </Card>
             <Card title="Hasil kerja → stok">
