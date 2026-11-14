@@ -29,3 +29,13 @@ describe("Anggota tidak input hasil produksi sendiri", () => {
     expect(effectivePermissions("OPERATOR", [{ role: "OPERATOR", permission: "production.create", allowed: true }] as never).has("production.create")).toBe(true);
   });
 });
+
+describe("Divisi anggota mengikuti data karyawannya", () => {
+  it("divisi karyawan menang atas kolom divisi akun yang tertinggal", () => {
+    const delta = { role: "OPERATOR" as const, divisionId: "asm", employeeId: "e1", employee: { divisionId: "pck" } };
+    expect(reportDivision(delta)).toBe("pck");
+    expect(canSeeDivision(delta, "asm")).toBe(false);
+    expect(canSeeDivision(delta, "pck")).toBe(true);
+    expect(reportDivision({ role: "KAPTEN_DIVISI" as const, divisionId: "ctk", employee: null })).toBe("ctk");
+  });
+});

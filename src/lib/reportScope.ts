@@ -3,7 +3,16 @@ import type { Role } from "@prisma/client";
 /** Peran pengelola yang melihat laporan shift SEMUA divisi */
 const ALL_DIVISIONS: Role[] = ["OWNER", "ADMIN", "ADMIN_PRODUKSI", "SUPERVISOR", "FINANCE"];
 
-type ScopeUser = { role: Role; divisionId: string | null; employeeId?: string | null };
+type ScopeUser = { role: Role; divisionId: string | null; employeeId?: string | null; employee?: { divisionId: string | null } | null };
+
+/**
+ * Divisi anggota: divisi DATA KARYAWAN-nya lebih dulu (tempat ia benar-benar bekerja), baru kolom divisi akun.
+ * Kolom divisi akun bisa tertinggal (mis. diisi saat pernah jadi kapten divisi lain) dan dulu membuat operator
+ * Packing bisa membuka laporan Assembling.
+ */
+export function memberDivision(user: ScopeUser): string | null {
+  return user.employee?.divisionId ?? user.divisionId ?? null;
+}
 
 /**
  * Divisi yang boleh dilihat/diisi pengguna di menu Laporan Shift.
@@ -12,7 +21,7 @@ type ScopeUser = { role: Role; divisionId: string | null; employeeId?: string | 
  */
 export function reportDivision(user: ScopeUser): string | null {
   if (ALL_DIVISIONS.includes(user.role)) return null;
-  if (user.role === "KAPTEN_DIVISI" || user.role === "OPERATOR" || user.employeeId) return user.divisionId ?? "-";
+  if (user.role === "KAPTEN_DIVISI" || user.role === "OPERATOR" || user.employeeId) return memberDivision(user) ?? "-";
   return null;
 }
 

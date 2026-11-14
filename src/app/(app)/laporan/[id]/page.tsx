@@ -21,6 +21,9 @@ import { DownloadJpg } from "@/components/DownloadJpg";
 import { Modal } from "@/components/Modal";
 import { ClearQuery } from "@/components/ClearQuery";
 import { ReportForm, ReceiptSection } from "./ReportForm";
+import { ResultRows } from "../../borongan/BoronganForms";
+import { addResults } from "../../borongan/actions";
+import { setoranData } from "@/lib/boronganSetoran";
 import { ReportSheet } from "./ReportSheet";
 import { reportCatalogs } from "@/lib/productFamily";
 import { letterhead } from "@/lib/letterhead";
@@ -54,6 +57,9 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const day = r.date.toISOString().slice(0, 10);
   const lh = await letterhead();
   const divTasks = await prisma.pieceTask.count({ where: { divisionId: r.divisionId, active: true } });
+  // "+ Setoran borongan": form setoran (#93) di popup, hanya bila divisi punya tugas borongan & user berhak
+  const canSetor = (template === "ASSEMBLING" || divTasks > 0) && (user.can("borongan.manage") || user.can("borongan.point"));
+  const setoran = canSetor ? await setoranData(user, r.divisionId) : null;
   const [bLines, flowOn, resultStatus, receipts, pendingReturns] = await Promise.all([
     boronganLines(template, r.date, r.divisionId),
     flowEnabled(),
@@ -83,6 +89,9 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const fname = `laporan-${r.division.code}-${r.shift.code}-${day}`;
   // Pratinjau JPG & Unduh JPG hanya setelah laporan dikirim (saat mengisi tidak ditampilkan)
   const sent = r.status !== "DRAFT";
+  // Ringkas setoran hari ini, mis. "3 catatan · 1.200 pcs" (dari boronganLines: baris judul, per titik·tugas, total)
+  const setoranRows = bLines.slice(1, -1);
+  const setoranSum = setoranRows.length ? `${setoranRows.length} catatan · ${bLines[bLines.length - 1].replace(/^TOTAL SETORAN: /, "")}` : null;
   const receiptViews = receipts.map((x) => ({ id: x.id, number: x.number, itemName: x.item.name, unit: x.item.unit, qty: Number(x.qty), supplierName: x.supplierName, hasPhoto: !!x.photoPath, linked: !!x.purchaseId }));
   const materials = items.map((i) => ({ id: i.id, name: i.name, unit: i.unit }));
 
@@ -125,6 +134,19 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                 />
               </Modal>
             )}
+            {canEdit && setoran && setoran.tasks.length > 0 && (
+              <Modal trigger="+ Setoran borongan" triggerClass="btn-secondary" title="Catat setoran borongan" subtitle={`${r.division.name} · ${fmtDay(r.date)}`} wide>
+                <ModalForm action={addResults} className="space-y-3">
+                  <ResultRows pointTasks={setoran.pointTasks} points={setoran.points} workers={setoran.workers} tasks={setoran.tasks} />
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block"><span className="label">Tanggal</span><input type="date" name="date" defaultValue={day} className="input" /></label>
+                    <label className="block"><span className="label">Catatan</span><input name="note" className="input" /></label>
+                  </div>
+                  <p className="text-xs text-slate-500">Bahan sesuai resep tugas otomatis terpakai dari stok titik, dan barang hasil bertambah di stok titik.</p>
+                  <Submit>Simpan setoran</Submit>
+                </ModalForm>
+              </Modal>
+            )}
             {canEdit && (
               <Modal trigger={`+ Barang masuk${receipts.length ? ` (${receipts.length})` : ""}`} triggerClass="btn-secondary" title="Barang masuk hari ini" subtitle={`${r.division.name} · ${r.shift.name} · ${fmtDay(r.date)}`} defaultOpen={masuk === "1"} wide>
                 {materials.length > 0 ? (
@@ -141,13 +163,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
       {canEdit && (
         <div className="space-y-4">
           <Suspense fallback={null}><ClearQuery param="isi" /><ClearQuery param="masuk" /></Suspense>
-          {(template === "ASSEMBLING" || divTasks > 0) && (
-            <div className="card p-4 text-sm">
-              <h3 className="mb-1 font-semibold text-slate-800">Setoran borongan hari ini</h3>
-              {bLines.length ? <ul className="text-slate-600">{bLines.slice(1).map((l) => <li key={l}>{l}</li>)}</ul> : <p className="text-slate-500">Belum ada setoran tercatat untuk tanggal ini.</p>}
-              {user.can("borongan.view") && <Link href="/borongan?tab=hasil" className="btn-secondary btn-sm mt-2">+ Catat setoran di menu Borongan</Link>}
-            </div>
-          )}
+
           {pendingReturns.length > 0 && (
             <div className="card p-4 text-sm">
               <h3 className="mb-1 font-semibold text-slate-800">Kiriman hasil borongan menunggu diterima</h3>
@@ -169,11 +185,12 @@ export default async function ReportDetail({ params, searchParams }: { params: P
       )}
       {!sent ? (
         <div className="card p-5 text-sm">
-          <div className="flex flex-wrap items-center gap-2"><Badge tone="amber">Draf</Badge><span className="text-slate-500">Dibuat oleh {r.createdBy} · PIC {r.picName ?? r.createdBy}</span></div>
+          <div className="flex flex-wrap items-center gap-2"><Badge tone="amber">Draf</Badge><span className="text-slate-500">Dibuat oleh {r.createdBy} · PIC diisi otomatis dari akun yang mengirim</span></div>
           <p className="mt-3 text-slate-600">Laporan belum dikirim. Lanjutkan mengisi lewat tombol <b>Lanjutkan isi laporan</b>, lalu tekan <b>Kirim laporan</b> di langkah terakhir. Pratinjau & JPG laporan muncul setelah terkirim.</p>
           <ul className="mt-3 grid gap-1 text-slate-600 sm:grid-cols-3">
             <li>Checklist: <b>{checklist.filter((c) => (c.photo ? !!c.photoPath : c.done)).length}/{checklist.length}</b></li>
             <li>Barang masuk: <b>{receipts.length}</b></li>
+            {setoranSum && <li>Setoran borongan: <b>{setoranSum}</b></li>}
             <li>Stok akhir terisi: <b>{saved.filter((x) => x.qty != null).length}/{editStock.length}</b></li>
           </ul>
         </div>

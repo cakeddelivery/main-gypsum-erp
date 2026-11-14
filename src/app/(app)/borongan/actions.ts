@@ -9,7 +9,8 @@ import { audit } from "@/lib/audit";
 import { BoronganError, assertPoint, boronganScope, canWarehouse, isSetoranOnly, cancelHandover, checkSplit, createHandover, deleteResult, receiveHandover, recordResults, removePerson, savePerson, settlePoint, cancelSettlement } from "@/lib/borongan";
 import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 
-const PATHS = ["/borongan", "/stok"];
+// /laporan: setoran juga dicatat dari popup di halaman Laporan Shift (ringkasan setoran ikut segar)
+const PATHS = ["/borongan", "/stok", "/laporan"];
 const num = (x: FormDataEntryValue) => Number(String(x).replace(/\./g, "").replace(",", ".")) || 0;
 const lines = (fd: FormData) => {
   const qty = fd.getAll("qty").map(num);
