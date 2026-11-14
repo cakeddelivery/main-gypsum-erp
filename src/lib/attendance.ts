@@ -33,7 +33,7 @@ export const ATT_LABEL: Record<AttendanceStatus, string> = {
   TERLAMBAT: "Terlambat",
   IZIN: "Izin",
   SAKIT: "Sakit",
-  ALPA: "Alpa",
+  ALPA: "Alpa / tanpa keterangan",
   LIBUR: "Libur",
 };
 

@@ -1,3 +1,4 @@
+import { resignEffective } from "./time";
 import bcrypt from "bcryptjs";
 import type { User } from "@prisma/client";
 import { prisma } from "./db";
@@ -99,8 +100,8 @@ export async function checkLogin(usernameRaw: string, password: string, ip: stri
 
   const record = (success: boolean) => prisma.loginAttempt.create({ data: { ip, username, success, createdAt: now } });
 
-  const user = await prisma.user.findUnique({ where: { username } });
-  if (!user || !user.active) {
+  const user = await prisma.user.findUnique({ where: { username }, include: { employee: { select: { resignDate: true } } } });
+  if (!user || !user.active || resignEffective(user.employee?.resignDate, now)) {
     await bcrypt.compare(password, DUMMY_HASH); // samakan waktu respons
     await record(false);
     return { ok: false, error: GENERIC };

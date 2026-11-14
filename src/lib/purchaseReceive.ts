@@ -105,7 +105,7 @@ export async function closePurchase(id: string, reason: string, actor: Actor, no
     const left = prepaidLeft(p);
     let receivable: { number: string } | null = null;
     if (left > 0) {
-      const j = await postJournal(tx, { date: now, storeId: p.storeId, description: `Sisa pesanan ${p.number} tidak datang: refund dari ${p.vendor}`, source: "PEMBELIAN", sourceId: p.number, actor, lines: [{ accountCode: COA.PIUTANG, debit: left, memo: "Refund supplier" }, { accountCode: COA.UANG_MUKA_PEMBELIAN, credit: left }] });
+      const j = await postJournal(tx, { date: now, storeId: p.storeId, description: `Sisa pesanan ${p.number} tidak datang: refund dari ${p.vendor}`, source: "PEMBELIAN", sourceId: `${p.number}:TUTUP`, actor, lines: [{ accountCode: COA.PIUTANG, debit: left, memo: "Refund supplier" }, { accountCode: COA.UANG_MUKA_PEMBELIAN, credit: left }] });
       receivable = await tx.receivable.create({ data: { number: await nextNumber(tx, "PIU", now), customer: p.vendor, storeId: p.storeId, date: now, amount: BigInt(left), note: `Refund supplier: sisa pesanan ${p.number} tidak datang`, journalId: j.id } });
     }
     await tx.purchase.update({ where: { id }, data: { delivery: "DITUTUP", prepaidUsed: { increment: BigInt(left) }, closedReason: reason.trim().slice(0, 300) } });

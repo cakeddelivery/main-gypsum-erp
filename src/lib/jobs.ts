@@ -161,6 +161,22 @@ export async function sendWdProcessReminder(now: Date = new Date()) {
   return { sent, failed: targets.length - sent, withdrawals: m.rows.length };
 }
 
+/** Cek Konsistensi harian: kirim ringkasan ke Owner (tertaut Telegram) hanya bila ada masalah Kritis/Sedang */
+export async function sendConsistencyReport(now: Date = new Date()) {
+  const { runConsistency, consistencyText } = await import("./consistency");
+  const { esc } = await import("./telegram");
+  const r = await runConsistency(now);
+  const counts = { kritis: r.issues.filter((i) => i.level === "KRITIS").length, sedang: r.issues.filter((i) => i.level === "SEDANG").length, info: r.issues.filter((i) => i.level === "INFO").length };
+  await prisma.notificationLog.create({ data: { channel: "SISTEM", type: "CEK_KONSISTENSI", target: todayStr(now), status: counts.kritis || counts.sedang ? "PERINGATAN" : "SELESAI", payload: JSON.stringify({ ...counts, keys: r.issues.map((i) => `${i.key}:${i.items.length}`) }).slice(0, 2000) } });
+  const text = consistencyText(r, esc, process.env.APP_URL || "");
+  if (!text) return { ...counts, sent: 0 };
+  const recipients = await prisma.telegramIdentity.findMany({ where: { active: true, chatId: { not: null }, user: { active: true, role: "OWNER" } } });
+  if (!telegramConfigured() || !recipients.length) return { ...counts, sent: 0 };
+  let sent = 0;
+  for (const x of recipients) if ((await sendTelegram(x.chatId!, text, { type: "CEK_KONSISTENSI" })).ok) sent++;
+  return { ...counts, sent };
+}
+
 async function ranToday(key: string, date: string) {
   const s = await prisma.setting.findUnique({ where: { key } });
   return s?.value === date;
@@ -191,11 +207,22 @@ export async function runDueJobs(now: Date = new Date()) {
   const minutes = p.hour * 60 + p.minute;
   if (minutes >= 6 * 60 && !(await ranToday("job_monthly_payroll_last", date))) {
     await markRan("job_monthly_payroll_last", date);
+    // Resign terjadwal yang tanggalnya tiba: Nonaktif + akun dimatikan (sebelum slip dibuat)
+    const { applyDueResignations } = await import("./payroll");
+    results.resign = await logFailure("RESIGN_BERLAKU", date, () => applyDueResignations(now));
+    // Hari kemarin tanpa catatan absen → Alpa "Tanpa keterangan (otomatis)" (sebelum slip & cek konsistensi)
+    const { markMissingAttendance } = await import("./attendanceAuto");
+    results.absenOtomatis = await logFailure("ABSEN_TANPA_KETERANGAN", date, () => markMissingAttendance(now));
     results.monthlyPayroll = await logFailure("GAJI_OTOMATIS", date, () => generateMonthlyPayroll(SYSTEM_ACTOR, now));
     results.allowancePayroll = await logFailure("TUNJANGAN_OTOMATIS", date, () => generateAllowancePayroll(SYSTEM_ACTOR, now));
     // Overhead "Gaji Produksi" ikut gaji terbaru (mis. karyawan resign hari ini)
     const { syncSalaryOverheads } = await import("./salaryOverhead");
     results.salaryOverhead = await logFailure("OVERHEAD_GAJI", date, () => syncSalaryOverheads());
+  }
+  // 06.00 setelah slip gaji: Cek Konsistensi (uang, barang, absensi-gaji, karyawan); ringkasan ke Owner bila ada masalah
+  if (minutes >= 6 * 60 && !(await ranToday("job_konsistensi_last", date))) {
+    await markRan("job_konsistensi_last", date);
+    results.consistency = await logFailure("CEK_KONSISTENSI", date, () => sendConsistencyReport(now));
   }
   if (minutes >= 7 * 60 && !(await ranToday("job_daily_recap_last", date))) {
     await markRan("job_daily_recap_last", date);

@@ -83,6 +83,7 @@ export const REPORTS = [
   { href: "/akuntansi/saldo-rekening", label: "Atur saldo rekening", desc: "Samakan saldo Seabank, ShopeePay, kas" },
   { href: "/akuntansi/saldo-awal", label: "Saldo awal & penyesuaian", desc: "Input saldo pembukaan" },
   { href: "/akuntansi/coa", label: "Chart of Accounts", desc: "Bagan akun manufaktur" },
+  { href: "/akuntansi/konsistensi", label: "Cek konsistensi", desc: "Uang, barang, absensi & gaji: dokumen menggantung / selisih" },
   { href: "/akuntansi/tutup-buku", label: "Tutup buku", desc: "Penutupan periode bulanan" },
 ];
 
