@@ -20,7 +20,8 @@ import { salePaymentPhoto } from "./botSales";
 import { detectPayablePayment } from "./botPurchase";
 import { openPayables } from "./payables";
 import { matchReserveTransfer } from "./reserve";
-import { intentReserve, reserveIntent } from "./reserveSync";
+import { intentReserve, reserveIntent, routeIntent } from "./reserveSync";
+import { payrollHint } from "./payrollHint";
 import { supplierKey, supplierNames } from "./suppliers";
 import { cbId, chunk, createDraft, dateUnconfirmed, draftMessage, resolveCategory, type DraftInput, type Pick } from "./botDraft";
 export { draftMessage } from "./botDraft";
@@ -268,6 +269,8 @@ async function handleMessage(u: TgUpdate) {
   const storeId = seller ? matchStore([text, receipt?.counterparty].filter(Boolean).join(" "), stores) : null;
   // Kategori belum dikenali: saran 1–3 kategori (kata kunci → riwayat → AI bila ada) atau usulan kategori baru
   const catSuggest = ex.direction !== "TRANSFER" && !ex.categoryId && !splits.length && !reserveIntent(text) ? await suggestCategories(prisma, { direction: ex.direction, text: [text, receipt?.counterparty].filter(Boolean).join(" ") }, { ai: true }).catch(() => null) : null;
+  // "Gaji Rico ...": karyawan yang disebut + peringatan bila gajinya sudah disetujui di Penggajian (cegah beban dobel)
+  const payHint = ex.direction === "KELUAR" && !splits.length ? await payrollHint(text).catch(() => null) : null;
   const draft: DraftInput = {
     direction: ex.direction,
     amount: ex.amount,
@@ -280,7 +283,7 @@ async function handleMessage(u: TgUpdate) {
     proofPath,
     // WD saldo penjual tanpa tanggal di keterangan maupun bukti (bukti WD TikTok tidak mencantumkan tanggal):
     // tanggal wajib dipastikan sebelum dibukukan
-    aiExtraction: { ...ex, ...(receipt ? { receipt } : {}), ...(catSuggest && (catSuggest.picks.length || catSuggest.proposal) ? { catSuggest } : {}), ...(seller && !extractDate(text) && !receipt?.date ? { needDate: true } : {}) },
+    aiExtraction: { ...ex, ...(receipt ? { receipt } : {}), ...(payHint ? { payrollHint: payHint } : {}), ...(catSuggest && (catSuggest.picks.length || catSuggest.proposal) ? { catSuggest } : {}), ...(seller && !extractDate(text) && !receipt?.date ? { needDate: true } : {}) },
     messageId: String(msg.message_id),
     storeId,
     askStore: !!seller && !storeId,
@@ -291,9 +294,14 @@ async function handleMessage(u: TgUpdate) {
   // Keterangan jelas transfer sisihan ("OPS 9 nov" = Kompensasi Pengelola, "nabung spinjam 9 nov" = tabungan cicilan):
   // rekening asal/tujuan = alur dana sisihannya (bukan bacaan foto yang bisa tertukar dengan nama penerima),
   // tanggal sisihan = tanggal di keterangan, waktu transfer = waktu di bukti
-  const intent = !loan && !splits.length && text && ident.perms.has("finance.approve") ? reserveIntent(text) : null;
+  // Petunjuk: caption dulu; bila caption tidak jelas, berita transfer di bukti (teks OCR, mis. "Nabung Spinjam 11 Nov 26"),
+  // lalu alur rekening bukti (5984 → 0006 = tabungan cicilan, 5984 → ShopeePay = OPS) bila caption menyebut "sisihan"
+  const proofText = [receipt?.counterparty, ocrText].filter(Boolean).join(" ");
+  const intent = loan || splits.length || !ident.perms.has("finance.approve")
+    ? null
+    : (text ? reserveIntent(text) : null) ?? (proofText ? reserveIntent(proofText) : null) ?? (/\b(sisih|sisihan|disisihkan)\b/i.test(text) && ex.direction === "TRANSFER" ? await routeIntent(prisma, ex.accountId, ex.toAccountId) : null);
   if (intent && ex.amount) {
-    const day = extractDate(text) ?? ex.date ?? todayStr();
+    const day = extractDate(text) ?? (proofText ? extractDate(proofText) : null) ?? ex.date ?? todayStr();
     const r = await intentReserve(prisma, intent, ex.amount, day);
     if (r) {
       const when = receipt?.date ? jakartaDateTime(receipt.date, receipt.time ?? txTime(receipt.date, null)) : new Date(draft.date);

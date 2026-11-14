@@ -116,6 +116,17 @@ describe("Bot: cicilan pinjaman berjalan", () => {
   });
 });
 
+describe("Nama pemberi pinjaman berisi 'rp' + angka", () => {
+  it("'kreditrp4dq 2.100.000' tetap terbaca Rp2.100.000 (dulu 'rp4' terbaca Rp4: penyebab tes bot cicilan kadang gagal)", async () => {
+    const { extractTransaction } = await import("@/lib/extract");
+    const banks = await prisma.bankAccount.findMany({ where: { active: true } });
+    const cats = await prisma.txCategory.findMany({ where: { active: true } });
+    for (const t of ["kreditrp4dq", "kreditcmrp5", "Sharp12"]) expect(extractTransaction(`bayar cicilan ${t} 2.100.000 dari seabank`, banks, cats).amount).toBe(2_100_000);
+    expect(extractTransaction("bayar listrik Rp 350.000", banks, cats).amount).toBe(350_000);
+    expect(extractTransaction("total:Rp50rb", banks, cats).amount).toBe(50_000);
+  });
+});
+
 describe("Ubah kategori transaksi dibukukan", () => {
   it("Beban Lain-lain → cicilan pinjaman lalu → kategori lain, sisa hutang mengikuti", async () => {
     const p = await createLoanRecord({ lender: `Mas Uji ${tag}`, amount: 15_000_000, paidBefore: 3_000_000, date: jakartaDateTime("2026-05-01", "12:00"), note: "uji-hutang" }, owner);

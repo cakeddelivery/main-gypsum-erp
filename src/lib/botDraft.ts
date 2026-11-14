@@ -76,6 +76,7 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
         ]
       : []),
     tiktok && !sw?.transferred && ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"].includes(t.status) ? "⏳ Dana WD TikTok baru masuk bank 1–3 hari setelah ditransfer. Bila belum masuk, konfirmasi dulu (Dalam Proses), lalu tekan 💰 Uang diterima saat sudah masuk (atau kirim screenshot \"Berhasil ditransfer\")." : "",
+    (t.aiExtraction as { payrollHint?: { text: string } } | null)?.payrollHint?.text ?? "",
     dateNeeded ? "📅 <b>Bukti withdraw tidak mencantumkan tanggal.</b> Pastikan tanggal dana masuk ke rekening sebelum dibukukan." : "",
   ].filter(Boolean);
   if (dup) {

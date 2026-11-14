@@ -144,7 +144,9 @@ export async function createLoanRecord(input: LoanInput, actor: Actor, db?: Tx) 
 
 /** Hutang yang belum lunas, terbaru dulu, beserta nama barang pembeliannya (untuk dicocokkan dengan pesan bot) */
 export async function openPayables() {
-  const rows = await prisma.payable.findMany({ where: {}, include: { supplier: { select: { name: true, aliases: true } } }, orderBy: { date: "desc" }, take: 200 });
+  // Tanpa batas jumlah: dulu 200 dokumen terbaru diambil SEBELUM disaring yang belum lunas, sehingga hutang lama yang
+  // belum lunas bisa hilang dari tebakan bot bila dokumennya sudah banyak (urutan tanggal sama juga tidak tetap)
+  const rows = await prisma.payable.findMany({ where: {}, include: { supplier: { select: { name: true, aliases: true } } }, orderBy: [{ date: "desc" }, { number: "desc" }] });
   const open = rows.filter((p) => p.paid < p.amount);
   const purchases = await prisma.purchase.findMany({ where: { payableId: { in: open.map((p) => p.id) } }, select: { payableId: true, number: true, lines: { select: { item: { select: { name: true } } } } } });
   return open.map((p) => {
@@ -156,7 +158,7 @@ export type OpenPayable = Awaited<ReturnType<typeof openPayables>>[number];
 
 /** Pilihan hutang/pinjaman belum lunas untuk form transaksi pengeluaran */
 export async function payableOptions(includeId?: string | null) {
-  const rows = await prisma.payable.findMany({ orderBy: { date: "desc" }, include: { supplier: { select: { name: true } } }, take: 300 });
+  const rows = await prisma.payable.findMany({ orderBy: [{ date: "desc" }, { number: "desc" }], include: { supplier: { select: { name: true } } } });
   return rows
     .filter((p) => p.paid < p.amount || p.id === includeId)
     .map((p) => {
