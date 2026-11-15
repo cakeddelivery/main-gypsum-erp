@@ -1,3 +1,4 @@
+import { alpaInfo } from "@/lib/payroll";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requirePerm } from "@/lib/auth";
@@ -23,6 +24,20 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
     prisma.bankAccount.findMany({ where: { active: true } }),
     p.journalId ? prisma.journal.findUnique({ where: { id: p.journalId } }) : null,
   ]);
+  // Koreksi absensi (Alpa) setelah slip disetujui: slip TIDAK berubah otomatis; beri tahu agar bisa ditinjau
+  const changed: { name: string; was: number; now: number }[] = [];
+  if (p.kind === "BULANAN" && p.status !== "DRAFT") {
+    const alpa = await prisma.attendance.findMany({ where: { employeeId: { in: p.payslips.map((x) => x.employeeId) }, status: "ALPA", date: { gte: p.startDate, lte: p.endDate } }, select: { employeeId: true, date: true } });
+    for (const x of p.payslips) {
+      // Hanya slip yang dihitung dengan aturan Alpa (slip lama memakai aturan bolos)
+      const info = alpaInfo(x.alpaDetail);
+      if (!info) continue;
+      // Hitungan absen dimulai dari tanggal go-live (bila jatuh di tengah siklus); siklus sebelum go-live tidak dihitung
+      if (!info.from) continue;
+      const now = alpa.filter((a) => a.employeeId === x.employeeId && a.date.toISOString().slice(0, 10) >= info.from!).length;
+      if (now !== info.dates.length) changed.push({ name: x.employee.name, was: info.dates.length, now });
+    }
+  }
   const sum = (k: "baseSalary" | "dailyWage" | "pieceWage" | "allowance" | "transport" | "total") => p.payslips.reduce((s, x) => s + Number(x[k]), 0);
   // Slip yang sudah dibayar satu per satu (mis. dari bot Telegram)
   const paidSlips = p.payslips.filter((x) => x.paidAt);
@@ -34,7 +49,7 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
         subtitle={`${p.kind === "BULANAN" ? "Gaji bulanan" : p.kind === "BORONGAN" ? "Klaim borongan" : "Upah harian/campuran"} · ${fmtDay(p.startDate)} – ${fmtDay(p.endDate)}${p.payDate ? ` · gajian ${fmtDay(p.payDate)}` : ""}`}
         actions={
           <>
-            <DownloadCsv filename={`gaji-${p.code}`} rows={[["Karyawan", "Divisi", "Hadir", "Libur", "Bolos", "Telat (kali)", "Telat (menit)", "Gaji pokok", "Upah harian", "Borongan", "Tunjangan", "Transport", "Bonus", "Potongan", "Kasbon", "Total"], ...p.payslips.map((x) => [x.employee.name, x.employee.division?.name ?? "", x.daysPresent, x.offDays, x.absentDays, x.lateCount, x.lateMinutes, Number(x.baseSalary), Number(x.dailyWage), Number(x.pieceWage), Number(x.allowance), Number(x.transport), Number(x.bonus), Number(x.deduction), Number(x.advanceDeduction), Number(x.total)])]} />
+            <DownloadCsv filename={`gaji-${p.code}`} rows={[["Karyawan", "Divisi", "Hadir", "Libur", "Alpa", "Telat (kali)", "Telat (menit)", "Gaji pokok", "Upah harian", "Borongan", "Tunjangan", "Transport", "Bonus", "Potongan Alpa", "Potongan lain", "Kasbon", "Total"], ...p.payslips.map((x) => [x.employee.name, x.employee.division?.name ?? "", x.daysPresent, x.offDays, x.absentDays, x.lateCount, x.lateMinutes, Number(x.baseSalary), Number(x.dailyWage), Number(x.pieceWage), Number(x.allowance), Number(x.transport), Number(x.bonus), Number(x.alpaDeduction), Number(x.deduction), Number(x.advanceDeduction), Number(x.total)])]} />
             {p.status === "DRAFT" && user.can("payroll.manage") && <ActionForm action={compute}><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary" pendingText="Menghitung…">Hitung ulang</Submit></ActionForm>}
             {p.kind === "BORONGAN" && p.status === "DRAFT" && user.can("payroll.manage") && <ActionForm action={cancelClaim} confirm="Batalkan klaim ini? Hasil borongan kembali menjadi belum diklaim."><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary">Batalkan klaim</Submit></ActionForm>}
             {p.status === "DRAFT" && user.can("payroll.approve") && p.payslips.length > 0 && <ActionForm action={approve} confirm="Setujui penggajian ini? Slip tidak bisa dihitung ulang setelah disetujui."><input type="hidden" name="id" value={p.id} /><Submit className="btn-success">Setujui</Submit></ActionForm>}
@@ -72,9 +87,16 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
           </>
         }
       />
+      {changed.length > 0 && (
+        <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+          <b>Ada koreksi absensi setelah gaji ini disetujui.</b> Slip yang sudah disetujui tidak berubah otomatis:
+          <ul className="mt-1 list-disc pl-5">{changed.map((c) => <li key={c.name}>{c.name}: Alpa di slip {c.was} hari, sekarang {c.now} hari</li>)}</ul>
+          {p.status === "DISETUJUI" ? "Bila perlu disesuaikan, Batalkan persetujuan lalu Hitung ulang sebelum dibayar." : "Gaji sudah dibayar; selesaikan selisihnya di periode berikutnya (bonus/potongan)."}
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat label="Status" value={<Badge tone={p.status === "DIBAYAR" ? "green" : p.status === "DISETUJUI" ? "blue" : "amber"}>{p.status}</Badge>} hint={p.approvedBy ? `Disetujui ${p.approvedBy}` : undefined} />
-        {p.kind === "BULANAN" ? <Stat label="Gaji pokok" value={idr(sum("baseSalary"))} /> : p.kind === "TUNJANGAN" ? <Stat label="Tunjangan" value={idr(sum("allowance"))} /> : <Stat label="Upah harian" value={idr(sum("dailyWage"))} />}
+        {p.kind === "BULANAN" ? <Stat label="Gaji pokok" value={idr(sum("baseSalary"))} hint={Number(p.payslips.reduce((t, x) => t + Number(x.alpaDeduction), 0)) > 0 ? `Potongan Alpa ${idr(p.payslips.reduce((t, x) => t + Number(x.alpaDeduction), 0))}` : undefined} /> : p.kind === "TUNJANGAN" ? <Stat label="Tunjangan" value={idr(sum("allowance"))} /> : <Stat label="Upah harian" value={idr(sum("dailyWage"))} />}
         <Stat label="Upah borongan" value={idr(sum("pieceWage"))} />
         <Stat label="Transport assembling" value={idr(sum("transport"))} />
         <Stat label="Total" value={idr(sum("total"))} tone="blue" hint={journal ? `Jurnal ${journal.number} · ${fmtDateTime(p.paidAt)}` : undefined} />
@@ -83,11 +105,11 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
         <Card title="Slip gaji">
           <div className="overflow-x-auto">
             <Paged><table className="tbl">
-              <thead><tr><th>Karyawan</th><th>Divisi</th><th className="num">Hadir</th>{p.kind === "BULANAN" && <><th className="num">Libur</th><th className="num">Bolos</th><th className="num">Gaji pokok</th></>}<th className="num">Harian</th><th className="num">Borongan</th>{p.kind === "TUNJANGAN" && <th className="num">Tunjangan</th>}<th className="num">Transport</th><th className="num">Bonus</th><th className="num">Potongan</th><th className="num">Kasbon</th><th className="num">Total</th><th /></tr></thead>
+              <thead><tr><th>Karyawan</th><th>Divisi</th><th className="num">Hadir</th>{p.kind === "BULANAN" && <><th className="num">Libur</th><th className="num">Alpa</th><th className="num">Gaji pokok</th></>}<th className="num">Harian</th><th className="num">Borongan</th>{p.kind === "TUNJANGAN" && <th className="num">Tunjangan</th>}<th className="num">Transport</th><th className="num">Bonus</th><th className="num">Potongan<div className="text-[10px] font-normal normal-case">alpa + lain</div></th><th className="num">Kasbon</th><th className="num">Total</th><th /></tr></thead>
               <tbody>
                 {p.payslips.map((s) => (
                   <tr key={s.id}>
-                    <td>{s.employee.name}</td><td>{s.employee.division.name}</td><td className="num">{s.daysPresent}</td>{p.kind === "BULANAN" && <><td className="num">{s.offDays}</td><td className={`num ${s.absentDays ? "text-rose-600" : ""}`}>{s.absentDays}{s.lateCount > 0 && <div className="text-xs font-normal text-amber-600">telat {s.lateCount}× · {s.lateMinutes} mnt</div>}</td><td className="num">{idr(s.baseSalary)}</td></>}<td className="num">{idr(s.dailyWage)}</td><td className="num">{idr(s.pieceWage)}</td>{p.kind === "TUNJANGAN" && <td className="num">{idr(s.allowance)}</td>}<td className="num">{idr(s.transport)}</td><td className="num">{idr(s.bonus)}</td><td className="num text-rose-600">{idr(s.deduction)}</td><td className="num text-rose-600">{idr(s.advanceDeduction)}</td><td className="num font-semibold">{idr(s.total)}{s.note && <div className="text-xs font-normal text-slate-400">{s.note}</div>}{s.paidAt && p.status !== "DIBAYAR" && <div className="text-xs font-semibold text-emerald-700">✓ Lunas {fmtDay(s.paidAt)}</div>}</td>
+                    <td>{s.employee.name}</td><td>{s.employee.division.name}</td><td className="num">{s.daysPresent}</td>{p.kind === "BULANAN" && <><td className="num">{s.offDays}</td><td className={`num ${s.absentDays ? "text-rose-600" : ""}`}>{s.absentDays}{s.lateCount > 0 && <div className="text-xs font-normal text-amber-600">telat {s.lateCount}× · {s.lateMinutes} mnt</div>}</td><td className="num">{idr(s.baseSalary)}</td></>}<td className="num">{idr(s.dailyWage)}</td><td className="num">{idr(s.pieceWage)}</td>{p.kind === "TUNJANGAN" && <td className="num">{idr(s.allowance)}</td>}<td className="num">{idr(s.transport)}</td><td className="num">{idr(s.bonus)}</td><td className="num text-rose-600">{idr(Number(s.deduction) + Number(s.alpaDeduction))}{Number(s.alpaDeduction) > 0 && <div className="text-xs font-normal">Alpa {idr(s.alpaDeduction)}</div>}</td><td className="num text-rose-600">{idr(s.advanceDeduction)}</td><td className="num font-semibold">{idr(s.total)}{s.note && <div className="text-xs font-normal text-slate-400">{s.note}</div>}{s.paidAt && p.status !== "DIBAYAR" && <div className="text-xs font-semibold text-emerald-700">✓ Lunas {fmtDay(s.paidAt)}</div>}</td>
                     <td><div className="flex gap-1">
                       <Link href={`/gaji/slip/${s.id}`} className="btn-secondary btn-sm">Slip</Link>
                       {p.status === "DRAFT" && user.can("payroll.manage") && (

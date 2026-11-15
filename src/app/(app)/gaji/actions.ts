@@ -44,8 +44,8 @@ export const adjustSlip = action(
     const bonus = int(fd, "bonus");
     const deduction = int(fd, "deduction");
     if (bonus < 0 || deduction < 0) throw new Error("Nilai tidak boleh negatif");
-    // Potongan bolos/terlambat hasil hitungan tetap dipakai bila potongan tidak diubah
-    const total = Math.max(0, Number(s.baseSalary + s.dailyWage + s.pieceWage + s.allowance + s.transport - s.advanceDeduction) + bonus - deduction);
+    // Potongan Alpa (gaji pokok ÷ 30 × hari Alpa) tetap; "Potongan" di sini = potongan lain/terlambat yang diubah manual
+    const total = Math.max(0, Number(s.baseSalary + s.dailyWage + s.pieceWage + s.allowance + s.transport - s.advanceDeduction - s.alpaDeduction) + bonus - deduction);
     await prisma.payslip.update({ where: { id }, data: { bonus: BigInt(bonus), deduction: BigInt(deduction), total: BigInt(total) } });
     await audit(user, "SLIP_DISESUAIKAN", "Payslip", id, { bonus, deduction });
     return "Slip diperbarui";
@@ -171,9 +171,11 @@ export const saveAllowance = action(
     const name = z.string().trim().min(2, "Nama tunjangan minimal 2 huruf").parse(str(fd, "name"));
     const amount = int(fd, "amount");
     if (amount <= 0) throw new Error("Nominal tunjangan harus lebih dari 0");
-    const data = { name, amount: BigInt(amount), active: id ? fd.get("active") === "on" : true };
+    const payDay = int(fd, "payDay", 15);
+    if (payDay < 1 || payDay > 31) throw new Error("Tanggal bayar tunjangan harus 1–31");
+    const data = { name, amount: BigInt(amount), payDay, active: id ? fd.get("active") === "on" : true };
     const row = id ? await prisma.employeeAllowance.update({ where: { id }, data }) : await prisma.employeeAllowance.create({ data: { ...data, employeeId: str(fd, "employeeId") } });
-    await audit(user, id ? "TUNJANGAN_DIUBAH" : "TUNJANGAN_DITAMBAH", "EmployeeAllowance", row.id, { name, amount });
+    await audit(user, id ? "TUNJANGAN_DIUBAH" : "TUNJANGAN_DITAMBAH", "EmployeeAllowance", row.id, { name, amount, payDay });
     await syncSalaryOverheadsSafe();
     return "Tunjangan disimpan";
   },
@@ -196,7 +198,7 @@ export const generateAllowance = action(
   "payroll.manage",
   async (_fd, user) => {
     const r = await generateAllowancePayroll(user, new Date(), true);
-    return r.created ? `Slip tunjangan ${r.created} dibuat` : "Slip tunjangan bulan ini sudah ada atau belum ada tunjangan aktif";
+    return r.created ? `Slip tunjangan ${r.created} dibuat` : "Slip tunjangan yang jatuh tempo bulan ini sudah ada, atau belum ada tunjangan aktif";
   },
   ["/gaji", "/gaji/tunjangan"],
 );

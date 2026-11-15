@@ -119,32 +119,61 @@ export function sumAllowances(rows: { name: string; amount: number | bigint; act
   return { total: detail.reduce((s, d) => s + d.amount, 0), detail };
 }
 
-/** Periode tunjangan bulan berjalan: dibuat mulai tanggal `payday` (default 15), dibayar pada tanggal itu */
-export function allowancePeriodFor(today: string, payday = 15) {
-  const [y, m] = today.split("-").map(Number);
+/** Tanggal bayar efektif tunjangan pada bulan `ym` (YYYY-MM): tgl 29/30/31 di bulan pendek → akhir bulan */
+export function allowancePayDate(ym: string, payDay: number) {
+  const [y, m] = ym.split("-").map(Number);
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  const day = String(Math.min(Math.max(1, payday), last)).padStart(2, "0");
-  const ym = `${y}-${String(m).padStart(2, "0")}`;
-  const payDate = `${ym}-${day}`;
-  return { code: `TNJ-${ym.replace("-", "")}`, start: `${ym}-01`, payDate, due: today >= payDate };
+  return `${ym}-${String(Math.min(Math.max(1, Math.round(payDay) || 15), last)).padStart(2, "0")}`;
+}
+
+/** Kode periode tunjangan: tgl 15 tetap TNJ-YYYYMM (data lama), tanggal lain TNJ-YYYYMM-DD */
+export const allowanceCode = (payDate: string) => (payDate.slice(8) === "15" ? `TNJ-${payDate.slice(0, 7).replace("-", "")}` : `TNJ-${payDate.slice(0, 7).replace("-", "")}-${payDate.slice(8)}`);
+
+/** Periode tunjangan bulan berjalan untuk satu tanggal bayar: dibuat mulai tanggal itu */
+export function allowancePeriodFor(today: string, payday = 15) {
+  const ym = today.slice(0, 7);
+  const payDate = allowancePayDate(ym, payday);
+  return { code: allowanceCode(payDate), start: `${ym}-01`, payDate, due: today >= payDate };
+}
+
+/** Penanda slip yang dihitung dengan aturan Alpa (slip lama: potongan bolos, alpaDetail = []) */
+export const ALPA_RULE = "alpa30";
+export type AlpaDetail = { rule: string; from: string | null; dates: string[] };
+/** Tanggal-tanggal Alpa di slip; null = slip lama (aturan bolos) */
+export function alpaInfo(detail: unknown): AlpaDetail | null {
+  return detail && typeof detail === "object" && !Array.isArray(detail) && (detail as AlpaDetail).rule ? (detail as AlpaDetail) : null;
+}
+
+/** Potongan Alpa gaji bulanan: gaji pokok ÷ 30 × hari Alpa, dibulatkan ke rupiah, tidak melebihi gaji pokok */
+export function alpaDeduction(baseSalary: number, alpaDays: number) {
+  if (baseSalary <= 0 || alpaDays <= 0) return 0;
+  return Math.min(baseSalary, Math.round((baseSalary / 30) * alpaDays));
 }
 
 export type MonthlyCalcInput = {
   monthlySalary: number;
-  absentDays: number;
-  workdaysPerMonth: number;
+  /** Jumlah hari berstatus ALPA final dalam periode (Izin/Sakit/Libur tidak dipotong) */
+  alpaDays: number;
   lateMinutes: number;
   lateDeductionPerMinute: number;
   transport: number;
   resignedBeforePayday: boolean;
 };
 
-/** Gaji bulanan: gaji pokok − (bolos × gaji/hari) − potongan terlambat; resign sebelum gajian = Rp0 */
+/** Gaji bulanan: gaji pokok − potongan Alpa (pokok ÷ 30 × hari Alpa) − potongan terlambat; resign sebelum gajian = Rp0 */
 export function calcMonthly(i: MonthlyCalcInput) {
-  if (i.resignedBeforePayday) return { baseSalary: i.monthlySalary, deduction: 0, transport: 0, total: 0, note: "Resign sebelum tanggal gajian: tidak menerima gaji" };
-  const perDay = Math.round(i.monthlySalary / Math.max(1, i.workdaysPerMonth));
-  const deduction = Math.min(i.monthlySalary, i.absentDays * perDay + i.lateMinutes * i.lateDeductionPerMinute);
-  return { baseSalary: i.monthlySalary, deduction, transport: i.transport, total: i.monthlySalary - deduction + i.transport, note: i.absentDays ? `Bolos ${i.absentDays} hari × Rp ${perDay.toLocaleString("id-ID")}` : null };
+  if (i.resignedBeforePayday) return { baseSalary: i.monthlySalary, alpaDeduction: 0, deduction: 0, transport: 0, total: 0, note: "Resign sebelum tanggal gajian: tidak menerima gaji" };
+  const alpa = alpaDeduction(i.monthlySalary, i.alpaDays);
+  const deduction = Math.min(i.monthlySalary - alpa, i.lateMinutes * i.lateDeductionPerMinute);
+  const perDay = i.monthlySalary / 30;
+  return {
+    baseSalary: i.monthlySalary,
+    alpaDeduction: alpa,
+    deduction,
+    transport: i.transport,
+    total: i.monthlySalary - alpa - deduction + i.transport,
+    note: i.alpaDays ? `Potongan Alpa ${i.alpaDays} hari × Rp ${Math.round(perDay).toLocaleString("id-ID")}` : null,
+  };
 }
 
 async function settingStr(tx: Tx, key: string) {
@@ -307,10 +336,8 @@ async function monthlyEmployeesFor(tx: Tx, period: Period, offset: number) {
 
 async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
   const bpjsDef = await settingNum(tx, "bpjs_tk_amount", 28400);
-  const [offset, quota, workdays, lateDed, requireValidated, goLive] = await Promise.all([
+  const [offset, lateDed, requireValidated, goLive] = await Promise.all([
     settingNum(tx, "payday_offset_days", 7),
-    settingNum(tx, "weekly_off_quota", 1),
-    settingNum(tx, "monthly_workdays", 26),
     settingNum(tx, "late_deduction_per_minute", 0),
     tx.setting.findUnique({ where: { key: "payroll_require_validated" } }).then((s) => (s?.value ?? "true") === "true"),
     settingStr(tx, "go_live_date"),
@@ -326,12 +353,15 @@ async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
     const present = new Set(att.map((a) => dateStr(a.date)));
     // Absen yang belum divalidasi tidak dihitung masuk: tampilkan di slip agar tidak terpotong bolos tanpa disadari
     const pendingDays = requireValidated && countFrom ? await tx.attendance.count({ where: { employeeId: e.id, date: { gte: dateOnly(countFrom), lte: period.endDate }, status: { in: ["HADIR", "TERLAMBAT"] }, validated: false } }) : 0;
-    const { offDays, absentDays } = countFrom ? countAbsence(countFrom, end, present, quota) : { offDays: 0, absentDays: 0 };
+    // Status final absensi: Alpa dipotong; Izin/Sakit/Libur tidak dipotong (hari sebelum go-live tidak dihitung)
+    const finals = countFrom ? await tx.attendance.findMany({ where: { employeeId: e.id, date: { gte: dateOnly(countFrom), lte: period.endDate }, status: { in: ["ALPA", "LIBUR"] } }, select: { date: true, status: true }, orderBy: { date: "asc" } }) : [];
+    const alpaDates = finals.filter((a) => a.status === "ALPA").map((a) => dateStr(a.date));
+    const offDays = finals.filter((a) => a.status === "LIBUR").length;
+    const absentDays = alpaDates.length;
     const trips = await tx.transportTrip.aggregate({ where: { employeeId: e.id, date: { gte: period.startDate, lte: period.endDate } }, _sum: { amount: true } });
     const calc = calcMonthly({
       monthlySalary: Number(e.monthlySalary),
-      absentDays,
-      workdaysPerMonth: workdays,
+      alpaDays: absentDays,
       lateMinutes: att.reduce((s, a) => s + a.lateMinutes, 0),
       lateDeductionPerMinute: lateDed,
       transport: Number(trips._sum.amount ?? 0),
@@ -355,6 +385,8 @@ async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
         pieceDetail: [],
         transport: BigInt(calc.transport),
         deduction: BigInt(calc.deduction),
+        alpaDeduction: BigInt(calc.alpaDeduction),
+        alpaDetail: { rule: ALPA_RULE, from: countFrom, dates: alpaDates },
         advanceDeduction: BigInt(adv.deduction),
         advanceDetail: adv.detail,
         lateCount: late.count,
@@ -386,38 +418,60 @@ async function computeClaim(tx: Tx, period: Period, actor: Actor) {
   await audit(actor, "KLAIM_BORONGAN_DIHITUNG", "PayrollPeriod", period.id, { pieceWage }, tx);
 }
 
-/** Slip tunjangan: semua karyawan aktif yang punya tunjangan; resign sebelum tanggal bayar tidak menerima */
+/**
+ * Slip tunjangan untuk SATU tanggal bayar: tunjangan aktif yang tanggal bayarnya (efektif bulan itu) sama dengan tanggal
+ * periode ini. Tunjangan yang sudah masuk periode tunjangan lain di bulan yang sama tidak dihitung lagi (tanpa dobel,
+ * mis. tanggal bayar diubah di tengah bulan). Resign sebelum tanggal bayar tidak menerima.
+ */
 async function computeAllowance(tx: Tx, period: Period, actor: Actor) {
   const payDate = period.payDate ? dateStr(period.payDate) : dateStr(period.endDate);
+  const ym = payDate.slice(0, 7);
   const emps = await tx.employee.findMany({ where: { allowances: { some: { active: true } } }, include: { allowances: true } });
+  // Tunjangan yang sudah dibayar/ditagih di periode tunjangan lain bulan ini (per karyawan, per nama tunjangan)
+  const others = await tx.payslip.findMany({
+    where: { periodId: { not: period.id }, period: { kind: "TUNJANGAN", payDate: { gte: dateOnly(`${ym}-01`), lte: dateOnly(allowancePayDate(ym, 31)) } } },
+    select: { employeeId: true, allowanceDetail: true },
+  });
+  const taken = new Set(others.flatMap((o) => (o.allowanceDetail as AllowanceLine[]).map((l) => `${o.employeeId}|${l.name.trim().toLowerCase()}`)));
   await tx.payslip.deleteMany({ where: { periodId: period.id } });
   let count = 0;
   for (const e of emps) {
     if (e.status === "NONAKTIF" && !e.resignDate) continue;
     if (e.resignDate && dateStr(e.resignDate) < payDate) continue;
-    const a = sumAllowances(e.allowances);
+    const mine = e.allowances.filter((x) => allowancePayDate(ym, x.payDay) === payDate && !taken.has(`${e.id}|${x.name.trim().toLowerCase()}`));
+    const a = sumAllowances(mine);
     if (!a.total) continue;
-    await tx.payslip.create({ data: { periodId: period.id, employeeId: e.id, daysPresent: 0, dailyWage: BigInt(0), pieceWage: BigInt(0), pieceDetail: [], transport: BigInt(0), allowance: BigInt(a.total), allowanceDetail: a.detail, total: BigInt(a.total), note: "Tunjangan bulanan" } });
+    await tx.payslip.create({ data: { periodId: period.id, employeeId: e.id, daysPresent: 0, dailyWage: BigInt(0), pieceWage: BigInt(0), pieceDetail: [], transport: BigInt(0), allowance: BigInt(a.total), allowanceDetail: a.detail, total: BigInt(a.total), note: `Tunjangan bulanan · dibayar tgl ${Number(payDate.slice(8))}` } });
     count++;
   }
-  await audit(actor, "TUNJANGAN_DIHITUNG", "PayrollPeriod", period.id, { employees: count }, tx);
+  await audit(actor, "TUNJANGAN_DIHITUNG", "PayrollPeriod", period.id, { employees: count, payDate }, tx);
 }
 
-/** Buat periode tunjangan bulan berjalan bila sudah tanggal bayar (default 15). Idempoten. */
+/**
+ * Buat periode tunjangan bulan berjalan untuk setiap tanggal bayar yang sudah tiba (tanggal bayar per tunjangan,
+ * bawaan 15). Satu periode per tanggal bayar per bulan; idempoten.
+ */
+/** `force`: abaikan tanggal go-live (tombol manual). Tanggal bayar yang belum tiba tidak pernah dibuat lebih awal. */
 export async function generateAllowancePayroll(actor: Actor, now: Date = new Date(), force = false) {
   const today = todayStr(now);
-  const db = prisma as unknown as Tx;
-  const payday = await settingNum(db, "allowance_payday", 15);
-  const goLive = await settingStr(db, "go_live_date");
-  const p = allowancePeriodFor(today, payday);
-  if (!p.due && !force) return { created: null };
-  if (goLive && p.payDate < goLive && !force) return { created: null };
-  if (await prisma.payrollPeriod.findUnique({ where: { code: p.code } })) return { created: null };
-  const has = await prisma.employeeAllowance.count({ where: { active: true } });
-  if (!has) return { created: null };
-  const period = await prisma.payrollPeriod.create({ data: { code: p.code, kind: "TUNJANGAN", startDate: dateOnly(p.start), endDate: dateOnly(p.payDate), payDate: dateOnly(p.payDate) } });
-  await computePeriod(period.id, actor);
-  return { created: period.code };
+  const ym = today.slice(0, 7);
+  const goLive = await settingStr(prisma as unknown as Tx, "go_live_date");
+  const rows = await prisma.employeeAllowance.findMany({ where: { active: true }, select: { payDay: true } });
+  if (!rows.length) return { created: null };
+  const dates = [...new Set(rows.map((r) => allowancePayDate(ym, r.payDay)))].sort();
+  const created: string[] = [];
+  for (const payDate of dates) {
+    if (today < payDate) continue; // belum tanggal bayarnya (juga untuk tombol manual)
+    if (goLive && payDate < goLive && !force) continue;
+    const code = allowanceCode(payDate);
+    if (await prisma.payrollPeriod.findUnique({ where: { code } })) continue;
+    const period = await prisma.payrollPeriod.create({ data: { code, kind: "TUNJANGAN", startDate: dateOnly(`${ym}-01`), endDate: dateOnly(payDate), payDate: dateOnly(payDate) } });
+    await computePeriod(period.id, actor);
+    // Tidak ada tunjangan yang perlu ditagih (semua sudah masuk periode lain): periode kosong dihapus
+    if (!(await prisma.payslip.count({ where: { periodId: period.id } }))) await prisma.payrollPeriod.delete({ where: { id: period.id } });
+    else created.push(code);
+  }
+  return { created: created.length ? created.join(", ") : null };
 }
 
 /**

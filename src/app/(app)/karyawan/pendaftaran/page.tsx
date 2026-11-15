@@ -62,7 +62,7 @@ export default async function PendaftaranPage() {
                       <Field label="Role akun"><select name="role" className="input" defaultValue="OPERATOR">{roles.map((x) => <option key={x} value={x}>{ROLE_LABEL[x]}</option>)}</select></Field>
                       <Field label="Sistem upah"><select name="wageType" className="input" defaultValue="HARIAN">{Object.entries(WAGE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
                       <Field label="Tanggal masuk" hint="Menentukan siklus & tanggal gajian"><input type="date" name="joinDate" className="input" required defaultValue={r.startDate.toISOString().slice(0, 10)} /></Field>
-                      <Field label="Gaji bulanan (IDR)" hint="Untuk sistem upah Bulanan"><input name="monthlySalary" inputMode="numeric" className="input" defaultValue="0" /></Field>
+                      <Field label="Gaji Pokok (IDR)" hint="Untuk sistem upah Bulanan; Alpa dipotong Gaji Pokok ÷ 30 per hari"><input name="monthlySalary" inputMode="numeric" className="input" defaultValue="0" /></Field>
                       <Field label="Upah harian (IDR)" hint="Untuk Harian / Campuran"><input name="dailyRate" inputMode="numeric" className="input" defaultValue="0" /></Field>
                       <div className="col-span-2 rounded-xl border border-slate-200 p-3">
                         <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" name="bpjsTk" /> Ikut BPJS Ketenagakerjaan <span className="text-xs font-normal text-slate-500">(dibayar perusahaan)</span></label>

@@ -743,6 +743,9 @@ model Payslip {
   /// BPJS Ketenagakerjaan per bulan yang ditanggung perusahaan (info saja, tidak masuk total)
   bpjsCompany      BigInt        @default(0)
   total            BigInt
+  /// Potongan Alpa (gaji pokok ÷ 30 × hari Alpa) dan tanggal-tanggal Alpanya ["YYYY-MM-DD", …]
+  alpaDeduction    BigInt        @default(0)
+  alpaDetail       Json          @default("[]")
   /// Dibayar per slip (mis. dari bot Telegram); bila semua slip periode lunas, periode berstatus Dibayar
   paidAt            DateTime?
   paidJournalId     String?
@@ -1846,6 +1849,8 @@ model EmployeeAllowance {
   name       String
   amount     BigInt
   active     Boolean  @default(true)
+  /// Tanggal bayar tiap bulan (1–31; bulan yang lebih pendek → akhir bulan). Data lama: 15
+  payDay     Int      @default(15)
   createdAt  DateTime @default(now())
 
   @@index([employeeId])
