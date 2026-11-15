@@ -42,7 +42,7 @@ export function isIosStandalone() {
   return typeof window !== "undefined" && isIos() && isStandalone();
 }
 
-function isIos() {
+export function isIos() {
   const ua = navigator.userAgent;
   return /iPad|iPhone|iPod/.test(ua) || (ua.includes("Macintosh") && navigator.maxTouchPoints > 1);
 }

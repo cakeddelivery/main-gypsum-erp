@@ -84,28 +84,29 @@ model Shift {
 }
 
 model User {
-  id             String               @id @default(cuid())
-  username       String               @unique
-  name           String
+  id                String               @id @default(cuid())
+  username          String               @unique
+  name              String
   /// Email opsional (unik, huruf kecil): untuk lupa password & login dengan Google
-  email          String?              @unique
-  passwordHash   String
-  role           Role
-  active         Boolean              @default(true)
-  employeeId     String?              @unique
-  employee       Employee?            @relation(fields: [employeeId], references: [id])
-  divisionId     String?
-  division       Division?            @relation("DivisionCaptain", fields: [divisionId], references: [id])
-  failedLogins   Int                  @default(0)
-  lockedUntil    DateTime?
+  email             String?              @unique
+  passwordHash      String
+  role              Role
+  active            Boolean              @default(true)
+  employeeId        String?              @unique
+  employee          Employee?            @relation(fields: [employeeId], references: [id])
+  divisionId        String?
+  division          Division?            @relation("DivisionCaptain", fields: [divisionId], references: [id])
+  failedLogins      Int                  @default(0)
+  lockedUntil       DateTime?
   /// Naik setiap password diganti/direset; JWT dengan versi lama ditolak (sesi lama dicabut)
-  sessionVersion Int                  @default(0)
-  lastLoginAt    DateTime?
-  createdAt      DateTime             @default(now())
-  telegram       TelegramIdentity[]
-  alertReads     AlertRead[]
-  boronganPerson BoronganPerson?
-  resetTokens    PasswordResetToken[]
+  sessionVersion    Int                  @default(0)
+  lastLoginAt       DateTime?
+  createdAt         DateTime             @default(now())
+  telegram          TelegramIdentity[]
+  alertReads        AlertRead[]
+  boronganPerson    BoronganPerson?
+  resetTokens       PasswordResetToken[]
+  pushSubscriptions PushSubscription[]
 }
 
 /// Token reset password (lupa password). Hanya hash SHA-256 yang disimpan; sekali pakai, berlaku 30 menit.
@@ -1901,4 +1902,20 @@ model SalePayment {
   cancelReason  String?
 
   @@index([saleId])
+}
+
+/// Langganan notifikasi push (Web Push) per perangkat/browser pengguna
+model PushSubscription {
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  endpoint   String    @unique
+  p256dh     String
+  auth       String
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+  lastSentAt DateTime?
+  failCount  Int       @default(0)
+
+  @@index([userId])
 }

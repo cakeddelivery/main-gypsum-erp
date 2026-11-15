@@ -195,6 +195,8 @@ async function markRan(key: string, date: string) {
  * - 08.00 WIB: pengingat dana talangan ke Owner & Finance (bila ada yang belum dikembalikan)
  * - 08.00 WIB: pengingat piutang penjualan jatuh tempo ke Owner & Finance (sekali per nota per hari)
  * - 08.00 WIB: peringatan anggaran beban ≥80% / ≥100% ke Owner (sekali per ambang per akun per bulan)
+ * - 12.00 & 15.00 WIB: notifikasi push "Barang masuk?" & "Setoran borongan diterima?" ke anggota divisi yang sedang
+ *   bertugas (sudah absen masuk, belum pulang) + ringkasan ke Supervisor & Owner (hanya bila kunci VAPID terpasang)
  * - 19.00 WIB: pengingat order bahan baku (stok akhir shift terakhir ≤ limit) ke Owner & Admin (hanya bila ada)
  * - Tanggal tutup buku (Pengaturan, default 10) pukul 09.00 WIB: tutup buku bulan sebelumnya.
  *   Tidak tanggal 1 agar bukti transaksi akhir bulan yang terlambat masuk masih bisa dibukukan.
@@ -253,6 +255,16 @@ export async function runDueJobs(now: Date = new Date()) {
   if (minutes >= 8 * 60 && !(await ranToday("job_budget_last", date))) {
     await markRan("job_budget_last", date);
     results.budget = await logFailure("ANGGARAN", date, () => sendBudgetNotice(now));
+  }
+  // Pengingat push 12.00 / 15.00 (jendela 3 jam; tiap slot sekali per hari)
+  {
+    const { dueSlot, sendShiftReminders } = await import("./pushReminders");
+    const slot = dueSlot(minutes);
+    if (slot && !(await ranToday(slot.key, date))) {
+      await markRan(slot.key, date);
+      const { pushConfigured } = await import("./push");
+      if (pushConfigured()) results[`push${slot.label.slice(0, 2)}`] = await logFailure("PUSH_PENGINGAT", date, () => sendShiftReminders(now, slot.label));
+    }
   }
   if (minutes >= 19 * 60 && !(await ranToday("job_order_bahan_last", date))) {
     await markRan("job_order_bahan_last", date);

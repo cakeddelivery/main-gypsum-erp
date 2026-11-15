@@ -11,6 +11,7 @@ ERP bisa dipasang di layar utama HP (Android Chrome & iPhone Safari) dan kompute
 | Halaman offline (HTML mandiri, tanpa data) | `src/app/offline/route.ts` → `/offline` |
 | Daftar SW + kartu "Pasang aplikasi" di Profil | `src/components/Pwa.tsx` |
 | Cek otomatis (butuh build berjalan) | `node scripts/pwa-check.cjs` |
+| Notifikasi push (Web Push, pengingat 12.00/15.00) | lihat `docs/PUSH.md` |
 
 Aturan service worker:
 - Halaman, data, dan API ERP **tidak pernah disimpan** (privat, perlu login). Navigasi selalu ke jaringan; bila gagal tampil `/offline`.

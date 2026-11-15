@@ -64,8 +64,9 @@ export const openReport = action("report.create", async (fd, user) => {
   });
   // Draf lama mengikuti checklist divisi terbaru (jawaban dengan label sama dipertahankan)
   await refreshDraftChecklists({ id: r.id });
-  // go=masuk: langsung buka popup Barang masuk; selain itu buka form isian laporan
-  redirect(`/laporan/${r.id}?${fd.get("go") === "masuk" ? "masuk" : "isi"}=1`);
+  // go=masuk: popup Barang masuk; go=terima: popup Penerimaan borongan (dari notifikasi); selain itu form isian laporan
+  const go = fd.get("go");
+  redirect(`/laporan/${r.id}?${go === "masuk" ? "masuk" : go === "terima" ? "terima" : "isi"}=1`);
 });
 
 async function guardReport(id: string, user: User) {

@@ -3,8 +3,9 @@
  * - Navigasi halaman: selalu ke jaringan; bila gagal (offline) tampilkan /offline.
  * - Yang disimpan hanya aset statis yang tidak berubah: /_next/static/* (nama file ber-hash) dan ikon /pwa/.
  * - /api/*, /files/*, POST, server action: tidak disentuh sama sekali.
+ * - Notifikasi push: tampilkan judul/isi dari server; ketuk → buka (atau fokuskan) halaman ERP terkait.
  * Naikkan VERSION bila isi file ini diubah; cache lama dibersihkan saat activate. */
-const VERSION = "v1";
+const VERSION = "v2";
 const PRECACHE = `mg-precache-${VERSION}`;
 const STATIC = `mg-static-${VERSION}`;
 const OFFLINE_URL = "/offline";
@@ -70,4 +71,42 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(cacheFirst(req));
   }
   // Selain itu (RSC, gambar, dll.) dibiarkan ke browser seperti biasa, tanpa cache.
+});
+
+// ---------------- Notifikasi push ----------------
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (e) {
+    data = { body: event.data ? event.data.text() : "" };
+  }
+  const title = data.title || "Main Gypsum ERP";
+  const url = typeof data.url === "string" && data.url.startsWith("/") && !data.url.startsWith("//") ? data.url : "/";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || "",
+      icon: "/pwa/icon-192.png",
+      badge: "/pwa/icon-192.png",
+      tag: data.tag || undefined,
+      renotify: !!data.tag,
+      data: { url },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = new URL((event.notification.data && event.notification.data.url) || "/", self.location.origin).href;
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((list) => {
+      // Pakai jendela ERP yang sudah terbuka bila ada, lalu pindah ke halaman tujuan
+      for (const c of list) {
+        if (new URL(c.url).origin === self.location.origin && "focus" in c) {
+          return c.focus().then((w) => (w && "navigate" in w ? w.navigate(url) : self.clients.openWindow(url)));
+        }
+      }
+      return self.clients.openWindow(url);
+    }),
+  );
 });
