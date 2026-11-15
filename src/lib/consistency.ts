@@ -392,6 +392,37 @@ const doublePay: Check = async () => {
   return issue("gaji-dobel", "ABSENSI_GAJI", "KRITIS", "Slip gaji tumpang tindih (bisa dibayar dua kali)", "Satu karyawan punya dua slip untuk hari yang sama. Batalkan salah satunya.", items);
 };
 
+/**
+ * Beban gaji dicatat manual lewat Transaksi (kategori Gaji & Upah) untuk karyawan yang slipnya sudah disetujui pada
+ * periode yang sama: beban gaji tercatat dua kali (slip disetujui sudah diakui sebagai Hutang Gaji).
+ */
+const manualPayrollExpense: Check = async (c) => {
+  const { matchEmployees } = await import("./employeeMatch");
+  const from = dateOnly(addDays(c.today, -90));
+  const cats = await prisma.txCategory.findMany({ where: { coaAccount: { code: COA.BEBAN_GAJI_PRODUKSI } }, select: { id: true } });
+  if (!cats.length) return null;
+  const txs = await prisma.financeTransaction.findMany({
+    where: { status: "DIBUKUKAN", direction: "KELUAR", deletedAt: null, date: { gte: from }, categoryId: { in: cats.map((x) => x.id) } },
+    select: { id: true, number: true, date: true, amount: true, note: true, rawText: true, counterparty: true },
+  });
+  if (!txs.length) return null;
+  const emps = await prisma.employee.findMany({ select: { id: true, name: true, nickname: true } });
+  const slips = await prisma.payslip.findMany({
+    where: { total: { gt: 0 }, period: { status: { in: ["DISETUJUI", "DIBAYAR"] }, endDate: { gte: dateOnly(addDays(c.today, -150)) } } },
+    select: { employeeId: true, period: { select: { id: true, code: true, startDate: true, endDate: true, payDate: true } } },
+  });
+  const items: IssueItem[] = [];
+  for (const t of txs) {
+    const m = matchEmployees([t.note, t.rawText, t.counterparty].filter(Boolean).join(" "), emps);
+    if (!m.sure) continue;
+    const day = dateStr(t.date);
+    // Slip karyawan itu yang periodenya mencakup tanggal transaksi (sampai 14 hari setelah tanggal gajian)
+    const hit = slips.find((x) => x.employeeId === m.sure!.id && dateStr(x.period.startDate) <= day && day <= addDays(dateStr(x.period.payDate ?? x.period.endDate), 14));
+    if (hit) items.push({ label: `${t.number} · ${m.sure.name}`, detail: `beban ${Number(t.amount).toLocaleString("id-ID")} padahal ada slip ${hit.period.code} (disetujui/dibayar)`, href: `/gaji/${hit.period.id}` });
+  }
+  return issue("gaji-beban-manual", "ABSENSI_GAJI", "SEDANG", "Beban gaji dicatat manual padahal slipnya sudah disetujui", "Slip disetujui sudah dibukukan sebagai Hutang Gaji. Pembayarannya harus lewat Bayar slip (bot) atau Penggajian → Bayar, bukan transaksi beban. Batalkan/koreksi transaksi tersebut agar beban gaji tidak dobel.", items);
+};
+
 // =========================== RETUR ===========================
 
 const staleReturns: Check = async (c) => {
@@ -453,7 +484,7 @@ export const CHECKS: Check[] = [
   unbalancedJournals, duplicateJournals, bookedWithoutJournal, cancelledNotReversed, cancelledDocsNotReversed, bankNegative, transitBalance, salesPaid,
   payablesVsLedger, receivablesVsLedger, prepaidVsLedger, advances, reserveFunds, reserveMissing, talanganOpen, mirrorOfReversed, staleDrafts, staleWdProcess, purchaseIssues, depreciationGaps,
   inventoryVsLedger, flowSwitch, negative, unlinkedReceipts, handovers, stockRequests, unpaidBorongan, movementsWithoutRef, manualBorongan, manualReceipts,
-  missingPayroll, doublePay, payrollAccruals, unvalidatedAttendance, missingAttendance,
+  missingPayroll, doublePay, manualPayrollExpense, payrollAccruals, unvalidatedAttendance, missingAttendance,
   staleReturns, failedReturnVideos, returnsWithoutVideo, staleComplaints, approvedRefundsUnpaid,
   accessAfterResign, pendingRegistrations,
 ];

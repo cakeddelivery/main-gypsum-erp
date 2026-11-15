@@ -743,6 +743,13 @@ model Payslip {
   /// BPJS Ketenagakerjaan per bulan yang ditanggung perusahaan (info saja, tidak masuk total)
   bpjsCompany      BigInt        @default(0)
   total            BigInt
+  /// Dibayar per slip (mis. dari bot Telegram); bila semua slip periode lunas, periode berstatus Dibayar
+  paidAt            DateTime?
+  paidJournalId     String?
+  paidFromAccountId String?
+  /// Pesan Telegram yang membayar slip ini (satu pesan/bukti hanya untuk satu pembayaran)
+  paidMessageId     String?       @unique
+  paidProofPath     String?
 
   @@unique([periodId, employeeId])
 }

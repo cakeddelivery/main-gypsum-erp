@@ -24,6 +24,9 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
     p.journalId ? prisma.journal.findUnique({ where: { id: p.journalId } }) : null,
   ]);
   const sum = (k: "baseSalary" | "dailyWage" | "pieceWage" | "allowance" | "transport" | "total") => p.payslips.reduce((s, x) => s + Number(x[k]), 0);
+  // Slip yang sudah dibayar satu per satu (mis. dari bot Telegram)
+  const paidSlips = p.payslips.filter((x) => x.paidAt);
+  const unpaidTotal = p.payslips.filter((x) => !x.paidAt).reduce((s, x) => s + Number(x.total), 0);
   return (
     <div className="space-y-5">
       <PageHeader
@@ -35,7 +38,7 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
             {p.status === "DRAFT" && user.can("payroll.manage") && <ActionForm action={compute}><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary" pendingText="Menghitung…">Hitung ulang</Submit></ActionForm>}
             {p.kind === "BORONGAN" && p.status === "DRAFT" && user.can("payroll.manage") && <ActionForm action={cancelClaim} confirm="Batalkan klaim ini? Hasil borongan kembali menjadi belum diklaim."><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary">Batalkan klaim</Submit></ActionForm>}
             {p.status === "DRAFT" && user.can("payroll.approve") && p.payslips.length > 0 && <ActionForm action={approve} confirm="Setujui penggajian ini? Slip tidak bisa dihitung ulang setelah disetujui."><input type="hidden" name="id" value={p.id} /><Submit className="btn-success">Setujui</Submit></ActionForm>}
-            {p.status === "DISETUJUI" && user.can("payroll.approve") && (
+            {p.status === "DISETUJUI" && !paidSlips.length && user.can("payroll.approve") && (
               <Modal trigger="Batalkan persetujuan" triggerClass="btn-secondary" title="Kembalikan ke draft">
                 <ModalForm action={unapprove} className="space-y-3">
                   <input type="hidden" name="id" value={p.id} />
@@ -45,12 +48,12 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
                 </ModalForm>
               </Modal>
             )}
-            {p.status === "DIBAYAR" && user.can("payroll.approve") && (
+            {(p.status === "DIBAYAR" || paidSlips.length > 0) && user.can("payroll.approve") && (
               <Modal trigger="Batalkan pembayaran" triggerClass="btn-secondary" title="Batalkan pembayaran gaji">
                 <ModalForm action={cancelPay} className="space-y-3">
                   <input type="hidden" name="id" value={p.id} />
                   <Field label="Alasan (tercatat di audit log)"><input name="reason" className="input" required /></Field>
-                  <p className="text-xs text-slate-500">Jurnal pembayaran dibalik (uang dianggap kembali ke rekening), potongan kasbon dikembalikan, status kembali Disetujui.</p>
+                  <p className="text-xs text-slate-500">Semua jurnal pembayaran periode ini dibalik (termasuk slip yang dibayar satu per satu dari bot), potongan kasbon dikembalikan, status kembali Disetujui.</p>
                   <Submit className="btn-danger">Batalkan pembayaran</Submit>
                 </ModalForm>
               </Modal>
@@ -61,7 +64,7 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
                   <input type="hidden" name="id" value={p.id} />
                   <Field label="Dibayar dari rekening"><select name="bankAccountId" className="input">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
                   <Field label="Tanggal bayar"><input type="date" name="date" defaultValue={todayStr()} className="input" /></Field>
-                  <p className="text-sm">Total dibayar: <b>{idr(sum("total"))}</b>. Hutang gaji yang diakui saat disetujui dilunasi dari rekening ini.</p>
+                  <p className="text-sm">Total dibayar: <b>{idr(unpaidTotal)}</b>{paidSlips.length ? ` (${paidSlips.length} slip sudah dibayar sebelumnya)` : ""}. Hutang gaji yang diakui saat disetujui dilunasi dari rekening ini.</p>
                   <Submit className="btn-success">Bayar & bukukan</Submit>
                 </ModalForm>
               </Modal>
@@ -84,7 +87,7 @@ export default async function PeriodPage({ params }: { params: Promise<{ id: str
               <tbody>
                 {p.payslips.map((s) => (
                   <tr key={s.id}>
-                    <td>{s.employee.name}</td><td>{s.employee.division.name}</td><td className="num">{s.daysPresent}</td>{p.kind === "BULANAN" && <><td className="num">{s.offDays}</td><td className={`num ${s.absentDays ? "text-rose-600" : ""}`}>{s.absentDays}{s.lateCount > 0 && <div className="text-xs font-normal text-amber-600">telat {s.lateCount}× · {s.lateMinutes} mnt</div>}</td><td className="num">{idr(s.baseSalary)}</td></>}<td className="num">{idr(s.dailyWage)}</td><td className="num">{idr(s.pieceWage)}</td>{p.kind === "TUNJANGAN" && <td className="num">{idr(s.allowance)}</td>}<td className="num">{idr(s.transport)}</td><td className="num">{idr(s.bonus)}</td><td className="num text-rose-600">{idr(s.deduction)}</td><td className="num text-rose-600">{idr(s.advanceDeduction)}</td><td className="num font-semibold">{idr(s.total)}{s.note && <div className="text-xs font-normal text-slate-400">{s.note}</div>}</td>
+                    <td>{s.employee.name}</td><td>{s.employee.division.name}</td><td className="num">{s.daysPresent}</td>{p.kind === "BULANAN" && <><td className="num">{s.offDays}</td><td className={`num ${s.absentDays ? "text-rose-600" : ""}`}>{s.absentDays}{s.lateCount > 0 && <div className="text-xs font-normal text-amber-600">telat {s.lateCount}× · {s.lateMinutes} mnt</div>}</td><td className="num">{idr(s.baseSalary)}</td></>}<td className="num">{idr(s.dailyWage)}</td><td className="num">{idr(s.pieceWage)}</td>{p.kind === "TUNJANGAN" && <td className="num">{idr(s.allowance)}</td>}<td className="num">{idr(s.transport)}</td><td className="num">{idr(s.bonus)}</td><td className="num text-rose-600">{idr(s.deduction)}</td><td className="num text-rose-600">{idr(s.advanceDeduction)}</td><td className="num font-semibold">{idr(s.total)}{s.note && <div className="text-xs font-normal text-slate-400">{s.note}</div>}{s.paidAt && p.status !== "DIBAYAR" && <div className="text-xs font-semibold text-emerald-700">✓ Lunas {fmtDay(s.paidAt)}</div>}</td>
                     <td><div className="flex gap-1">
                       <Link href={`/gaji/slip/${s.id}`} className="btn-secondary btn-sm">Slip</Link>
                       {p.status === "DRAFT" && user.can("payroll.manage") && (
