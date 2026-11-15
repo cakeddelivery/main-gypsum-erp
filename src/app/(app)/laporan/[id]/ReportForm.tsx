@@ -173,7 +173,13 @@ export function ReportForm(p: Props) {
   // Tutup (✕ di bawah atau di judul popup): konfirmasi simpan draf / buang perubahan bila ada isian berubah
   const [dirty, setDirty] = useState(false);
   const [closeAsk, setCloseAsk] = useState(false);
-  const askClose = () => (dirty ? setCloseAsk(true) : close());
+  // Tombol ✕: selalu konfirmasi dulu (isian yang belum disimpan bisa hilang); setelah ditutup kembali ke daftar Laporan
+  const askClose = () => setCloseAsk(true);
+  const leaving = useRef(false);
+  const leave = () => {
+    close();
+    router.push("/laporan");
+  };
   const setGuard = useCloseGuard();
   useEffect(() => {
     setGuard(askClose);
@@ -231,7 +237,8 @@ export function ReportForm(p: Props) {
         setConfirming(false);
         setCloseAsk(false);
         setDirty(false);
-        window.setTimeout(close, 750);
+        window.setTimeout(leaving.current ? leave : close, 750);
+        leaving.current = false;
       }}
       onError={(err) => {
         if (!sending.current) return;
@@ -554,7 +561,6 @@ export function ReportForm(p: Props) {
       </p>
       {/* Tombol selalu terlihat di bawah popup */}
       <div className="modal-foot">
-        <button type="button" className="btn-secondary btn-icon" aria-label="Tutup laporan" onClick={askClose}>✕</button>
         <button type="button" className="btn-secondary flex-1" disabled={step === 0} onClick={() => go(step - 1)}>‹ Kembali</button>
         {last ? (
           <button type="button" className="btn-success flex-1" onClick={trySend}>{p.sent ? "Kirim ulang" : "Kirim laporan"}</button>
@@ -567,12 +573,12 @@ export function ReportForm(p: Props) {
         <div role="alertdialog" aria-labelledby="tutup-lap-judul" className="anim-fade fixed inset-0 z-30 grid place-items-center bg-slate-900/50 p-4">
           <div className="anim-pop w-full max-w-sm rounded-xl border border-slate-300 bg-white p-4 shadow-2xl">
             <p id="tutup-lap-judul" className="font-semibold text-slate-900">Tutup laporan?</p>
-            <p className="mt-1 text-sm text-slate-600">Ada isian yang belum disimpan. Simpan sebagai draf agar bisa dilanjutkan nanti.</p>
+            <p className="mt-1 text-sm text-slate-600">{dirty ? "Ada isian yang belum disimpan dan akan hilang bila ditutup." : "Isian yang belum disimpan akan hilang bila ditutup."} Simpan sebagai draf agar bisa dilanjutkan nanti.</p>
             <div className="mt-4 grid gap-2">
-              <span className="flex" onClickCapture={() => (sending.current = false)}>
+              <span className="flex" onClickCapture={() => { sending.current = false; leaving.current = true; }}>
                 <Submit className="btn-primary flex-1" name="intent" value="draft" pendingText="Menyimpan…">Simpan draf</Submit>
               </span>
-              <button type="button" className="btn-danger" onClick={() => { clearFormDraft(draftKey); setCloseAsk(false); close(); }}>Buang perubahan</button>
+              <button type="button" className="btn-danger" onClick={() => { clearFormDraft(draftKey); setCloseAsk(false); leave(); }}>Tutup tanpa simpan</button>
               <button type="button" className="btn-secondary" onClick={() => setCloseAsk(false)} autoFocus>Batal</button>
             </div>
           </div>
