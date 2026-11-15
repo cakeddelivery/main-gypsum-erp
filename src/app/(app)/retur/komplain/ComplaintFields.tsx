@@ -90,6 +90,7 @@ export function ComplaintFields({ items, today }: { items: Opt[]; today: string 
         <button type="button" className="btn-secondary btn-sm" onClick={() => setRows((x) => [...x, { k: Date.now(), labelSku: "", labelName: "", itemId: "", qty: "1", sendQty: "1" }])}>+ Tambah barang</button>
       </div>
 
+      <label className="block"><span className="label">Ongkir ditanggung toko (Rp, opsional)</span><input name="shippingCost" inputMode="numeric" className="input" placeholder="0" /><span className="mt-1 block text-xs text-slate-500">Mis. ongkir kirim ganti. Untuk analitik kerugian; bila dibayar dari rekening tetap catat di Transaksi</span></label>
       <label className="block"><span className="label">Bukti dari pembeli (foto / video chat, boleh lebih dari satu, total maks 15 MB)</span>
         <input type="file" name="evidence" accept="image/*,video/*" multiple className="block w-full min-w-0 max-w-full text-base" />
       </label>

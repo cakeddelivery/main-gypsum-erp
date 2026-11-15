@@ -36,6 +36,7 @@ export default async function KomplainDetail({ params }: { params: Promise<{ id:
   const info: [string, React.ReactNode][] = [
     ["Tanggal", fmtDate(c.date)], ["Marketplace", marketplaceLabel(c.marketplace)], ["No. pesanan", c.orderNo ?? "-"], ["No. resi", c.trackingNo ?? "-"],
     ["Tujuan", [c.city, c.province].filter(Boolean).join(", ") || "-"], ["Masalah", issueLabel(c.issueType)], ...(c.description ? [["Keterangan", c.description] as [string, string]] : []),
+    ...(Number(c.shippingCost) ? [["Ongkir ditanggung", idr(Number(c.shippingCost))] as [string, string]] : []),
     ["Solusi", `${solutionLabel(c.solution)}${c.bundleNext ? " — dibarengkan pesanan berikutnya" : ""}`], ["Diajukan", `${c.createdBy} · ${fmtDateTime(c.createdAt)}`],
     ...(ret ? [["Retur terkait", <Link key="r" href={`/retur/${ret.id}`} className="text-brand-600 underline">{ret.number}</Link>] as [string, React.ReactNode]] : []),
     ...(c.approvedAt ? [["Disetujui", `${c.approvedBy} · ${fmtDateTime(c.approvedAt)}`] as [string, string]] : []),

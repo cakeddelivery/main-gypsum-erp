@@ -1948,6 +1948,8 @@ model ReturnCase {
   inspectRef         String?
   goodValue          BigInt        @default(0)
   lossValue          BigInt        @default(0)
+  /// Ongkir retur yang ditanggung toko (info untuk analitik kerugian; tidak dijurnal di sini)
+  shippingCost       BigInt        @default(0)
   claimAmount        BigInt        @default(0)
   claimAt            DateTime?
   claimNote          String?
@@ -2103,6 +2105,8 @@ model Complaint {
   sendJournalId    String?
   sendRef          String?
   replacementValue BigInt           @default(0)
+  /// Ongkir kirim ganti / ongkir lain yang ditanggung toko (info untuk analitik kerugian; tidak dijurnal di sini)
+  shippingCost     BigInt           @default(0)
   doneAt           DateTime?
   doneBy           String?
   cancelledAt      DateTime?

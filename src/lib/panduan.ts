@@ -153,7 +153,7 @@ const OWNER: Guide = {
     ph("amber", { icon: "cog", when: "Saat perlu", title: "Pengaturan divisi", items: ["«Laporan Shift» → «Bahan & checklist divisi»: format laporan, bahan & limit, «Ubah checklist» (wajib foto), target.", "Sakelar «Hasil kerja → stok» menentukan hasil laporan masuk stok."] }),
     ph("violet", { icon: "tag", when: "Saat perlu", title: "Produk & harga", items: ["«Produk & HPP»: «Ubah harga», resep, dan «Overhead» per bulan."] }),
   ],
-  periodic: ["Bulanan: «Akuntansi» → «Tutup buku» setelah Cek konsistensi bersih; lihat «Laba rugi».", "Bulanan: «Analitik» untuk tren penjualan & biaya."],
+  periodic: ["Bulanan: «Akuntansi» → «Tutup buku» setelah Cek konsistensi bersih; lihat «Laba rugi».", "Bulanan: «Analitik» untuk tren penjualan & biaya.", "Bulanan: «Retur & Komplain» → «📊 Analitik»: kota, produk, kurir & alasan dengan kerugian terbesar (Unduh untuk Excel)."],
   infos: STAFF_INFOS,
 };
 

@@ -50,7 +50,7 @@ function inputOf(fd: FormData): ComplaintInput {
     date: day(fd), marketplace: optStr(fd, "marketplace"), courier: optStr(fd, "courier"), trackingNo: optStr(fd, "trackingNo"), orderNo: optStr(fd, "orderNo"),
     city: optStr(fd, "city"), province: optStr(fd, "province"), issueType: str(fd, "issueType"), description: optStr(fd, "description"), solution: str(fd, "solution"),
     bundleNext: bool(fd, "bundleNext"), refundAmount: int(fd, "refundAmount"), payeeBank: optStr(fd, "payeeBank"), payeeAccount: optStr(fd, "payeeAccount"), payeeName: optStr(fd, "payeeName"),
-    labelRead, lines: skus.map((s, i) => ({ labelSku: s, labelName: names[i], itemId: items[i] || null, qty: qty[i], sendQty: send[i] ?? 0 })),
+    labelRead, shippingCost: int(fd, "shippingCost"), lines: skus.map((s, i) => ({ labelSku: s, labelName: names[i], itemId: items[i] || null, qty: qty[i], sendQty: send[i] ?? 0 })),
   };
 }
 

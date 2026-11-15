@@ -42,6 +42,8 @@ export type ComplaintInput = {
   payeeAccount?: string | null;
   payeeName?: string | null;
   labelRead?: Prisma.InputJsonValue | null;
+  /// Ongkir kirim ganti / lain yang ditanggung toko (opsional, untuk analitik)
+  shippingCost?: number;
   lines: ComplaintLineInput[];
 };
 
@@ -80,7 +82,7 @@ export async function createComplaint(input: ComplaintInput, actor: Actor) {
         orderNo: clean(input.orderNo, 40)?.toUpperCase() ?? null, city: clean(input.city, 60), province: clean(input.province, 60), issueType: input.issueType, description: clean(input.description, 1000),
         solution: input.solution, bundleNext: !refund && !!input.bundleNext, refundAmount: BigInt(refund ? Math.round(input.refundAmount ?? 0) : 0),
         payeeBank: refund ? clean(input.payeeBank, 40) : null, payeeAccount: refund ? input.payeeAccount!.replace(/[^0-9]/g, "") : null, payeeName: refund ? clean(input.payeeName, 80) : null,
-        labelRead: input.labelRead ?? undefined, createdBy: actor.name, createdById: actor.id,
+        labelRead: input.labelRead ?? undefined, createdBy: actor.name, createdById: actor.id, shippingCost: BigInt(Math.max(0, Math.round(input.shippingCost ?? 0))),
         lines: { create: lines.map((l, i) => ({ labelSku: clean(l.labelSku, 40)?.toUpperCase() ?? null, labelName: clean(l.labelName, 80), itemId: l.itemId || null, qty: l.qty, sendQty: refund ? 0 : l.sendQty, sortOrder: i })) },
       },
     });

@@ -5,7 +5,7 @@ import { readLabelAction } from "./actions";
 
 type Opt = { id: string; name: string };
 type Row = { k: number; labelSku: string; labelVariation: string; labelName: string; qty: string; itemId: string };
-export type ReturnDefaults = Partial<Omit<LabelRead, "lines">> & { date?: string; reason?: string | null; note?: string | null; lines?: Omit<Row, "k">[] };
+export type ReturnDefaults = Partial<Omit<LabelRead, "lines">> & { date?: string; reason?: string | null; note?: string | null; shippingCost?: number; lines?: Omit<Row, "k">[] };
 
 export const RETURN_REASONS = ["Pembeli mengembalikan barang", "Gagal kirim / tidak diterima", "Pesanan dibatalkan", "Salah kirim", "Lainnya"];
 
@@ -160,7 +160,10 @@ export function ReturnFields({ items, today, defaults }: { items: Opt[]; today: 
         <button type="button" className="btn-secondary btn-sm" onClick={() => setRows((x) => [...x, { k: Date.now(), labelSku: "", labelVariation: "", labelName: "", qty: "1", itemId: "" }])}>+ Tambah barang</button>
         <p className="text-xs text-slate-500">Produk ERP yang dipilih diingat untuk SKU + variasi yang sama di retur berikutnya.</p>
       </div>
-      <label className="block"><span className="label">Catatan</span><textarea name="note" defaultValue={v.note ?? ""} rows={2} className="input" /></label>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label><span className="label">Ongkir retur ditanggung toko (Rp, opsional)</span><input name="shippingCost" inputMode="numeric" defaultValue={v.shippingCost || ""} className="input" placeholder="0" /><span className="mt-1 block text-xs text-slate-500">Untuk analitik kerugian; tidak dibukukan di sini</span></label>
+        <label><span className="label">Catatan</span><textarea name="note" defaultValue={v.note ?? ""} rows={2} className="input" /></label>
+      </div>
     </div>
   );
 }

@@ -60,6 +60,7 @@ function inputOf(fd: FormData): ReturnInput {
     reason: optStr(fd, "reason"),
     note: optStr(fd, "note"),
     labelRead,
+    shippingCost: int(fd, "shippingCost"),
     lines: skus.map((s, i) => ({ labelSku: s, labelVariation: vars[i], labelName: names[i], qty: qty[i], itemId: items[i] || null })),
   };
 }

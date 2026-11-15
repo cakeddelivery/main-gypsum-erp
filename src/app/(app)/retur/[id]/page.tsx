@@ -43,6 +43,7 @@ export default async function ReturDetail({ params, searchParams }: { params: Pr
     ["Diterima", fmtDate(r.receivedAt)], ["Marketplace", marketplaceLabel(r.marketplace)], ["Kurir", r.courier ?? "-"], ["No. resi", <span key="r" className="font-mono">{r.trackingNo}</span>],
     ["No. pesanan", r.orderNo ?? "-"], ["Tujuan", [r.city, r.province].filter(Boolean).join(", ") || "-"], ["Alasan", r.reason ?? "-"], ["Dicatat", `${r.createdBy} · ${fmtDateTime(r.createdAt)}`],
     ...(r.inspectedAt ? [["Diperiksa", `${r.inspectedBy} · ${fmtDateTime(r.inspectedAt)}`] as [string, string]] : []),
+    ...(Number(r.shippingCost) ? [["Ongkir ditanggung", idr(Number(r.shippingCost))] as [string, string]] : []),
     ...(r.note ? [["Catatan", r.note] as [string, string]] : []),
     ...(r.cancelledAt ? [["Dibatalkan", `${fmtDateTime(r.cancelledAt)} — ${r.cancelReason}`] as [string, string]] : []),
   ];
@@ -58,7 +59,7 @@ export default async function ReturDetail({ params, searchParams }: { params: Pr
             <Modal trigger="Ubah data" title={`Ubah ${r.number}`} triggerClass="btn-secondary" full>
               <ModalForm action={editReturn}>
                 <input type="hidden" name="id" value={r.id} />
-                <ReturnFields items={items} today={todayStr()} defaults={{ date: dateStr(r.receivedAt), marketplace: r.marketplace, courier: r.courier, trackingNo: r.trackingNo, orderNo: r.orderNo, city: r.city, province: r.province, reason: r.reason, note: r.note, lines: r.lines.map((l) => ({ labelSku: l.labelSku ?? "", labelVariation: l.labelVariation ?? "", labelName: l.labelName ?? "", qty: String(l.qty), itemId: l.itemId ?? "" })) }} />
+                <ReturnFields items={items} today={todayStr()} defaults={{ date: dateStr(r.receivedAt), marketplace: r.marketplace, courier: r.courier, trackingNo: r.trackingNo, orderNo: r.orderNo, city: r.city, province: r.province, reason: r.reason, note: r.note, shippingCost: Number(r.shippingCost), lines: r.lines.map((l) => ({ labelSku: l.labelSku ?? "", labelVariation: l.labelVariation ?? "", labelName: l.labelName ?? "", qty: String(l.qty), itemId: l.itemId ?? "" })) }} />
                 <div className="mt-4"><Submit>Simpan perubahan</Submit></div>
               </ModalForm>
             </Modal>

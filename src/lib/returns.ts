@@ -53,6 +53,8 @@ export type ReturnInput = {
   note?: string | null;
   storeId?: string | null;
   labelRead?: Prisma.InputJsonValue | null;
+  /// Ongkir retur ditanggung toko (opsional, untuk analitik)
+  shippingCost?: number;
   lines: ReturnLineInput[];
 };
 
@@ -117,7 +119,7 @@ export async function createReturn(input: ReturnInput, actor: Actor) {
     const r = await tx.returnCase.create({
       data: {
         number, receivedAt: input.receivedAt, marketplace: clean(input.marketplace, 20), courier: clean(input.courier, 30), trackingNo, orderNo: clean(input.orderNo, 40)?.toUpperCase() ?? null,
-        city: clean(input.city, 60), province: clean(input.province, 60), reason: clean(input.reason, 200), note: clean(input.note, 500), storeId: input.storeId ?? null,
+        city: clean(input.city, 60), province: clean(input.province, 60), reason: clean(input.reason, 200), note: clean(input.note, 500), shippingCost: BigInt(Math.max(0, Math.round(input.shippingCost ?? 0))), storeId: input.storeId ?? null,
         labelRead: input.labelRead ?? undefined, createdBy: actor.name, createdById: actor.id,
         lines: { create: rows.map((l, i) => ({ labelSku: clean(l.labelSku, 40)?.toUpperCase() ?? null, labelVariation: clean(l.labelVariation, 60)?.toUpperCase() ?? null, labelName: clean(l.labelName, 80), qty: l.qty, itemId: l.itemId || null, sortOrder: i })) },
       },
@@ -146,7 +148,7 @@ export async function updateReturn(id: string, input: ReturnInput, actor: Actor)
       where: { id },
       data: {
         receivedAt: input.receivedAt, marketplace: clean(input.marketplace, 20), courier: clean(input.courier, 30), trackingNo, orderNo: clean(input.orderNo, 40)?.toUpperCase() ?? null,
-        city: clean(input.city, 60), province: clean(input.province, 60), reason: clean(input.reason, 200), note: clean(input.note, 500),
+        city: clean(input.city, 60), province: clean(input.province, 60), reason: clean(input.reason, 200), note: clean(input.note, 500), shippingCost: BigInt(Math.max(0, Math.round(input.shippingCost ?? 0))),
         lines: { create: rows.map((l, i) => ({ labelSku: clean(l.labelSku, 40)?.toUpperCase() ?? null, labelVariation: clean(l.labelVariation, 60)?.toUpperCase() ?? null, labelName: clean(l.labelName, 80), qty: l.qty, itemId: l.itemId || null, sortOrder: i })) },
       },
     });
