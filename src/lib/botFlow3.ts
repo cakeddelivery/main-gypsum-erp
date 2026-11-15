@@ -19,6 +19,7 @@ import type { BotIdent } from "./botMenu";
 import { SALES_FLOWS, salesMenuRows } from "./botSales";
 import { createDraft, draftMessage, type DraftInput } from "./botDraft";
 import { ackIds, guardDup } from "./botDup";
+import { gajiFlow } from "./botGaji";
 
 /**
  * Isian bot Telegram Tahap 3: kasbon, pembelian bahan baku, dan borongan tetangga
@@ -1248,4 +1249,4 @@ const draftDup: FlowDef = {
   },
 };
 
-export const T3_FLOWS: Record<string, FlowDef> = { trx: draftDup, kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, tlg: talangan, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay, ...SALES_FLOWS };
+export const T3_FLOWS: Record<string, FlowDef> = { trx: draftDup, kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, tlg: talangan, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay, gaji: gajiFlow, ...SALES_FLOWS };

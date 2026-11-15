@@ -28,7 +28,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
   const [employees, divisions] = await Promise.all([
     prisma.employee.findMany({
       where: { ...(fixedDiv ? { divisionId: fixedDiv } : sp.division ? { divisionId: sp.division } : {}), ...(sp.status ? { status: sp.status as EmployeeStatus } : {}), ...(sp.q ? { OR: [{ name: { contains: sp.q, mode: "insensitive" } }, { code: { contains: sp.q, mode: "insensitive" } }] } : {}) },
-      include: { division: true, user: true, allowances: { where: { active: true }, orderBy: { name: "asc" } } },
+      include: { division: true, user: true, allowances: { orderBy: { name: "asc" } } },
       orderBy: [{ status: "asc" }, { name: "asc" }],
     }),
     prisma.division.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
@@ -40,6 +40,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
   // Rekening gaji: data pribadi, hanya Owner & Finance
   const seeBank = user.role === "OWNER" || user.role === "FINANCE";
   const bpjsDefault = Number((await prisma.setting.findUnique({ where: { key: "bpjs_tk_amount" } }))?.value) || 28400;
+  const allowanceDay = Number((await prisma.setting.findUnique({ where: { key: "allowance_payday" } }))?.value) || 15;
   const roles = user.can("users.manage") ? ROLES.filter((r) => r !== "OWNER" || user.role === "OWNER") : (["OPERATOR", "KAPTEN_DIVISI", "PIC_CONTENT", "ADMIN_PRODUKSI", "ADMIN_MARKETPLACE"] as const);
   const form = (e?: (typeof employees)[number]) => (
     <ModalForm action={saveEmployee} className="grid grid-cols-2 gap-3">
@@ -49,7 +50,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
       <Field label="Divisi"><select name="divisionId" defaultValue={e?.divisionId} className="input">{divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
       <Field label="Status"><select name="status" defaultValue={e?.status ?? "AKTIF"} className="input"><option value="AKTIF">Aktif</option><option value="CUTI">Cuti</option><option value="NONAKTIF">Nonaktif</option></select></Field>
       <Field label="Sistem upah"><select name="wageType" defaultValue={e?.wageType ?? "HARIAN"} className="input">{Object.entries(WAGE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
-      <Field label="Gaji bulanan (IDR)" hint="Untuk sistem upah Bulanan"><input name="monthlySalary" inputMode="numeric" defaultValue={e ? Number(e.monthlySalary) : 0} className="input" /></Field>
+      <Field label="Gaji Pokok (IDR)" hint="Untuk sistem upah Bulanan; Alpa dipotong Gaji Pokok ÷ 30 per hari"><input name="monthlySalary" inputMode="numeric" defaultValue={e ? Number(e.monthlySalary) : 0} className="input" /></Field>
       <Field label="Upah harian (IDR)" hint="Untuk Harian / Campuran"><input name="dailyRate" inputMode="numeric" defaultValue={e ? Number(e.dailyRate) : 0} className="input" /></Field>
       <Field label="Telepon"><input name="phone" defaultValue={e?.phone ?? ""} className="input" /></Field>
       <Field label="Tanggal masuk" hint="Menentukan siklus & tanggal gajian"><input type="date" name="joinDate" defaultValue={e?.joinDate?.toISOString().slice(0, 10)} className="input" /></Field>
@@ -72,7 +73,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
           {seeBank && <Field label="Atas nama rekening"><input name="bankAccountName" defaultValue={e?.bankAccountName ?? ""} className="input" /></Field>}
         </div>
       </details>
-      {canAllowance && <AllowanceFields initial={(e?.allowances ?? []).map((a) => ({ id: a.id, name: a.name, amount: Number(a.amount) }))} />}
+      {canAllowance && <AllowanceFields initial={(e?.allowances ?? []).map((a) => ({ id: a.id, name: a.name, amount: Number(a.amount), payDay: a.payDay, active: a.active }))} defaultPayDay={allowanceDay} />}
       <div className="col-span-2 flex justify-end"><Submit>Simpan</Submit></div>
     </ModalForm>
   );
@@ -94,7 +95,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
                 <tr key={e.id}>
                   <td className="font-mono text-xs">{e.code}</td><td><span className="flex items-center gap-2"><Avatar name={e.name} src={e.user ? avatarUrl(e.user) : null} size={28} />{e.name}</span></td><td>{e.division.name}</td>
                   <td><Badge tone={e.status === "AKTIF" ? "green" : e.status === "CUTI" ? "amber" : "gray"}>{e.status}</Badge></td>
-                  <td>{WAGE[e.wageType]}{!canSeePay ? null : e.wageType === "BULANAN" ? <div className="text-xs text-slate-400">{idr(e.monthlySalary)}/bulan</div> : Number(e.dailyRate) > 0 && <div className="text-xs text-slate-400">{idr(e.dailyRate)}/hari</div>}{canSeePay && e.bpjsTk && <div className="text-xs text-sky-600">BPJS TK {idr(e.bpjsTkAmount != null ? e.bpjsTkAmount : bpjsDefault)}/bulan (perusahaan)</div>}{canSeePay && e.allowances.length > 0 && <div className="text-xs text-slate-400">+ tunjangan {idr(e.allowances.reduce((t, a) => t + Number(a.amount), 0))}/bulan</div>}</td>
+                  <td>{WAGE[e.wageType]}{!canSeePay ? null : e.wageType === "BULANAN" ? <div className="text-xs text-slate-400">{idr(e.monthlySalary)}/bulan</div> : Number(e.dailyRate) > 0 && <div className="text-xs text-slate-400">{idr(e.dailyRate)}/hari</div>}{canSeePay && e.bpjsTk && <div className="text-xs text-sky-600">BPJS TK {idr(e.bpjsTkAmount != null ? e.bpjsTkAmount : bpjsDefault)}/bulan (perusahaan)</div>}{canSeePay && e.allowances.some((a) => a.active) && <div className="text-xs text-slate-400">+ tunjangan {idr(e.allowances.filter((a) => a.active).reduce((t, a) => t + Number(a.amount), 0))}/bulan</div>}</td>
                   <td>{fmtDay(e.joinDate)}{e.resignDate && <div className="text-xs text-rose-600">Resign {fmtDay(e.resignDate)}</div>}</td>
                   <td>{e.user ? <span className="text-xs">{e.user.username} · {ROLE_LABEL[e.user.role]}{!e.user.active && " (nonaktif)"}</span> : <span className="text-xs text-slate-400">—</span>}</td>
                   {canManage && (

@@ -23,6 +23,7 @@ import { openPayables } from "./payables";
 import { matchReserveTransfer } from "./reserve";
 import { intentReserve, reserveIntent, routeIntent } from "./reserveSync";
 import { payrollHint } from "./payrollHint";
+import { PAY_WORDS, prefilledGaji, usedGajiText } from "./botGaji";
 import { supplierKey, supplierNames } from "./suppliers";
 import { cbId, chunk, createDraft, dateUnconfirmed, draftMessage, resolveCategory, type DraftInput, type Pick } from "./botDraft";
 export { draftMessage } from "./botDraft";
@@ -258,6 +259,14 @@ async function handleMessage(u: TgUpdate) {
       ex.toAccountId = null;
     }
   }
+  // "Gaji/upah <nama>": bayar slip gaji yang sudah disetujui langsung dari bot (pelunasan Hutang Gaji, bukan draft beban)
+  const gajiCase = !!text && PAY_WORDS.test(text) && !loan && !splits.length && (ex.direction === "KELUAR" || !ex.direction) && ident.perms.has("payroll.approve");
+  const gajiPrefill = (tx: unknown) => ({ text: [text, receipt?.counterparty].filter(Boolean).join(" "), amount: ex.amount ?? null, bankId: ex.accountId ?? null, date: ex.date ?? null, time: ex.date ? txTime(ex.date, ex.time) : null, proofPath, messageId: String(msg.message_id), tx });
+  if (gajiCase && (!ex.amount || !ex.direction)) {
+    const session = await prefilledGaji({ i: ident, chatId }, gajiPrefill(null));
+    if (session?.step === "used") return sendTelegram(chatId, usedGajiText(session));
+    if (session) return startPrefilledFlow({ i: ident, chatId }, session);
+  }
   if (!ex.amount || !ex.direction) {
     await sendTelegram(chatId, `Saya belum bisa membaca ${!ex.amount ? "nominal" : "jenis transaksi (masuk/keluar/transfer)"} dari ${photo ? "foto & keterangan" : "pesan"} ini. Tulis ulang dengan lebih lengkap, misal: <i>bayar gypsum 2jt dari seabank</i>.`);
     return;
@@ -291,6 +300,12 @@ async function handleMessage(u: TgUpdate) {
     splits: splits.length ? splits.map((x) => ({ categoryId: x.itemId ? null : x.categoryId, amount: x.amount, note: x.label, itemId: x.itemId, qty: x.qty })) : undefined,
   };
   const ctx = { i: ident, chatId };
+  if (gajiCase) {
+    const session = await prefilledGaji(ctx, gajiPrefill(draft));
+    // Bukti/pesan yang sama sudah membayar slip: cukup beri tahu, tanpa isian & tanpa draft
+    if (session?.step === "used") return sendTelegram(chatId, usedGajiText(session));
+    if (session) return startPrefilledFlow(ctx, session);
+  }
   const basis = [text, receipt?.counterparty].filter(Boolean).join(" ");
   // Keterangan jelas transfer sisihan ("OPS 9 nov" = Kompensasi Pengelola, "nabung spinjam 9 nov" = tabungan cicilan):
   // rekening asal/tujuan = alur dana sisihannya (bukan bacaan foto yang bisa tertukar dengan nama penerima),

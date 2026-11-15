@@ -17,11 +17,11 @@ export async function payrollHint(text: string | null | undefined): Promise<{ te
   const hit = emps.filter((e) => [e.nickname, ...e.name.split(/\s+/)].some((w) => !!w && w.length >= 3 && t.includes(` ${w.toLowerCase()} `)));
   if (hit.length !== 1) return null;
   const e = hit[0];
-  const slips = await prisma.payslip.findMany({ where: { employeeId: e.id, period: { status: "DISETUJUI" } }, include: { period: { select: { code: true } } } });
+  const slips = await prisma.payslip.findMany({ where: { employeeId: e.id, period: { status: "DISETUJUI" }, paidAt: null }, include: { period: { select: { code: true } } } });
   const due = slips.filter((s) => Number(s.total) > 0);
   if (due.length) {
     const list = due.map((s) => `${s.period.code} ${idr(s.total)}`).join(", ");
-    return { warn: true, text: `⚠️ <b>Gaji ${esc(e.name)} sudah tercatat di Penggajian</b> (${list}, disetujui, belum dibayar). Agar beban gaji tidak tercatat dua kali, bayar lewat web: Penggajian → ${due[0].period.code} → Bayar, lalu tolak draft ini.` };
+    return { warn: true, text: `⚠️ <b>Gaji ${esc(e.name)} sudah tercatat di Penggajian</b> (${list}, disetujui, belum dibayar). Agar beban gaji tidak tercatat dua kali, tolak draft ini lalu bayar lewat tombol <b>Bayar slip</b> (kirim ulang pesan gaji ke bot, perlu hak bayar gaji) atau web Penggajian → ${due[0].period.code} → Bayar.` };
   }
   return { warn: false, text: `👤 Gaji karyawan: ${esc(e.name)} (tidak ada slip disetujui yang belum dibayar, dicatat sebagai beban Gaji & Upah)` };
 }

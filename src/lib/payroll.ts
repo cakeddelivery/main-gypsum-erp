@@ -119,32 +119,61 @@ export function sumAllowances(rows: { name: string; amount: number | bigint; act
   return { total: detail.reduce((s, d) => s + d.amount, 0), detail };
 }
 
-/** Periode tunjangan bulan berjalan: dibuat mulai tanggal `payday` (default 15), dibayar pada tanggal itu */
-export function allowancePeriodFor(today: string, payday = 15) {
-  const [y, m] = today.split("-").map(Number);
+/** Tanggal bayar efektif tunjangan pada bulan `ym` (YYYY-MM): tgl 29/30/31 di bulan pendek → akhir bulan */
+export function allowancePayDate(ym: string, payDay: number) {
+  const [y, m] = ym.split("-").map(Number);
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
-  const day = String(Math.min(Math.max(1, payday), last)).padStart(2, "0");
-  const ym = `${y}-${String(m).padStart(2, "0")}`;
-  const payDate = `${ym}-${day}`;
-  return { code: `TNJ-${ym.replace("-", "")}`, start: `${ym}-01`, payDate, due: today >= payDate };
+  return `${ym}-${String(Math.min(Math.max(1, Math.round(payDay) || 15), last)).padStart(2, "0")}`;
+}
+
+/** Kode periode tunjangan: tgl 15 tetap TNJ-YYYYMM (data lama), tanggal lain TNJ-YYYYMM-DD */
+export const allowanceCode = (payDate: string) => (payDate.slice(8) === "15" ? `TNJ-${payDate.slice(0, 7).replace("-", "")}` : `TNJ-${payDate.slice(0, 7).replace("-", "")}-${payDate.slice(8)}`);
+
+/** Periode tunjangan bulan berjalan untuk satu tanggal bayar: dibuat mulai tanggal itu */
+export function allowancePeriodFor(today: string, payday = 15) {
+  const ym = today.slice(0, 7);
+  const payDate = allowancePayDate(ym, payday);
+  return { code: allowanceCode(payDate), start: `${ym}-01`, payDate, due: today >= payDate };
+}
+
+/** Penanda slip yang dihitung dengan aturan Alpa (slip lama: potongan bolos, alpaDetail = []) */
+export const ALPA_RULE = "alpa30";
+export type AlpaDetail = { rule: string; from: string | null; dates: string[] };
+/** Tanggal-tanggal Alpa di slip; null = slip lama (aturan bolos) */
+export function alpaInfo(detail: unknown): AlpaDetail | null {
+  return detail && typeof detail === "object" && !Array.isArray(detail) && (detail as AlpaDetail).rule ? (detail as AlpaDetail) : null;
+}
+
+/** Potongan Alpa gaji bulanan: gaji pokok ÷ 30 × hari Alpa, dibulatkan ke rupiah, tidak melebihi gaji pokok */
+export function alpaDeduction(baseSalary: number, alpaDays: number) {
+  if (baseSalary <= 0 || alpaDays <= 0) return 0;
+  return Math.min(baseSalary, Math.round((baseSalary / 30) * alpaDays));
 }
 
 export type MonthlyCalcInput = {
   monthlySalary: number;
-  absentDays: number;
-  workdaysPerMonth: number;
+  /** Jumlah hari berstatus ALPA final dalam periode (Izin/Sakit/Libur tidak dipotong) */
+  alpaDays: number;
   lateMinutes: number;
   lateDeductionPerMinute: number;
   transport: number;
   resignedBeforePayday: boolean;
 };
 
-/** Gaji bulanan: gaji pokok − (bolos × gaji/hari) − potongan terlambat; resign sebelum gajian = Rp0 */
+/** Gaji bulanan: gaji pokok − potongan Alpa (pokok ÷ 30 × hari Alpa) − potongan terlambat; resign sebelum gajian = Rp0 */
 export function calcMonthly(i: MonthlyCalcInput) {
-  if (i.resignedBeforePayday) return { baseSalary: i.monthlySalary, deduction: 0, transport: 0, total: 0, note: "Resign sebelum tanggal gajian: tidak menerima gaji" };
-  const perDay = Math.round(i.monthlySalary / Math.max(1, i.workdaysPerMonth));
-  const deduction = Math.min(i.monthlySalary, i.absentDays * perDay + i.lateMinutes * i.lateDeductionPerMinute);
-  return { baseSalary: i.monthlySalary, deduction, transport: i.transport, total: i.monthlySalary - deduction + i.transport, note: i.absentDays ? `Bolos ${i.absentDays} hari × Rp ${perDay.toLocaleString("id-ID")}` : null };
+  if (i.resignedBeforePayday) return { baseSalary: i.monthlySalary, alpaDeduction: 0, deduction: 0, transport: 0, total: 0, note: "Resign sebelum tanggal gajian: tidak menerima gaji" };
+  const alpa = alpaDeduction(i.monthlySalary, i.alpaDays);
+  const deduction = Math.min(i.monthlySalary - alpa, i.lateMinutes * i.lateDeductionPerMinute);
+  const perDay = i.monthlySalary / 30;
+  return {
+    baseSalary: i.monthlySalary,
+    alpaDeduction: alpa,
+    deduction,
+    transport: i.transport,
+    total: i.monthlySalary - alpa - deduction + i.transport,
+    note: i.alpaDays ? `Potongan Alpa ${i.alpaDays} hari × Rp ${Math.round(perDay).toLocaleString("id-ID")}` : null,
+  };
 }
 
 async function settingStr(tx: Tx, key: string) {
@@ -307,10 +336,8 @@ async function monthlyEmployeesFor(tx: Tx, period: Period, offset: number) {
 
 async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
   const bpjsDef = await settingNum(tx, "bpjs_tk_amount", 28400);
-  const [offset, quota, workdays, lateDed, requireValidated, goLive] = await Promise.all([
+  const [offset, lateDed, requireValidated, goLive] = await Promise.all([
     settingNum(tx, "payday_offset_days", 7),
-    settingNum(tx, "weekly_off_quota", 1),
-    settingNum(tx, "monthly_workdays", 26),
     settingNum(tx, "late_deduction_per_minute", 0),
     tx.setting.findUnique({ where: { key: "payroll_require_validated" } }).then((s) => (s?.value ?? "true") === "true"),
     settingStr(tx, "go_live_date"),
@@ -326,12 +353,15 @@ async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
     const present = new Set(att.map((a) => dateStr(a.date)));
     // Absen yang belum divalidasi tidak dihitung masuk: tampilkan di slip agar tidak terpotong bolos tanpa disadari
     const pendingDays = requireValidated && countFrom ? await tx.attendance.count({ where: { employeeId: e.id, date: { gte: dateOnly(countFrom), lte: period.endDate }, status: { in: ["HADIR", "TERLAMBAT"] }, validated: false } }) : 0;
-    const { offDays, absentDays } = countFrom ? countAbsence(countFrom, end, present, quota) : { offDays: 0, absentDays: 0 };
+    // Status final absensi: Alpa dipotong; Izin/Sakit/Libur tidak dipotong (hari sebelum go-live tidak dihitung)
+    const finals = countFrom ? await tx.attendance.findMany({ where: { employeeId: e.id, date: { gte: dateOnly(countFrom), lte: period.endDate }, status: { in: ["ALPA", "LIBUR"] } }, select: { date: true, status: true }, orderBy: { date: "asc" } }) : [];
+    const alpaDates = finals.filter((a) => a.status === "ALPA").map((a) => dateStr(a.date));
+    const offDays = finals.filter((a) => a.status === "LIBUR").length;
+    const absentDays = alpaDates.length;
     const trips = await tx.transportTrip.aggregate({ where: { employeeId: e.id, date: { gte: period.startDate, lte: period.endDate } }, _sum: { amount: true } });
     const calc = calcMonthly({
       monthlySalary: Number(e.monthlySalary),
-      absentDays,
-      workdaysPerMonth: workdays,
+      alpaDays: absentDays,
       lateMinutes: att.reduce((s, a) => s + a.lateMinutes, 0),
       lateDeductionPerMinute: lateDed,
       transport: Number(trips._sum.amount ?? 0),
@@ -355,6 +385,8 @@ async function computeMonthly(tx: Tx, period: Period, actor: Actor) {
         pieceDetail: [],
         transport: BigInt(calc.transport),
         deduction: BigInt(calc.deduction),
+        alpaDeduction: BigInt(calc.alpaDeduction),
+        alpaDetail: { rule: ALPA_RULE, from: countFrom, dates: alpaDates },
         advanceDeduction: BigInt(adv.deduction),
         advanceDetail: adv.detail,
         lateCount: late.count,
@@ -386,38 +418,60 @@ async function computeClaim(tx: Tx, period: Period, actor: Actor) {
   await audit(actor, "KLAIM_BORONGAN_DIHITUNG", "PayrollPeriod", period.id, { pieceWage }, tx);
 }
 
-/** Slip tunjangan: semua karyawan aktif yang punya tunjangan; resign sebelum tanggal bayar tidak menerima */
+/**
+ * Slip tunjangan untuk SATU tanggal bayar: tunjangan aktif yang tanggal bayarnya (efektif bulan itu) sama dengan tanggal
+ * periode ini. Tunjangan yang sudah masuk periode tunjangan lain di bulan yang sama tidak dihitung lagi (tanpa dobel,
+ * mis. tanggal bayar diubah di tengah bulan). Resign sebelum tanggal bayar tidak menerima.
+ */
 async function computeAllowance(tx: Tx, period: Period, actor: Actor) {
   const payDate = period.payDate ? dateStr(period.payDate) : dateStr(period.endDate);
+  const ym = payDate.slice(0, 7);
   const emps = await tx.employee.findMany({ where: { allowances: { some: { active: true } } }, include: { allowances: true } });
+  // Tunjangan yang sudah dibayar/ditagih di periode tunjangan lain bulan ini (per karyawan, per nama tunjangan)
+  const others = await tx.payslip.findMany({
+    where: { periodId: { not: period.id }, period: { kind: "TUNJANGAN", payDate: { gte: dateOnly(`${ym}-01`), lte: dateOnly(allowancePayDate(ym, 31)) } } },
+    select: { employeeId: true, allowanceDetail: true },
+  });
+  const taken = new Set(others.flatMap((o) => (o.allowanceDetail as AllowanceLine[]).map((l) => `${o.employeeId}|${l.name.trim().toLowerCase()}`)));
   await tx.payslip.deleteMany({ where: { periodId: period.id } });
   let count = 0;
   for (const e of emps) {
     if (e.status === "NONAKTIF" && !e.resignDate) continue;
     if (e.resignDate && dateStr(e.resignDate) < payDate) continue;
-    const a = sumAllowances(e.allowances);
+    const mine = e.allowances.filter((x) => allowancePayDate(ym, x.payDay) === payDate && !taken.has(`${e.id}|${x.name.trim().toLowerCase()}`));
+    const a = sumAllowances(mine);
     if (!a.total) continue;
-    await tx.payslip.create({ data: { periodId: period.id, employeeId: e.id, daysPresent: 0, dailyWage: BigInt(0), pieceWage: BigInt(0), pieceDetail: [], transport: BigInt(0), allowance: BigInt(a.total), allowanceDetail: a.detail, total: BigInt(a.total), note: "Tunjangan bulanan" } });
+    await tx.payslip.create({ data: { periodId: period.id, employeeId: e.id, daysPresent: 0, dailyWage: BigInt(0), pieceWage: BigInt(0), pieceDetail: [], transport: BigInt(0), allowance: BigInt(a.total), allowanceDetail: a.detail, total: BigInt(a.total), note: `Tunjangan bulanan · dibayar tgl ${Number(payDate.slice(8))}` } });
     count++;
   }
-  await audit(actor, "TUNJANGAN_DIHITUNG", "PayrollPeriod", period.id, { employees: count }, tx);
+  await audit(actor, "TUNJANGAN_DIHITUNG", "PayrollPeriod", period.id, { employees: count, payDate }, tx);
 }
 
-/** Buat periode tunjangan bulan berjalan bila sudah tanggal bayar (default 15). Idempoten. */
+/**
+ * Buat periode tunjangan bulan berjalan untuk setiap tanggal bayar yang sudah tiba (tanggal bayar per tunjangan,
+ * bawaan 15). Satu periode per tanggal bayar per bulan; idempoten.
+ */
+/** `force`: abaikan tanggal go-live (tombol manual). Tanggal bayar yang belum tiba tidak pernah dibuat lebih awal. */
 export async function generateAllowancePayroll(actor: Actor, now: Date = new Date(), force = false) {
   const today = todayStr(now);
-  const db = prisma as unknown as Tx;
-  const payday = await settingNum(db, "allowance_payday", 15);
-  const goLive = await settingStr(db, "go_live_date");
-  const p = allowancePeriodFor(today, payday);
-  if (!p.due && !force) return { created: null };
-  if (goLive && p.payDate < goLive && !force) return { created: null };
-  if (await prisma.payrollPeriod.findUnique({ where: { code: p.code } })) return { created: null };
-  const has = await prisma.employeeAllowance.count({ where: { active: true } });
-  if (!has) return { created: null };
-  const period = await prisma.payrollPeriod.create({ data: { code: p.code, kind: "TUNJANGAN", startDate: dateOnly(p.start), endDate: dateOnly(p.payDate), payDate: dateOnly(p.payDate) } });
-  await computePeriod(period.id, actor);
-  return { created: period.code };
+  const ym = today.slice(0, 7);
+  const goLive = await settingStr(prisma as unknown as Tx, "go_live_date");
+  const rows = await prisma.employeeAllowance.findMany({ where: { active: true }, select: { payDay: true } });
+  if (!rows.length) return { created: null };
+  const dates = [...new Set(rows.map((r) => allowancePayDate(ym, r.payDay)))].sort();
+  const created: string[] = [];
+  for (const payDate of dates) {
+    if (today < payDate) continue; // belum tanggal bayarnya (juga untuk tombol manual)
+    if (goLive && payDate < goLive && !force) continue;
+    const code = allowanceCode(payDate);
+    if (await prisma.payrollPeriod.findUnique({ where: { code } })) continue;
+    const period = await prisma.payrollPeriod.create({ data: { code, kind: "TUNJANGAN", startDate: dateOnly(`${ym}-01`), endDate: dateOnly(payDate), payDate: dateOnly(payDate) } });
+    await computePeriod(period.id, actor);
+    // Tidak ada tunjangan yang perlu ditagih (semua sudah masuk periode lain): periode kosong dihapus
+    if (!(await prisma.payslip.count({ where: { periodId: period.id } }))) await prisma.payrollPeriod.delete({ where: { id: period.id } });
+    else created.push(code);
+  }
+  return { created: created.length ? created.join(", ") : null };
 }
 
 /**
@@ -544,62 +598,90 @@ export async function approvePeriod(periodId: string, actor: Actor) {
   });
 }
 
-/** Bayar gaji: integrasi biaya tenaga kerja ke keuangan (jurnal beban gaji & transport). */
+type PayOpts = { messageId?: string | null; proofPath?: string | null };
+
+/**
+ * Inti pembayaran gaji (dipakai web Penggajian → Bayar dan bot Telegram): bayar slip-slip yang belum lunas pada satu periode.
+ * Slip yang sudah disetujui diakui sebagai Hutang Gaji saat disetujui, jadi pembayaran = Dr Hutang Gaji / Cr Kas-Bank
+ * (+ Cr Piutang karyawan untuk potongan kasbon), BUKAN beban baru. Periode berstatus Dibayar bila semua slipnya lunas.
+ */
+async function paySlipsTx(tx: Tx, periodId: string, slipIds: string[] | "all", bankAccountId: string, storeId: string | null, actor: Actor, paidAt: Date, opts: PayOpts = {}) {
+  await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
+  const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId }, include: { payslips: true } });
+  if (p.status === "DIBAYAR") throw new PayrollError(`Gaji ${p.code} sudah lunas`);
+  if (p.status !== "DISETUJUI") throw new PayrollError("Periode harus disetujui sebelum dibayar");
+  const unpaid = p.payslips.filter((x) => !x.paidAt);
+  const slips = slipIds === "all" ? unpaid : unpaid.filter((x) => slipIds.includes(x.id));
+  if (slipIds !== "all" && slips.length !== slipIds.length) throw new PayrollError("Slip ini sudah dibayar");
+  if (!slips.length) throw new PayrollError(`Semua slip ${p.code} sudah dibayar`);
+  if (opts.messageId && (await tx.payslip.findUnique({ where: { paidMessageId: opts.messageId } }))) throw new PayrollError("Pesan/bukti ini sudah dipakai untuk membayar slip gaji");
+  const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: bankAccountId } });
+  // Nilai slip saat disetujui (sudah diakui sebagai Hutang Gaji)
+  const before = payrollCost(slips);
+  if (p.kind === "BULANAN") {
+    // Resign setelah slip dihitung tetapi sebelum tanggal gajian: slip menjadi Rp0
+    const payDay = p.payDate ? dateStr(p.payDate) : todayStr(paidAt);
+    const resigned = await tx.employee.findMany({ where: { id: { in: slips.map((x) => x.employeeId) }, resignDate: { lt: dateOnly(payDay) } } });
+    for (const e of resigned) {
+      const slip = slips.find((x) => x.employeeId === e.id)!;
+      if (slip.total === BigInt(0)) continue;
+      await tx.payslip.update({ where: { id: slip.id }, data: { total: BigInt(0), transport: BigInt(0), advanceDeduction: BigInt(0), advanceDetail: [], note: "Resign sebelum tanggal gajian: tidak menerima gaji" } });
+      slip.total = BigInt(0);
+      slip.transport = BigInt(0);
+      slip.advanceDeduction = BigInt(0);
+      slip.advanceDetail = [];
+    }
+  }
+  // Beban = gaji kotor; kasbon yang dipotong melunasi piutang karyawan, sisanya keluar dari rekening
+  const advances = slips.reduce((t, x) => t + Number(x.advanceDeduction), 0);
+  const { wages, transport } = payrollCost(slips);
+  const net = wages + transport - advances;
+  const accrued = (await activeAccrual(tx, p.id)) ? before.wages + before.transport : 0;
+  const lines = accrued ? [
+    { accountCode: COA.UTANG_GAJI, debit: accrued, memo: `Pelunasan hutang gaji ${p.code}` },
+    ...(accrued - wages - transport > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, credit: accrued - wages - transport, memo: "Slip dinolkan (resign sebelum gajian)" }] : []),
+    ...(advances > 0 ? [{ accountCode: COA.PIUTANG_KARYAWAN, credit: advances, memo: "Potongan kasbon" }] : []),
+    ...(net > 0 ? [{ accountId: bank.coaAccountId, credit: net }] : []),
+  ] : [
+    ...(wages > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, debit: wages, memo: p.kind === "TUNJANGAN" ? "Tunjangan karyawan" : "Gaji bulanan, upah harian & borongan" }] : []),
+    ...(transport > 0 ? [{ accountCode: COA.BEBAN_TRANSPORT, debit: transport, memo: "Transport assembling" }] : []),
+    ...(advances > 0 ? [{ accountCode: COA.PIUTANG_KARYAWAN, credit: advances, memo: "Potongan kasbon" }] : []),
+    ...(net > 0 ? [{ accountId: bank.coaAccountId, credit: net }] : []),
+  ];
+  for (const x of slips)
+    for (const d of x.advanceDetail as AdvanceAlloc[]) {
+      await tx.$queryRaw`SELECT id FROM "CashAdvance" WHERE id = ${d.id} FOR UPDATE`;
+      const a = await tx.cashAdvance.findUniqueOrThrow({ where: { id: d.id } });
+      if (a.repaid + BigInt(d.amount) > a.amount) throw new PayrollError(`Potongan kasbon ${a.number} melebihi sisa kasbon (sudah dilunasi di luar gaji). Hitung ulang periode ini sebelum dibayar.`);
+      await tx.cashAdvance.update({ where: { id: d.id }, data: { repaid: { increment: BigInt(d.amount) } } });
+    }
+  const whole = slips.length === unpaid.length && unpaid.length === p.payslips.length;
+  const names = slips.length === 1 ? ` · ${(await tx.employee.findUnique({ where: { id: slips[0].employeeId }, select: { name: true } }))?.name ?? ""}` : "";
+  const j = lines.length ? await postJournal(tx, { date: paidAt, storeId, description: `Pembayaran gaji ${p.code}${names}`.slice(0, 150), source: "PAYROLL", sourceId: whole ? p.id : `${p.id}:${slips.map((x) => x.id).join(",")}`.slice(0, 190), actor, lines }) : null;
+  await tx.payslip.updateMany({ where: { id: { in: slips.map((x) => x.id) } }, data: { paidAt, paidJournalId: j?.id ?? null, paidFromAccountId: bankAccountId } });
+  if (opts.messageId || opts.proofPath) await tx.payslip.update({ where: { id: slips[0].id }, data: { paidMessageId: opts.messageId ?? null, paidProofPath: opts.proofPath ?? null } });
+  const done = slips.length === unpaid.length;
+  if (done) await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DIBAYAR", paidAt, paidFromAccountId: bankAccountId, journalId: whole ? (j?.id ?? null) : null } });
+  await audit(actor, slips.length === 1 && !whole ? "GAJI_SLIP_DIBAYAR" : "GAJI_DIBAYAR", "PayrollPeriod", periodId, { journal: j?.number ?? null, total: net, advances, slip: slips.map((x) => x.id), lunasSemua: done, pesan: opts.messageId ?? undefined }, tx);
+  return { journal: j, net, done, code: p.code };
+}
+
+/** Bayar gaji (web Penggajian → Bayar): semua slip yang belum lunas pada periode ini */
 export async function payPeriod(periodId: string, bankAccountId: string, storeId: string | null, actor: Actor, paidAt: Date = new Date()) {
-  return prisma.$transaction(async (tx: Tx) => {
-    await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
-    const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId }, include: { payslips: true } });
-    if (p.status !== "DISETUJUI") throw new PayrollError("Periode harus disetujui sebelum dibayar");
-    const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: bankAccountId } });
-    if (p.kind === "BULANAN") {
-      // Resign setelah slip dihitung tetapi sebelum tanggal gajian: slip menjadi Rp0
-      const payDay = p.payDate ? dateStr(p.payDate) : todayStr(paidAt);
-      const resigned = await tx.employee.findMany({ where: { id: { in: p.payslips.map((x) => x.employeeId) }, resignDate: { lt: dateOnly(payDay) } } });
-      for (const e of resigned) {
-        const slip = p.payslips.find((x) => x.employeeId === e.id)!;
-        if (slip.total === BigInt(0)) continue;
-        await tx.payslip.update({ where: { id: slip.id }, data: { total: BigInt(0), transport: BigInt(0), advanceDeduction: BigInt(0), advanceDetail: [], note: "Resign sebelum tanggal gajian: tidak menerima gaji" } });
-        slip.total = BigInt(0);
-        slip.transport = BigInt(0);
-        slip.advanceDeduction = BigInt(0);
-        slip.advanceDetail = [];
-      }
-    }
-    // Beban = gaji kotor; kasbon yang dipotong melunasi piutang karyawan, sisanya keluar dari rekening
-    const advances = p.payslips.reduce((s, x) => s + Number(x.advanceDeduction), 0);
-    const { wages, transport } = payrollCost(p.payslips);
-    const net = wages + transport - advances;
-    // Sudah diakui sebagai Hutang Gaji saat disetujui: pembayaran melunasi hutangnya (selisih karena resign dikembalikan ke beban)
-    const accrual = await activeAccrual(tx, p.id);
-    const accrued = accrual ? accrual.lines.filter((l) => l.account.code === COA.UTANG_GAJI).reduce((s, l) => s + Number(l.credit), 0) : 0;
-    const lines = accrual ? [
-      { accountCode: COA.UTANG_GAJI, debit: accrued, memo: `Pelunasan hutang gaji ${p.code}` },
-      ...(accrued - wages - transport > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, credit: accrued - wages - transport, memo: "Slip dinolkan (resign sebelum gajian)" }] : []),
-      ...(advances > 0 ? [{ accountCode: COA.PIUTANG_KARYAWAN, credit: advances, memo: "Potongan kasbon" }] : []),
-      ...(net > 0 ? [{ accountId: bank.coaAccountId, credit: net }] : []),
-    ] : [
-      ...(wages > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, debit: wages, memo: p.kind === "TUNJANGAN" ? "Tunjangan karyawan" : "Gaji bulanan, upah harian & borongan" }] : []),
-      ...(transport > 0 ? [{ accountCode: COA.BEBAN_TRANSPORT, debit: transport, memo: "Transport assembling" }] : []),
-      ...(advances > 0 ? [{ accountCode: COA.PIUTANG_KARYAWAN, credit: advances, memo: "Potongan kasbon" }] : []),
-      ...(net > 0 ? [{ accountId: bank.coaAccountId, credit: net }] : []),
-    ];
-    for (const x of p.payslips)
-      for (const d of x.advanceDetail as AdvanceAlloc[]) {
-        await tx.$queryRaw`SELECT id FROM "CashAdvance" WHERE id = ${d.id} FOR UPDATE`;
-        const a = await tx.cashAdvance.findUniqueOrThrow({ where: { id: d.id } });
-        if (a.repaid + BigInt(d.amount) > a.amount) throw new PayrollError(`Potongan kasbon ${a.number} melebihi sisa kasbon (sudah dilunasi di luar gaji). Hitung ulang periode ini sebelum dibayar.`);
-        await tx.cashAdvance.update({ where: { id: d.id }, data: { repaid: { increment: BigInt(d.amount) } } });
-      }
-    if (wages + transport === 0 && !accrued) {
-      await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DIBAYAR", paidAt, paidFromAccountId: bankAccountId } });
-      await audit(actor, "GAJI_DIBAYAR", "PayrollPeriod", periodId, { total: 0 }, tx);
-      return { number: "tanpa jurnal (Rp0)" } as { number: string };
-    }
-    const j = await postJournal(tx, { date: paidAt, storeId, description: `Pembayaran gaji ${p.code}`, source: "PAYROLL", sourceId: p.id, actor, lines });
-    await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DIBAYAR", paidAt, paidFromAccountId: bankAccountId, journalId: j.id } });
-    await audit(actor, "GAJI_DIBAYAR", "PayrollPeriod", periodId, { journal: j.number, total: net, advances }, tx);
-    return j;
-  });
+  const r = await prisma.$transaction((tx: Tx) => paySlipsTx(tx, periodId, "all", bankAccountId, storeId, actor, paidAt));
+  return r.journal ?? ({ number: "tanpa jurnal (Rp0)" } as { number: string });
+}
+
+/** Bayar SATU slip (bot Telegram): pelunasan Hutang Gaji karyawan itu saja; pesan/bukti yang sama tidak bisa dipakai dua kali */
+export async function paySlip(slipId: string, bankAccountId: string, storeId: string | null, actor: Actor, paidAt: Date = new Date(), opts: PayOpts = {}) {
+  const slip = await prisma.payslip.findUniqueOrThrow({ where: { id: slipId }, select: { periodId: true } });
+  try {
+    return await prisma.$transaction((tx: Tx) => paySlipsTx(tx, slip.periodId, [slipId], bankAccountId, storeId, actor, paidAt, opts));
+  } catch (e) {
+    // Klik ganda / pesan ganda bersamaan: indeks unik pesan menolak yang kedua
+    if ((e as { code?: string }).code === "P2002") throw new PayrollError("Pesan/bukti ini sudah dipakai untuk membayar slip gaji");
+    throw e;
+  }
 }
 
 /**
@@ -611,12 +693,15 @@ export async function cancelPayment(periodId: string, reason: string, actor: Act
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
     const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId }, include: { payslips: true } });
-    if (p.status !== "DIBAYAR") throw new PayrollError("Hanya periode berstatus Dibayar yang pembayarannya bisa dibatalkan");
+    if (p.status !== "DIBAYAR" && !p.payslips.some((x) => x.paidAt)) throw new PayrollError("Hanya periode berstatus Dibayar (atau yang sebagian slipnya sudah dibayar) yang pembayarannya bisa dibatalkan");
     const paidAt = p.paidAt ?? now;
     const date = await assertPeriodOpen(tx, paidAt).then(() => paidAt, () => now);
-    if (p.journalId) await reverseJournal(tx, p.journalId, date, actor, `batal bayar ${p.code} — ${reason.trim()}`.slice(0, 150));
+    // Jurnal pembayaran: satu per periode (web) dan/atau per slip (bot); masing-masing dibalik sekali
+    const journals = [...new Set([p.journalId, ...p.payslips.map((x) => x.paidJournalId)].filter((x): x is string => !!x))];
+    for (const jid of journals) await reverseJournal(tx, jid, date, actor, `batal bayar ${p.code} — ${reason.trim()}`.slice(0, 150));
     for (const x of p.payslips)
       for (const d of x.advanceDetail as AdvanceAlloc[]) await tx.cashAdvance.update({ where: { id: d.id }, data: { repaid: { decrement: BigInt(d.amount) } } });
+    await tx.payslip.updateMany({ where: { periodId }, data: { paidAt: null, paidJournalId: null, paidFromAccountId: null, paidMessageId: null } });
     await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DISETUJUI", paidAt: null, paidFromAccountId: null, journalId: null } });
     await audit(actor, "GAJI_BATAL_BAYAR", "PayrollPeriod", periodId, { code: p.code, reason }, tx);
   });
@@ -629,6 +714,7 @@ export async function unapprovePeriod(periodId: string, reason: string, actor: A
     await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
     const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId } });
     if (p.status !== "DISETUJUI") throw new PayrollError("Hanya periode berstatus Disetujui yang bisa dikembalikan ke draft");
+    if (await tx.payslip.count({ where: { periodId, paidAt: { not: null } } })) throw new PayrollError("Sebagian slip periode ini sudah dibayar. Batalkan pembayarannya dulu sebelum mengembalikan ke draft.");
     const acc = await activeAccrual(tx, p.id);
     if (acc) {
       const date = await assertPeriodOpen(tx, acc.date).then(() => acc.date, () => now);

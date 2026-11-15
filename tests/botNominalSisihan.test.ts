@@ -97,12 +97,19 @@ describe("Nominal dengan pemisah tidak standar", () => {
 });
 
 describe("Bot: pesan gaji", () => {
-  it("nominal terbaca → draft; gaji yang sudah disetujui di Penggajian diberi peringatan agar tidak dobel", async () => {
+  it("Owner (berhak bayar gaji): pesan gaji → isian Bayar gaji; tanpa slip bisa dicatat beban biasa (draft + keterangan karyawan); slip disetujui ditawarkan dibayar", async () => {
+    const tap = (data: string) => handleTelegramUpdate({ update_id: n, callback_query: { id: String(n++), from, data, message: { message_id: 1, chat } } } as never);
     const div = await prisma.division.findFirstOrThrow();
     const emp = await prisma.employee.create({ data: { code: "UJI-RICO", name: "Rico Ujinominal", nickname: "Rico", divisionId: div.id, wageType: "BULANAN", monthlySalary: BigInt(1_250_000) } });
+    sent.length = 0;
     await say("Gaji Rico periode oktober 1250.000 pada tanggal 12 november 2026");
     let last = sent.map((s) => s.text).join("\n");
     expect(last).not.toContain("belum bisa membaca");
+    expect(last).toContain("Tidak ada slip gaji");
+    // Bukan gaji slip → dicatat sebagai draft transaksi biasa seperti sebelumnya
+    sent.length = 0;
+    await tap("f:plain");
+    last = sent.map((s) => s.text).join("\n");
     expect(last).toContain("1.250.000");
     expect(last).toContain("Gaji karyawan: Rico Ujinominal");
 
@@ -110,9 +117,7 @@ describe("Bot: pesan gaji", () => {
     await prisma.payslip.create({ data: { periodId: p.id, employeeId: emp.id, daysPresent: 26, dailyWage: BigInt(0), pieceWage: BigInt(0), pieceDetail: [], transport: BigInt(0), total: BigInt(1_250_000) } });
     sent.length = 0;
     await say("Pembayaran Gaji Rico periode oktober senilai 1.300.000 pada tanggal 20 november 2026");
-    last = sent.map((s) => s.text).join("\n");
-    expect(last).toContain("sudah tercatat di Penggajian");
-    expect(last).toContain("GJB-UJI-RICO");
+    expect((sent.at(-1)?.buttons ?? []).flat().some((x) => x.text.includes("Bayar slip GJB-UJI-RICO"))).toBe(true);
   });
 });
 

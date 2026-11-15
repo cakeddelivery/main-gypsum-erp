@@ -44,7 +44,7 @@ export const saveEmployee = action(
       ...(fd.has("bankAccountNo") && (user.role === "OWNER" || user.role === "FINANCE") ? { bankName: optStr(fd, "bankName"), bankAccountNo: optStr(fd, "bankAccountNo")?.replace(/\D/g, "") || null, bankAccountName: optStr(fd, "bankAccountName") } : {}),
     };
     if (data.wageType === "BULANAN" && !data.joinDate) throw new Error("Karyawan bulanan wajib punya tanggal masuk (dasar tanggal gajian)");
-    if (data.wageType === "BULANAN" && data.monthlySalary <= BigInt(0)) throw new Error("Isi gaji bulanan");
+    if (data.wageType === "BULANAN" && data.monthlySalary <= BigInt(0)) throw new Error("Isi gaji pokok");
     // Tunjangan ikut disimpan dari form (hanya pengelola penggajian)
     const allowances = fd.has("allowancesPresent") && user.can("payroll.manage") ? parseAllowances(fd) : null;
     // Kode karyawan otomatis per divisi (CTK-001); kode tetap walau pindah divisi
@@ -54,8 +54,8 @@ export const saveEmployee = action(
         const keep = allowances.filter((a) => a.id).map((a) => a.id!);
         await tx.employeeAllowance.deleteMany({ where: { employeeId: e.id, id: { notIn: keep } } });
         for (const a of allowances) {
-          if (a.id) await tx.employeeAllowance.updateMany({ where: { id: a.id, employeeId: e.id }, data: { name: a.name, amount: BigInt(a.amount), active: true } });
-          else await tx.employeeAllowance.create({ data: { employeeId: e.id, name: a.name, amount: BigInt(a.amount) } });
+          if (a.id) await tx.employeeAllowance.updateMany({ where: { id: a.id, employeeId: e.id }, data: { name: a.name, amount: BigInt(a.amount), payDay: a.payDay, active: a.active } });
+          else await tx.employeeAllowance.create({ data: { employeeId: e.id, name: a.name, amount: BigInt(a.amount), payDay: a.payDay, active: a.active } });
         }
       }
       return e;
@@ -72,10 +72,14 @@ function parseAllowances(fd: FormData) {
   const ids = fd.getAll("allowId").map(String);
   const names = fd.getAll("allowName").map((v) => String(v).trim());
   const amounts = fd.getAll("allowAmount").map((v) => Number(String(v).replace(/\D/g, "")));
+  const days = fd.getAll("allowPayDay").map((v) => Number(String(v).replace(/\D/g, "")));
+  const actives = fd.getAll("allowActive").map((v) => String(v) !== "0");
   return names.map((name, i) => {
     if (name.length < 2) throw new Error("Nama tunjangan minimal 2 huruf");
     if (!(amounts[i] > 0)) throw new Error(`Nominal tunjangan ${name} harus lebih dari 0`);
-    return { id: ids[i] || null, name, amount: amounts[i] };
+    const payDay = days[i] || 15;
+    if (payDay < 1 || payDay > 31) throw new Error(`Tanggal bayar tunjangan ${name} harus 1–31`);
+    return { id: ids[i] || null, name, amount: amounts[i], payDay, active: actives[i] ?? true };
   });
 }
 

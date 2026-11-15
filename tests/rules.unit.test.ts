@@ -34,12 +34,12 @@ describe("Jatah libur 1x per minggu", () => {
 });
 
 describe("Gaji bulanan", () => {
-  it("potong bolos per hari dari gaji ÷ 26", () => {
-    const r = calcMonthly({ monthlySalary: 2_600_000, absentDays: 2, workdaysPerMonth: 26, lateMinutes: 0, lateDeductionPerMinute: 0, transport: 0, resignedBeforePayday: false });
-    expect(r.total).toBe(2_400_000);
+  it("potong Alpa: gaji pokok ÷ 30 × hari Alpa (keputusan Owner 15 Nov 2026)", () => {
+    const r = calcMonthly({ monthlySalary: 3_000_000, alpaDays: 2, lateMinutes: 0, lateDeductionPerMinute: 0, transport: 0, resignedBeforePayday: false });
+    expect([r.alpaDeduction, r.total]).toEqual([200_000, 2_800_000]);
   });
   it("resign sebelum gajian = Rp0", () => {
-    expect(calcMonthly({ monthlySalary: 2_600_000, absentDays: 0, workdaysPerMonth: 26, lateMinutes: 0, lateDeductionPerMinute: 0, transport: 50_000, resignedBeforePayday: true }).total).toBe(0);
+    expect(calcMonthly({ monthlySalary: 2_600_000, alpaDays: 0, lateMinutes: 0, lateDeductionPerMinute: 0, transport: 50_000, resignedBeforePayday: true }).total).toBe(0);
   });
 });
 
