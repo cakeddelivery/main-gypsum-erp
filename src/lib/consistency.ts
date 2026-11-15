@@ -306,35 +306,27 @@ const unpaidBorongan: Check = async (c) => {
 
 // =========================== ABSENSI & GAJI ===========================
 
+/** Status absensi dihitung otomatis tiap pagi; sisa yang belum tervalidasi berarti job 06.00 tidak berjalan */
 const unvalidatedAttendance: Check = async (c) => {
-  const rows = await prisma.attendance.groupBy({ by: ["employeeId"], where: { validated: false, status: { in: ["HADIR", "TERLAMBAT"] }, date: { lt: dateOnly(addDays(c.today, -STALE.attendance)) } }, _count: true });
+  const rows = await prisma.attendance.groupBy({ by: ["employeeId"], where: { validated: false, date: { lt: dateOnly(addDays(c.today, -STALE.attendance)) } }, _count: true });
   const emps = await prisma.employee.findMany({ where: { id: { in: rows.map((r) => r.employeeId) } }, select: { id: true, name: true } });
-  return issue("absen-belum-validasi", "ABSENSI_GAJI", "SEDANG", `Absen hadir belum divalidasi (> ${STALE.attendance} hari)`, "Absen yang belum divalidasi dihitung TIDAK masuk di slip gaji (bisa terpotong bolos) dan menahan persetujuan gaji.",
-    rows.map((r) => ({ label: emps.find((e) => e.id === r.employeeId)?.name ?? r.employeeId, detail: `${r._count} hari`, href: "/absensi" })));
+  return issue("absen-belum-validasi", "ABSENSI_GAJI", "SEDANG", `Absensi belum berstatus final (> ${STALE.attendance} hari)`, "Status absensi seharusnya dihitung otomatis tiap pagi. Sisa ini berarti job 06.00 tidak berjalan; jalankan skrip validasi-otomatis atau hubungi admin.",
+    rows.map((r) => ({ label: emps.find((e) => e.id === r.employeeId)?.name ?? r.employeeId, detail: `${r._count} hari`, href: "/absensi?tab=koreksi" })));
 };
 
-/** Hari "Tanpa keterangan (otomatis)" atau tanpa catatan absen sama sekali (7 hari terakhir), melebihi jatah libur */
+/** Alpa (dijadwalkan masuk tanpa absen / minggu tanpa jadwal) 7 hari terakhir melebihi jatah libur */
 const missingAttendance: Check = async (c) => {
-  const { AUTO_NOTE } = await import("./attendanceAuto");
   const goLive = (await prisma.setting.findUnique({ where: { key: "go_live_date" } }))?.value ?? "2000-01-01";
   const quota = Number((await prisma.setting.findUnique({ where: { key: "weekly_off_quota" } }))?.value) || 1;
   const from = [addDays(c.today, -7), goLive].sort().at(-1)!;
   const to = addDays(c.today, -1);
   if (from > to) return null;
-  const emps = await prisma.employee.findMany({ where: { status: "AKTIF", wageType: { not: "BORONGAN" } }, select: { id: true, name: true, joinDate: true } });
-  const att = await prisma.attendance.findMany({ where: { date: { gte: dateOnly(from), lte: dateOnly(to) } }, select: { employeeId: true, date: true, note: true } });
-  const items: IssueItem[] = [];
-  for (const e of emps) {
-    const start = [from, e.joinDate ? dateStr(e.joinDate) : from].sort().at(-1)!;
-    let days = 0;
-    for (let d = start; d <= to; d = addDays(d, 1)) days++;
-    if (days <= 0) continue;
-    const mine = att.filter((a) => a.employeeId === e.id && dateStr(a.date) >= start);
-    const known = new Set(mine.filter((a) => a.note !== AUTO_NOTE).map((a) => dateStr(a.date))).size;
-    const missing = days - known;
-    if (missing > Math.ceil((quota * days) / 7)) items.push({ label: e.name, detail: `${missing} dari ${days} hari tanpa keterangan (${start} – ${to})`, href: "/absensi" });
-  }
-  return issue("hari-tanpa-absen", "ABSENSI_GAJI", "INFO", "Hari kerja tanpa keterangan melebihi jatah libur (7 hari terakhir)", "Hari tanpa absen diberi status \"Tanpa keterangan\" otomatis tiap pagi. Ubah menjadi Libur/Izin/Sakit di menu Absensi bila memang tidak masuk; sisanya dihitung bolos di slip.", items);
+  const rows = await prisma.attendance.groupBy({ by: ["employeeId"], where: { status: "ALPA", date: { gte: dateOnly(from), lte: dateOnly(to) }, employee: { status: "AKTIF", wageType: { not: "BORONGAN" } } }, _count: true });
+  const emps = await prisma.employee.findMany({ where: { id: { in: rows.map((r) => r.employeeId) } }, select: { id: true, name: true } });
+  const items: IssueItem[] = rows
+    .filter((r) => r._count > Math.ceil(quota))
+    .map((r) => ({ label: emps.find((e) => e.id === r.employeeId)?.name ?? r.employeeId, detail: `${r._count} hari Alpa (${from} – ${to})`, href: "/absensi?tab=koreksi" }));
+  return issue("hari-tanpa-absen", "ABSENSI_GAJI", "INFO", "Alpa melebihi jatah libur (7 hari terakhir)", "Alpa = dijadwalkan masuk tetapi tidak absen (atau jadwal minggu itu belum diatur). Bila keliru (lupa absen / izin), koreksi di Absensi → Alpa & koreksi; sisanya dihitung bolos di slip.", items);
 };
 
 /** Keputusan Owner 14 Nov: HPP penjualan marketplace harian dari laporan Packing/Giftbox (sakelar Hasil kerja → stok) */
