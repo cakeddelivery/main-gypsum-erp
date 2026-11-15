@@ -62,9 +62,6 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
   if (can("refund.approve")) {
     tasks.push(prisma.complaint.count({ where: { cancelledAt: null, solution: "REFUND", status: "DIAJUKAN" } }).then((c) => void (c && out.push({ key: "refund-setuju", label: "Refund komplain menunggu persetujuan", count: c, href: "/retur/komplain?tab=setuju", tone: "red" }))));
   }
-  if (can("users.manage")) {
-    tasks.push(prisma.complaint.count({ where: { cancelledAt: null, status: "MENUNGGU_OWNER" } }).then((c) => void (c && out.push({ key: "refund-owner", label: "Refund di atas batas menunggu persetujuan Owner", count: c, href: "/retur/komplain?tab=setuju", tone: "red" }))));
-  }
   if (can("refund.pay")) {
     tasks.push(prisma.complaint.count({ where: { cancelledAt: null, status: "DISETUJUI" } }).then((c) => void (c && out.push({ key: "refund-bayar", label: "Refund disetujui, belum dibayar", count: c, href: "/retur/komplain?tab=bayar", tone: "amber" }))));
   }

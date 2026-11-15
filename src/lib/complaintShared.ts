@@ -17,7 +17,6 @@ export const solutionLabel = (k: string) => SOLUTIONS.find((i) => i.key === k)?.
 
 export const COMPLAINT_STATUS: Record<ComplaintStatus, { label: string; tone: "gray" | "blue" | "amber" | "green" | "red" }> = {
   DIAJUKAN: { label: "Diajukan", tone: "blue" },
-  MENUNGGU_OWNER: { label: "Menunggu Owner", tone: "amber" },
   DISETUJUI: { label: "Disetujui", tone: "amber" },
   DIBAYAR: { label: "Dibayar", tone: "green" },
   DIKIRIM: { label: "Pengganti dikirim", tone: "green" },

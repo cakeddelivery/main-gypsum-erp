@@ -1,6 +1,7 @@
--- Komplain pembeli & refund (kirim ganti / refund dengan persetujuan Finance → Owner di atas batas).
+-- Komplain pembeli & refund (kirim ganti / refund disetujui & dibayar Finance).
 -- CreateEnum
-CREATE TYPE "ComplaintStatus" AS ENUM ('DIAJUKAN', 'MENUNGGU_OWNER', 'DISETUJUI', 'DIBAYAR', 'DIKIRIM', 'SELESAI', 'DITOLAK');
+CREATE TYPE "ComplaintStatus" AS ENUM ('DIAJUKAN', 'DISETUJUI', 'DIBAYAR', 'DIKIRIM', 'SELESAI', 'DITOLAK');
+
 
 -- CreateTable
 CREATE TABLE "Complaint" (
@@ -28,8 +29,6 @@ CREATE TABLE "Complaint" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "approvedBy" TEXT,
     "approvedAt" TIMESTAMP(3),
-    "ownerApprovedBy" TEXT,
-    "ownerApprovedAt" TIMESTAMP(3),
     "rejectedBy" TEXT,
     "rejectedAt" TIMESTAMP(3),
     "rejectReason" TEXT,

@@ -5,7 +5,7 @@ import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDate, fmtDateTime, todayStr } from "@/lib/time";
-import { canSeePayee, refundLimit } from "@/lib/complaints";
+import { canSeePayee } from "@/lib/complaints";
 import { complaintStatusOf, COMPLAINT_STATUS, issueLabel, solutionLabel } from "@/lib/complaintShared";
 import { marketplaceLabel } from "@/lib/returnLabel";
 import { fmtBytes } from "@/lib/mediaStore";
@@ -27,21 +27,18 @@ export default async function KomplainDetail({ params }: { params: Promise<{ id:
   const open = !c.cancelledAt && c.status !== "SELESAI" && c.status !== "DITOLAK";
   const refund = c.solution === "REFUND";
   const seePayee = canSeePayee(c, user);
-  const [limit, banks, tx, ret] = await Promise.all([
-    refundLimit(),
+  const [banks, tx, ret] = await Promise.all([
     c.status === "DISETUJUI" && user.can("refund.pay") ? prisma.bankAccount.findMany({ where: { active: true, marketplace: false }, orderBy: { code: "asc" } }) : [],
     c.payJournalId ? prisma.financeTransaction.findFirst({ where: { journalId: c.payJournalId }, select: { id: true, number: true } }) : null,
     c.trackingNo ? prisma.returnCase.findFirst({ where: { trackingNo: c.trackingNo, cancelledAt: null }, select: { id: true, number: true } }) : null,
   ]);
-  const owner = user.role === "OWNER";
-  const canApprove = user.can("refund.approve") && refund && (c.status === "DIAJUKAN" || (c.status === "MENUNGGU_OWNER" && owner));
+  const canApprove = user.can("refund.approve") && refund && c.status === "DIAJUKAN";
   const info: [string, React.ReactNode][] = [
     ["Tanggal", fmtDate(c.date)], ["Marketplace", marketplaceLabel(c.marketplace)], ["No. pesanan", c.orderNo ?? "-"], ["No. resi", c.trackingNo ?? "-"],
     ["Tujuan", [c.city, c.province].filter(Boolean).join(", ") || "-"], ["Masalah", issueLabel(c.issueType)], ...(c.description ? [["Keterangan", c.description] as [string, string]] : []),
     ["Solusi", `${solutionLabel(c.solution)}${c.bundleNext ? " — dibarengkan pesanan berikutnya" : ""}`], ["Diajukan", `${c.createdBy} · ${fmtDateTime(c.createdAt)}`],
     ...(ret ? [["Retur terkait", <Link key="r" href={`/retur/${ret.id}`} className="text-brand-600 underline">{ret.number}</Link>] as [string, React.ReactNode]] : []),
-    ...(c.approvedAt ? [["Disetujui Finance", `${c.approvedBy} · ${fmtDateTime(c.approvedAt)}`] as [string, string]] : []),
-    ...(c.ownerApprovedAt ? [["Disetujui Owner", `${c.ownerApprovedBy} · ${fmtDateTime(c.ownerApprovedAt)}`] as [string, string]] : []),
+    ...(c.approvedAt ? [["Disetujui", `${c.approvedBy} · ${fmtDateTime(c.approvedAt)}`] as [string, string]] : []),
     ...(c.rejectedAt ? [["Ditolak", `${c.rejectedBy} · ${fmtDateTime(c.rejectedAt)} — ${c.rejectReason}`] as [string, string]] : []),
     ...(c.paidAt ? [["Dibayar", `${c.paidBy} · ${fmtDate(c.paidAt)}`] as [string, string]] : []),
     ...(c.sentAt ? [["Pengganti dikirim", `${c.sentBy} · ${fmtDateTime(c.sentAt)}`] as [string, string]] : []),
@@ -83,22 +80,22 @@ export default async function KomplainDetail({ params }: { params: Promise<{ id:
                 <p className="text-xs text-slate-500">🔒 Rekening pembeli (hanya pengaju, Finance, Owner)</p>
                 <p className="mt-1 font-medium">{c.payeeBank} · <span className="font-mono">{c.payeeAccount}</span></p>
                 <p>a.n. {c.payeeName}</p>
-                <p className="mt-1">Nominal <b>{idr(Number(c.refundAmount))}</b>{Number(c.refundAmount) > limit ? ` (di atas batas ${idr(limit)}: perlu Owner)` : ""}</p>
+                <p className="mt-1">Nominal <b>{idr(Number(c.refundAmount))}</b></p>
               </div>
             ) : <p className="text-slate-500">Rekening pembeli disembunyikan. Nominal {idr(Number(c.refundAmount))}.</p>)}
             {refund && c.proofPath && seePayee && <p>Bukti bayar: <a href={`/api/files/komplain-proof/${c.id}`} target="_blank" rel="noreferrer" className="text-brand-600 underline">lihat</a>{tx && <> · <Link href={`/finance/${tx.id}`} className="text-brand-600 underline">{tx.number}</Link></>}{c.proofSentAt ? ` · terkirim ke pengaju ${fmtDateTime(c.proofSentAt)}` : ""}</p>}
             {!refund && Number(c.replacementValue) > 0 && <p>Nilai barang pengganti {idr(Number(c.replacementValue))} (beban garansi).</p>}
             <div className="flex flex-wrap gap-2">
               {canApprove && (
-                <Modal trigger={c.status === "MENUNGGU_OWNER" ? "Setujui (Owner)" : "Setujui refund"} title={`Setujui ${c.number}`}>
+                <Modal trigger="Setujui refund" title={`Setujui ${c.number}`}>
                   <ModalForm action={approveAction} className="space-y-3">
                     <input type="hidden" name="id" value={c.id} />
-                    <p className="text-sm">Refund {idr(Number(c.refundAmount))} ke {seePayee ? `${c.payeeBank} ${c.payeeAccount} a.n. ${c.payeeName}` : "rekening pembeli"}.{Number(c.refundAmount) > limit && !owner ? " Setelah ini menunggu persetujuan Owner." : ""}</p>
+                    <p className="text-sm">Refund {idr(Number(c.refundAmount))} ke {seePayee ? `${c.payeeBank} ${c.payeeAccount} a.n. ${c.payeeName}` : "rekening pembeli"}.</p>
                     <Submit>Setujui</Submit>
                   </ModalForm>
                 </Modal>
               )}
-              {open && user.can("refund.approve") && ["DIAJUKAN", "MENUNGGU_OWNER", "DISETUJUI"].includes(c.status) && (
+              {open && user.can("refund.approve") && ["DIAJUKAN", "DISETUJUI"].includes(c.status) && (
                 <Modal trigger="Tolak" title={`Tolak ${c.number}`} triggerClass="btn-secondary">
                   <ModalForm action={rejectAction} className="space-y-3">
                     <input type="hidden" name="id" value={c.id} />
@@ -136,7 +133,7 @@ export default async function KomplainDetail({ params }: { params: Promise<{ id:
                 <ModalForm action={finishComplaintAction}><input type="hidden" name="id" value={c.id} /><Submit className="btn-secondary">Tandai selesai</Submit></ModalForm>
               )}
             </div>
-            <p className="text-xs text-slate-500">Alur refund: Diajukan → Disetujui Finance → (Owner bila &gt; {idr(limit)}) → Dibayar → Selesai. Kirim ganti: Diajukan → {COMPLAINT_STATUS.DIKIRIM.label} → Selesai.</p>
+            <p className="text-xs text-slate-500">Alur refund: Diajukan → Disetujui (Finance) → Dibayar → Selesai. Kirim ganti: Diajukan → {COMPLAINT_STATUS.DIKIRIM.label} → Selesai.</p>
           </div>
         </Card>
       </div>

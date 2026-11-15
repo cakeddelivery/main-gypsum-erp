@@ -73,19 +73,17 @@ describe("Komplain & refund", () => {
     expect(JSON.stringify(logs)).not.toMatch(/081234567890/);
   });
 
-  it("refund > batas: Finance → Menunggu Owner → Owner setuju; Finance tidak bisa melewati Owner", async () => {
-    const c = await createComplaint(base({ refundAmount: 150000, orderNo: "2508017ABCDE13" }), spv);
-    expect((await approveRefund(c.id, finance)).status).toBe("MENUNGGU_OWNER");
-    await expect(approveRefund(c.id, finance)).rejects.toThrow(/Owner/);
-    await expect(payRefund(c.id, { bankAccountId: seabank, date: d("2027-08-02"), proofPath: "y.jpg", proofMime: "image/jpeg" }, finance)).rejects.toThrow(/Owner/);
-    expect((await approveRefund(c.id, owner)).status).toBe("DISETUJUI");
-    // Owner langsung menyetujui refund besar yang baru diajukan
+  it("refund besar cukup disetujui Finance (tanpa Owner); Owner juga boleh menyetujui; tolak & batal", async () => {
+    const c = await createComplaint(base({ refundAmount: 750000, orderNo: "2508017ABCDE13" }), spv);
+    expect((await approveRefund(c.id, finance)).status).toBe("DISETUJUI");
+    await expect(approveRefund(c.id, finance)).rejects.toThrow(/sudah disetujui/);
     const c2 = await createComplaint(base({ refundAmount: 200000, orderNo: "2508017ABCDE14" }), spv);
-    expect((await approveRefund(c2.id, owner))).toMatchObject({ status: "DISETUJUI", ownerApprovedBy: owner.name });
+    expect(await approveRefund(c2.id, owner)).toMatchObject({ status: "DISETUJUI", approvedBy: owner.name });
     const r = await rejectComplaint(c2.id, "pembeli batal", finance);
     expect(r.status).toBe("DITOLAK");
-    // Batal setelah dibayar → jurnal balik
+    // Batal setelah dibayar → jurnal balik, baris Transaksi ikut Dibatalkan
     await payRefund(c.id, { bankAccountId: seabank, date: d("2027-08-03"), proofPath: "y.jpg", proofMime: "image/jpeg" }, finance);
+    expect(await net(COA_REFUND, c.number)).toBe(750000);
     await cancelComplaint(c.id, "salah input", finance, d("2027-08-04"));
     expect(await net(COA_REFUND, c.number)).toBe(0);
     expect((await prisma.financeTransaction.findFirstOrThrow({ where: { origin: "KOMPLAIN", originRef: `${c.number}:REFUND` } })).status).toBe("DIBATALKAN");

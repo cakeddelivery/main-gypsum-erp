@@ -78,7 +78,7 @@ export const approveAction = action(
   "refund.approve",
   async (fd, user) => {
     const c = await approveRefund(str(fd, "id"), user);
-    return c.status === "MENUNGGU_OWNER" ? `${c.number} disetujui Finance, menunggu persetujuan Owner` : `${c.number} disetujui, siap dibayar`;
+    return `${c.number} disetujui, siap dibayar`;
   },
   PATHS,
 );

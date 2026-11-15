@@ -15,16 +15,9 @@ export const COMPLAINT_SOURCE = "KOMPLAIN";
 export const COA_REFUND = "4-1200";
 export const COA_GARANSI = "6-1820";
 export const REFUND_CATEGORY = "Retur & Refund Penjualan";
-export const REFUND_LIMIT = { key: "refund_batas_owner", def: 100000 };
 
 export { ISSUE_TYPES, issueLabel, SOLUTIONS, solutionLabel, COMPLAINT_STATUS, complaintStatusOf } from "./complaintShared";
 import { COMPLAINT_STATUS, ISSUE_TYPES, SOLUTIONS, issueLabel } from "./complaintShared";
-
-export async function refundLimit(db: Pick<Tx, "setting"> = prisma) {
-  const row = await db.setting.findUnique({ where: { key: REFUND_LIMIT.key } });
-  const n = Number(row?.value?.replace(/\./g, ""));
-  return row?.value && Number.isFinite(n) && n >= 0 ? n : REFUND_LIMIT.def;
-}
 
 /** Rekening refund pembeli hanya untuk pengaju, penyetuju/pembayar refund (Finance) dan Owner */
 export function canSeePayee(c: { createdById: string | null }, user: { id: string; role: string; can: (p: Permission) => boolean }) {
@@ -105,25 +98,15 @@ async function lockOpen(tx: Tx, id: string) {
 }
 
 /**
- * Setujui refund. Finance: di bawah/sama dengan batas → Disetujui; di atas batas → Menunggu Owner.
- * Owner menyetujui keduanya sekaligus (Owner = persetujuan tertinggi).
+ * Setujui refund: cukup oleh Finance (izin refund.approve) berapa pun nominalnya. Owner boleh ikut menyetujui bila punya izin.
  */
-export async function approveRefund(id: string, actor: Actor & { role: string }, now: Date = new Date()) {
+export async function approveRefund(id: string, actor: Actor, now: Date = new Date()) {
   return prisma.$transaction(async (tx) => {
     const c = await lockOpen(tx, id);
     if (c.solution !== "REFUND") throw new StockError("Hanya refund yang perlu persetujuan");
-    const owner = actor.role === "OWNER";
-    const limit = await refundLimit(tx);
-    let data: Prisma.ComplaintUpdateInput;
-    if (c.status === "DIAJUKAN") {
-      const needOwner = Number(c.refundAmount) > limit && !owner;
-      data = { status: needOwner ? "MENUNGGU_OWNER" : "DISETUJUI", approvedBy: actor.name, approvedAt: now, ...(owner && Number(c.refundAmount) > limit ? { ownerApprovedBy: actor.name, ownerApprovedAt: now } : {}) };
-    } else if (c.status === "MENUNGGU_OWNER") {
-      if (!owner) throw new StockError(`Refund di atas Rp ${limit.toLocaleString("id-ID")} perlu persetujuan Owner`);
-      data = { status: "DISETUJUI", ownerApprovedBy: actor.name, ownerApprovedAt: now };
-    } else throw new StockError(`${c.number} sudah ${COMPLAINT_STATUS[c.status].label.toLowerCase()}`);
-    const out = await tx.complaint.update({ where: { id }, data });
-    await audit(actor, "REFUND_DISETUJUI", "Complaint", id, { number: c.number, status: out.status }, tx);
+    if (c.status !== "DIAJUKAN") throw new StockError(`${c.number} sudah ${COMPLAINT_STATUS[c.status].label.toLowerCase()}`);
+    const out = await tx.complaint.update({ where: { id }, data: { status: "DISETUJUI", approvedBy: actor.name, approvedAt: now } });
+    await audit(actor, "REFUND_DISETUJUI", "Complaint", id, { number: c.number }, tx);
     return out;
   });
 }
@@ -132,7 +115,7 @@ export async function rejectComplaint(id: string, reason: string, actor: Actor, 
   if (!reason?.trim()) throw new StockError("Alasan penolakan wajib diisi");
   return prisma.$transaction(async (tx) => {
     const c = await lockOpen(tx, id);
-    if (!["DIAJUKAN", "MENUNGGU_OWNER", "DISETUJUI"].includes(c.status)) throw new StockError(`${c.number} tidak bisa ditolak lagi`);
+    if (!["DIAJUKAN", "DISETUJUI"].includes(c.status)) throw new StockError(`${c.number} tidak bisa ditolak lagi`);
     const out = await tx.complaint.update({ where: { id }, data: { status: "DITOLAK", rejectedBy: actor.name, rejectedAt: now, rejectReason: reason.trim().slice(0, 300) } });
     await audit(actor, "KOMPLAIN_DITOLAK", "Complaint", id, { number: c.number, reason }, tx);
     return out;
@@ -148,7 +131,7 @@ export async function payRefund(id: string, p: { bankAccountId: string; date: Da
   if (!p.proofPath) throw new StockError("Unggah bukti transfer refund");
   return prisma.$transaction(async (tx) => {
     const c = await lockOpen(tx, id);
-    if (c.status !== "DISETUJUI") throw new StockError(c.status === "MENUNGGU_OWNER" ? "Menunggu persetujuan Owner" : `${c.number} belum disetujui / sudah dibayar`);
+    if (c.status !== "DISETUJUI") throw new StockError(`${c.number} belum disetujui / sudah dibayar`);
     await assertPeriodOpen(tx, p.date);
     const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: p.bankAccountId } });
     const amount = Number(c.refundAmount);

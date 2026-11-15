@@ -148,7 +148,7 @@ const OWNER: Guide = {
   subtitle: "Ringkasan harian, akses, pengaturan, dan keputusan",
   phases: [
     ph("blue", { icon: "eye", when: "Pagi", title: "Ringkasan harian", items: ["«Beranda»: ringkasan hari ini. Telegram: cek saldo 05.00, Cek Konsistensi 06.00 (hanya bila ada masalah), rekap 07.00."] }),
-    ph("red", { icon: "alert", when: "Bila ada temuan", title: "Keputusan", items: ["«Akuntansi» → «Cek konsistensi»: putuskan temuan **Kritis** lebih dulu.", "Selisih borongan: «Borongan» → tab «Penerimaan & Selisih».", "Refund di atas batas (Pengaturan, bawaan Rp100.000): «Retur & Komplain» → komplain → «Setujui (Owner)»."] }),
+    ph("red", { icon: "alert", when: "Bila ada temuan", title: "Keputusan", items: ["«Akuntansi» → «Cek konsistensi»: putuskan temuan **Kritis** lebih dulu.", "Selisih borongan: «Borongan» → tab «Penerimaan & Selisih».", "Komplain & refund: «Retur & Komplain» → «💬 Komplain & refund» (refund cukup disetujui & dibayar Finance; Owner bisa ikut memantau)."] }),
     ph("green", { icon: "user", when: "Saat perlu", title: "Karyawan & akses", items: ["«Karyawan» → «Pendaftaran» → «+ Tautan undangan», lalu «Setujui» / «Tolak». Berhenti kerja: «Karyawan» → «Resign».", "«Pengaturan» → «Pengguna & hak akses»: izin per role (izin sensitif ditandai). HP hilang: «Keluarkan semua perangkat»."] }),
     ph("amber", { icon: "cog", when: "Saat perlu", title: "Pengaturan divisi", items: ["«Laporan Shift» → «Bahan & checklist divisi»: format laporan, bahan & limit, «Ubah checklist» (wajib foto), target.", "Sakelar «Hasil kerja → stok» menentukan hasil laporan masuk stok."] }),
     ph("violet", { icon: "tag", when: "Saat perlu", title: "Produk & harga", items: ["«Produk & HPP»: «Ubah harga», resep, dan «Overhead» per bulan."] }),

@@ -5,7 +5,6 @@ import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDate, jakartaDateTime, jakartaParts, todayStr } from "@/lib/time";
 import { complaintStatusOf, issueLabel, solutionLabel } from "@/lib/complaintShared";
-import { refundLimit } from "@/lib/complaints";
 import { marketplaceLabel } from "@/lib/returnLabel";
 import { Badge, Card, Empty, Field, FilterBar, PageHeader, Stat, Tabs } from "@/components/ui";
 import { Submit } from "@/components/ActionForm";
@@ -21,8 +20,8 @@ export const metadata = { title: "Komplain & Refund" };
 
 type SP = { tab?: string; q?: string };
 const TABS: { key: string; label: string; where: Prisma.ComplaintWhereInput }[] = [
-  { key: "proses", label: "Perlu tindakan", where: { cancelledAt: null, status: { in: ["DIAJUKAN", "MENUNGGU_OWNER", "DISETUJUI", "DIBAYAR", "DIKIRIM"] as ComplaintStatus[] } } },
-  { key: "setuju", label: "Perlu disetujui", where: { cancelledAt: null, status: { in: ["DIAJUKAN", "MENUNGGU_OWNER"] as ComplaintStatus[] }, solution: "REFUND" } },
+  { key: "proses", label: "Perlu tindakan", where: { cancelledAt: null, status: { in: ["DIAJUKAN", "DISETUJUI", "DIBAYAR", "DIKIRIM"] as ComplaintStatus[] } } },
+  { key: "setuju", label: "Perlu disetujui", where: { cancelledAt: null, status: "DIAJUKAN", solution: "REFUND" } },
   { key: "bayar", label: "Siap dibayar", where: { cancelledAt: null, status: "DISETUJUI" } },
   { key: "selesai", label: "Selesai", where: { cancelledAt: null, status: "SELESAI" } },
   { key: "tolak", label: "Ditolak / batal", where: { OR: [{ status: "DITOLAK" }, { cancelledAt: { not: null } }] } },
@@ -37,26 +36,25 @@ export default async function KomplainPage({ searchParams }: { searchParams: Pro
   const p = jakartaParts();
   const monthStart = jakartaDateTime(`${p.year}-${String(p.month).padStart(2, "0")}-01`, "00:00");
   const canCreate = user.can("refund.request");
-  const [rows, counts, paid, sent, items, limit] = await Promise.all([
+  const [rows, counts, paid, sent, items] = await Promise.all([
     prisma.complaint.findMany({ where, orderBy: [{ date: "desc" }, { number: "desc" }], take: 300, include: { lines: { include: { item: { select: { name: true } } }, orderBy: { sortOrder: "asc" } } } }),
     Promise.all(TABS.map((t) => prisma.complaint.count({ where: t.where }))),
     prisma.complaint.aggregate({ where: { cancelledAt: null, solution: "REFUND", paidAt: { gte: monthStart } }, _sum: { refundAmount: true }, _count: true }),
     prisma.complaint.aggregate({ where: { cancelledAt: null, solution: "KIRIM_GANTI", sentAt: { gte: monthStart } }, _sum: { replacementValue: true }, _count: true }),
     canCreate ? prisma.item.findMany({ where: { active: true, type: "BARANG_JADI" }, orderBy: { name: "asc" }, select: { id: true, name: true } }) : [],
-    refundLimit(),
   ]);
 
   return (
     <div className="space-y-5">
       <PageHeader
         title="Komplain & Refund"
-        subtitle="Komplain pembeli (pecah, kurang, kelengkapan). Solusi kirim ganti (stok keluar sebagai beban garansi) atau refund (disetujui Finance, di atas batas juga Owner; dibayar Finance)."
+        subtitle="Komplain pembeli (pecah, kurang, kelengkapan). Solusi kirim ganti (stok keluar sebagai beban garansi) atau refund (disetujui & dibayar Finance)."
         actions={<>
           <DownloadCsv filename={`komplain-${todayStr()}`} rows={[["No.", "Tanggal", "Marketplace", "Resi", "No. pesanan", "Kota/Kab", "Provinsi", "Masalah", "Barang", "Solusi", "Refund", "Nilai pengganti", "Status"], ...rows.map((c) => [c.number, fmtDate(c.date), marketplaceLabel(c.marketplace), c.trackingNo ?? "", c.orderNo ?? "", c.city ?? "", c.province ?? "", issueLabel(c.issueType), c.lines.map((l) => `${l.item?.name ?? l.labelSku ?? l.labelName} × ${l.qty}`).join("; "), solutionLabel(c.solution), Number(c.refundAmount), Number(c.replacementValue), complaintStatusOf(c).label])]} />
           {canCreate && (
             <Modal trigger="+ Komplain" title="Komplain baru" full>
               <ModalForm action={saveComplaint}>
-                <ComplaintFields items={items} today={todayStr()} limit={limit} />
+                <ComplaintFields items={items} today={todayStr()} />
                 <div className="mt-4"><Submit>Simpan komplain</Submit></div>
               </ModalForm>
             </Modal>

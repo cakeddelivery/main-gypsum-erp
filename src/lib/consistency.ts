@@ -435,7 +435,7 @@ const staleComplaints: Check = async (c) => {
 };
 
 const approvedRefundsUnpaid: Check = async (c) => {
-  const rows = await prisma.complaint.findMany({ where: { cancelledAt: null, status: "DISETUJUI", OR: [{ ownerApprovedAt: { lt: daysAgo(c, 2) } }, { ownerApprovedAt: null, approvedAt: { lt: daysAgo(c, 2) } }] }, select: { id: true, number: true, refundAmount: true, approvedAt: true } });
+  const rows = await prisma.complaint.findMany({ where: { cancelledAt: null, status: "DISETUJUI", approvedAt: { lt: daysAgo(c, 2) } }, select: { id: true, number: true, refundAmount: true, approvedAt: true } });
   return issue("refund-belum-dibayar", "UANG", "SEDANG", "Refund sudah disetujui tetapi belum dibayar (> 2 hari)", "Finance: «Bayar refund» + unggah bukti transfer, atau tolak bila batal.",
     rows.map((r) => ({ label: r.number, detail: `${idr(Number(r.refundAmount))} · disetujui ${r.approvedAt ? dateStr(r.approvedAt) : "-"}`, href: `/retur/komplain/${r.id}` })));
 };

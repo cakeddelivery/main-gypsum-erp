@@ -2047,7 +2047,6 @@ model MarketplaceSkuMap {
 
 enum ComplaintStatus {
   DIAJUKAN
-  MENUNGGU_OWNER
   DISETUJUI
   DIBAYAR
   DIKIRIM
@@ -2056,7 +2055,7 @@ enum ComplaintStatus {
 }
 
 /// Komplain pembeli (pecah sebagian, kurang qty, kelengkapan kurang, …). Solusi: kirim ganti (barang keluar stok sebagai
-/// beban garansi) atau refund (disetujui Finance, di atas batas nominal juga Owner; dibayar Finance → Transaksi tertaut).
+/// beban garansi) atau refund (disetujui & dibayar Finance berapa pun nominalnya → Transaksi tertaut).
 /// Data pribadi pembeli tidak disimpan kecuali rekening refund, yang hanya terlihat pengaju, Finance & Owner.
 model Complaint {
   id               String           @id @default(cuid())
@@ -2088,8 +2087,6 @@ model Complaint {
   createdAt        DateTime         @default(now())
   approvedBy       String?
   approvedAt       DateTime?
-  ownerApprovedBy  String?
-  ownerApprovedAt  DateTime?
   rejectedBy       String?
   rejectedAt       DateTime?
   rejectReason     String?

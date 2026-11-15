@@ -14,7 +14,7 @@ type Head = { trackingNo?: string | null; orderNo?: string | null; marketplace?:
  * Form komplain: foto label (opsional, sama seperti retur) → jenis masalah → barang & jumlah bermasalah → bukti dari
  * pembeli → solusi Refund (nominal + rekening/e-wallet pembeli) atau Kirim ganti (jumlah pengganti, bisa dibarengkan).
  */
-export function ComplaintFields({ items, today, limit }: { items: Opt[]; today: string; limit: number }) {
+export function ComplaintFields({ items, today }: { items: Opt[]; today: string }) {
   const [v, setV] = useState<Head>({});
   const [ver, setVer] = useState(0);
   const [rows, setRows] = useState<Row[]>([{ k: 0, labelSku: "", labelName: "", itemId: "", qty: "1", sendQty: "1" }]);
@@ -25,7 +25,6 @@ export function ComplaintFields({ items, today, limit }: { items: Opt[]; today: 
   const [labelRead, setLabelRead] = useState<{ source: string; codes: string[] } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const set = (i: number, p: Partial<Row>) => setRows((x) => x.map((y, j) => (j === i ? { ...y, ...p } : y)));
-  const amountN = Number(amount.replace(/\D/g, "")) || 0;
 
   async function onPhoto(file: File | undefined) {
     if (!file) return;
@@ -102,7 +101,6 @@ export function ComplaintFields({ items, today, limit }: { items: Opt[]; today: 
         {solution === "REFUND" ? (
           <>
             <label className="block"><span className="label">Nominal refund (Rp) *</span><input name="refundAmount" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)} className="input" required placeholder="mis. 50% dari harga barang bermasalah" /></label>
-            {amountN > limit && <p className="text-xs text-amber-800">Di atas Rp {limit.toLocaleString("id-ID")}: setelah Finance setuju, perlu persetujuan Owner juga.</p>}
             <div className="grid gap-3 sm:grid-cols-3">
               <div><span className="label">Bank / e-wallet *</span><BankSelect name="payeeBank" required /></div>
               <label><span className="label">No. rekening / HP *</span><input name="payeeAccount" inputMode="numeric" className="input font-mono" required autoComplete="off" /></label>
