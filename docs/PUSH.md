@@ -7,7 +7,7 @@ Web Push + VAPID dari pustaka `web-push`. Tanpa kunci VAPID, fitur ini diam:
 | Bagian | File |
 |---|---|
 | Kirim ke user: `sendPush(userIds, { title, body, url, tag })` (fungsi umum untuk dipakai fitur lain) | `src/lib/push.ts` |
-| Langganan per perangkat | tabel `PushSubscription` (migrasi `20261126100000_push_notifikasi`) |
+| Langganan per perangkat | tabel `PushSubscription` (migrasi `20261129100000_push_notifikasi`) |
 | Tampilkan & klik notifikasi | `public/sw.js` (event `push`, `notificationclick`, VERSION v2) |
 | Ajakan "Aktifkan notifikasi" + petunjuk bila diblokir / iPhone belum dipasang | `src/components/PushNotif.tsx` (`PushPrompt` di layout) |
 | Pengaturan di **Profil › Notifikasi** (aktif/nonaktif per perangkat, Kirim tes) | `PushSettings` |
