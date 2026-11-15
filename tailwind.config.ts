@@ -24,6 +24,8 @@ export default {
       addBase({
         ":root, .theme-light": themeVars("light"),
         '[data-theme="dark"]': themeVars("dark"),
+        // Cetak / simpan PDF selalu tema terang, walau aplikasi sedang mode gelap
+        "@media print": { '[data-theme="dark"]': { ...themeVars("light"), colorScheme: "light" } },
       });
     }),
   ],
