@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import type { Prisma, ReturnStatus } from "@prisma/client";
 import { requirePerm } from "@/lib/auth";
+import { returnItemOptions } from "@/lib/returnScope";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDate, jakartaParts, jakartaDateTime, todayStr } from "@/lib/time";
@@ -48,7 +49,7 @@ export default async function ReturPage({ searchParams }: { searchParams: Promis
     }),
     Promise.all(TABS.map((t) => prisma.returnCase.count({ where: t.where }))),
     prisma.returnCase.aggregate({ where: { cancelledAt: null, receivedAt: { gte: monthStart } }, _count: true, _sum: { lossValue: true, goodValue: true, claimPaidAmount: true } }),
-    prisma.item.findMany({ where: { active: true, type: "BARANG_JADI" }, orderBy: { name: "asc" }, select: { id: true, name: true } }),
+    returnItemOptions(user),
   ]);
 
   return (

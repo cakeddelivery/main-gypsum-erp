@@ -5,6 +5,7 @@ import { jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
 import { cache } from "react";
 import { prisma } from "./db";
+import { divisionReturGrant } from "./returnScope";
 import { effectivePermissions, type Permission } from "./rbac";
 import { audit } from "./audit";
 import { checkLogin, ipFromHeaders } from "./loginGuard";
@@ -75,6 +76,8 @@ export async function loadUser(userId: string, sv = 0) {
     const grant = (user.role === "KAPTEN_DIVISI" && division.reportTemplate === "ASSEMBLING") || (await prisma.pieceTask.count({ where: { divisionId: division.id, active: true } })) > 0;
     if (grant) for (const p of ["borongan.view", "borongan.point"] as const) perms.add(p);
   }
+  // Anggota divisi Giftbox & Packing mencatat retur paket (video unboxing) tanpa akses refund/komplain
+  if (divisionReturGrant(user.role, division?.reportTemplate)) perms.add("retur.manage");
   return {
     id: user.id,
     name: user.name,

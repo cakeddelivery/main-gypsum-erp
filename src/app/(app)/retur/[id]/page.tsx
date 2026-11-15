@@ -2,6 +2,7 @@ import { Fragment } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requirePerm } from "@/lib/auth";
+import { returnItemOptions } from "@/lib/returnScope";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDate, fmtDateTime, todayStr, dateStr } from "@/lib/time";
@@ -30,7 +31,7 @@ export default async function ReturDetail({ params, searchParams }: { params: Pr
   const open = !r.cancelledAt && r.status !== "SELESAI";
   const keepDays = await returnSetting("videoKeepDays");
   const [items, banks, claimTx] = await Promise.all([
-    r.status === "DITERIMA" && open ? prisma.item.findMany({ where: { active: true, type: "BARANG_JADI" }, orderBy: { name: "asc" }, select: { id: true, name: true } }) : [],
+    r.status === "DITERIMA" && open ? returnItemOptions(user) : [],
     r.status === "KLAIM_DIAJUKAN" ? prisma.bankAccount.findMany({ where: { active: true }, orderBy: [{ marketplace: "desc" }, { code: "asc" }] }) : [],
     r.claimJournalId ? prisma.financeTransaction.findFirst({ where: { journalId: r.claimJournalId }, select: { id: true, number: true } }) : null,
   ]);
