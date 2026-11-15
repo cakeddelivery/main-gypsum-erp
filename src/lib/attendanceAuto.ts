@@ -2,6 +2,7 @@ import type { AttendanceStatus, Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { addDays, dateOnly, dateStr, todayStr } from "./time";
 import { evaluateCheckIn } from "./attendance";
+import { nightShiftRunning } from "./workday";
 import { AUTO_NOTE, LIBUR_NOTE, SHIFT_NOTE_PREFIX, SYSTEM_VALIDATOR, actualShift, divisionShifts, isShiftDivision, targetStatus } from "./attendanceRules";
 
 export { AUTO_NOTE, LIBUR_NOTE } from "./attendanceRules";
@@ -29,7 +30,8 @@ const monday = (day: string) => addDays(day, -((dateOnly(day).getUTCDay() + 6) %
  * - absen tanpa jadwal → jadwal hari itu diisi otomatis (dicentang);
  * - semuanya langsung tervalidasi (tidak ada antrean validasi manual). Setiap perubahan dicatat di audit log.
  */
-export async function reconcileDay(day: string, opts: { apply: boolean; employeeIds?: string[] } = { apply: true }): Promise<DayChange[]> {
+export async function reconcileDay(day: string, opts: { apply: boolean; employeeIds?: string[]; now?: Date } = { apply: true }): Promise<DayChange[]> {
+  const now = opts.now ?? new Date();
   const d = dateOnly(day);
   const only = opts.employeeIds ? { id: { in: opts.employeeIds } } : {};
   const [shifts, emps, atts, scheds, week, leaves] = await Promise.all([
@@ -58,7 +60,9 @@ export async function reconcileDay(day: string, opts: { apply: boolean; employee
     const sched = schedOf.get(a.employeeId) ?? null;
     let shiftId = a.shiftId;
     const data: Prisma.AttendanceUpdateInput = {};
-    if (shiftDiv) {
+    // Absen masuk yang jatuh di hari kalender berikutnya (datang telat ke shift malam) tetap memakai shift tercatat
+    const nextDay = todayStr(a.checkIn) !== day;
+    if (shiftDiv && !nextDay) {
       const act = actualShift(divisionShifts(shifts, a.employee.division.shiftCount), a.checkIn, sched?.shiftId ?? a.shiftId, true);
       if (act && act.id !== a.shiftId) {
         const ev = evaluateCheckIn(act, a.checkIn);
@@ -85,6 +89,10 @@ export async function reconcileDay(day: string, opts: { apply: boolean; employee
   for (const e of emps) {
     const a = attOf.get(e.id) ?? null;
     if (a?.checkIn) continue;
+    // Shift malam (lintas tengah malam) yang masih berjalan belum boleh dianggap Alpa
+    const sc = schedOf.get(e.id);
+    const scShift = sc ? shifts.find((x) => x.id === sc.shiftId) : null;
+    if (!a && scShift && nightShiftRunning(now, day, scShift)) continue;
     const t = targetStatus({ scheduled: schedOf.has(e.id), weekPlanned: planned.has(e.id), leave: (leaveOf.get(e.id) as "IZIN" | "SAKIT" | undefined) ?? null, att: a });
     if (!a && t) {
       changes.push({ employeeId: e.id, name: e.name, date: day, kind: "STATUS_BARU", to: t.status });
@@ -128,7 +136,7 @@ export async function markMissingAttendance(now: Date = new Date()) {
   for (let k = LOOKBACK; k >= 1; k--) {
     const day = addDays(today, -k);
     if (goLive && day < goLive) continue;
-    const ch = await reconcileDay(day, { apply: true });
+    const ch = await reconcileDay(day, { apply: true, now });
     created += ch.filter((c) => c.kind === "STATUS_BARU").length;
     changed += ch.length;
   }
@@ -141,7 +149,7 @@ export async function reconcileAfterSchedule(dates: string[], employeeIds: strin
   const goLive = (await prisma.setting.findUnique({ where: { key: "go_live_date" } }))?.value ?? "0000";
   const days = [...new Set(dates)].filter((x) => x < today && x >= goLive).sort();
   let n = 0;
-  for (const day of days) n += (await reconcileDay(day, { apply: true, employeeIds })).length;
+  for (const day of days) n += (await reconcileDay(day, { apply: true, employeeIds, now })).length;
   return n;
 }
 

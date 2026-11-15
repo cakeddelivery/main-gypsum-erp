@@ -5,7 +5,7 @@ import { audit } from "./audit";
 import { recordMovement, stockBalances, StockError, STAGES, STAGE_LABEL, MOVEMENT_LABEL } from "./stock";
 import { REJECT_REASONS } from "./reject";
 import { EntryForbidden, recordProductionEntry } from "./productionEntry";
-import { selfCheckIn, selfCheckOut } from "./attendanceSelf";
+import { resolveWorkday, selfCheckIn, selfCheckOut } from "./attendanceSelf";
 import { ATT_LABEL, type GeoPoint } from "./attendance";
 import { idr } from "./money";
 import { addDays, dateOnly, fmtDate, fmtDateTime, jakartaDateTime, todayStr } from "./time";
@@ -277,7 +277,10 @@ async function prodAnswer(ctx: Ctx, s: Session, v: string, fromText: boolean): P
 // =====================================================================
 async function absenStatus(i: BotIdent) {
   if (!i.user.employeeId) return null;
-  return prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: i.user.employeeId, date: dateOnly(todayStr()) } }, include: { shift: true } });
+  // Shift malam lintas hari: 01.03 masih tanggal kerja kemarin bila absen masuk kemarin belum pulang
+  const wd = await resolveWorkday(i.user.employeeId);
+  const date = wd.carried === "pulang" || wd.carried === "selesai" ? wd.date : todayStr();
+  return prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: i.user.employeeId, date: dateOnly(date) } }, include: { shift: true } });
 }
 
 async function absenStart(ctx: Ctx): Promise<Session | string | Prompt> {

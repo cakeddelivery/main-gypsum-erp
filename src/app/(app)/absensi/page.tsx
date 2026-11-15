@@ -13,7 +13,7 @@ import { checkIn, checkOut, deleteWorkSite, saveAttendance, correctAttendance, s
 import { Paged } from "@/components/Paged";
 import { canDecideLeave } from "@/lib/leave";
 import { nearestShift } from "@/lib/attendance";
-import { divisionReportSent } from "@/lib/attendanceSelf";
+import { divisionReportSent, resolveWorkday } from "@/lib/attendanceSelf";
 import { AbsenToday } from "./AbsenToday";
 import { scheduleGroups } from "@/lib/scheduleGroups";
 import { cellKey, cellOf, type Cell } from "@/lib/scheduleEdit";
@@ -66,14 +66,17 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
 
 /** Tab "Hari ini": data absen sendiri untuk tampilan varian A */
 async function Today({ user, shifts }: { user: { name: string; employeeId: string | null; photoUrl: string | null }; shifts: (Shift & { endTime: string; toleranceMinutes: number })[] }) {
-  const today = todayStr();
-  const d = dateOnly(today);
+  // Tanggal kerja = tanggal mulai shift: pukul 01.03 shift malam (16:00–01:00) kemarin yang belum pulang → Absen Pulang kemarin
+  const wd = await resolveWorkday(user.employeeId!);
+  const workday = wd.carried ? wd.date : todayStr();
+  const d = dateOnly(workday);
   const [att, sched, sites] = await Promise.all([
     prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: user.employeeId!, date: d } }, include: { shift: true } }),
     prisma.shiftSchedule.findUnique({ where: { employeeId_date: { employeeId: user.employeeId!, date: d } }, include: { shift: true } }),
     prisma.workSite.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { id: true, name: true, latitude: true, longitude: true, radiusM: true } }),
   ]);
   const shift = att?.shift ?? sched?.shift ?? nearestShift(shifts, new Date());
+  const workdayLabel = wd.carried ? `Shift malam · tanggal kerja ${fmtDay(d)}` : null;
   const report = att?.checkIn && !att.checkOut ? await divisionReportSent(user.employeeId!, att.date, att.shiftId) : null;
   return (
     <AbsenToday
@@ -83,6 +86,7 @@ async function Today({ user, shifts }: { user: { name: string; employeeId: strin
       sites={sites}
       att={att ? { status: att.status, checkIn: att.checkIn?.toISOString() ?? null, checkOut: att.checkOut?.toISOString() ?? null, lateMinutes: att.lateMinutes, note: att.note } : null}
       report={report}
+      workdayLabel={workdayLabel}
       checkIn={checkIn}
       checkOut={checkOut}
     />
@@ -177,7 +181,7 @@ async function Schedule({ date, divFilter }: { date: string; divFilter: object; 
 async function Corrections({ divFilter, canCorrect }: { divFilter: object; canCorrect: boolean; shifts: Shift[] }) {
   const today = todayStr();
   const rows = await prisma.attendance.findMany({
-    where: { employee: divFilter, date: { gte: dateOnly(addDays(today, -30)), lt: dateOnly(today) }, OR: [{ status: { in: ["ALPA", "LIBUR"] } }, { note: { startsWith: SHIFT_NOTE_PREFIX } }, { note: { startsWith: "Koreksi " } }] },
+    where: { employee: divFilter, date: { gte: dateOnly(addDays(today, -30)), lt: dateOnly(today) }, OR: [{ status: { in: ["ALPA", "LIBUR"] } }, { note: { startsWith: SHIFT_NOTE_PREFIX } }, { note: { startsWith: "Koreksi " } }, { checkIn: { not: null }, checkOut: null }] },
     include: { employee: { include: { division: true } }, shift: true },
     orderBy: [{ date: "desc" }, { employee: { name: "asc" } }],
     take: 300,
@@ -197,7 +201,8 @@ async function Corrections({ divFilter, canCorrect }: { divFilter: object; canCo
                       <span className="break-words font-medium text-slate-900">{a.employee.name}</span>
                       <Badge tone={TONE[a.status]}>{a.status === "TERLAMBAT" ? `Telat ${a.lateMinutes} mnt` : ATT_LABEL[a.status]}</Badge>
                     </div>
-                    <div className="mt-0.5 break-words text-xs text-slate-500">{fmtDay(a.date)} · {a.employee.division.name} · {a.shift.name}{a.checkIn ? ` · masuk ${fmtDateTime(a.checkIn).slice(-9)}` : ""}</div>
+                    <div className="mt-0.5 break-words text-xs text-slate-500">{fmtDay(a.date)} · {a.employee.division.name} · {a.shift.name}{a.checkIn ? ` · masuk ${fmtDateTime(a.checkIn).slice(-9)}` : ""}{a.checkOut ? ` · pulang ${fmtDateTime(a.checkOut).slice(-9)}` : ""}</div>
+                    {a.checkIn && !a.checkOut && <div className="mt-1"><Badge tone="amber">Belum absen pulang</Badge></div>}
                     {a.note && <div className="mt-0.5 break-words text-xs text-slate-600">{a.note === AUTO_NOTE ? "Tidak absen (otomatis)" : a.note}</div>}
                     {canCorrect && (
                       <div className="mt-2">
@@ -213,7 +218,8 @@ async function Corrections({ divFilter, canCorrect }: { divFilter: object; canCo
                                 <option value="ALPA">Alpa</option>
                               </select>
                             </Field>
-                            <Field label="Jam masuk (bila hadir)" hint="Kosong = jam mulai shift"><input type="time" name="checkIn" className="input" /></Field>
+                            <Field label="Jam masuk (bila hadir)" hint="Kosong = jam masuk tercatat / jam mulai shift"><input type="time" name="checkIn" className="input" /></Field>
+                            <Field label="Jam pulang (bila hadir)" hint="Kosong = tidak diubah. Shift malam: jam setelah 00.00 otomatis dihitung esok harinya."><input type="time" name="checkOut" className="input" /></Field>
                             <Field label="Alasan koreksi (wajib)"><textarea name="reason" required minLength={3} rows={2} className="input" placeholder="Mis. lupa absen, hadir dikonfirmasi Kapten" /></Field>
                             <Submit>Simpan koreksi</Submit>
                           </ModalForm>
