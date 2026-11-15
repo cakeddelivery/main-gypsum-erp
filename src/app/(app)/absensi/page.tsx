@@ -1,7 +1,7 @@
 import { AUTO_NOTE } from "@/lib/attendanceAuto";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { addDays, dateOnly, fmtDateTime, fmtDay, todayStr } from "@/lib/time";
+import { addDays, dateOnly, dateStr, fmtDateTime, fmtDay, todayStr } from "@/lib/time";
 import { ATT_LABEL } from "@/lib/attendance";
 import { fmtMinutes, lateRecap } from "@/lib/lateRecap";
 import { Badge, Card, Empty, FilterBar, Field, PageHeader, Tabs } from "@/components/ui";
@@ -9,13 +9,15 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { UseMyLocation } from "@/components/GeoFields";
-import { checkIn, checkOut, deleteWorkSite, saveAttendance, saveSchedule, saveWorkSite, validateAttendance } from "./actions";
+import { checkIn, checkOut, deleteWorkSite, saveAttendance, saveScheduleCells, saveWorkSite, validateAttendance } from "./actions";
 import { Paged } from "@/components/Paged";
 import { canDecideLeave } from "@/lib/leave";
 import { nearestShift } from "@/lib/attendance";
 import { divisionReportSent } from "@/lib/attendanceSelf";
 import { AbsenToday } from "./AbsenToday";
 import { scheduleGroups } from "@/lib/scheduleGroups";
+import { cellKey, cellOf, type Cell } from "@/lib/scheduleEdit";
+import { ScheduleTable } from "./ScheduleTable";
 import { IzinSakit, Riwayat } from "./SelfTabs";
 
 export const metadata = { title: "Absensi" };
@@ -133,57 +135,35 @@ async function Daily({ date, divFilter, shifts }: { date: string; divFilter: obj
   );
 }
 
-async function Schedule({ date, divFilter, shifts }: { date: string; divFilter: object; shifts: Shift[] }) {
+async function Schedule({ date, divFilter }: { date: string; divFilter: object; shifts: Shift[] }) {
   const dow = (dateOnly(date).getUTCDay() + 6) % 7;
   const start = addDays(date, -dow);
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
   const rows = await prisma.employee.findMany({ where: { status: { not: "NONAKTIF" }, ...divFilter }, include: { division: true, user: { select: { role: true } } }, orderBy: { name: "asc" } });
   const groups = scheduleGroups(rows.map((e) => ({ ...e, role: e.user?.role ?? null })));
-  const employees = groups.flatMap((g) => g.rows);
-  const sched = await prisma.shiftSchedule.findMany({ where: { date: { gte: dateOnly(days[0]), lte: dateOnly(days[6]) }, employeeId: { in: employees.map((e) => e.id) } }, include: { shift: true } });
+  const [sched, activeShifts] = await Promise.all([
+    prisma.shiftSchedule.findMany({ where: { date: { gte: dateOnly(days[0]), lte: dateOnly(days[6]) }, employeeId: { in: rows.map((e) => e.id) } } }),
+    prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, select: { id: true } }),
+  ]);
+  // Divisi 2 shift (mis. Cetak, Oven) memakai saklar S1 · — · S2; lainnya centang masuk/libur
+  const shiftDivOf = new Map(rows.map((e) => [e.id, e.user?.role !== "SUPERVISOR" && e.division.shiftCount >= 2]));
+  const saved: Record<string, Cell> = {};
+  for (const s of sched) saved[cellKey(s.employeeId, dateStr(s.date))] = cellOf(activeShifts.findIndex((x) => x.id === s.shiftId), !!shiftDivOf.get(s.employeeId));
+  const view = groups.map((g) => ({ key: g.key, name: g.name, shiftDiv: g.rows.length > 0 && g.rows.every((r) => shiftDivOf.get(r.id)), rows: g.rows.map((r) => ({ id: r.id, name: r.name })) }));
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <a className="btn-secondary btn-sm" href={`/absensi?tab=jadwal&date=${addDays(start, -7)}`}>← Minggu lalu</a>
         <span className="text-sm font-medium">{fmtDay(dateOnly(days[0]))} – {fmtDay(dateOnly(days[6]))}</span>
         <a className="btn-secondary btn-sm" href={`/absensi?tab=jadwal&date=${addDays(start, 7)}`}>Minggu depan →</a>
-        <div className="ml-auto">
-          <Modal trigger="Atur jadwal" title="Atur jadwal shift">
-            <ModalForm action={saveSchedule} className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
-                <label><span className="label">Dari</span><input type="date" name="from" defaultValue={days[0]} className="input" /></label>
-                <label><span className="label">Sampai</span><input type="date" name="to" defaultValue={days[5]} className="input" /></label>
-              </div>
-              <label className="block"><span className="label">Shift</span><select name="shiftId" className="input">{shifts.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.startTime})</option>)}</select></label>
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="skipSunday" defaultChecked /> Lewati hari Minggu</label>
-              <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border p-2">
-                {groups.map((g) => (
-                  <div key={g.key}>
-                    <div className="pt-1 text-xs font-bold uppercase tracking-wide text-slate-500">{g.name}</div>
-                    {g.rows.map((e) => <label key={e.id} className="flex items-center gap-2 text-sm"><input type="checkbox" name="employeeIds" value={e.id} /> {e.name}</label>)}
-                  </div>
-                ))}
-              </div>
-              <Submit>Simpan jadwal</Submit>
-            </ModalForm>
-          </Modal>
-        </div>
       </div>
-      <div className="table-wrap">
-        <Paged size={15}><table className="tbl">
-          <thead><tr><th>Karyawan</th>{days.map((d) => <th key={d}>{fmtDay(dateOnly(d)).split(",")[0]} {d.slice(8)}</th>)}</tr></thead>
-          <tbody>
-            {groups.map((g) => [
-              <tr key={`g-${g.key}`} data-pg-group className="bg-slate-50 hover:bg-slate-50">
-                <td colSpan={8} className="sticky left-0 text-xs font-bold uppercase tracking-wide text-slate-600">{g.name} <span className="font-medium normal-case text-slate-500">· {g.rows.length} orang</span></td>
-              </tr>,
-              ...g.rows.map((e) => (
-                <tr key={e.id}><td>{e.name}</td>{days.map((d) => { const s = sched.find((x) => x.employeeId === e.id && x.date.toISOString().slice(0, 10) === d); return <td key={d}>{s ? <Badge tone={s.shift.code === "S1" ? "blue" : "purple"}>{s.shift.name}</Badge> : <span className="text-slate-300">—</span>}</td>; })}</tr>
-              )),
-            ])}
-          </tbody>
-        </table></Paged>
-      </div>
+      <ScheduleTable
+        days={days.map((d) => ({ date: d, label: `${fmtDay(dateOnly(d)).split(",")[0]} ${d.slice(8)}` }))}
+        groups={view}
+        saved={saved}
+        canEdit
+        save={saveScheduleCells}
+      />
     </div>
   );
 }

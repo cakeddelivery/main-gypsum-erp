@@ -41,8 +41,8 @@ export function PartnerList({ kind, subtitle, rows, q, canManage, save, remove, 
                   <td className="font-mono text-xs">{r.code ?? "—"}</td>
                   <td className="font-medium text-slate-900">{r.href ? <Link className="link" href={r.href}>{r.name}</Link> : r.name}{r.aliases && <div className="text-xs font-normal text-slate-500">alias: {r.aliases}</div>}</td>
                   <td>{r.phone ? <a className="link" href={`https://wa.me/${wa(r.phone)}`} target="_blank" rel="noreferrer">{r.phone}</a> : "—"}</td>
-                  <td className="min-w-[10rem] max-w-xs whitespace-normal break-words">{r.address ?? "—"}</td>
-                  <td className="min-w-[10rem] max-w-xs whitespace-normal break-words text-xs">{r.note ?? ""}</td>
+                  <td className="min-w-[10rem] max-w-xs !whitespace-normal break-words">{r.address ?? "—"}</td>
+                  <td className="min-w-[10rem] max-w-xs !whitespace-normal break-words text-xs">{r.note ?? ""}</td>
                   {extraHeader && <td>{r.extra}</td>}
                   <td>{r.active ? <Badge tone="green">Aktif</Badge> : <Badge>Nonaktif</Badge>}</td>
                   {canManage && (

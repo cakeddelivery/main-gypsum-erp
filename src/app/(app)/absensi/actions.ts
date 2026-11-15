@@ -4,10 +4,12 @@ import { action, str, optStr, int, bool } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { evaluateCheckIn, readGeo } from "@/lib/attendance";
 import { selfCheckIn, selfCheckOut } from "@/lib/attendanceSelf";
-import { addDays, dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
+import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
 import type { AttendanceStatus, LeaveKind } from "@prisma/client";
 import { cancelLeave, decideLeave, leaveError, submitLeave } from "@/lib/leave";
+import { parseChanges } from "@/lib/scheduleEdit";
+import { applyScheduleChanges } from "@/lib/scheduleSave";
 import { MAX_PROOF_BYTES, MAX_PROOF_TEXT, saveProof } from "@/lib/storage";
 import { sniffMime } from "@/lib/imageCompress";
 
@@ -111,29 +113,22 @@ export const validateAttendance = action(
   ["/absensi", "/"],
 );
 
-export const saveSchedule = action(
+/** Atur jadwal langsung di tabel: semua perubahan disimpan sekaligus */
+export const saveScheduleCells = action(
   "attendance.manage",
   async (fd, user) => {
-    const ids = fd.getAll("employeeIds").map(String);
-    const shiftId = str(fd, "shiftId");
-    const from = str(fd, "from");
-    const to = str(fd, "to");
-    if (!ids.length) throw new Error("Pilih karyawan");
-    if (to < from) throw new Error("Tanggal akhir sebelum tanggal awal");
-    const days: string[] = [];
-    for (let d = from; d <= to && days.length < 62; d = addDays(d, 1)) days.push(d);
-    const skipSunday = fd.get("skipSunday") === "on";
-    let n = 0;
-    for (const employeeId of ids) {
-      await guardEmployee(employeeId, user);
-      for (const d of days) {
-        if (skipSunday && dateOnly(d).getUTCDay() === 0) continue;
-        await prisma.shiftSchedule.upsert({ where: { employeeId_date: { employeeId, date: dateOnly(d) } }, create: { employeeId, date: dateOnly(d), shiftId }, update: { shiftId } });
-        n++;
-      }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(str(fd, "changes") || "[]");
+    } catch {
+      throw new Error("Data jadwal tidak valid");
     }
-    await audit(user, "JADWAL_DIATUR", "ShiftSchedule", null, { ids, shiftId, from, to });
-    return `${n} jadwal tersimpan`;
+    const changes = parseChanges(raw);
+    if (!changes.length) return "Tidak ada perubahan";
+    for (const employeeId of new Set(changes.map((c) => c.employeeId))) await guardEmployee(employeeId, user);
+    const r = await applyScheduleChanges(changes);
+    await audit(user, "JADWAL_DIATUR", "ShiftSchedule", null, { perubahan: changes.length, masuk: r.saved, libur: r.removed });
+    return `Jadwal tersimpan (${changes.length} perubahan)`;
   },
   ["/absensi"],
 );

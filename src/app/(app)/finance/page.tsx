@@ -106,7 +106,7 @@ export default async function FinancePage({ searchParams }: { searchParams: Prom
                     <td>{name(banks, t.accountId)}{t.direction === "TRANSFER" && ` → ${name(banks, t.toAccountId)}`}</td>
                     <td>{isWd(t) ? <span className={t.storeId ? "text-emerald-700" : "text-amber-700"}>{wdLabel(t)}</span> : t.direction === "TRANSFER" ? "—" : catLabel(t)}</td>
                     <td>{srcLabel(t)}</td>
-                    <td className="min-w-[10rem] max-w-[220px] whitespace-normal break-words">{t.note}</td>
+                    <td className="min-w-[10rem] max-w-[220px] !whitespace-normal break-words">{t.note}</td>
                   </tr>
                 ))}
               </tbody>

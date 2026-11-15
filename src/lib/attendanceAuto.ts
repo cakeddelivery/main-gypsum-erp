@@ -4,6 +4,8 @@ import { addDays, dateOnly, dateStr, todayStr } from "./time";
 
 /** Keterangan absen yang dibuat otomatis untuk hari tanpa catatan (keputusan Owner 14 Nov 2026) */
 export const AUTO_NOTE = "Tanpa keterangan (otomatis)";
+/** Hari yang tidak dicentang pada minggu yang jadwalnya sudah diatur */
+export const LIBUR_NOTE = "Libur sesuai jadwal (otomatis)";
 /** Berapa hari ke belakang yang diisi (agar hari yang terlewat saat job tidak berjalan tetap terisi) */
 const LOOKBACK = 3;
 
@@ -28,8 +30,16 @@ export async function markMissingAttendance(now: Date = new Date()) {
     const todo = emps.filter((e) => !have.has(e.id) && dateStr(e.joinDate!) <= day && !(e.resignDate && dateStr(e.resignDate) <= day));
     if (!todo.length) continue;
     const sched = new Map((await prisma.shiftSchedule.findMany({ where: { date: d, employeeId: { in: todo.map((e) => e.id) } } })).map((s) => [s.employeeId, s.shiftId]));
+    // Minggu itu jadwalnya sudah diatur, tetapi hari ini tidak dicentang → Libur sesuai jadwal (bukan Alpa)
+    const monday = addDays(day, -((dateOnly(day).getUTCDay() + 6) % 7));
+    const planned = new Set(
+      (await prisma.shiftSchedule.findMany({ where: { date: { gte: dateOnly(monday), lte: dateOnly(addDays(monday, 6)) }, employeeId: { in: todo.map((e) => e.id) } }, select: { employeeId: true } })).map((s) => s.employeeId),
+    );
     const r = await prisma.attendance.createMany({
-      data: todo.map((e) => ({ employeeId: e.id, date: d, shiftId: sched.get(e.id) ?? shifts[0].id, status: "ALPA" as const, note: AUTO_NOTE })),
+      data: todo.map((e) => {
+        const off = !sched.has(e.id) && planned.has(e.id);
+        return { employeeId: e.id, date: d, shiftId: sched.get(e.id) ?? shifts[0].id, status: off ? ("LIBUR" as const) : ("ALPA" as const), note: off ? LIBUR_NOTE : AUTO_NOTE };
+      }),
       skipDuplicates: true,
     });
     created += r.count;

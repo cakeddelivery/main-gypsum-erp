@@ -220,7 +220,7 @@ export async function IzinSakit({ user }: { user: { role: Role; employeeId: stri
                       <td>{r.employee.name}<div className="text-xs text-slate-500">{r.employee.division.name}</div></td>
                       <td>{LEAVE_KIND_LABEL[r.kind]}</td>
                       <td>{range(r.dateFrom, r.dateTo)}</td>
-                      <td className="max-w-[16rem] whitespace-normal">{r.reason}{r.attachmentPath && <> · <a href={`/api/files/leave/${r.id}`} target="_blank" className="link">📎</a></>}{r.rejectReason && <div className="text-xs text-rose-700">Ditolak: {r.rejectReason}</div>}</td>
+                      <td className="max-w-[16rem] !whitespace-normal">{r.reason}{r.attachmentPath && <> · <a href={`/api/files/leave/${r.id}`} target="_blank" className="link">📎</a></>}{r.rejectReason && <div className="text-xs text-rose-700">Ditolak: {r.rejectReason}</div>}</td>
                       <td><Badge tone={LEAVE_TONE[r.status]}>{LEAVE_STATUS[r.status]}</Badge></td>
                       <td className="text-xs">{r.decidedBy}<div className="text-slate-500">{fmtDate(r.decidedAt)}</div></td>
                     </tr>
