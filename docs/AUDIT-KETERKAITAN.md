@@ -21,6 +21,7 @@ Tanda: ✅ diperbaiki di branch `claude/cek-konsistensi` · 🔎 dipantau Cek ko
 | Baris tertaut (pembelian, gaji, kasbon, borongan, sisihan, penjualan, pinjaman, aset) | ikut dokumen sumber | ikut sumber | jurnal sumber (satu jurnal) | 🔎 baris tertaut masih Dibukukan padahal sumbernya dibatalkan |
 | Pembelian | Lunas / Bertahap / Tempo; pesanan: Menunggu → Sebagian → Diterima / Ditutup; Dibatalkan | Diterima/Ditutup/Dibatalkan | `PEMBELIAN` (+ terima barang `TRM`), Hutang, Uang Muka, Piutang refund | 🔎 pesanan > 14 hari, uang muka vs akun 1-1510, batal belum dibalik |
 | Penjualan offline | Lunas / Sebagian / Tempo / Lewat jatuh tempo; Dibatalkan | Lunas/Dibatalkan | `PENJUALAN`, Piutang, stok keluar + HPP | 🔎 terbayar > tagihan, batal belum dibalik, piutang vs akun 1-1300 |
+| Komplain & refund (#komplain) | Diajukan → Disetujui (Finance) → Dibayar → Selesai / Ditolak; kirim ganti: Diajukan → Dikirim → Selesai | Dibayar/Dikirim/Selesai/Ditolak | refund: Dr 4-1200 / Cr rekening (sumber `KOMPLAIN`, baris tertaut Transaksi); pengganti: Dr 6-1820 / Cr Persediaan BJ + stok keluar | 🔎 komplain menggantung, refund disetujui belum dibayar > 2 hari |
 | Marketplace | WD = penjualan neto; Biaya marketplace bulanan (#86) | — | `FINANCE`, `MARKETPLACE_BULANAN` | (tampil di halaman Biaya marketplace) |
 | Hutang / pinjaman | sisa > 0 → lunas | Lunas | `UTANG`, `PINJAMAN`, `SALDO_AWAL`, `FINANCE` (bayar) | 🔎 daftar hutang vs akun 2-1100/2-1400/akun khusus |
 | Kasbon | dicicil lewat slip / pelunasan tunai; Dibatalkan | Lunas/Dibatalkan | `KASBON`, potongan di jurnal `PAYROLL` | 🔎 sisa kasbon vs akun 1-1310 |
@@ -41,6 +42,7 @@ Tanda: ✅ diperbaiki di branch `claude/cek-konsistensi` · 🔎 dipantau Cek ko
 | Setoran koordinator → penerimaan divisi (#96) | `HSB:` di titik → `PND:` titik → gudang; reject = penyesuaian | Beban selisih untuk reject | selisih tampil di menu Borongan & laporan shift |
 | Penjualan offline | PENGELUARAN ref JUAL | HPP | — |
 | Penjualan marketplace | (opname barang jadi akhir bulan) | HPP opname | ❓ lihat C2 |
+| Retur marketplace (#retur) | barang baik: PENERIMAAN ref `RTR-…-P1` ke gudang barang jadi | Dr Persediaan Barang Jadi + Dr 6-1810 Kerugian Barang Retur Rusak / Cr HPP (sumber `RETUR`); klaim cair Dr rekening / Cr 4-9200 → baris tertaut Transaksi | 🔎 retur menggantung > 14 hari, video gagal unggah, retur tanpa video |
 | Permintaan stok otomatis | — | — | 🔎 terbuka > 7 hari |
 | Semua | — | nilai stok vs akun persediaan | 🔎 selisih > Rp1.000, 🔎 stok minus, 🔎 mutasi manual tanpa ref |
 
