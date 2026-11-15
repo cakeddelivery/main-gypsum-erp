@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import type { Prisma, ReturnStatus } from "@prisma/client";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
@@ -14,6 +15,7 @@ import { Paged } from "@/components/Paged";
 import { DownloadCsv } from "@/components/DownloadCsv";
 import { ReturnFields } from "./ReturnFields";
 import { saveReturn } from "./actions";
+import { ReturTabs } from "./ReturTabs";
 
 export const metadata = { title: "Retur" };
 
@@ -28,7 +30,8 @@ const TABS: { key: string; label: string; where: Prisma.ReturnCaseWhereInput }[]
 ];
 
 export default async function ReturPage({ searchParams }: { searchParams: Promise<SP> }) {
-  await requirePerm("retur.manage");
+  const user = await requirePerm("retur.manage", "refund.request", "refund.approve", "refund.pay");
+  if (!user.can("retur.manage")) redirect("/retur/komplain");
   const sp = await searchParams;
   const q = sp.q?.trim();
   const tab = TABS.find((t) => t.key === sp.tab) ?? (q ? { key: "semua", label: "Semua", where: {} } : TABS[0]);
@@ -63,6 +66,7 @@ export default async function ReturPage({ searchParams }: { searchParams: Promis
           </Modal>
         </>}
       />
+      <ReturTabs current="retur" can={user.can} />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat label="Retur bulan ini" value={`${month._count} paket`} />
         <Stat label="Kembali ke stok" value={idr(Number(month._sum.goodValue ?? 0))} hint="nilai barang baik" tone="green" />

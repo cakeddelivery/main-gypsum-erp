@@ -12,7 +12,7 @@ export const NAV: NavItem[] = [
   { href: "/stok", label: "Stok & Persediaan", icon: "box", perms: ["stock.view", "stock.request"] },
   { href: "/produk", label: "Produk & HPP", icon: "tag", perms: ["product.view"] },
   { href: "/penjualan", label: "Penjualan", icon: "cart", perms: ["sales.view"] },
-  { href: "/retur", label: "Retur & Komplain", icon: "retur", perms: ["retur.manage"] },
+  { href: "/retur", label: "Retur & Komplain", icon: "retur", perms: ["retur.manage", "refund.request", "refund.approve", "refund.pay"] },
   { href: "/supplier", label: "Supplier", icon: "truck", perms: ["partner.view"] },
   { href: "/pelanggan", label: "Pelanggan", icon: "user", perms: ["partner.view"] },
   { href: "/borongan", label: "Borongan", icon: "users", perms: ["borongan.view"] },

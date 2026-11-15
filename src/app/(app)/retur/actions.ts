@@ -21,7 +21,7 @@ const day = (fd: FormData, k = "date") => jakartaDateTime(str(fd, k) || todayStr
  */
 export async function readLabelAction(fd: FormData): Promise<{ ok: boolean; error?: string; source?: string; read?: LabelRead; matches?: (string | null)[] }> {
   try {
-    await assertPerm("retur.manage");
+    await assertPerm("retur.manage", "refund.request");
     const file = fd.get("label");
     if (!(file instanceof File) || !file.size) return { ok: false, error: "Foto label belum dipilih" };
     if (!file.type.startsWith("image/")) return { ok: false, error: "Foto label harus berupa gambar" };

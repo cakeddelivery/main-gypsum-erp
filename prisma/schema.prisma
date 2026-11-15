@@ -956,6 +956,7 @@ model Item {
   shiftReceipts        ShiftReceipt[]
   boronganReceiptLines BoronganReceiptLine[]
   returnLines          ReturnLine[]
+  complaintLines       ComplaintLine[]
   skuMaps              MarketplaceSkuMap[]
 }
 
@@ -2040,4 +2041,109 @@ model MarketplaceSkuMap {
   item      Item     @relation(fields: [itemId], references: [id])
   updatedBy String
   updatedAt DateTime @updatedAt
+}
+
+// ============ KOMPLAIN & REFUND ============
+
+enum ComplaintStatus {
+  DIAJUKAN
+  MENUNGGU_OWNER
+  DISETUJUI
+  DIBAYAR
+  DIKIRIM
+  SELESAI
+  DITOLAK
+}
+
+/// Komplain pembeli (pecah sebagian, kurang qty, kelengkapan kurang, …). Solusi: kirim ganti (barang keluar stok sebagai
+/// beban garansi) atau refund (disetujui Finance, di atas batas nominal juga Owner; dibayar Finance → Transaksi tertaut).
+/// Data pribadi pembeli tidak disimpan kecuali rekening refund, yang hanya terlihat pengaju, Finance & Owner.
+model Complaint {
+  id               String           @id @default(cuid())
+  /// Nomor otomatis KMP-202611-0001
+  number           String           @unique
+  date             DateTime
+  marketplace      String?
+  courier          String?
+  trackingNo       String?
+  orderNo          String?
+  city             String?
+  province         String?
+  /// PECAH / KURANG_QTY / KELENGKAPAN / SALAH_KIRIM / LAINNYA
+  issueType        String
+  description      String?
+  /// KIRIM_GANTI / REFUND
+  solution         String
+  /// Kirim ganti dibarengkan pesanan berikutnya pembeli
+  bundleNext       Boolean          @default(false)
+  refundAmount     BigInt           @default(0)
+  /// Rekening/e-wallet pembeli untuk refund (sensitif)
+  payeeBank        String?
+  payeeAccount     String?
+  payeeName        String?
+  status           ComplaintStatus  @default(DIAJUKAN)
+  labelRead        Json?
+  createdBy        String
+  createdById      String?
+  createdAt        DateTime         @default(now())
+  approvedBy       String?
+  approvedAt       DateTime?
+  ownerApprovedBy  String?
+  ownerApprovedAt  DateTime?
+  rejectedBy       String?
+  rejectedAt       DateTime?
+  rejectReason     String?
+  paidBy           String?
+  paidAt           DateTime?
+  payBankAccountId String?
+  payJournalId     String?
+  proofPath        String?
+  proofMime        String?
+  /// Bukti bayar sudah terkirim ke pengaju lewat bot
+  proofSentAt      DateTime?
+  sentBy           String?
+  sentAt           DateTime?
+  sendJournalId    String?
+  sendRef          String?
+  replacementValue BigInt           @default(0)
+  doneAt           DateTime?
+  doneBy           String?
+  cancelledAt      DateTime?
+  cancelReason     String?
+  lines            ComplaintLine[]
+  media            ComplaintMedia[]
+
+  @@index([status])
+  @@index([date])
+  @@index([trackingNo])
+}
+
+model ComplaintLine {
+  id          String    @id @default(cuid())
+  complaintId String
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  labelSku    String?
+  labelName   String?
+  itemId      String?
+  item        Item?     @relation(fields: [itemId], references: [id])
+  /// Jumlah bermasalah
+  qty         Int
+  /// Jumlah pengganti yang dikirim (kirim ganti)
+  sendQty     Int       @default(0)
+  unitCost    BigInt    @default(0)
+  sortOrder   Int       @default(0)
+}
+
+/// Bukti dari pembeli (foto/video chat) — lewat lapisan mediaStore
+model ComplaintMedia {
+  id          String    @id @default(cuid())
+  complaintId String
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  storageKey  String
+  mime        String
+  size        Int
+  createdBy   String
+  createdAt   DateTime  @default(now())
+
+  @@index([complaintId])
 }

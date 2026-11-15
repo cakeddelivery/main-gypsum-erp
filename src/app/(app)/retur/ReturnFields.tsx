@@ -10,7 +10,7 @@ export type ReturnDefaults = Partial<Omit<LabelRead, "lines">> & { date?: string
 export const RETURN_REASONS = ["Pembeli mengembalikan barang", "Gagal kirim / tidak diterima", "Pesanan dibatalkan", "Salah kirim", "Lainnya"];
 
 /** Kecilkan foto di HP sebelum dikirim (lebih cepat di sinyal lemah); foto tidak disimpan di server */
-async function shrink(file: File, max = 1600): Promise<Blob> {
+export async function shrink(file: File, max = 1600): Promise<Blob> {
   try {
     const bmp = await createImageBitmap(file);
     const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
@@ -25,7 +25,7 @@ async function shrink(file: File, max = 1600): Promise<Blob> {
 }
 
 /** Baca semua barcode di foto: BarcodeDetector bawaan HP (Android/Chrome), cadangan ZXing (iPhone/Safari) */
-async function detectCodes(file: File): Promise<string[]> {
+export async function detectCodes(file: File): Promise<string[]> {
   const out = new Set<string>();
   const bmp = await createImageBitmap(file).catch(() => null);
   if (!bmp) return [];

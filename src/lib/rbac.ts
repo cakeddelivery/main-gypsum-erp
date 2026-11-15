@@ -53,6 +53,9 @@ export const PERMISSIONS = {
   "sales.view": "Lihat penjualan & piutang pelanggan",
   "sales.manage": "Catat penjualan, terima cicilan piutang, batalkan penjualan",
   "retur.manage": "Catat paket retur (scan label, video unboxing), periksa barang, ajukan klaim",
+  "refund.request": "Catat komplain pembeli & ajukan refund / kirim ganti",
+  "refund.approve": "Setujui / tolak refund komplain (melihat rekening pembeli)",
+  "refund.pay": "Bayar refund komplain dari rekening usaha",
   "finance.view": "Lihat Transaksi",
   "finance.create": "Input transaksi",
   "finance.review": "Tinjau transaksi",
@@ -80,26 +83,26 @@ export const DEFAULT_MATRIX: Record<Role, Permission[]> = {
     "accounting.view", "accounting.post", "accounting.close", "payroll.view", "payroll.approve", "payroll.self",
     "stock.view", "product.view", "employee.view", "production.view", "production.target", "report.view", "audit.view",
     "attendance.view", "attendance.manage", "partner.view", "partner.manage", "borongan.view", "borongan.pay",
-    "sales.view", "sales.manage", "retur.manage",
+    "sales.view", "sales.manage", "retur.manage", "refund.request", "refund.approve", "refund.pay",
   ],
   ADMIN: [
     "dashboard.view", "dashboard.finance", "production.view", "production.create", "production.edit",
     "report.view", "report.create", "attendance.view", "attendance.self", "attendance.location", "stock.view", "stock.move",
     "stock.request", "stock.approve", "master.manage", "product.view", "product.manage", "employee.view", "employee.manage",
     "payroll.view", "payroll.manage", "payroll.self", "finance.view", "finance.create", "finance.review", "accounting.view", "settings.manage", "audit.view",
-    "partner.view", "partner.manage", "borongan.view", "borongan.manage", "sales.view", "sales.manage", "retur.manage",
+    "partner.view", "partner.manage", "borongan.view", "borongan.manage", "sales.view", "sales.manage", "retur.manage", "refund.request",
   ],
   ADMIN_PRODUKSI: [
     "dashboard.view", "production.view", "production.create", "production.edit", "report.view", "report.create",
     "attendance.view", "attendance.self", "stock.view", "stock.move", "stock.request", "product.view",
     "employee.view", "payroll.self", "partner.view", "borongan.view", "borongan.manage",
   ],
-  ADMIN_MARKETPLACE: ["dashboard.view", "stock.view", "product.view", "finance.view", "finance.create", "attendance.self", "payroll.self", "partner.view", "partner.manage", "sales.view", "sales.manage", "retur.manage"],
+  ADMIN_MARKETPLACE: ["dashboard.view", "stock.view", "product.view", "finance.view", "finance.create", "attendance.self", "payroll.self", "partner.view", "partner.manage", "sales.view", "sales.manage", "retur.manage", "refund.request"],
   KAPTEN_DIVISI: [...OPERATOR_BASE, "report.create", "stock.view", "stock.receive", "employee.view"],
   SUPERVISOR: [
     "dashboard.view", "production.view", "production.create", "production.edit", "production.target", "report.view", "report.create",
     "attendance.view", "attendance.manage", "attendance.self", "attendance.location", "stock.view", "stock.move", "stock.request", "stock.receive", "product.view",
-    "employee.view", "payroll.self", "partner.view", "borongan.view", "borongan.manage", "retur.manage",
+    "employee.view", "payroll.self", "partner.view", "borongan.view", "borongan.manage", "retur.manage", "refund.request",
   ],
   PIC_CONTENT: ["dashboard.view", "product.view", "attendance.self", "payroll.self"],
   OPERATOR: [...OPERATOR_BASE, "report.create"],
@@ -121,7 +124,7 @@ export const RESTRICTED: Partial<Record<Permission, Role[]>> = {
 export const SENSITIVE: Permission[] = [
   "dashboard.finance", "finance.view", "finance.create", "finance.review", "finance.approve",
   "accounting.view", "accounting.post", "accounting.close", "payroll.view", "payroll.manage", "payroll.approve",
-  "sales.manage", "borongan.pay", "settings.manage", "users.manage", "audit.view",
+  "sales.manage", "borongan.pay", "refund.approve", "refund.pay", "settings.manage", "users.manage", "audit.view",
 ];
 export const isSensitive = (p: string) => (SENSITIVE as string[]).includes(p);
 
@@ -164,7 +167,7 @@ export const MENU_GROUPS: { key: string; label: string; perms: Permission[]; on:
   { key: "stock", label: "Stok & Persediaan", perms: ["stock.view", "stock.move", "stock.request", "stock.approve", "stock.receive", "master.manage"], on: ["stock.view"] },
   { key: "product", label: "Produk & HPP", perms: ["product.view", "product.manage"], on: ["product.view"] },
   { key: "sales", label: "Penjualan", perms: ["sales.view", "sales.manage"], on: ["sales.view"] },
-  { key: "retur", label: "Retur & Komplain", perms: ["retur.manage"], on: ["retur.manage"] },
+  { key: "retur", label: "Retur & Komplain", perms: ["retur.manage", "refund.request", "refund.approve", "refund.pay"], on: ["retur.manage"] },
   { key: "partner", label: "Supplier & Pelanggan", perms: ["partner.view", "partner.manage"], on: ["partner.view"] },
   { key: "borongan", label: "Borongan", perms: ["borongan.view", "borongan.point", "borongan.manage", "borongan.pay"], on: ["borongan.view"] },
   { key: "employee", label: "Karyawan", perms: ["employee.view", "employee.manage"], on: ["employee.view"] },

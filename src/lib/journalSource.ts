@@ -40,6 +40,7 @@ export const SOURCE_LABEL: Record<string, string> = {
   SALDO_AWAL: "Saldo awal",
   PEMBALIK: "Pembalik",
   RETUR: "Retur",
+  KOMPLAIN: "Komplain",
 };
 
 /** Halaman menu sumber (tanpa query DB). `docId` = id dokumen bila sudah diketahui (mis. id transaksi/penjualan). */
@@ -76,6 +77,8 @@ export function sourceHref(source: string, sourceId: string | null, docId?: stri
       return "/stok/mutasi";
     case "STOK_AWAL":
       return "/stok/awal";
+    case "KOMPLAIN":
+      return sourceId ? `/retur/komplain?q=${encodeURIComponent(sourceId.split(":")[0])}` : "/retur/komplain";
     case "RETUR":
       return sourceId ? `/retur?q=${encodeURIComponent(sourceId.split(":")[0])}` : "/retur";
     default:

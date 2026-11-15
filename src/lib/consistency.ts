@@ -425,6 +425,21 @@ const returnsWithoutVideo: Check = async () => {
     rows.map((r) => ({ label: r.number, detail: r.trackingNo, href: `/retur/${r.id}` })));
 };
 
+const staleComplaints: Check = async (c) => {
+  const { returnSetting } = await import("./returns");
+  const { COMPLAINT_STATUS } = await import("./complaintShared");
+  const days = await returnSetting("staleDays");
+  const rows = await prisma.complaint.findMany({ where: { cancelledAt: null, status: { notIn: ["SELESAI", "DITOLAK", "DISETUJUI"] }, createdAt: { lt: daysAgo(c, days) } }, select: { id: true, number: true, status: true, createdAt: true } });
+  return issue("komplain-menggantung", "UANG", "SEDANG", `Komplain belum selesai lebih dari ${days} hari`, "Setujui/tolak, bayar refund atau kirim pengganti, lalu tandai Selesai.",
+    rows.map((r) => ({ label: r.number, detail: `${COMPLAINT_STATUS[r.status].label} sejak ${dateStr(r.createdAt)}`, href: `/retur/komplain/${r.id}` })));
+};
+
+const approvedRefundsUnpaid: Check = async (c) => {
+  const rows = await prisma.complaint.findMany({ where: { cancelledAt: null, status: "DISETUJUI", OR: [{ ownerApprovedAt: { lt: daysAgo(c, 2) } }, { ownerApprovedAt: null, approvedAt: { lt: daysAgo(c, 2) } }] }, select: { id: true, number: true, refundAmount: true, approvedAt: true } });
+  return issue("refund-belum-dibayar", "UANG", "SEDANG", "Refund sudah disetujui tetapi belum dibayar (> 2 hari)", "Finance: «Bayar refund» + unggah bukti transfer, atau tolak bila batal.",
+    rows.map((r) => ({ label: r.number, detail: `${idr(Number(r.refundAmount))} · disetujui ${r.approvedAt ? dateStr(r.approvedAt) : "-"}`, href: `/retur/komplain/${r.id}` })));
+};
+
 // =========================== KARYAWAN ===========================
 
 const accessAfterResign: Check = async (c) => {
@@ -447,7 +462,7 @@ export const CHECKS: Check[] = [
   payablesVsLedger, receivablesVsLedger, prepaidVsLedger, advances, reserveFunds, reserveMissing, talanganOpen, mirrorOfReversed, staleDrafts, staleWdProcess, purchaseIssues, depreciationGaps,
   inventoryVsLedger, flowSwitch, negative, unlinkedReceipts, handovers, stockRequests, unpaidBorongan, movementsWithoutRef, manualBorongan, manualReceipts,
   missingPayroll, doublePay, payrollAccruals, unvalidatedAttendance, missingAttendance,
-  staleReturns, failedReturnVideos, returnsWithoutVideo,
+  staleReturns, failedReturnVideos, returnsWithoutVideo, staleComplaints, approvedRefundsUnpaid,
   accessAfterResign, pendingRegistrations,
 ];
 
