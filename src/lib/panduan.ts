@@ -123,6 +123,7 @@ const SUPERVISOR: Guide = {
     ph("teal", { icon: "check", when: "Harian", title: "Validasi absensi", items: ["«Absensi» → tab «Validasi» → centang absen yang benar → «Validasi yang dipilih»."] }),
     ph("amber", { icon: "stock", when: "Harian", title: "Stok & bahan baku", items: ["«Stok & Persediaan» → «Permintaan»: «Setujui» / «Tolak», lalu «Penuhi». Kirim daftar ke grup: «Kirim ke WhatsApp».", "«Laporan Shift» → «Order bahan baku»: item online pakai «🛒 Order online» (Link Produk).", "Barang pembelian datang: «Stok & Persediaan» → «Pembelian» → «Terima barang»."] }),
     ph("violet", { icon: "truck", when: "Saat ada kiriman", title: "Borongan", items: ["«Borongan» → «+ Kirim Bahan» → «Serahkan Ke Driver».", "Cek tab «Penerimaan & Selisih»: selisih minus = setoran koordinator belum/kurang diterima divisi. Selesaikan sebelum upah dibayar."] }),
+    ph("red", { icon: "stock", when: "Paket retur datang", title: "Retur & video unboxing", items: ["«Retur & Komplain» → «+ Retur baru» → «📷 Foto label resi» → cek isian & produk → «Simpan & rekam video».", "Rekam tanpa jeda: tunjukkan label, buka paket → «■ Selesai rekam». Lalu «Periksa barang» (baik / rusak + foto) → «Ajukan klaim» bila ada yang rusak → «Tandai selesai».", "Komplain pembeli: «💬 Komplain & refund» → «+ Komplain» → Refund (isi rekening pembeli) atau Kirim ganti. Bukti bayar refund dikirim bot ke Anda."] }),
   ],
   periodic: ["Mingguan: cek «Rekap» per divisi dan laporan berlabel Kendala yang belum selesai.", "Pastikan setiap divisi punya bahan & limit yang benar di «Bahan & checklist divisi» (minta Owner bila perlu diubah)."],
   infos: STAFF_INFOS,
@@ -133,12 +134,12 @@ const FINANCE: Guide = {
   subtitle: "Transaksi, saldo, gaji, dan hutang setiap hari",
   phases: [
     ph("blue", { icon: "wallet", when: "Pagi 05.00", title: "Cek saldo", items: ["Bot Telegram mengirim saldo rekening. Cocokkan dengan aplikasi bank; riwayat di «Transaksi» → «Cek saldo harian»."] }),
-    ph("green", { icon: "check", when: "Harian", title: "Transaksi", items: ["«Transaksi»: draf dari bot/AI dibuka, periksa nominal, rekening & kategori → «✓ Setujui & bukukan».", "Salah/dobel: «Tolak». Sudah dibukukan tapi salah: «Batalkan transaksi» (jurnal dibalik otomatis)."] }),
+    ph("green", { icon: "check", when: "Harian", title: "Transaksi", items: ["«Transaksi»: draf dari bot/AI dibuka, periksa nominal, rekening & kategori → «✓ Setujui & bukukan».", "Salah/dobel: «Tolak». Sudah dibukukan tapi salah: «Batalkan transaksi» (jurnal dibalik otomatis).", "Refund komplain (lonceng): «Setujui refund» → «Bayar refund» + bukti transfer (tercatat otomatis, bukti dikirim bot ke Supervisor)."] }),
     ph("amber", { icon: "money", when: "Harian", title: "Withdraw & dana sisihan", items: ["Withdraw marketplace berstatus **Dalam Proses**; saat uang masuk rekening tekan «Uang diterima».", "«Dana sisihan» → «Sisihkan» / «Sisihkan semua» (OPS, Nabung, SPinjam). «Dana talangan» → «Kembalikan» bila sudah diganti."] }),
     ph("violet", { icon: "stock", when: "Saat belanja", title: "Pembelian & hutang", items: ["«Stok & Persediaan» → «Pembelian» → «+ Pembelian» → «Simpan pembelian».", "Hutang per supplier: «Supplier» → klik nama. Ringkasan: «Akuntansi» → «Piutang & hutang»."] }),
     ph("red", { icon: "wallet", when: "Jadwal gaji", title: "Penggajian & upah", items: ["«Penggajian» → «+ Periode harian» → «Buka» → periksa → «Setujui» → «Bayar gaji». Kasbon: «Kasbon» → «+ Kasbon» / «Lunasi».", "Tunjangan (tgl 15) di «Tunjangan»; BPJS mengikuti data karyawan. Upah borongan: «Borongan» → «Bayar Upah» (setelah selisih beres)."] }),
   ],
-  periodic: ["Bulanan: «Akuntansi» → «Biaya marketplace» → «+ Catat biaya».", "Bulanan: «Akuntansi» → «Cek konsistensi», selesaikan temuan sebelum Owner menutup buku."],
+  periodic: ["Klaim retur cair: «Retur & Komplain» → buka retur → «Klaim cair» (pemasukan otomatis tercatat di «Transaksi»).", "Bulanan: «Akuntansi» → «Biaya marketplace» → «+ Catat biaya».", "Bulanan: «Akuntansi» → «Cek konsistensi», selesaikan temuan sebelum Owner menutup buku."],
   infos: STAFF_INFOS,
 };
 
@@ -147,12 +148,12 @@ const OWNER: Guide = {
   subtitle: "Ringkasan harian, akses, pengaturan, dan keputusan",
   phases: [
     ph("blue", { icon: "eye", when: "Pagi", title: "Ringkasan harian", items: ["«Beranda»: ringkasan hari ini. Telegram: cek saldo 05.00, Cek Konsistensi 06.00 (hanya bila ada masalah), rekap 07.00."] }),
-    ph("red", { icon: "alert", when: "Bila ada temuan", title: "Keputusan", items: ["«Akuntansi» → «Cek konsistensi»: putuskan temuan **Kritis** lebih dulu.", "Selisih borongan: «Borongan» → tab «Penerimaan & Selisih»."] }),
+    ph("red", { icon: "alert", when: "Bila ada temuan", title: "Keputusan", items: ["«Akuntansi» → «Cek konsistensi»: putuskan temuan **Kritis** lebih dulu.", "Selisih borongan: «Borongan» → tab «Penerimaan & Selisih».", "Komplain & refund: «Retur & Komplain» → «💬 Komplain & refund» (refund cukup disetujui & dibayar Finance; Owner bisa ikut memantau)."] }),
     ph("green", { icon: "user", when: "Saat perlu", title: "Karyawan & akses", items: ["«Karyawan» → «Pendaftaran» → «+ Tautan undangan», lalu «Setujui» / «Tolak». Berhenti kerja: «Karyawan» → «Resign».", "«Pengaturan» → «Pengguna & hak akses»: izin per role (izin sensitif ditandai). HP hilang: «Keluarkan semua perangkat»."] }),
     ph("amber", { icon: "cog", when: "Saat perlu", title: "Pengaturan divisi", items: ["«Laporan Shift» → «Bahan & checklist divisi»: format laporan, bahan & limit, «Ubah checklist» (wajib foto), target.", "Sakelar «Hasil kerja → stok» menentukan hasil laporan masuk stok."] }),
     ph("violet", { icon: "tag", when: "Saat perlu", title: "Produk & harga", items: ["«Produk & HPP»: «Ubah harga», resep, dan «Overhead» per bulan."] }),
   ],
-  periodic: ["Bulanan: «Akuntansi» → «Tutup buku» setelah Cek konsistensi bersih; lihat «Laba rugi».", "Bulanan: «Analitik» untuk tren penjualan & biaya."],
+  periodic: ["Bulanan: «Akuntansi» → «Tutup buku» setelah Cek konsistensi bersih; lihat «Laba rugi».", "Bulanan: «Analitik» untuk tren penjualan & biaya.", "Bulanan: «Retur & Komplain» → «📊 Analitik»: kota, produk, kurir & alasan dengan kerugian terbesar (Unduh untuk Excel)."],
   infos: STAFF_INFOS,
 };
 

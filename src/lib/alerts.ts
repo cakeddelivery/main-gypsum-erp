@@ -56,6 +56,24 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
   if (can("attendance.manage")) {
     tasks.push(prisma.attendance.count({ where: { validated: false, date: { lte: dateOnly(today) }, ...(divisionId ? { employee: { divisionId } } : {}) } }).then((c) => void (c && out.push({ key: "att", label: "Absensi belum divalidasi", count: c, href: "/absensi?tab=validasi", tone: "blue" }))));
   }
+  if (can("retur.manage")) {
+    tasks.push(prisma.returnCase.count({ where: { cancelledAt: null, status: "DITERIMA" } }).then((c) => void (c && out.push({ key: "retur", label: "Paket retur belum diperiksa", count: c, href: "/retur?tab=DITERIMA", tone: "amber" }))));
+  }
+  if (can("refund.approve")) {
+    tasks.push(prisma.complaint.count({ where: { cancelledAt: null, solution: "REFUND", status: "DIAJUKAN" } }).then((c) => void (c && out.push({ key: "refund-setuju", label: "Refund komplain menunggu persetujuan", count: c, href: "/retur/komplain?tab=setuju", tone: "red" }))));
+  }
+  if (can("refund.pay")) {
+    tasks.push(prisma.complaint.count({ where: { cancelledAt: null, status: "DISETUJUI" } }).then((c) => void (c && out.push({ key: "refund-bayar", label: "Refund disetujui, belum dibayar", count: c, href: "/retur/komplain?tab=bayar", tone: "amber" }))));
+  }
+  if (can("users.manage")) {
+    tasks.push(
+      (async () => {
+        const [{ diskInfo }, { returnSetting }] = await Promise.all([import("./mediaStore"), import("./returns")]);
+        const [d, min] = await Promise.all([diskInfo(), returnSetting("diskWarnPct")]);
+        if (d.freePct < min) out.push({ key: "disk", label: `Disk server hampir penuh (sisa ${d.freePct}%)`, count: 1, href: "/retur?tab=SELESAI", tone: "red" });
+      })().catch(() => {}),
+    );
+  }
   if (can("payroll.approve")) {
     tasks.push(prisma.payrollPeriod.count({ where: { status: { in: ["DRAFT", "DISETUJUI"] }, payslips: { some: {} } } }).then((c) => void (c && out.push({ key: "payroll", label: "Penggajian menunggu persetujuan/pembayaran", count: c, href: "/gaji", tone: "blue" }))));
   }

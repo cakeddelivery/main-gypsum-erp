@@ -124,13 +124,18 @@ export const saveCategory = action("settings.manage", async (fd, user) => {
   return "Kategori tersimpan";
 }, P);
 
-const PARAM_KEYS = ["default_store_id", "loc_raw", "loc_wip", "loc_finished", "late_deduction_per_minute", "payday_offset_days", "weekly_off_quota", "monthly_workdays", "allowance_payday", "bpjs_tk_amount", "go_live_date", "payroll_require_validated", "auto_close_enabled", "auto_close_day", "report_checklist", "company_address", "company_tagline", "company_phone", "company_city"];
+const PARAM_KEYS = ["default_store_id", "loc_raw", "loc_wip", "loc_finished", "late_deduction_per_minute", "payday_offset_days", "weekly_off_quota", "monthly_workdays", "allowance_payday", "bpjs_tk_amount", "go_live_date", "payroll_require_validated", "auto_close_enabled", "auto_close_day", "report_checklist", "company_address", "company_tagline", "company_phone", "company_city", "retur_video_maks_menit", "retur_video_hapus_hari", "disk_peringatan_persen", "retur_menggantung_hari"];
 export const saveParams = action("settings.manage", async (fd, user) => {
   const changes: Record<string, string> = {};
   for (const k of PARAM_KEYS) {
     if (!fd.has(k)) continue;
     const v = str(fd, k);
     if (k === "auto_close_day" && v && !(/^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 28)) throw new Error("Tanggal tutup buku otomatis harus 1–28");
+    if (k.startsWith("retur_") || k === "disk_peringatan_persen") {
+      const lim: Record<string, [number, number, string]> = { retur_video_maks_menit: [1, 15, "Durasi video 1–15 menit"], retur_video_hapus_hari: [7, 365, "Simpan video 7–365 hari"], disk_peringatan_persen: [5, 50, "Batas peringatan disk 5–50%"], retur_menggantung_hari: [3, 90, "Retur menggantung 3–90 hari"] };
+      const [lo, hi, msg] = lim[k];
+      if (v && !(/^\d+$/.test(v) && Number(v) >= lo && Number(v) <= hi)) throw new Error(msg);
+    }
     changes[k] = v;
     await prisma.setting.upsert({ where: { key: k }, create: { key: k, value: v }, update: { value: v } });
   }
