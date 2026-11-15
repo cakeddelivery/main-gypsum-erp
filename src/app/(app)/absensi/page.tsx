@@ -44,8 +44,8 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
   const month = sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : today.slice(0, 7);
 
   return (
-    <div className="space-y-5">
-      <PageHeader title="Absensi" subtitle={isSelf ? undefined : "Absensi berbasis shift dengan toleransi keterlambatan"} />
+    <div className={isSelf && tab === "saya" ? "space-y-3" : "space-y-5"}>
+      {!(isSelf && tab === "saya") && <PageHeader title="Absensi" subtitle={isSelf ? undefined : "Absensi berbasis shift dengan toleransi keterlambatan"} />}
       {tabs.length > 1 && <Tabs current={tab} tabs={tabs} />}
       {isSelf && tab === "saya" && <Today user={user} shifts={shifts} />}
       {isSelf && tab === "riwayat" && <Riwayat employeeId={user.employeeId!} month={month} />}
