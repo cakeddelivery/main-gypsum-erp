@@ -8,6 +8,8 @@ import { EmailReminder } from "@/components/EmailReminder";
 import { alertDivision, cachedAlerts } from "@/lib/alerts";
 import { prisma } from "@/lib/db";
 import { guidesFor } from "@/lib/panduanAccess";
+import { pushPublicKey } from "@/lib/push";
+import { PushPrompt } from "@/components/PushNotif";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +35,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <Shell nav={nav} bottomNav={bottom} user={{ name: user.name, username: user.username, role: ROLE_LABEL[user.role], division }} env={process.env.APP_ENV || "development"} alerts={items} quickReport={quickReport}>
       {!user.email && <EmailReminder />}
+      <PushPrompt publicKey={pushPublicKey()} />
       {children}
     </Shell>
   );

@@ -36,7 +36,7 @@ export function currentShift(shifts: Shift[], now = new Date()): Shift | undefin
  * go="isi" membuka form laporan, go="masuk" membuka popup Barang masuk laporan itu.
  * Mode otomatis (anggota): semua terisi sendiri dan langsung dibuka.
  */
-export function ReportStartForm({ data, go = "isi" }: { data: ReportStartData; go?: "isi" | "masuk" }) {
+export function ReportStartForm({ data, go = "isi" }: { data: ReportStartData; go?: "isi" | "masuk" | "terima" }) {
   const { divisions, shifts, today } = data;
   const [div, setDiv] = useState(divisions.length === 1 ? divisions[0].id : "");
   const d = divisions.find((x) => x.id === div);

@@ -34,10 +34,10 @@ import { letterhead } from "@/lib/letterhead";
 
 export const metadata = { title: "Laporan Penutup Shift" };
 
-export default async function ReportDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ isi?: string; masuk?: string; jpg?: string }> }) {
+export default async function ReportDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ isi?: string; masuk?: string; terima?: string; jpg?: string }> }) {
   const user = await requirePerm("report.view");
   const { id } = await params;
-  const { isi, masuk, jpg } = await searchParams;
+  const { isi, masuk, terima, jpg } = await searchParams;
   // Draf mengikuti checklist divisi terbaru sebelum ditampilkan (laporan terkirim tidak diubah)
   await refreshDraftChecklists({ id });
   const r = await prisma.shiftReport.findUnique({ where: { id }, include: { shift: true, division: true, sends: { orderBy: { sentAt: "desc" } } } });
@@ -146,7 +146,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
               </Modal>
             )}
             {canEdit && canDivReceive && (
-              <Modal trigger="+ Penerimaan borongan" triggerClass="btn-secondary" title="Penerimaan hasil borongan" subtitle={`${r.division.name} · ${fmtDay(r.date)}`} wide>
+              <Modal trigger="+ Penerimaan borongan" triggerClass="btn-secondary" title="Penerimaan hasil borongan" subtitle={`${r.division.name} · ${fmtDay(r.date)}`} defaultOpen={terima === "1"} wide>
                 <ReceiveForm divisionId={r.divisionId} date={day} />
               </Modal>
             )}
@@ -178,7 +178,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
       />
       {canEdit && (
         <div className="space-y-4">
-          <Suspense fallback={null}><ClearQuery param="isi" /><ClearQuery param="masuk" /></Suspense>
+          <Suspense fallback={null}><ClearQuery param="isi" /><ClearQuery param="masuk" /><ClearQuery param="terima" /></Suspense>
 
           {pendingReturns.length > 0 && (
             <div className="card p-4 text-sm">

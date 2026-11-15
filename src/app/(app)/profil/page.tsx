@@ -10,6 +10,8 @@ import { Submit } from "@/components/ActionForm";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { initials } from "@/lib/initials";
 import { InstallAppCard } from "@/components/Pwa";
+import { PushSettings } from "@/components/PushNotif";
+import { pushPublicKey } from "@/lib/push";
 import { PasswordInput } from "@/components/PasswordInput";
 import { changeOwnPassword, saveOwnEmail } from "./actions";
 
@@ -77,6 +79,9 @@ export default async function ProfilPage({ searchParams }: { searchParams: Promi
         <Card title="Tampilan">
           <ThemeToggle withLabel />
           <p className="mt-3 text-xs text-slate-500">Untuk mengubah nama, role, atau divisi, hubungi Owner/Admin.</p>
+        </Card>
+        <Card title="Notifikasi">
+          <PushSettings publicKey={pushPublicKey()} />
         </Card>
         <InstallAppCard />
       </div>
