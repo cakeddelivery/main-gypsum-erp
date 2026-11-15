@@ -11,11 +11,12 @@ function geoError(e: GeolocationPositionError): string {
 }
 
 /** Pantau posisi GPS HP selama halaman terbuka */
-function useGeo() {
+export function useGeo(enabled = true) {
   const [fix, setFix] = useState<Fix | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {
+    if (!enabled) return;
     if (!("geolocation" in navigator)) {
       setError("Browser ini tidak mendukung GPS.");
       return;
@@ -30,7 +31,7 @@ function useGeo() {
       { enableHighAccuracy: true, maximumAge: 10000, timeout: 20000 },
     );
     return () => navigator.geolocation.clearWatch(id);
-  }, [attempt]);
+  }, [attempt, enabled]);
   return { fix, error, retry: () => setAttempt((n) => n + 1) };
 }
 

@@ -3,14 +3,19 @@ import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { addDays, dateOnly, fmtDateTime, fmtDay, todayStr } from "@/lib/time";
 import { ATT_LABEL } from "@/lib/attendance";
-import { fmtMinutes, lateOf, lateRecap } from "@/lib/lateRecap";
+import { fmtMinutes, lateRecap } from "@/lib/lateRecap";
 import { Badge, Card, Empty, FilterBar, Field, PageHeader, Tabs } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { GeoSubmit, UseMyLocation } from "@/components/GeoFields";
+import { UseMyLocation } from "@/components/GeoFields";
 import { checkIn, checkOut, deleteWorkSite, saveAttendance, saveSchedule, saveWorkSite, validateAttendance } from "./actions";
 import { Paged } from "@/components/Paged";
+import { canDecideLeave } from "@/lib/leave";
+import { nearestShift } from "@/lib/attendance";
+import { divisionReportSent } from "@/lib/attendanceSelf";
+import { AbsenToday } from "./AbsenToday";
+import { IzinSakit, Riwayat } from "./SelfTabs";
 
 export const metadata = { title: "Absensi" };
 const TONE = { HADIR: "green", TERLAMBAT: "amber", IZIN: "blue", SAKIT: "purple", ALPA: "red", LIBUR: "gray" } as const;
@@ -22,7 +27,12 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
   const date = sp.date && /^\d{4}-\d{2}-\d{2}$/.test(sp.date) ? sp.date : today;
   const canManage = user.can("attendance.manage");
   const canLocation = user.can("attendance.location");
+  const isSelf = !!user.employeeId && user.can("attendance.self");
+  const approver = canDecideLeave(user.role);
+  const pendingLeave = approver ? await prisma.leaveRequest.count({ where: { status: "MENUNGGU" } }) : undefined;
   const tabs = [
+    ...(isSelf ? [{ key: "saya", label: "Hari ini", href: "/absensi?tab=saya" }, { key: "riwayat", label: "Riwayat", href: "/absensi?tab=riwayat" }] : []),
+    ...(isSelf || approver ? [{ key: "izin", label: "Izin & Sakit", href: "/absensi?tab=izin", count: pendingLeave || undefined }] : []),
     ...(canManage
       ? [{ key: "harian", label: "Harian", href: `/absensi?tab=harian&date=${date}` }, { key: "jadwal", label: "Jadwal shift", href: `/absensi?tab=jadwal&date=${date}` }, { key: "validasi", label: "Validasi", href: "/absensi?tab=validasi" }, { key: "telat", label: "Rekap telat", href: `/absensi?tab=telat&date=${date}` }]
       : []),
@@ -31,63 +41,46 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
   const tab = tabs.some((t) => t.key === sp.tab) ? sp.tab! : (tabs[0]?.key ?? "saya");
   const divFilter = user.role === "KAPTEN_DIVISI" && user.divisionId ? { divisionId: user.divisionId } : {};
   const shifts = await prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" } });
-  const sites = await prisma.workSite.findMany({ where: { active: true }, orderBy: { name: "asc" } });
-  const siteNote = sites.length > 0 && (
-    <p className="mt-2 text-xs text-slate-500">Absen hanya bisa di lokasi kerja: {sites.map((x) => `${x.name} (radius ${x.radiusM} m)`).join(", ")}. Nyalakan GPS & izinkan akses lokasi.</p>
-  );
-
-  const self = user.employeeId
-    ? await Promise.all([
-        prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(today) } }, include: { shift: true } }),
-        prisma.attendance.findMany({ where: { employeeId: user.employeeId }, include: { shift: true }, orderBy: { date: "desc" }, take: 14 }),
-        prisma.attendance.findMany({ where: { employeeId: user.employeeId, date: { gte: dateOnly(`${today.slice(0, 7)}-01`), lte: dateOnly(today) } }, select: { status: true, lateMinutes: true } }),
-      ])
-    : null;
-  const myLate = self ? lateOf(self[2]) : null;
+  const month = sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : today.slice(0, 7);
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Absensi" subtitle="Absensi berbasis shift dengan toleransi keterlambatan" />
-      {self && user.can("attendance.self") && (
-        <Card title={`Absensi saya · ${fmtDay(dateOnly(today))}`}>
-          {self[0] ? (
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm">
-                <Badge tone={TONE[self[0].status]}>{ATT_LABEL[self[0].status]}</Badge> <span className="ml-1">{self[0].shift.name}</span>
-                <div className="mt-1 text-slate-500">Masuk {fmtDateTime(self[0].checkIn)}{self[0].lateMinutes > 0 && ` · terlambat ${self[0].lateMinutes} menit`}{self[0].checkOut && ` · Pulang ${fmtDateTime(self[0].checkOut)}`}</div>
-              </div>
-              {!self[0].checkOut && self[0].checkIn && (
-                <ActionForm action={checkOut}><GeoSubmit required={sites.length > 0} className="btn-secondary">Absen pulang</GeoSubmit></ActionForm>
-              )}
-              {!self[0].checkOut && self[0].checkIn && siteNote}
-            </div>
-          ) : (
-            <ActionForm action={checkIn} className="flex flex-wrap items-end gap-3">
-              <GeoSubmit required={sites.length > 0} className="btn-primary px-6 py-3 text-base">Absen masuk sekarang</GeoSubmit>
-              <div className="w-full">{siteNote}</div>
-            </ActionForm>
-          )}
-          {myLate && <p className="mt-3 text-xs text-slate-500">Telat bulan ini: {myLate.count ? <b className="text-amber-700">{myLate.count}× · total {fmtMinutes(myLate.minutes)}</b> : "tidak pernah"} (hanya rekap, tidak memotong gaji)</p>}
-          {self[1].length > 0 && (
-            <ul className="mt-4 divide-y divide-slate-100 text-sm">
-              {self[1].map((a) => (
-                <li key={a.id} className="flex justify-between py-1.5"><span>{fmtDay(a.date)} · {a.shift.name}</span><span className="flex items-center gap-2">{!a.validated && <span className="text-xs text-slate-400">belum divalidasi</span>}<Badge tone={TONE[a.status]}>{ATT_LABEL[a.status]}</Badge></span></li>
-              ))}
-            </ul>
-          )}
-        </Card>
-      )}
-      {tabs.length > 0 && (
-        <>
-          <Tabs current={tab} tabs={tabs} />
-          {canManage && tab === "harian" && <Daily date={date} divFilter={divFilter} shifts={shifts} />}
-          {canManage && tab === "jadwal" && <Schedule date={date} divFilter={divFilter} shifts={shifts} />}
-          {canManage && tab === "validasi" && <Validation divFilter={divFilter} />}
-          {canManage && tab === "telat" && <LateTab date={date} month={sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : date.slice(0, 7)} divisionId={user.role === "KAPTEN_DIVISI" ? user.divisionId : null} />}
-          {canLocation && tab === "lokasi" && <WorkSites />}
-        </>
-      )}
+      <PageHeader title="Absensi" subtitle={isSelf ? undefined : "Absensi berbasis shift dengan toleransi keterlambatan"} />
+      {tabs.length > 1 && <Tabs current={tab} tabs={tabs} />}
+      {isSelf && tab === "saya" && <Today user={user} shifts={shifts} />}
+      {isSelf && tab === "riwayat" && <Riwayat employeeId={user.employeeId!} month={month} />}
+      {tab === "izin" && <IzinSakit user={user} />}
+      {canManage && tab === "harian" && <Daily date={date} divFilter={divFilter} shifts={shifts} />}
+      {canManage && tab === "jadwal" && <Schedule date={date} divFilter={divFilter} shifts={shifts} />}
+      {canManage && tab === "validasi" && <Validation divFilter={divFilter} />}
+      {canManage && tab === "telat" && <LateTab date={date} month={sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : date.slice(0, 7)} divisionId={user.role === "KAPTEN_DIVISI" ? user.divisionId : null} />}
+      {canLocation && tab === "lokasi" && <WorkSites />}
     </div>
+  );
+}
+
+/** Tab "Hari ini": data absen sendiri untuk tampilan varian A */
+async function Today({ user, shifts }: { user: { name: string; employeeId: string | null; photoUrl: string | null }; shifts: (Shift & { endTime: string; toleranceMinutes: number })[] }) {
+  const today = todayStr();
+  const d = dateOnly(today);
+  const [att, sched, sites] = await Promise.all([
+    prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: user.employeeId!, date: d } }, include: { shift: true } }),
+    prisma.shiftSchedule.findUnique({ where: { employeeId_date: { employeeId: user.employeeId!, date: d } }, include: { shift: true } }),
+    prisma.workSite.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { id: true, name: true, latitude: true, longitude: true, radiusM: true } }),
+  ]);
+  const shift = att?.shift ?? sched?.shift ?? nearestShift(shifts, new Date());
+  const report = att?.checkIn && !att.checkOut ? await divisionReportSent(user.employeeId!, att.date, att.shiftId) : null;
+  return (
+    <AbsenToday
+      name={user.name}
+      photoUrl={user.photoUrl}
+      shift={shift ? { name: shift.name, startTime: shift.startTime, endTime: shift.endTime, toleranceMinutes: shift.toleranceMinutes } : null}
+      sites={sites}
+      att={att ? { status: att.status, checkIn: att.checkIn?.toISOString() ?? null, checkOut: att.checkOut?.toISOString() ?? null, lateMinutes: att.lateMinutes, note: att.note } : null}
+      report={report}
+      checkIn={checkIn}
+      checkOut={checkOut}
+    />
   );
 }
 

@@ -15,6 +15,8 @@ import { ActionForm } from "@/components/ActionForm";
 import { todayStr } from "@/lib/time";
 import type { EmployeeStatus } from "@prisma/client";
 import { Paged } from "@/components/Paged";
+import { Avatar } from "@/components/Avatar";
+import { avatarUrl } from "@/lib/profilePhoto";
 
 export const metadata = { title: "Karyawan" };
 const WAGE = { BULANAN: "Bulanan (gajian H+7)", HARIAN: "Harian", BORONGAN: "Borongan (per piece, klaim)", CAMPURAN: "Harian + borongan" };
@@ -90,7 +92,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
             <tbody>
               {employees.map((e) => (
                 <tr key={e.id}>
-                  <td className="font-mono text-xs">{e.code}</td><td>{e.name}</td><td>{e.division.name}</td>
+                  <td className="font-mono text-xs">{e.code}</td><td><span className="flex items-center gap-2"><Avatar name={e.name} src={e.user ? avatarUrl(e.user) : null} size={28} />{e.name}</span></td><td>{e.division.name}</td>
                   <td><Badge tone={e.status === "AKTIF" ? "green" : e.status === "CUTI" ? "amber" : "gray"}>{e.status}</Badge></td>
                   <td>{WAGE[e.wageType]}{!canSeePay ? null : e.wageType === "BULANAN" ? <div className="text-xs text-slate-400">{idr(e.monthlySalary)}/bulan</div> : Number(e.dailyRate) > 0 && <div className="text-xs text-slate-400">{idr(e.dailyRate)}/hari</div>}{canSeePay && e.bpjsTk && <div className="text-xs text-sky-600">BPJS TK {idr(e.bpjsTkAmount != null ? e.bpjsTkAmount : bpjsDefault)}/bulan (perusahaan)</div>}{canSeePay && e.allowances.length > 0 && <div className="text-xs text-slate-400">+ tunjangan {idr(e.allowances.reduce((t, a) => t + Number(a.amount), 0))}/bulan</div>}</td>
                   <td>{fmtDay(e.joinDate)}{e.resignDate && <div className="text-xs text-rose-600">Resign {fmtDay(e.resignDate)}</div>}</td>

@@ -83,6 +83,7 @@ export async function loadUser(userId: string, sv = 0) {
     name: user.name,
     username: user.username,
     email: user.email,
+    photoUrl: user.photoPath ? `/api/files/avatar/${user.id}?v=${user.photoUpdatedAt?.getTime() ?? 0}` : null,
     role: user.role,
     employeeId: user.employeeId,
     employee: user.employee,

@@ -8,20 +8,24 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { initials } from "@/lib/initials";
 import { InstallAppCard } from "@/components/Pwa";
 import { PushSettings } from "@/components/PushNotif";
 import { pushPublicKey } from "@/lib/push";
 import { PasswordInput } from "@/components/PasswordInput";
-import { changeOwnPassword, saveOwnEmail } from "./actions";
+import { Avatar } from "@/components/Avatar";
+import { PhotoPicker } from "@/components/PhotoPicker";
+import { avatarUrl } from "@/lib/profilePhoto";
+import { changeOwnPassword, removeOwnPhoto, saveOwnEmail, saveOwnPhoto } from "./actions";
 
 export const metadata = { title: "Profil" };
 
 export default async function ProfilPage({ searchParams }: { searchParams: Promise<{ isi?: string }> }) {
-  // Dari popup pengingat Gmail: form email langsung terbuka
-  const openEmail = (await searchParams).isi === "email";
+  // Dari kartu "Lengkapi akun": form email / foto langsung terbuka
+  const isi = (await searchParams).isi;
+  const openEmail = isi === "email";
   const me = await requireUser();
   const u = await prisma.user.findUniqueOrThrow({ where: { id: me.id }, include: { employee: { include: { division: true } }, division: true, telegram: true } });
+  const photo = avatarUrl(u);
   const division = u.division?.name ?? u.employee?.division.name;
   const rows: [string, React.ReactNode][] = [
     ["Nama", u.name],
@@ -42,6 +46,9 @@ export default async function ProfilPage({ searchParams }: { searchParams: Promi
         actions={
           <div className="flex flex-wrap gap-2">
           <Link href="/panduan" className="btn-secondary">📘 Panduan</Link>
+          <Modal trigger={u.photoPath ? "Ganti foto" : "Unggah foto"} triggerClass="btn-secondary" title="Foto profil" defaultOpen={isi === "foto"}>
+            <PhotoPicker name={u.name} src={photo} save={saveOwnPhoto} remove={removeOwnPhoto} />
+          </Modal>
           <Modal trigger={u.email ? "Ubah email" : "Isi email"} triggerClass="btn-secondary" title="Email akun" defaultOpen={openEmail && !u.email}>
             <ModalForm action={saveOwnEmail} className="space-y-3">
               <p className="text-xs text-slate-500">Isi dengan Gmail Anda. Dipakai untuk menerima link lupa password dan untuk tombol &quot;Masuk dengan Google&quot; (Gmail harus sama). Kosongkan untuk menghapus.</p>
@@ -64,7 +71,7 @@ export default async function ProfilPage({ searchParams }: { searchParams: Promi
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2" title="Akun">
           <div className="mb-4 flex items-center gap-3">
-            <span className="grid h-14 w-14 shrink-0 place-items-center rounded-full bg-brand-600 text-lg font-bold text-white">{initials(u.name)}</span>
+            <Avatar name={u.name} src={photo} size={56} />
             <div className="min-w-0">
               <div className="truncate text-lg font-semibold text-slate-900">{u.name}</div>
               <div className="text-sm text-slate-500">{ROLE_LABEL[u.role]}{division ? ` · ${division}` : ""}</div>

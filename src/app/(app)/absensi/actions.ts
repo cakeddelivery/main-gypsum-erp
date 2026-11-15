@@ -6,7 +6,10 @@ import { evaluateCheckIn, readGeo } from "@/lib/attendance";
 import { selfCheckIn, selfCheckOut } from "@/lib/attendanceSelf";
 import { addDays, dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
-import type { AttendanceStatus } from "@prisma/client";
+import type { AttendanceStatus, LeaveKind } from "@prisma/client";
+import { cancelLeave, decideLeave, leaveError, submitLeave } from "@/lib/leave";
+import { MAX_PROOF_BYTES, MAX_PROOF_TEXT, saveProof } from "@/lib/storage";
+import { sniffMime } from "@/lib/imageCompress";
 
 export const checkIn = action(
   "attendance.self",
@@ -131,6 +134,51 @@ export const saveSchedule = action(
     }
     await audit(user, "JADWAL_DIATUR", "ShiftSchedule", null, { ids, shiftId, from, to });
     return `${n} jadwal tersimpan`;
+  },
+  ["/absensi"],
+);
+
+/** Karyawan mengajukan izin / sakit (lampiran foto opsional; wajib untuk sakit > 1 hari) */
+export const submitLeaveRequest = action(
+  "attendance.self",
+  async (fd, user) => {
+    const file = fd.get("attachment");
+    const has = file instanceof File && file.size > 0;
+    if (has && file.size > MAX_PROOF_BYTES) throw new Error(MAX_PROOF_TEXT);
+    const kind = str(fd, "kind") as LeaveKind;
+    const from = str(fd, "dateFrom");
+    const to = optStr(fd, "dateTo") || from;
+    const input = { kind, from, to, reason: str(fd, "reason"), hasAttachment: has };
+    const err = leaveError(input, todayStr());
+    if (err) throw new Error(err);
+    let attachmentPath: string | null = null;
+    if (has) {
+      const buf = Buffer.from(await file.arrayBuffer());
+      const mime = sniffMime(buf);
+      if (!mime || (!mime.startsWith("image/") && mime !== "application/pdf")) throw new Error("Lampiran harus foto atau PDF");
+      attachmentPath = await saveProof(buf, mime);
+    }
+    await submitLeave(user, { ...input, attachmentPath });
+    return "Pengajuan terkirim. Menunggu persetujuan Supervisor/Owner.";
+  },
+  ["/absensi"],
+);
+
+export const decideLeaveRequest = action(
+  "attendance.view",
+  async (fd, user) => {
+    const approve = str(fd, "decision") === "setuju";
+    const r = await decideLeave(user, str(fd, "id"), approve, optStr(fd, "rejectReason"));
+    return approve ? `Disetujui — ${r.applied} hari dicatat di absensi${r.skipped ? ` (${r.skipped} hari sudah hadir/libur, dibiarkan)` : ""}` : "Pengajuan ditolak";
+  },
+  ["/absensi", "/"],
+);
+
+export const cancelLeaveRequest = action(
+  "attendance.self",
+  async (fd, user) => {
+    await cancelLeave(user, str(fd, "id"));
+    return "Pengajuan dibatalkan";
   },
   ["/absensi"],
 );

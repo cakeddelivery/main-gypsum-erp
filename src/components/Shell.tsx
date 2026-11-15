@@ -37,7 +37,7 @@ function backTarget(path: string, nav: Item[]) {
   return null;
 }
 
-export function Shell({ nav, bottomNav, user, env, children, alerts, quickReport }: { nav: Item[]; bottomNav: Item[]; user: { name: string; username: string; role: string; division?: string | null }; env: string; children: React.ReactNode; alerts: HeaderAlert[]; quickReport?: ReportStartData | null }) {
+export function Shell({ nav, bottomNav, user, env, children, alerts, quickReport }: { nav: Item[]; bottomNav: Item[]; user: { name: string; username: string; role: string; division?: string | null; photoUrl?: string | null }; env: string; children: React.ReactNode; alerts: HeaderAlert[]; quickReport?: ReportStartData | null }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [path]);

@@ -107,6 +107,10 @@ model User {
   boronganPerson    BoronganPerson?
   resetTokens       PasswordResetToken[]
   pushSubscriptions PushSubscription[]
+  /// Foto profil (path relatif di storage, JPEG kecil tanpa EXIF); null = tampil inisial
+  photoPath         String?
+  photoUpdatedAt    DateTime?
+  leaveRequests     LeaveRequest[]       @relation("LeaveRequester")
 }
 
 /// Token reset password (lupa password). Hanya hash SHA-256 yang disimpan; sekali pakai, berlaku 30 menit.
@@ -292,6 +296,7 @@ model Employee {
   bpjsTkAmount    BigInt?
   user            User?
   attendances     Attendance[]
+  leaveRequests   LeaveRequest[]
   schedules       ShiftSchedule[]
   production      ProductionEntry[]
   targets         ProductionTarget[]
@@ -320,6 +325,40 @@ enum AttendanceStatus {
   SAKIT
   ALPA
   LIBUR
+}
+
+enum LeaveKind {
+  IZIN
+  SAKIT
+}
+
+enum LeaveStatus {
+  MENUNGGU
+  DISETUJUI
+  DITOLAK
+}
+
+/// Pengajuan izin/sakit oleh karyawan sendiri; disetujui Supervisor atau Owner → hari-harinya tercatat IZIN/SAKIT di absensi
+model LeaveRequest {
+  id             String      @id @default(cuid())
+  employeeId     String
+  employee       Employee    @relation(fields: [employeeId], references: [id])
+  userId         String?
+  user           User?       @relation("LeaveRequester", fields: [userId], references: [id])
+  kind           LeaveKind
+  dateFrom       DateTime    @db.Date
+  dateTo         DateTime    @db.Date
+  reason         String
+  /// Foto surat dokter / bukti (wajib untuk sakit lebih dari 1 hari)
+  attachmentPath String?
+  status         LeaveStatus @default(MENUNGGU)
+  decidedBy      String?
+  decidedAt      DateTime?
+  rejectReason   String?
+  createdAt      DateTime    @default(now())
+
+  @@index([employeeId, status])
+  @@index([status, createdAt])
 }
 
 model Attendance {

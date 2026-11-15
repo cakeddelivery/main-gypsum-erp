@@ -12,6 +12,7 @@ export async function selfCheckIn(user: Actor, pos: GeoPoint | null, via: "WEB" 
   const date = todayStr();
   const sched = await prisma.shiftSchedule.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(date) } } });
   const exists = await prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: dateOnly(date) } } });
+  if (exists && !exists.checkIn && (exists.status === "IZIN" || exists.status === "SAKIT")) throw new Error(`Hari ini Anda tercatat ${exists.status === "IZIN" ? "Izin" : "Sakit"}. Bila ternyata masuk kerja, minta Supervisor mengubah absensi.`);
   if (exists) throw new Error("Anda sudah absen masuk hari ini");
   const geo = checkGeofence(pos, await activeSites());
   if (!geo.ok) throw new Error(geo.error);
