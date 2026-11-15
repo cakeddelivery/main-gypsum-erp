@@ -8,6 +8,7 @@ import { passwordChangeData } from "@/lib/loginGuard";
 import { audit } from "@/lib/audit";
 import { normEmail } from "@/lib/email";
 import { friendly, type ActionResult } from "@/lib/action";
+import { clearProfilePhoto, setProfilePhoto } from "@/lib/profilePhoto";
 
 /** Tandai notifikasi sudah dibaca (jumlah saat ini disimpan; bila nanti bertambah, muncul lagi sebagai belum dibaca) */
 export async function markAlertsRead(items: { key: string; count: number }[]) {
@@ -55,6 +56,35 @@ export async function saveOwnEmail(_prev: ActionResult | null, fd: FormData): Pr
     // Layout ikut dimuat ulang agar popup pengingat Gmail hilang setelah email diisi
     revalidatePath("/", "layout");
     return { ok: true, message: email ? "Email tersimpan" : "Email dihapus", ts: Date.now() };
+  } catch (e) {
+    return { ok: false, error: friendly(e), ts: Date.now() };
+  }
+}
+
+/** Unggah / ganti foto profil sendiri (sudah dipotong persegi di HP; server memperkecil & membuang EXIF/GPS) */
+export async function saveOwnPhoto(_prev: ActionResult | null, fd: FormData): Promise<ActionResult> {
+  try {
+    const user = await getUser();
+    if (!user) throw new Error("Sesi berakhir, silakan login ulang");
+    const file = fd.get("photo");
+    if (!(file instanceof File) || !file.size) throw new Error("Pilih foto terlebih dahulu");
+    await setProfilePhoto(user.id, Buffer.from(await file.arrayBuffer()));
+    await audit(user, "FOTO_PROFIL_DIUBAH", "User", user.id);
+    revalidatePath("/", "layout");
+    return { ok: true, message: "Foto profil tersimpan", ts: Date.now() };
+  } catch (e) {
+    return { ok: false, error: friendly(e), ts: Date.now() };
+  }
+}
+
+export async function removeOwnPhoto(_prev: ActionResult | null, _fd: FormData): Promise<ActionResult> {
+  try {
+    const user = await getUser();
+    if (!user) throw new Error("Sesi berakhir, silakan login ulang");
+    await clearProfilePhoto(user.id);
+    await audit(user, "FOTO_PROFIL_DIHAPUS", "User", user.id);
+    revalidatePath("/", "layout");
+    return { ok: true, message: "Foto profil dihapus", ts: Date.now() };
   } catch (e) {
     return { ok: false, error: friendly(e), ts: Date.now() };
   }

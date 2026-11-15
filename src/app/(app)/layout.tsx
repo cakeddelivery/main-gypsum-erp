@@ -4,12 +4,11 @@ import { reportDivision } from "@/lib/reportScope";
 import { todayStr } from "@/lib/time";
 import { ROLE_LABEL } from "@/lib/rbac";
 import { Shell } from "@/components/Shell";
-import { EmailReminder } from "@/components/EmailReminder";
 import { alertDivision, cachedAlerts } from "@/lib/alerts";
 import { prisma } from "@/lib/db";
 import { guidesFor } from "@/lib/panduanAccess";
 import { pushPublicKey } from "@/lib/push";
-import { PushPrompt } from "@/components/PushNotif";
+import { AccountSetup } from "@/components/PushNotif";
 
 export const dynamic = "force-dynamic";
 
@@ -33,9 +32,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const items = alerts.map((a) => ({ ...a, read: (reads.find((r) => r.key === a.key)?.count ?? -1) >= a.count }));
   const division = user.employee?.division.name ?? null;
   return (
-    <Shell nav={nav} bottomNav={bottom} user={{ name: user.name, username: user.username, role: ROLE_LABEL[user.role], division }} env={process.env.APP_ENV || "development"} alerts={items} quickReport={quickReport}>
-      {!user.email && <EmailReminder />}
-      <PushPrompt publicKey={pushPublicKey()} />
+    <Shell nav={nav} bottomNav={bottom} user={{ name: user.name, username: user.username, role: ROLE_LABEL[user.role], division, photoUrl: user.photoUrl }} env={process.env.APP_ENV || "development"} alerts={items} quickReport={quickReport}>
+      <AccountSetup publicKey={pushPublicKey()} hasEmail={!!user.email} hasPhoto={!!user.photoUrl} />
       {children}
     </Shell>
   );

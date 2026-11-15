@@ -47,7 +47,7 @@ export async function setupBorongan(db: PrismaClient, apply: boolean): Promise<s
     if (!brn) {
       say("+ Titik borongan BERINGIN (lokasi stok BRN)");
       const loc = (await tx.location.findUnique({ where: { code: "BRN" } })) ?? (await tx.location.create({ data: { code: "BRN", name: "Titik Borongan Beringin" } }));
-      brn = await tx.boronganPoint.create({ data: { code: "BRN", name: "Beringin", locationId: loc.id } });
+      brn = await tx.boronganPoint.create({ data: { code: "BRN", name: "Beringin", locationId: loc.id, viaDriver: false } });
     } else say("= Titik Beringin sudah ada");
     const bmr = await tx.boronganPoint.findFirst({ where: { code: "BMR" } });
     const mst = await tx.boronganPoint.findFirst({ where: { code: "MST" } });

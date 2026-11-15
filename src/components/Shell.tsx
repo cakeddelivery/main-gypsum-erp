@@ -37,7 +37,7 @@ function backTarget(path: string, nav: Item[]) {
   return null;
 }
 
-export function Shell({ nav, bottomNav, user, env, children, alerts, quickReport }: { nav: Item[]; bottomNav: Item[]; user: { name: string; username: string; role: string; division?: string | null }; env: string; children: React.ReactNode; alerts: HeaderAlert[]; quickReport?: ReportStartData | null }) {
+export function Shell({ nav, bottomNav, user, env, children, alerts, quickReport }: { nav: Item[]; bottomNav: Item[]; user: { name: string; username: string; role: string; division?: string | null; photoUrl?: string | null }; env: string; children: React.ReactNode; alerts: HeaderAlert[]; quickReport?: ReportStartData | null }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [path]);
@@ -97,7 +97,7 @@ export function Shell({ nav, bottomNav, user, env, children, alerts, quickReport
             <aside className="anim-drawer absolute left-0 top-0 flex h-full w-72 max-w-[85vw] flex-col overflow-y-auto bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3 text-sm">
                 <div className="min-w-0">
-                  <div className="truncate font-semibold text-slate-900">{user.name}</div>
+                  <div className="break-words font-semibold text-slate-900">{user.name}</div>
                   <div className="text-slate-500">{user.role}</div>
                 </div>
                 <button className="grid h-10 w-10 place-items-center rounded-lg text-slate-500 hover:bg-slate-100" aria-label="Tutup menu" onClick={() => setOpen(false)}>

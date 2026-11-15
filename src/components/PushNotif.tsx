@@ -1,5 +1,8 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { CLOSE_MS } from "./Modal";
+import { todayStr } from "@/lib/time";
 import { isIos, isStandalone } from "./Pwa";
 import { removePushSubscription, savePushSubscription, sendTestPush } from "@/app/(app)/profil/pushActions";
 
@@ -74,26 +77,10 @@ function IosInstallHelp() {
   );
 }
 
-const DISMISS = "mg_push_prompt_dismissed";
+const SETUP_KEY = "mg_lengkapi_akun";
 
-/**
- * Ajakan aktifkan notifikasi: muncul setiap kali aplikasi dibuka selama izin belum diberikan
- * (bisa ditutup untuk sesi ini). Izin diminta lewat tombol (ketukan pengguna), tidak otomatis.
- * Bila izin sudah ada tetapi perangkat belum terdaftar (mis. kunci server baru), didaftarkan diam-diam.
- */
-export function PushPrompt({ publicKey }: { publicKey: string | null }) {
-  const { status, refresh } = usePushStatus(publicKey);
-  const [hidden, setHidden] = useState(true);
-  const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    let dismissed = false;
-    try {
-      dismissed = sessionStorage.getItem(DISMISS) === "1";
-    } catch {}
-    const t = window.setTimeout(() => setHidden(dismissed), 1500);
-    return () => window.clearTimeout(t);
-  }, []);
-  // Izin sudah diberikan: pastikan langganan perangkat ini tersimpan di server (sekali per sesi)
+/** Daftarkan ulang perangkat diam-diam bila izin notifikasi sudah ada (sekali per sesi), mis. setelah kunci server baru */
+function usePushSync(publicKey: string | null, status: Status, refresh: () => void) {
   useEffect(() => {
     if (!publicKey || (status !== "on" && status !== "granted-off")) return;
     try {
@@ -102,37 +89,102 @@ export function PushPrompt({ publicKey }: { publicKey: string | null }) {
     } catch {}
     subscribe(publicKey).then(refresh).catch(() => {});
   }, [status, publicKey, refresh]);
+}
 
-  const show = !hidden && (status === "default" || status === "denied" || status === "ios-install");
-  if (!show) return null;
-  const close = () => {
-    setHidden(true);
-    try {
-      sessionStorage.setItem(DISMISS, "1");
-    } catch {}
-  };
+function Step({ done, icon, title, why, children }: { done: boolean; icon: string; title: string; why: React.ReactNode; children?: React.ReactNode }) {
   return (
-    <div role="dialog" aria-labelledby="push-ajak" className="no-print fixed inset-x-3 bottom-24 z-40 mx-auto max-w-md rounded-2xl border border-slate-200 bg-white p-4 text-slate-700 shadow-2xl sm:bottom-4">
-      <div className="flex items-start gap-3">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand-50 text-xl" aria-hidden>🔔</span>
-        <div className="min-w-0 flex-1">
-          <p id="push-ajak" className="font-semibold text-slate-900">
-            {status === "denied" ? "Notifikasi masih diblokir" : status === "ios-install" ? "Pasang ERP agar bisa menerima notifikasi" : "Aktifkan notifikasi"}
-          </p>
-          {status === "default" && <p className="mt-1 text-sm">Dapat pengingat barang masuk & setoran borongan, kabar laporan, dan info penting lain langsung di HP, walau aplikasi sedang ditutup.</p>}
-          {status === "denied" && <><p className="mt-1 text-sm">Izinkan notifikasi dari pengaturan HP/browser:</p><DeniedHelp /></>}
-          {status === "ios-install" && <><p className="mt-1 text-sm">Di iPhone, notifikasi hanya bisa diterima dari ERP yang dipasang di Layar Utama:</p><IosInstallHelp /></>}
-          <div className="mt-3 flex flex-wrap gap-2">
-            {status === "default" && (
-              <button type="button" className="btn-primary" disabled={busy} onClick={async () => { setBusy(true); try { await enable(publicKey!); } finally { setBusy(false); refresh(); } }}>
-                {busy ? "Mengaktifkan…" : "Aktifkan notifikasi"}
-              </button>
-            )}
-            <button type="button" className="btn-secondary" onClick={close}>{status === "default" ? "Nanti" : "Tutup"}</button>
-          </div>
+    <li className={`flex gap-3 rounded-xl border p-3 ${done ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"}`}>
+      <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-lg ${done ? "bg-emerald-600 text-white" : "bg-brand-50"}`} aria-hidden>{done ? "✓" : icon}</span>
+      <div className="min-w-0 flex-1">
+        <div className={`font-semibold ${done ? "text-emerald-800 line-through decoration-emerald-400" : "text-slate-900"}`}>{title}</div>
+        {!done && <div className="mt-0.5 text-sm text-slate-600">{why}</div>}
+        {!done && children && <div className="mt-2">{children}</div>}
+      </div>
+    </li>
+  );
+}
+
+/**
+ * Kartu "Lengkapi akun Anda": satu ajakan untuk Gmail, foto profil, dan notifikasi (menggantikan 3 popup terpisah).
+ * Hanya langkah yang belum selesai yang perlu dikerjakan; "Nanti saja" menyembunyikan kartu sampai besok.
+ */
+export function AccountSetup({ publicKey, hasEmail, hasPhoto }: { publicKey: string | null; hasEmail: boolean; hasPhoto: boolean }) {
+  const { status, refresh } = usePushStatus(publicKey);
+  usePushSync(publicKey, status, refresh);
+  const ref = useRef<HTMLDialogElement>(null);
+  const [closing, setClosing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const router = useRouter();
+  const path = usePathname();
+  // Notifikasi ikut dicek hanya bila bisa dipakai di perangkat ini
+  const pushStep = status === "default" || status === "denied" || status === "ios-install" || status === "on" || status === "granted-off";
+  const pushDone = status === "on";
+  const steps = [!hasEmail, !hasPhoto, pushStep && !pushDone];
+  const left = steps.filter(Boolean).length;
+  const total = 2 + (pushStep ? 1 : 0);
+  useEffect(() => {
+    if (status === "loading" || left === 0 || path.startsWith("/profil")) return;
+    let seen: string | null = null;
+    try {
+      seen = localStorage.getItem(SETUP_KEY);
+    } catch {}
+    if (seen === todayStr()) return;
+    const t = window.setTimeout(() => { if (!ref.current?.open) ref.current?.showModal(); }, 1200);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+  const close = (then?: () => void) => {
+    try {
+      localStorage.setItem(SETUP_KEY, todayStr());
+    } catch {}
+    setClosing(true);
+    window.setTimeout(() => {
+      ref.current?.close();
+      setClosing(false);
+      then?.();
+    }, CLOSE_MS);
+  };
+  const go = (href: string) => () => close(() => router.push(href));
+  return (
+    <dialog
+      ref={ref}
+      data-update-safe
+      data-closing={closing || undefined}
+      onCancel={(e) => { e.preventDefault(); close(); }}
+      className="modal no-print w-[calc(100%-1.5rem)] max-w-md rounded-2xl bg-white p-0 text-slate-800 shadow-xl backdrop:bg-slate-900/50"
+      aria-labelledby="lengkapi-akun"
+    >
+      <div className="space-y-3 p-5">
+        <div>
+          <h2 id="lengkapi-akun" className="text-lg font-bold text-slate-900">Lengkapi akun Anda</h2>
+          <p className="text-sm text-slate-500">{total - left} dari {total} langkah selesai</p>
+          <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${((total - left) / total) * 100}%` }} /></div>
+        </div>
+        <ul className="space-y-2">
+          <Step done={hasEmail} icon="📧" title="Isi Gmail" why={<>Lupa password bisa buat sendiri lewat Gmail, dan masuk cepat dengan tombol &quot;Masuk dengan Google&quot;.</>}>
+            <button type="button" className="btn-primary btn-sm" onClick={go("/profil?isi=email")}>Isi Gmail</button>
+          </Step>
+          <Step done={hasPhoto} icon="🙂" title="Unggah foto profil" why="Aplikasi tampil lebih profesional, dan Supervisor mudah mengenali Anda di absensi & laporan.">
+            <button type="button" className="btn-primary btn-sm" onClick={go("/profil?isi=foto")}>Unggah foto</button>
+          </Step>
+          {pushStep && (
+            <Step done={pushDone} icon="🔔" title="Aktifkan notifikasi" why="Dapat pengingat barang masuk, setoran borongan, kabar izin/sakit, dan info penting lain langsung di HP.">
+              {status === "default" && (
+                <button type="button" className="btn-primary btn-sm" disabled={busy} onClick={async () => { setBusy(true); try { await enable(publicKey!); } finally { setBusy(false); refresh(); } }}>
+                  {busy ? "Mengaktifkan…" : "Aktifkan notifikasi"}
+                </button>
+              )}
+              {status === "granted-off" && <button type="button" className="btn-primary btn-sm" disabled={busy} onClick={async () => { setBusy(true); try { await subscribe(publicKey!); } finally { setBusy(false); refresh(); } }}>Aktifkan di HP ini</button>}
+              {status === "denied" && <><p className="text-sm text-slate-600">Notifikasi masih diblokir. Izinkan dari pengaturan HP/browser:</p><DeniedHelp /></>}
+              {status === "ios-install" && <><p className="text-sm text-slate-600">Di iPhone, pasang ERP di Layar Utama dulu:</p><IosInstallHelp /></>}
+            </Step>
+          )}
+        </ul>
+        <div className="flex justify-end pt-1">
+          <button type="button" className="btn-secondary" onClick={() => close()}>Nanti saja</button>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }
 

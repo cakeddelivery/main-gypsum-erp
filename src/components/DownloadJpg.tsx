@@ -37,9 +37,19 @@ export function DownloadJpg({ targetId, filename, autoOpen, label = "⬇ Unduh J
     const width = Number(el.dataset.exportWidth) || 1000;
     const host = document.createElement("div");
     host.style.cssText = `position:fixed;left:-20000px;top:0;width:${width}px;pointer-events:none`;
+    // File JPG SELALU tema terang, apa pun mode HP/aplikasi: tema halaman dipaksa terang selama gambar dibuat
+    // (Safari/iPhone bisa ikut memakai warna mode gelap halaman), lalu dikembalikan
+    const html = document.documentElement;
+    const prevTheme = html.dataset.theme;
+    const prevScheme = html.style.colorScheme;
+    html.dataset.theme = "light";
+    html.style.colorScheme = "light";
     const node = el.cloneNode(true) as HTMLElement;
     node.removeAttribute("id");
     node.classList.add("theme-light", "exporting");
+    node.dataset.theme = "light";
+    node.style.colorScheme = "light";
+    node.style.backgroundColor = "#ffffff";
     node.style.width = `${width}px`;
     host.appendChild(node);
     document.body.appendChild(host);
@@ -54,6 +64,9 @@ export function DownloadJpg({ targetId, filename, autoOpen, label = "⬇ Unduh J
       }
       setUrl(data);
     } finally {
+      if (prevTheme) html.dataset.theme = prevTheme;
+      else delete html.dataset.theme;
+      html.style.colorScheme = prevScheme;
       host.remove();
       setBusy(false);
     }

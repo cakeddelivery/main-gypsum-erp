@@ -151,7 +151,7 @@ export function ReturnFields({ items, today, defaults }: { items: Opt[]; today: 
                 <option value="">— produk ERP (pilih) —</option>
                 {items.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
               </select>
-              {r.labelName && <p className="mt-1 truncate text-xs text-slate-500">Label: {r.labelName}</p>}
+              {r.labelName && <p className="mt-1 break-words text-xs text-slate-500">Label: {r.labelName}</p>}
               <input type="hidden" name="labelName" value={r.labelName} />
             </div>
             <button type="button" aria-label="Hapus baris" className="btn-secondary btn-sm btn-icon col-span-1" onClick={() => setRows((x) => (x.length > 1 ? x.filter((_, j) => j !== i) : x))}>×</button>

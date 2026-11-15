@@ -57,8 +57,8 @@ export function reportSteps(hasWork: boolean): string[] {
 
 const MEMBER_INFOS: Info[] = [
   { icon: "key", title: "Lupa password", text: "Di halaman masuk tekan «Lupa password?» → ketik username/email → «Kirim link reset» → buka link di Gmail." },
-  { icon: "lock", title: "Ganti password", text: "Ikon akun (kanan atas) → «Profil» → «Ganti password» → «Simpan password»." },
-  { icon: "mail", title: "Isi Gmail", text: "«Profil» → «Isi email» → «Simpan email». Gunanya: reset password sendiri, menerima pemberitahuan, dan bisa tekan «Masuk dengan Google» (Gmail harus sama)." },
+  { icon: "mail", title: "Akun: password, Gmail, foto", text: "«Profil» → «Ganti password» / «Isi email» / «Unggah foto». Gmail untuk reset password & «Masuk dengan Google»." },
+  { icon: "check", title: "Izin & Sakit", text: "«Absen» → «Izin & Sakit» → «+ Ajukan izin / sakit». Sakit > 1 hari wajib foto surat dokter." },
   { icon: "user", title: "PIC otomatis", text: "Nama PIC laporan diambil dari akun yang mengirim. Selalu pakai akun sendiri." },
   { icon: "lock", title: "Jaga akun", text: "Jangan bagikan password. Di HP orang lain, tekan «Keluar» setelah selesai." },
   { icon: "help", title: "Bila ada error", text: "Tutup lalu buka lagi aplikasinya. Muncul \"Versi baru tersedia\"? Isian aman, tekan «Muat ulang». Masih error? Foto layarnya, hubungi Kapten divisi atau Admin (WA {wa})." },
@@ -66,13 +66,13 @@ const MEMBER_INFOS: Info[] = [
 
 const LOGIN = ph("blue", {
   icon: "login", when: "Datang", title: "Masuk ke ERP", shot: "login",
-  items: ["Buka ERP di HP, ketik username & password, tekan «Masuk» (atau «Masuk dengan Google»). Tetap masuk sampai 90 hari.", "Muncul \"Gmail Anda belum diisi\"? Tekan «Isi Gmail sekarang»."],
+  items: ["Buka ERP di HP, ketik username & password, tekan «Masuk» (atau «Masuk dengan Google»). Tetap masuk sampai 90 hari.", "Muncul \"Lengkapi akun Anda\"? Isi Gmail & foto profil."],
 });
 const ABSEN = ph("green", {
   icon: "pin", when: "Mulai shift", title: "Absen masuk", shot: "absen",
-  items: ["Menu bawah «Absen» → tekan «Absen masuk sekarang».", "Izinkan lokasi (GPS) & berada di lokasi kerja. Lewat 10 menit dari jam shift = telat."],
+  items: ["Menu bawah «Absen» → tab «Hari ini» → tekan tombol hijau «Absen Masuk».", "Izinkan lokasi (GPS) & berada di lokasi kerja (titik hijau). Lewat 10 menit dari jam shift = telat."],
 });
-const PULANG = ph("red", { icon: "home", when: "Pulang", title: "Absen pulang", items: ["Menu bawah «Absen» → tekan «Absen pulang» (di lokasi kerja)."] });
+const PULANG = ph("red", { icon: "home", when: "Pulang", title: "Absen pulang", items: ["Menu bawah «Absen» → «Absen Pulang» (di lokasi kerja)."] });
 
 function divisionGuide(d: DivSpec): Guide {
   return {
@@ -118,9 +118,9 @@ const SUPERVISOR: Guide = {
   id: "supervisor", kind: "role", name: "Supervisor", title: "Lembar Panduan Supervisor", audience: "Supervisor produksi",
   subtitle: "Memantau semua divisi, stok bahan, dan borongan setiap hari",
   phases: [
-    ph("green", { icon: "pin", when: "Mulai kerja", title: "Absen & cek peringatan", items: ["«Absensi» → «Absen masuk sekarang» (GPS di lokasi kerja).", "Ikon lonceng (kanan atas): baca peringatan; laporan berlabel **Kendala** dibuka → «Tindak lanjuti»."] }),
+    ph("green", { icon: "pin", when: "Mulai kerja", title: "Absen & cek peringatan", items: ["«Absensi» → «Absen Masuk» (GPS di lokasi kerja).", "Ikon lonceng (kanan atas): baca peringatan; laporan berlabel **Kendala** dibuka → «Tindak lanjuti»."] }),
     ph("blue", { icon: "eye", when: "Sepanjang hari", title: "Pantau laporan shift", items: ["«Laporan Shift»: laporan dikelompokkan per tanggal (terbaru di atas), 1 laporan per divisi per shift. Tekan «Lihat».", "Angka harian: «Rekap» dan «Resi & patung». Draf yang belum dikirim ditandai **Draf**: ingatkan divisinya."] }),
-    ph("teal", { icon: "check", when: "Harian", title: "Validasi absensi", items: ["«Absensi» → tab «Validasi» → centang absen yang benar → «Validasi yang dipilih»."] }),
+    ph("teal", { icon: "check", when: "Harian", title: "Validasi absensi", items: ["«Absensi» → tab «Validasi» → centang absen yang benar → «Validasi yang dipilih».", "Tab «Izin & Sakit»: «Setujui» / «Tolak» (tulis alasan). Hari yang disetujui otomatis tercatat Izin/Sakit (menggantikan Alpa)."] }),
     ph("amber", { icon: "stock", when: "Harian", title: "Stok & bahan baku", items: ["«Stok & Persediaan» → «Permintaan»: «Setujui» / «Tolak», lalu «Penuhi». Kirim daftar ke grup: «Kirim ke WhatsApp».", "«Laporan Shift» → «Order bahan baku»: item online pakai «🛒 Order online» (Link Produk).", "Barang pembelian datang: «Stok & Persediaan» → «Pembelian» → «Terima barang»."] }),
     ph("violet", { icon: "truck", when: "Saat ada kiriman", title: "Borongan", items: ["«Borongan» → «+ Kirim Bahan» → «Serahkan Ke Driver».", "Cek tab «Penerimaan & Selisih»: selisih minus = setoran koordinator belum/kurang diterima divisi. Selesaikan sebelum upah dibayar."] }),
     ph("red", { icon: "stock", when: "Paket retur datang", title: "Retur & video unboxing", items: ["«Retur & Komplain» → «+ Retur baru» → «📷 Foto label resi» → cek isian & produk → «Simpan & rekam video».", "Rekam tanpa jeda: tunjukkan label, buka paket → «■ Selesai rekam». Lalu «Periksa barang» (baik / rusak + foto) → «Ajukan klaim» bila ada yang rusak → «Tandai selesai».", "Komplain pembeli: «💬 Komplain & refund» → «+ Komplain» → Refund (isi rekening pembeli) atau Kirim ganti. Bukti bayar refund dikirim bot ke Anda."] }),
@@ -148,7 +148,7 @@ const OWNER: Guide = {
   subtitle: "Ringkasan harian, akses, pengaturan, dan keputusan",
   phases: [
     ph("blue", { icon: "eye", when: "Pagi", title: "Ringkasan harian", items: ["«Beranda»: ringkasan hari ini. Telegram: cek saldo 05.00, Cek Konsistensi 06.00 (hanya bila ada masalah), rekap 07.00."] }),
-    ph("red", { icon: "alert", when: "Bila ada temuan", title: "Keputusan", items: ["«Akuntansi» → «Cek konsistensi»: putuskan temuan **Kritis** lebih dulu.", "Selisih borongan: «Borongan» → tab «Penerimaan & Selisih».", "Komplain & refund: «Retur & Komplain» → «💬 Komplain & refund» (refund cukup disetujui & dibayar Finance; Owner bisa ikut memantau)."] }),
+    ph("red", { icon: "alert", when: "Bila ada temuan", title: "Keputusan", items: ["«Akuntansi» → «Cek konsistensi»: putuskan temuan **Kritis** lebih dulu.", "Selisih borongan: «Borongan» → tab «Penerimaan & Selisih».", "Izin & sakit karyawan menunggu: «Absensi» → tab «Izin & Sakit» → «Setujui» / «Tolak».", "Komplain & refund: «Retur & Komplain» → «💬 Komplain & refund» (refund cukup disetujui & dibayar Finance; Owner bisa ikut memantau)."] }),
     ph("green", { icon: "user", when: "Saat perlu", title: "Karyawan & akses", items: ["«Karyawan» → «Pendaftaran» → «+ Tautan undangan», lalu «Setujui» / «Tolak». Berhenti kerja: «Karyawan» → «Resign».", "«Pengaturan» → «Pengguna & hak akses»: izin per role (izin sensitif ditandai). HP hilang: «Keluarkan semua perangkat»."] }),
     ph("amber", { icon: "cog", when: "Saat perlu", title: "Pengaturan divisi", items: ["«Laporan Shift» → «Bahan & checklist divisi»: format laporan, bahan & limit, «Ubah checklist» (wajib foto), target.", "Sakelar «Hasil kerja → stok» menentukan hasil laporan masuk stok."] }),
     ph("violet", { icon: "tag", when: "Saat perlu", title: "Produk & harga", items: ["«Produk & HPP»: «Ubah harga», resep, dan «Overhead» per bulan."] }),

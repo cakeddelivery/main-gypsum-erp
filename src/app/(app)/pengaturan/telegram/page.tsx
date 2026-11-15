@@ -83,7 +83,7 @@ export default async function TelegramPage() {
         <div className="overflow-x-auto">
           <Paged><table className="tbl">
             <thead><tr><th>Waktu</th><th>Kanal</th><th>Jenis</th><th>Tujuan</th><th>Status</th><th>Kesalahan</th></tr></thead>
-            <tbody>{logs.map((l) => <tr key={l.id}><td>{fmtDateTime(l.at)}</td><td>{l.channel}</td><td>{l.type}</td><td className="font-mono text-xs">{l.target}</td><td><Badge tone={l.status === "TERKIRIM" || l.status === "SELESAI" ? "green" : "red"}>{l.status}</Badge></td><td className="max-w-xs truncate text-xs text-rose-600">{l.error}</td></tr>)}</tbody>
+            <tbody>{logs.map((l) => <tr key={l.id}><td>{fmtDateTime(l.at)}</td><td>{l.channel}</td><td>{l.type}</td><td className="font-mono text-xs">{l.target}</td><td><Badge tone={l.status === "TERKIRIM" || l.status === "SELESAI" ? "green" : "red"}>{l.status}</Badge></td><td className="min-w-[10rem] max-w-xs !whitespace-normal break-words text-xs text-rose-600">{l.error}</td></tr>)}</tbody>
           </table></Paged>
         </div>
       </Card>

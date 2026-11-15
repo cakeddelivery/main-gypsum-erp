@@ -4,9 +4,14 @@ import { action, str, optStr, int, bool } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { evaluateCheckIn, readGeo } from "@/lib/attendance";
 import { selfCheckIn, selfCheckOut } from "@/lib/attendanceSelf";
-import { addDays, dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
+import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
-import type { AttendanceStatus } from "@prisma/client";
+import type { AttendanceStatus, LeaveKind } from "@prisma/client";
+import { cancelLeave, decideLeave, leaveError, submitLeave } from "@/lib/leave";
+import { parseChanges } from "@/lib/scheduleEdit";
+import { applyScheduleChanges } from "@/lib/scheduleSave";
+import { MAX_PROOF_BYTES, MAX_PROOF_TEXT, saveProof } from "@/lib/storage";
+import { sniffMime } from "@/lib/imageCompress";
 
 export const checkIn = action(
   "attendance.self",
@@ -108,29 +113,67 @@ export const validateAttendance = action(
   ["/absensi", "/"],
 );
 
-export const saveSchedule = action(
+/** Atur jadwal langsung di tabel: semua perubahan disimpan sekaligus */
+export const saveScheduleCells = action(
   "attendance.manage",
   async (fd, user) => {
-    const ids = fd.getAll("employeeIds").map(String);
-    const shiftId = str(fd, "shiftId");
-    const from = str(fd, "from");
-    const to = str(fd, "to");
-    if (!ids.length) throw new Error("Pilih karyawan");
-    if (to < from) throw new Error("Tanggal akhir sebelum tanggal awal");
-    const days: string[] = [];
-    for (let d = from; d <= to && days.length < 62; d = addDays(d, 1)) days.push(d);
-    const skipSunday = fd.get("skipSunday") === "on";
-    let n = 0;
-    for (const employeeId of ids) {
-      await guardEmployee(employeeId, user);
-      for (const d of days) {
-        if (skipSunday && dateOnly(d).getUTCDay() === 0) continue;
-        await prisma.shiftSchedule.upsert({ where: { employeeId_date: { employeeId, date: dateOnly(d) } }, create: { employeeId, date: dateOnly(d), shiftId }, update: { shiftId } });
-        n++;
-      }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(str(fd, "changes") || "[]");
+    } catch {
+      throw new Error("Data jadwal tidak valid");
     }
-    await audit(user, "JADWAL_DIATUR", "ShiftSchedule", null, { ids, shiftId, from, to });
-    return `${n} jadwal tersimpan`;
+    const changes = parseChanges(raw);
+    if (!changes.length) return "Tidak ada perubahan";
+    for (const employeeId of new Set(changes.map((c) => c.employeeId))) await guardEmployee(employeeId, user);
+    const r = await applyScheduleChanges(changes);
+    await audit(user, "JADWAL_DIATUR", "ShiftSchedule", null, { perubahan: changes.length, masuk: r.saved, libur: r.removed });
+    return `Jadwal tersimpan (${changes.length} perubahan)`;
+  },
+  ["/absensi"],
+);
+
+/** Karyawan mengajukan izin / sakit (lampiran foto opsional; wajib untuk sakit > 1 hari) */
+export const submitLeaveRequest = action(
+  "attendance.self",
+  async (fd, user) => {
+    const file = fd.get("attachment");
+    const has = file instanceof File && file.size > 0;
+    if (has && file.size > MAX_PROOF_BYTES) throw new Error(MAX_PROOF_TEXT);
+    const kind = str(fd, "kind") as LeaveKind;
+    const from = str(fd, "dateFrom");
+    const to = optStr(fd, "dateTo") || from;
+    const input = { kind, from, to, reason: str(fd, "reason"), hasAttachment: has };
+    const err = leaveError(input, todayStr());
+    if (err) throw new Error(err);
+    let attachmentPath: string | null = null;
+    if (has) {
+      const buf = Buffer.from(await file.arrayBuffer());
+      const mime = sniffMime(buf);
+      if (!mime || (!mime.startsWith("image/") && mime !== "application/pdf")) throw new Error("Lampiran harus foto atau PDF");
+      attachmentPath = await saveProof(buf, mime);
+    }
+    await submitLeave(user, { ...input, attachmentPath });
+    return "Pengajuan terkirim. Menunggu persetujuan Supervisor/Owner.";
+  },
+  ["/absensi"],
+);
+
+export const decideLeaveRequest = action(
+  "attendance.view",
+  async (fd, user) => {
+    const approve = str(fd, "decision") === "setuju";
+    const r = await decideLeave(user, str(fd, "id"), approve, optStr(fd, "rejectReason"));
+    return approve ? `Disetujui — ${r.applied} hari dicatat di absensi${r.skipped ? ` (${r.skipped} hari sudah hadir/libur, dibiarkan)` : ""}` : "Pengajuan ditolak";
+  },
+  ["/absensi", "/"],
+);
+
+export const cancelLeaveRequest = action(
+  "attendance.self",
+  async (fd, user) => {
+    await cancelLeave(user, str(fd, "id"));
+    return "Pengajuan dibatalkan";
   },
   ["/absensi"],
 );

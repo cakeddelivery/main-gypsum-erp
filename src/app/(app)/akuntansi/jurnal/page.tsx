@@ -28,7 +28,7 @@ function shortStamp(d: Date) {
   return `${day} ${time}`;
 }
 const amt = (v: bigint) => (Number(v) ? Number(v).toLocaleString("id-ID") : null);
-const pill = "inline-flex max-w-[9rem] items-center truncate rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset";
+const pill = "inline-flex max-w-[12rem] items-center whitespace-normal break-words rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset";
 
 export default async function JurnalPage({ searchParams }: { searchParams: Promise<SP> }) {
   const user = await requirePerm("accounting.view");

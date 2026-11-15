@@ -116,7 +116,7 @@ export default async function ProduksiPage({ searchParams }: { searchParams: Pro
                   <td>{e.product.name}</td>
                   <td className="num">{e.qtyGood}</td>
                   <td className="num text-rose-600">{e.qtyReject}{e.rejectReason && <div className="text-[11px] font-normal text-slate-400">{e.rejectReason}</div>}</td>
-                  <td className="max-w-[200px] truncate text-slate-500">{e.note}</td>
+                  <td className="min-w-[10rem] max-w-[220px] !whitespace-normal break-words text-slate-500">{e.note}</td>
                   {user.can("production.edit") && (
                     <td>
                       <ActionForm action={deleteEntry} confirm="Hapus entri ini? Mutasi stok & jurnal terkait akan dibalik.">

@@ -5,7 +5,8 @@ import { Icon } from "./Icon";
 const KEY = "mg-theme";
 
 /** Pilihan tersimpan di perangkat; bila belum pernah memilih, ikuti setelan sistem */
-export const THEME_SCRIPT = `try{var t=localStorage.getItem("${KEY}");if(t==="dark"||(!t&&matchMedia("(prefers-color-scheme: dark)").matches))document.documentElement.dataset.theme="dark"}catch(e){}`;
+// Halaman cetak (/cetak/…, untuk PDF) selalu tema terang
+export const THEME_SCRIPT = `try{var t=localStorage.getItem("${KEY}");if(location.pathname.indexOf("/cetak")!==0&&(t==="dark"||(!t&&matchMedia("(prefers-color-scheme: dark)").matches)))document.documentElement.dataset.theme="dark"}catch(e){}`;
 
 export function ThemeToggle({ withLabel = false }: { withLabel?: boolean }) {
   const [dark, setDark] = useState<boolean | null>(null);

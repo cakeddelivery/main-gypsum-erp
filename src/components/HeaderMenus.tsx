@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { markAlertsRead } from "@/app/(app)/profil/actions";
-import { initials } from "@/lib/initials";
+import { Avatar } from "./Avatar";
 import { Icon } from "./Icon";
 import { startNavProgress } from "./NavProgress";
 
@@ -88,12 +88,12 @@ export function NotificationBell({ alerts }: { alerts: HeaderAlert[] }) {
 }
 
 /** Ikon profil: info pengguna yang login + menu Profil dan Keluar */
-export function ProfileMenu({ user }: { user: { name: string; username: string; role: string; division?: string | null } }) {
+export function ProfileMenu({ user }: { user: { name: string; username: string; role: string; division?: string | null; photoUrl?: string | null } }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="relative">
       <button type="button" className="flex items-center gap-2 rounded-lg p-1 hover:bg-slate-100" aria-label="Profil" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        <span className="grid h-8 w-8 place-items-center rounded-full bg-brand-600 text-xs font-bold text-white">{initials(user.name)}</span>
+        <Avatar name={user.name} src={user.photoUrl} size={32} />
         <span className="hidden text-left text-xs leading-tight sm:block">
           <span className="block font-medium text-slate-800">{user.name}</span>
           <span className="block text-slate-500">{user.role}</span>
@@ -101,10 +101,10 @@ export function ProfileMenu({ user }: { user: { name: string; username: string; 
       </button>
       <Popover open={open} onClose={() => setOpen(false)} label="Profil">
         <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4">
-          <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-brand-600 text-sm font-bold text-white">{initials(user.name)}</span>
+          <Avatar name={user.name} src={user.photoUrl} size={44} />
           <div className="min-w-0">
-            <div className="truncate font-semibold text-slate-900">{user.name}</div>
-            <div className="truncate text-sm text-slate-500">@{user.username} · {user.role}{user.division ? ` · ${user.division}` : ""}</div>
+            <div className="break-words font-semibold text-slate-900">{user.name}</div>
+            <div className="break-words text-sm text-slate-500">@{user.username} · {user.role}{user.division ? ` · ${user.division}` : ""}</div>
           </div>
         </div>
         <div className="p-2">

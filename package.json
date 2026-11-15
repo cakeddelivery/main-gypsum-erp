@@ -37,7 +37,8 @@
     "kompres:file": "tsx scripts/kompres-file.ts",
     "backup": "bash scripts/backup.sh",
     "restore": "bash scripts/restore.sh",
-    "backup:buka": "bash scripts/decrypt-backup.sh"
+    "backup:buka": "bash scripts/decrypt-backup.sh",
+    "test:hp": "node scripts/cek-tampilan-hp.cjs"
   },
   "author": "",
   "license": "ISC",

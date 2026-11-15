@@ -30,11 +30,15 @@ import {
 } from "@/lib/shiftReport";
 import { addReceipt, removeChecklistPhoto, removeReceipt, saveReport, uploadChecklistPhoto } from "../actions";
 import { FormDraft, clearFormDraft } from "@/components/FormDraft";
+import { CameraCapture } from "@/components/CameraCapture";
+import { readReopen, reportReopenKey, writeReopen } from "@/lib/reopen";
+import { setUploading } from "@/lib/appVersion";
 
 /** Baris pesanan yang sedang dikirim (Stok → Pembelian) untuk barang divisi ini */
 export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean; vendor: string; itemName: string; unit: string };
 export type ReceiptView = { id: string; number: string; itemName: string; unit: string; qty: number; supplierName: string | null; hasPhoto: boolean; linked: boolean };
-export type ResultCountRow = { key: string; label: string; unit: string; qty: number | null; group?: string };
+/** Barang tahap "Stok jadi": `group` produk induk, `sub` paket (baris katalog), `col` series (kolom katalog) */
+export type ResultCountRow = { key: string; label: string; unit: string; qty: number | null; group?: string; sub?: string; col?: string };
 
 type Props = {
   id: string;
@@ -72,18 +76,6 @@ const fmt = (v: number) => v.toLocaleString("id-ID");
 const toNum = (s: string) => (s.trim() === "" ? null : Math.max(0, Math.round(Number(s.replace(/\./g, "").replace(/,/g, ".")) || 0)));
 
 /** Perkecil foto di HP sebelum diunggah (maks. 1600 px, JPEG) agar cepat & hemat kuota */
-async function shrink(file: File): Promise<Blob> {
-  if (!file.type.startsWith("image/")) throw new Error("File harus berupa foto");
-  const img = await createImageBitmap(file).catch(() => null);
-  if (!img) return file;
-  const scale = Math.min(1, 1600 / Math.max(img.width, img.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(img.width * scale);
-  canvas.height = Math.round(img.height * scale);
-  canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
-  return new Promise((res) => canvas.toBlob((b) => res(b ?? file), "image/jpeg", 0.8));
-}
-
 export function ReportForm(p: Props) {
   const t = p.template ? TEMPLATES[p.template] : null;
   const [work, setWork] = useState<WorkData>(() => {
@@ -110,8 +102,14 @@ export function ReportForm(p: Props) {
     ...(stock.length > 0 ? [{ key: "stok", label: "Stok akhir" }] : []),
     { key: "catatan", label: "Catatan & kirim" },
   ];
-  const [step, setStep] = useState(0);
-  const [seen, setSeen] = useState(() => new Set([0]));
+  // Halaman sempat dimuat ulang (mis. HP menutup browser saat kamera dibuka): lanjut di langkah terakhir
+  const reopenKey = reportReopenKey(p.id);
+  const [step, setStep] = useState(() => {
+    if (typeof window === "undefined") return 0;
+    const i = steps.findIndex((x) => x.key === readReopen(reopenKey)?.step);
+    return i < 0 ? 0 : i;
+  });
+  const [seen, setSeen] = useState(() => new Set([0, step]));
   const cur = steps[Math.min(step, steps.length - 1)].key;
   const last = step >= steps.length - 1;
   const close = useCloseModal();
@@ -122,6 +120,26 @@ export function ReportForm(p: Props) {
     setStep(i);
     setSeen((x) => new Set(x).add(i));
   };
+  // Ingat langkah aktif; setelah muat ulang gulir ke item checklist terakhir yang sedang difoto
+  useEffect(() => {
+    writeReopen(reopenKey, { step: steps[step]?.key });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+  useEffect(() => {
+    const item = readReopen(reopenKey)?.item;
+    if (item == null) return;
+    writeReopen(reopenKey, { item: undefined });
+    const t = window.setTimeout(() => {
+      const el = formRef.current?.querySelector<HTMLElement>(`[data-check-item="${item}"]`);
+      if (!el) return;
+      el.scrollIntoView({ block: "center" });
+      el.classList.add("ring-2", "ring-brand-400");
+      window.setTimeout(() => el.classList.remove("ring-2", "ring-brand-400"), 2500);
+      toast("Lanjut dari foto checklist terakhir");
+    }, 500);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Pindah langkah → kembali ke atas popup
   useEffect(() => {
     const body = bodyTop.current?.closest(".modal-body");
@@ -147,14 +165,21 @@ export function ReportForm(p: Props) {
   const [rc, setRc] = useState<Record<string, string>>(() => Object.fromEntries(p.resultCount.map((r) => [r.key, r.qty == null ? "" : String(r.qty)])));
   const rcFilled = Object.values(rc).filter((v) => v !== "").length;
   const [rcQuery, setRcQuery] = useState("");
-  const matches = (label: string) => !rcQuery.trim() || label.toLowerCase().includes(rcQuery.trim().toLowerCase());
+  // Cari per kata (mis. "24 cewek" cocok dengan "Paket Single Pack 24 pcs · Cewek")
+  const matches = (label: string) => rcQuery.trim().toLowerCase().split(/\s+/).every((w) => label.toLowerCase().includes(w));
   const rcGroups = Object.entries(
     p.resultCount.reduce<Record<string, ResultCountRow[]>>((m, r) => ((m[r.group ?? "Lainnya"] ??= []).push(r), m), {}),
   );
   // Tutup (✕ di bawah atau di judul popup): konfirmasi simpan draf / buang perubahan bila ada isian berubah
   const [dirty, setDirty] = useState(false);
   const [closeAsk, setCloseAsk] = useState(false);
-  const askClose = () => (dirty ? setCloseAsk(true) : close());
+  // Tombol ✕: selalu konfirmasi dulu (isian yang belum disimpan bisa hilang); setelah ditutup kembali ke daftar Laporan
+  const askClose = () => setCloseAsk(true);
+  const leaving = useRef(false);
+  const leave = () => {
+    close();
+    router.push("/laporan");
+  };
   const setGuard = useCloseGuard();
   useEffect(() => {
     setGuard(askClose);
@@ -212,7 +237,8 @@ export function ReportForm(p: Props) {
         setConfirming(false);
         setCloseAsk(false);
         setDirty(false);
-        window.setTimeout(close, 750);
+        window.setTimeout(leaving.current ? leave : close, 750);
+        leaving.current = false;
       }}
       onError={(err) => {
         if (!sending.current) return;
@@ -385,7 +411,7 @@ export function ReportForm(p: Props) {
         <h3 className="mb-2 font-semibold text-slate-800">Checklist penutupan {doneCount}/{p.checklist.length}</h3>
         <ul className="space-y-2">
           {p.checklist.map((c, i) => (
-            <li key={i} className={`flex items-center gap-3 rounded-lg border px-3 py-2 ${(c.photo ? c.photoPath : checks[i]) ? "border-emerald-200 bg-emerald-50" : "border-slate-200"}`}>
+            <li key={i} data-check-item={i} className={`flex items-center gap-3 rounded-lg border px-3 py-2 transition ${(c.photo ? c.photoPath : checks[i]) ? "border-emerald-200 bg-emerald-50" : "border-slate-200"}`}>
               {c.photo ? (
                 <PhotoTask id={p.id} index={i} entry={c} />
               ) : (
@@ -421,20 +447,48 @@ export function ReportForm(p: Props) {
                     <span className="min-w-0">{g}</span>
                     <span className="flex shrink-0 items-center gap-2 text-xs text-slate-500 tabular-nums">{filled}/{rows.length}<span className="transition group-open:rotate-180" aria-hidden>▾</span></span>
                   </summary>
-                  <ul className="divide-y divide-slate-100 border-t border-slate-100 px-3">
-                    {rows.map((r) => (
-                      <CountRow
-                        key={r.key}
-                        hidden={!matches(r.label)}
-                        name={r.label}
-                        unit={r.unit}
-                        inputName={`rc.${r.key}`}
-                        inputMode="numeric"
-                        value={rc[r.key] ?? ""}
-                        onChange={(v) => setRc((x) => ({ ...x, [r.key]: v }))}
-                      />
-                    ))}
-                  </ul>
+                  {rows.some((r) => r.col) ? (
+                    // Produk induk: per paket (baris katalog), series dalam 2 kolom agar tidak banyak gulir
+                    <div className="space-y-2 border-t border-slate-100 p-2">
+                      {Object.entries(rows.reduce<Record<string, ResultCountRow[]>>((m, r) => ((m[r.sub ?? ""] ??= []).push(r), m), {})).map(([sub, cells]) => {
+                        const vis = cells.filter((r) => matches(r.label));
+                        const sum = cells.reduce((a, r) => a + (Number(rc[r.key]) || 0), 0);
+                        return (
+                          <div key={sub || "-"} className={`rounded-lg border border-slate-200 p-2.5 ${vis.length ? "" : "hidden"}`}>
+                            {sub && (
+                              <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                                <span className="text-sm font-semibold text-slate-800">{sub}</span>
+                                <span className="text-xs text-slate-500 tabular-nums">{sum ? `${sum.toLocaleString("id-ID")} ${cells[0].unit}` : "—"}</span>
+                              </div>
+                            )}
+                            <div className="keep-cols grid grid-cols-2 gap-2">
+                              {cells.map((r) => (
+                                <label key={r.key} className={`block min-w-0 ${matches(r.label) ? "" : "hidden"}`}>
+                                  <span className="block break-words text-xs leading-tight text-slate-500">{r.col || r.label}</span>
+                                  <input name={`rc.${r.key}`} inputMode="numeric" value={rc[r.key] ?? ""} onChange={(e) => setRc((x) => ({ ...x, [r.key]: e.target.value }))} className={`input py-1.5 text-right ${rc[r.key] ? "border-brand-400 bg-brand-50" : ""}`} placeholder="0" aria-label={r.label} />
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <ul className="divide-y divide-slate-100 border-t border-slate-100 px-3">
+                      {rows.map((r) => (
+                        <CountRow
+                          key={r.key}
+                          hidden={!matches(r.label)}
+                          name={r.label}
+                          unit={r.unit}
+                          inputName={`rc.${r.key}`}
+                          inputMode="numeric"
+                          value={rc[r.key] ?? ""}
+                          onChange={(v) => setRc((x) => ({ ...x, [r.key]: v }))}
+                        />
+                      ))}
+                    </ul>
+                  )}
                 </details>
               );
             })}
@@ -507,7 +561,6 @@ export function ReportForm(p: Props) {
       </p>
       {/* Tombol selalu terlihat di bawah popup */}
       <div className="modal-foot">
-        <button type="button" className="btn-secondary btn-icon" aria-label="Tutup laporan" onClick={askClose}>✕</button>
         <button type="button" className="btn-secondary flex-1" disabled={step === 0} onClick={() => go(step - 1)}>‹ Kembali</button>
         {last ? (
           <button type="button" className="btn-success flex-1" onClick={trySend}>{p.sent ? "Kirim ulang" : "Kirim laporan"}</button>
@@ -520,12 +573,12 @@ export function ReportForm(p: Props) {
         <div role="alertdialog" aria-labelledby="tutup-lap-judul" className="anim-fade fixed inset-0 z-30 grid place-items-center bg-slate-900/50 p-4">
           <div className="anim-pop w-full max-w-sm rounded-xl border border-slate-300 bg-white p-4 shadow-2xl">
             <p id="tutup-lap-judul" className="font-semibold text-slate-900">Tutup laporan?</p>
-            <p className="mt-1 text-sm text-slate-600">Ada isian yang belum disimpan. Simpan sebagai draf agar bisa dilanjutkan nanti.</p>
+            <p className="mt-1 text-sm text-slate-600">{dirty ? "Ada isian yang belum disimpan dan akan hilang bila ditutup." : "Isian yang belum disimpan akan hilang bila ditutup."} Simpan sebagai draf agar bisa dilanjutkan nanti.</p>
             <div className="mt-4 grid gap-2">
-              <span className="flex" onClickCapture={() => (sending.current = false)}>
+              <span className="flex" onClickCapture={() => { sending.current = false; leaving.current = true; }}>
                 <Submit className="btn-primary flex-1" name="intent" value="draft" pendingText="Menyimpan…">Simpan draf</Submit>
               </span>
-              <button type="button" className="btn-danger" onClick={() => { clearFormDraft(draftKey); setCloseAsk(false); close(); }}>Buang perubahan</button>
+              <button type="button" className="btn-danger" onClick={() => { clearFormDraft(draftKey); setCloseAsk(false); leave(); }}>Tutup tanpa simpan</button>
               <button type="button" className="btn-secondary" onClick={() => setCloseAsk(false)} autoFocus>Batal</button>
             </div>
           </div>
@@ -568,7 +621,8 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
   const [itemId, setItemId] = useState("");
   const [qty, setQty] = useState("");
   const [shop, setShop] = useState("");
-  const photo = useRef<HTMLInputElement>(null);
+  const [photo, setPhoto] = useState<{ blob: Blob; url: string } | null>(null);
+  const [cam, setCam] = useState(false);
   const unit = materials.find((m) => m.id === itemId)?.unit;
   const itemOrders = orders.filter((o) => o.itemId === itemId);
   const [orderLine, setOrderLine] = useState("");
@@ -607,18 +661,14 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
         fd.set("purchaseLineId", order.lineId);
         if (order.cod) fd.set("bankAccountId", bank);
       }
-      const f = photo.current?.files?.[0];
-      if (f) {
-        const blob = await shrink(f);
-        fd.set("photo", new File([blob], "nota.jpg", { type: blob.type || "image/jpeg" }));
-      }
+      if (photo) fd.set("photo", new File([photo.blob], "nota.jpg", { type: photo.blob.type || "image/jpeg" }));
       return addReceipt(fd);
     }, "Barang masuk tercatat").then((ok) => {
       if (!ok) return;
       setItemId("");
       setQty("");
       setOrderLine("");
-      if (photo.current) photo.current.value = "";
+      setPhoto(null);
     });
   return (
     <section className="card p-4">
@@ -701,7 +751,15 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
           </label>
         )}
         {order && <p className="col-span-12 text-xs text-sky-700">Barang ini divalidasi sebagai penerimaan pesanan: stok masuk dan {order.cod ? "pembayaran COD" : "uang muka/hutang"} tercatat otomatis. Tidak perlu dicatat lagi di Pembelian.</p>}
-        <label className="col-span-12 sm:col-span-8"><span className="text-xs text-slate-500">Foto nota (opsional)</span><input ref={photo} type="file" accept="image/*" capture="environment" className="block w-full text-sm" /></label>
+        <div className="col-span-12 sm:col-span-8"><span className="text-xs text-slate-500">Foto nota (opsional)</span>
+          <div className="flex items-center gap-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            {photo && <img src={photo.url} alt="Foto nota" className="h-10 w-10 rounded-md object-cover" />}
+            <button type="button" className="btn-secondary btn-sm" onClick={() => setCam(true)}>📷 {photo ? "Ganti foto" : "Foto nota"}</button>
+            {photo && <button type="button" className="text-xs text-slate-500 underline" onClick={() => setPhoto(null)}>Hapus</button>}
+          </div>
+          <CameraCapture open={cam} title="Foto nota" onClose={() => setCam(false)} onCapture={(blob) => setPhoto({ blob, url: URL.createObjectURL(blob) })} />
+        </div>
         <div className="col-span-12 flex items-end sm:col-span-4"><button type="button" className="btn-primary btn-sm w-full" disabled={busy} onClick={add}>{busy ? "Menyimpan…" : "+ Catat barang masuk"}</button></div>
       </div>
     </section>
@@ -710,8 +768,8 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
 
 function PhotoTask({ id, index, entry }: { id: string; index: number; entry: ChecklistEntry }) {
   const router = useRouter();
-  const input = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [cam, setCam] = useState(false);
   const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, ok: string) => {
     setBusy(true);
     try {
@@ -725,6 +783,17 @@ function PhotoTask({ id, index, entry }: { id: string; index: number; entry: Che
       setBusy(false);
     }
   };
+  // Foto langsung diunggah begitu diambil (sudah dikompres di HP) → tersimpan di draf laporan di server
+  const upload = (blob: Blob) => {
+    setUploading(true);
+    return run(async () => {
+      const fd = new FormData();
+      fd.set("id", id);
+      fd.set("index", String(index));
+      fd.set("photo", new File([blob], "foto.jpg", { type: blob.type || "image/jpeg" }));
+      return uploadChecklistPhoto(fd);
+    }, "Foto tersimpan").finally(() => setUploading(false));
+  };
   const src = entry.photoPath ? `/api/files/report/${id}/${index}?v=${encodeURIComponent(entry.photoPath.split("/").pop() ?? "")}` : null;
   return (
     <div className="flex flex-1 items-center gap-3">
@@ -735,30 +804,28 @@ function PhotoTask({ id, index, entry }: { id: string; index: number; entry: Che
       )}
       <div className="min-w-0 flex-1">
         <div className="text-sm">{isDone(entry) ? "✓ " : ""}{entry.label}</div>
-        <div className="text-xs text-slate-500">{src ? "Foto bukti terlampir" : "Wajib foto bukti"}</div>
+        <div className="text-xs text-slate-500">{busy ? "Mengunggah foto…" : src ? "Foto bukti terlampir" : "Wajib foto bukti"}</div>
       </div>
-      <input
-        ref={input}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          e.target.value = "";
-          if (!f) return;
-          run(async () => {
-            const blob = await shrink(f);
-            const fd = new FormData();
-            fd.set("id", id);
-            fd.set("index", String(index));
-            fd.set("photo", new File([blob], "foto.jpg", { type: blob.type || "image/jpeg" }));
-            return uploadChecklistPhoto(fd);
-          }, "Foto tersimpan");
-        }}
+      <CameraCapture
+        open={cam}
+        title={entry.label}
+        onClose={() => setCam(false)}
+        onCapture={upload}
+        onBeforeExternal={() => writeReopen(reportReopenKey(id), { item: index })}
       />
       <div className="flex shrink-0 flex-col gap-1 sm:flex-row">
-        <button type="button" data-flush-draft className="btn-secondary btn-sm" disabled={busy} onClick={() => input.current?.click()}>{busy ? "…" : src ? "Ganti" : "Foto"}</button>
+        <button
+          type="button"
+          data-flush-draft
+          className="btn-secondary btn-sm"
+          disabled={busy}
+          onClick={() => {
+            writeReopen(reportReopenKey(id), { item: index });
+            setCam(true);
+          }}
+        >
+          {busy ? "…" : src ? "Ganti" : "Foto"}
+        </button>
         {src && (
           <button
             type="button"
@@ -785,12 +852,12 @@ function CountRow({ name, sub, unit, inputName, inputMode, value, onChange, warn
   return (
     <li className={`flex items-center gap-3 py-2 ${hidden ? "hidden" : ""}`}>
       <div className="min-w-0 flex-1">
-        <div className={`line-clamp-2 text-sm leading-snug ${warn ? "font-medium text-amber-700" : "text-slate-800"}`}>{name}</div>
+        <div className={`break-words text-sm leading-snug ${warn ? "font-medium text-amber-700" : "text-slate-800"}`}>{name}</div>
         {sub && <div className="text-xs text-slate-500">{sub}</div>}
       </div>
       <label className="flex shrink-0 items-center gap-1.5">
-        <input name={inputName} inputMode={inputMode} value={value} onChange={(e) => onChange(e.target.value)} className="input w-20 py-1.5 text-right" placeholder="0" aria-label={typeof name === "string" ? name : undefined} />
-        <span className="w-14 truncate text-xs text-slate-500" title={unit}>{unit}</span>
+        <input name={inputName} inputMode={inputMode} value={value} onChange={(e) => onChange(e.target.value)} className="input w-[4.5rem] py-1.5 text-right" placeholder="0" aria-label={typeof name === "string" ? name : undefined} />
+        <span className="w-12 break-words text-[11px] leading-tight text-slate-500">{unit}</span>
       </label>
     </li>
   );

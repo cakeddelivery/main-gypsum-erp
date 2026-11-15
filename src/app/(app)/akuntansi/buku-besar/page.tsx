@@ -34,7 +34,7 @@ export default async function BukuBesar({ searchParams }: { searchParams: Promis
           <thead><tr><th>Tanggal</th><th>No. jurnal</th><th>Keterangan</th><th className="num">Debit</th><th className="num">Kredit</th><th className="num">Saldo</th></tr></thead>
           <tbody>
             <tr className="bg-slate-50"><td colSpan={5}>Saldo awal</td><td className="num font-semibold">{idr(l.opening)}</td></tr>
-            {l.rows.map((x) => <tr key={x.id}><td>{fmtDateTime(x.date)}</td><td className="font-mono text-xs">{x.number}</td><td className="max-w-xs truncate">{x.description}{x.memo && <span className="text-xs text-slate-400"> · {x.memo}</span>}</td><td className="num">{x.debit ? idr(x.debit) : ""}</td><td className="num">{x.credit ? idr(x.credit) : ""}</td><td className="num">{idr(x.balance)}</td></tr>)}
+            {l.rows.map((x) => <tr key={x.id}><td>{fmtDateTime(x.date)}</td><td className="font-mono text-xs">{x.number}</td><td className="min-w-[12rem] max-w-xs !whitespace-normal break-words">{x.description}{x.memo && <span className="text-xs text-slate-400"> · {x.memo}</span>}</td><td className="num">{x.debit ? idr(x.debit) : ""}</td><td className="num">{x.credit ? idr(x.credit) : ""}</td><td className="num">{idr(x.balance)}</td></tr>)}
           </tbody>
           <tfoot><tr className="bg-slate-50 font-semibold"><td colSpan={5}>Saldo akhir</td><td className="num">{idr(l.closing)}</td></tr></tfoot>
         </table></Paged>

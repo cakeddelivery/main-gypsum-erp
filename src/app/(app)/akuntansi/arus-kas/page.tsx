@@ -48,7 +48,7 @@ export default async function ArusKas({ searchParams }: { searchParams: Promise<
                 <tbody>
                   {cf.groups[s.key].length === 0 && <tr><td colSpan={5} className="text-slate-400">Tidak ada transaksi pada periode ini</td></tr>}
                   {cf.groups[s.key].map((x, i) => (
-                    <tr key={i}><td>{fmtDate(x.date)}</td><td className="font-mono text-xs">{x.number}</td><td className="max-w-xs truncate">{x.memo}</td><td className="num text-emerald-600">{x.amount > 0 ? idr(x.amount) : ""}</td><td className="num text-rose-600">{x.amount < 0 ? idr(-x.amount) : ""}</td></tr>
+                    <tr key={i}><td>{fmtDate(x.date)}</td><td className="font-mono text-xs">{x.number}</td><td className="min-w-[12rem] max-w-xs !whitespace-normal break-words">{x.memo}</td><td className="num text-emerald-600">{x.amount > 0 ? idr(x.amount) : ""}</td><td className="num text-rose-600">{x.amount < 0 ? idr(-x.amount) : ""}</td></tr>
                   ))}
                 </tbody>
                 <tfoot><tr className="bg-slate-50 font-semibold"><td colSpan={4}>Kas bersih {s.title.toLowerCase()}</td><td className={`num ${totals[s.key] < 0 ? "text-rose-600" : ""}`}>{idr(totals[s.key])}</td></tr></tfoot>

@@ -1,13 +1,14 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 
-const PAGE = 10;
-
 /**
- * Pagination 10 baris untuk tabel di dalamnya. Baris disembunyikan lewat atribut data-pg-hidden,
+ * Pagination (bawaan 10 baris) untuk tabel di dalamnya. Baris disembunyikan lewat atribut data-pg-hidden,
  * sehingga saat diunduh JPG atau dicetak semua baris tetap tampil (lihat globals.css).
+ * Baris judul kelompok (`data-pg-group`) tidak dihitung; judul ikut tampil (diulang) di setiap halaman
+ * yang memuat baris kelompoknya, sehingga kelompok yang terpotong tetap jelas.
  */
-export function Paged({ children }: { children: React.ReactNode }) {
+export function Paged({ children, size = 10 }: { children: React.ReactNode; size?: number }) {
+  const PAGE = size;
   const ref = useRef<HTMLDivElement>(null);
   const [count, setCount] = useState(0);
   const [page, setPage] = useState(0);
@@ -17,7 +18,7 @@ export function Paged({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const measure = () => setCount(el.querySelectorAll(":scope > table > tbody > tr").length);
+    const measure = () => setCount(el.querySelectorAll(":scope > table > tbody > tr:not([data-pg-group])").length);
     measure();
     const obs = new MutationObserver(measure);
     obs.observe(el, { childList: true, subtree: true });
@@ -25,8 +26,23 @@ export function Paged({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    ref.current?.querySelectorAll<HTMLTableRowElement>(":scope > table > tbody > tr").forEach((r, i) => r.toggleAttribute("data-pg-hidden", Math.floor(i / PAGE) !== cur));
-  }, [cur, count]);
+    const rows = ref.current?.querySelectorAll<HTMLTableRowElement>(":scope > table > tbody > tr");
+    if (!rows) return;
+    let i = 0;
+    let header: { row: HTMLTableRowElement; shown: boolean } | null = null;
+    const closeHeader = () => header && header.row.toggleAttribute("data-pg-hidden", !header.shown);
+    rows.forEach((r) => {
+      if (r.hasAttribute("data-pg-group")) {
+        closeHeader();
+        header = { row: r, shown: false };
+        return;
+      }
+      const shown = Math.floor(i++ / PAGE) === cur;
+      r.toggleAttribute("data-pg-hidden", !shown);
+      if (shown && header) header.shown = true;
+    });
+    closeHeader();
+  }, [cur, count, PAGE]);
 
   return (
     <div ref={ref}>
