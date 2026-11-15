@@ -1,5 +1,6 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { clearReopen, readReopen, writeReopen } from "@/lib/reopen";
 
 const Ctx = createContext<() => void>(() => {});
 export const useCloseModal = () => useContext(Ctx);
@@ -14,7 +15,7 @@ export const CLOSE_MS = 160;
  * Popup form. Bila isian sudah diubah, menutup (✕, Esc, ketuk di luar popup) meminta konfirmasi dulu
  * agar isian tidak hilang tanpa sengaja. Setelah tersimpan, popup ditutup tanpa konfirmasi.
  */
-export function Modal({ trigger, title, children, triggerClass = "btn-primary", wide, full, defaultOpen = false, subtitle, grow, triggerLabel }: {
+export function Modal({ trigger, title, children, triggerClass = "btn-primary", wide, full, defaultOpen = false, subtitle, grow, triggerLabel, reopenKey }: {
   trigger: React.ReactNode;
   title: string;
   children: React.ReactNode;
@@ -28,6 +29,8 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
   grow?: boolean;
   /** Label aksesibel tombol pemicu (mis. tombol ikon) */
   triggerLabel?: string;
+  /** Popup diingat selama terbuka; bila halaman dimuat ulang (mis. HP menutup browser saat kamera dibuka) popup dibuka lagi otomatis */
+  reopenKey?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [dirty, setDirty] = useState(false);
@@ -35,6 +38,15 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
   const [closing, setClosing] = useState(false);
   const ref = useRef<HTMLDialogElement>(null);
   const btn = useRef<HTMLButtonElement>(null);
+  /** true = ditutup dengan sengaja (bukan karena halaman dimuat ulang) */
+  const closingRef = useRef(false);
+  // Dibuka lagi setelah muat ulang; ditandai saat terbuka, dihapus saat ditutup dengan benar
+  useEffect(() => {
+    if (reopenKey && readReopen(reopenKey)) setOpen(true);
+  }, [reopenKey]);
+  useEffect(() => {
+    if (reopenKey && open) writeReopen(reopenKey, {});
+  }, [open, reopenKey]);
   useEffect(() => {
     const d = ref.current;
     if (!d) return;
@@ -48,6 +60,8 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
       }
     }
     if (!open && d.open) d.close();
+    if (!open && closingRef.current && reopenKey) clearReopen(reopenKey);
+    if (!open) closingRef.current = false;
     if (!open) {
       setDirty(false);
       setAsking(false);
@@ -56,6 +70,7 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
   }, [open]);
   // Tutup dengan animasi singkat dulu, baru dialog benar-benar ditutup
   const forceClose = useCallback(() => {
+    closingRef.current = true;
     setClosing(true);
     window.setTimeout(() => setOpen(false), CLOSE_MS);
   }, []);
@@ -71,8 +86,10 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
         ref={ref}
         data-closing={closing || undefined}
         data-grow={grow || undefined}
-        onClose={() => setOpen(false)}
+        // Hanya event milik dialog ini (React meneruskan close/cancel dari dialog anak, mis. kamera, ke induknya)
+        onClose={(e) => { if (e.target !== e.currentTarget) return; closingRef.current = true; setOpen(false); }}
         onCancel={(e) => {
+          if (e.target !== e.currentTarget) return;
           e.preventDefault();
           requestClose();
         }}

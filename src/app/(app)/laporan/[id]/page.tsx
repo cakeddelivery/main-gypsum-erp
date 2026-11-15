@@ -23,6 +23,7 @@ import { DownloadJpg } from "@/components/DownloadJpg";
 import { Modal } from "@/components/Modal";
 import { ClearQuery } from "@/components/ClearQuery";
 import { ReportForm, ReceiptSection } from "./ReportForm";
+import { reportReopenKey } from "@/lib/reopen";
 import { ResultRows } from "../../borongan/BoronganForms";
 import { addResults } from "../../borongan/actions";
 import { setoranData } from "@/lib/boronganSetoran";
@@ -115,6 +116,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
               <Modal
                 full
                 defaultOpen={isi === "1"}
+                reopenKey={reportReopenKey(r.id)}
                 trigger={r.status === "DRAFT" ? "✏️ Lanjutkan isi laporan" : "✏️ Ubah laporan"}
                 title={`Laporan ${r.division.name}`}
                 subtitle={`${r.shift.name} · ${fmtDay(r.date)}`}
