@@ -54,7 +54,8 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
     );
   }
   if (can("attendance.manage")) {
-    tasks.push(prisma.attendance.count({ where: { validated: false, date: { lte: dateOnly(today) }, ...(divisionId ? { employee: { divisionId } } : {}) } }).then((c) => void (c && out.push({ key: "att", label: "Absensi belum divalidasi", count: c, href: "/absensi?tab=validasi", tone: "blue" }))));
+    // Validasi absensi sudah otomatis; yang perlu dilihat hanya Alpa kemarin (bila keliru, koreksi di tab Alpa & koreksi)
+    tasks.push(prisma.attendance.count({ where: { status: "ALPA", date: dateOnly(addDays(today, -1)), ...(divisionId ? { employee: { divisionId } } : {}) } }).then((c) => void (c && out.push({ key: "att", label: "Alpa kemarin", count: c, href: "/absensi?tab=koreksi", tone: "amber" }))));
   }
   if (can("retur.manage")) {
     tasks.push(prisma.returnCase.count({ where: { cancelledAt: null, status: "DITERIMA" } }).then((c) => void (c && out.push({ key: "retur", label: "Paket retur belum diperiksa", count: c, href: "/retur?tab=DITERIMA", tone: "amber" }))));

@@ -74,3 +74,21 @@ describe("Tanggal bayar tunjangan per orang", () => {
     expect(await prisma.payslip.count({ where: { employeeId: y.id, period: { code: { startsWith: "TNJ-203403" } } } })).toBe(0);
   });
 });
+
+describe("Bayar slip (bot/web) memakai total setelah potongan Alpa", () => {
+  it("jurnal pelunasan = total slip (pokok − Alpa), bukan gaji pokok penuh", async () => {
+    const { approvePeriod, paySlip } = await import("@/lib/payroll");
+    const { COA } = await import("@/lib/accounting");
+    const div = await prisma.division.findFirstOrThrow();
+    const tag = Date.now().toString(36).slice(-4).toUpperCase();
+    const e = await prisma.employee.create({ data: { code: `ALPA-PAY-${tag}`, name: `Alpa Bayar ${tag}`, divisionId: div.id, wageType: "BULANAN", monthlySalary: BigInt(3_000_000), joinDate: dateOnly("2033-01-10") } });
+    const p = await prisma.payrollPeriod.create({ data: { code: `GJB-ALPA-${tag}`, kind: "PERIODE", startDate: dateOnly("2035-01-10"), endDate: dateOnly("2035-02-09") } });
+    const slip = await prisma.payslip.create({ data: { periodId: p.id, employeeId: e.id, daysPresent: 25, baseSalary: BigInt(3_000_000), absentDays: 2, dailyWage: BigInt(0), pieceWage: BigInt(0), pieceDetail: [], transport: BigInt(0), alpaDeduction: BigInt(200_000), alpaDetail: { rule: "alpa30", from: "2035-01-10", dates: ["2035-01-14", "2035-01-20"] }, total: BigInt(2_800_000) } });
+    await approvePeriod(p.id, actor);
+    const bank = await prisma.bankAccount.findFirstOrThrow({ where: { active: true } });
+    const r = await paySlip(slip.id, bank.id, null, actor, jakartaDateTime("2035-02-16", "10:00"), { messageId: `alpa-${tag}` });
+    const lines = await prisma.journalLine.findMany({ where: { journalId: r.journal!.id }, include: { account: true } });
+    expect(lines.find((l) => l.account.code === COA.UTANG_GAJI)?.debit).toBe(BigInt(2_800_000));
+    expect(lines.reduce((t, l) => t + Number(l.credit), 0)).toBe(2_800_000);
+  });
+});

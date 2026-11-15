@@ -1,4 +1,4 @@
-import { AUTO_NOTE } from "@/lib/attendanceAuto";
+import { AUTO_NOTE, SHIFT_NOTE_PREFIX } from "@/lib/attendanceRules";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { addDays, dateOnly, dateStr, fmtDateTime, fmtDay, todayStr } from "@/lib/time";
@@ -9,7 +9,7 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { UseMyLocation } from "@/components/GeoFields";
-import { checkIn, checkOut, deleteWorkSite, saveAttendance, saveScheduleCells, saveWorkSite, validateAttendance } from "./actions";
+import { checkIn, checkOut, deleteWorkSite, saveAttendance, correctAttendance, saveScheduleCells, saveWorkSite } from "./actions";
 import { Paged } from "@/components/Paged";
 import { canDecideLeave } from "@/lib/leave";
 import { nearestShift } from "@/lib/attendance";
@@ -37,11 +37,13 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
     ...(isSelf ? [{ key: "saya", label: "Hari ini", href: "/absensi?tab=saya" }, { key: "riwayat", label: "Riwayat", href: "/absensi?tab=riwayat" }] : []),
     ...(isSelf || approver ? [{ key: "izin", label: "Izin & Sakit", href: "/absensi?tab=izin", count: pendingLeave || undefined }] : []),
     ...(canManage
-      ? [{ key: "harian", label: "Harian", href: `/absensi?tab=harian&date=${date}` }, { key: "jadwal", label: "Jadwal shift", href: `/absensi?tab=jadwal&date=${date}` }, { key: "validasi", label: "Validasi", href: "/absensi?tab=validasi" }, { key: "telat", label: "Rekap telat", href: `/absensi?tab=telat&date=${date}` }]
+      ? [{ key: "harian", label: "Harian", href: `/absensi?tab=harian&date=${date}` }, { key: "jadwal", label: "Jadwal shift", href: `/absensi?tab=jadwal&date=${date}` }, { key: "koreksi", label: "Alpa & koreksi", href: "/absensi?tab=koreksi" }, { key: "telat", label: "Rekap telat", href: `/absensi?tab=telat&date=${date}` }]
       : []),
     ...(canLocation ? [{ key: "lokasi", label: "Lokasi kerja", href: "/absensi?tab=lokasi" }] : []),
   ];
-  const tab = tabs.some((t) => t.key === sp.tab) ? sp.tab! : (tabs[0]?.key ?? "saya");
+  // Tautan lama ?tab=validasi diarahkan ke tab pengganti
+  const want = sp.tab === "validasi" ? "koreksi" : sp.tab;
+  const tab = tabs.some((t) => t.key === want) ? want! : (tabs[0]?.key ?? "saya");
   const divFilter = user.role === "KAPTEN_DIVISI" && user.divisionId ? { divisionId: user.divisionId } : {};
   const shifts = await prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" } });
   const month = sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : today.slice(0, 7);
@@ -55,7 +57,7 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
       {tab === "izin" && <IzinSakit user={user} />}
       {canManage && tab === "harian" && <Daily date={date} divFilter={divFilter} shifts={shifts} />}
       {canManage && tab === "jadwal" && <Schedule date={date} divFilter={divFilter} shifts={shifts} />}
-      {canManage && tab === "validasi" && <Validation divFilter={divFilter} />}
+      {canManage && tab === "koreksi" && <Corrections divFilter={divFilter} canCorrect={user.role === "SUPERVISOR" || user.role === "OWNER"} shifts={shifts} />}
       {canManage && tab === "telat" && <LateTab date={date} month={sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : date.slice(0, 7)} divisionId={user.role === "KAPTEN_DIVISI" ? user.divisionId : null} />}
       {canLocation && tab === "lokasi" && <WorkSites />}
     </div>
@@ -168,23 +170,64 @@ async function Schedule({ date, divFilter }: { date: string; divFilter: object; 
   );
 }
 
-async function Validation({ divFilter }: { divFilter: object }) {
-  const rows = await prisma.attendance.findMany({ where: { validated: false, employee: divFilter }, include: { employee: true, shift: true }, orderBy: { date: "desc" }, take: 200 });
-  if (!rows.length) return <Empty title="Semua absensi sudah divalidasi" />;
+/**
+ * Riwayat status otomatis (read-only): Alpa, Libur sesuai jadwal, dan shift yang disesuaikan otomatis, 30 hari terakhir.
+ * Supervisor/Owner bisa mengoreksi satu baris dengan alasan wajib (tercatat di audit log).
+ */
+async function Corrections({ divFilter, canCorrect }: { divFilter: object; canCorrect: boolean; shifts: Shift[] }) {
+  const today = todayStr();
+  const rows = await prisma.attendance.findMany({
+    where: { employee: divFilter, date: { gte: dateOnly(addDays(today, -30)), lt: dateOnly(today) }, OR: [{ status: { in: ["ALPA", "LIBUR"] } }, { note: { startsWith: SHIFT_NOTE_PREFIX } }, { note: { startsWith: "Koreksi " } }] },
+    include: { employee: { include: { division: true } }, shift: true },
+    orderBy: [{ date: "desc" }, { employee: { name: "asc" } }],
+    take: 300,
+  });
+  if (!rows.length) return <Empty title="Tidak ada Alpa atau koreksi 30 hari terakhir" />;
   return (
-    <ActionForm action={validateAttendance}>
-      <div className="table-wrap">
-        <Paged><table className="tbl">
-          <thead><tr><th /><th>Tanggal</th><th>Karyawan</th><th>Shift</th><th>Status</th><th>Masuk</th></tr></thead>
-          <tbody>
-            {rows.map((a) => (
-              <tr key={a.id}><td><input type="checkbox" name="ids" value={a.id} defaultChecked={a.note !== AUTO_NOTE} className="h-4 w-4" /></td><td>{fmtDay(a.date)}</td><td>{a.employee.name}{a.note === AUTO_NOTE && <div className="text-xs text-rose-600">Tanpa keterangan: ubah jadi Libur/Izin/Sakit lewat Atur absensi, atau centang untuk dihitung tidak masuk</div>}</td><td>{a.shift.name}</td><td><Badge tone={TONE[a.status]}>{ATT_LABEL[a.status]}{a.lateMinutes > 0 && ` ${a.lateMinutes}m`}</Badge></td><td>{fmtDateTime(a.checkIn)}</td></tr>
-            ))}
-          </tbody>
-        </table></Paged>
+    <div className="space-y-3">
+      <p className="text-sm text-slate-600">Status dihitung otomatis setiap pagi dari jadwal & absen: dijadwalkan masuk tanpa absen = <b>Alpa</b>, tidak dicentang di jadwal = <b>Libur</b>, absen di shift lain (Cetak/Oven) = shift disesuaikan. Tidak perlu divalidasi manual.{canCorrect ? " Bila keliru (mis. lupa absen), tekan Koreksi." : ""}</p>
+      <div className="card overflow-hidden">
+        <Paged>
+          <table className="tbl tbl-grid w-full">
+            <tbody>
+              {rows.map((a) => (
+                <tr key={a.id} className="align-top">
+                  <td className="!whitespace-normal">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="break-words font-medium text-slate-900">{a.employee.name}</span>
+                      <Badge tone={TONE[a.status]}>{a.status === "TERLAMBAT" ? `Telat ${a.lateMinutes} mnt` : ATT_LABEL[a.status]}</Badge>
+                    </div>
+                    <div className="mt-0.5 break-words text-xs text-slate-500">{fmtDay(a.date)} · {a.employee.division.name} · {a.shift.name}{a.checkIn ? ` · masuk ${fmtDateTime(a.checkIn).slice(-9)}` : ""}</div>
+                    {a.note && <div className="mt-0.5 break-words text-xs text-slate-600">{a.note === AUTO_NOTE ? "Tidak absen (otomatis)" : a.note}</div>}
+                    {canCorrect && (
+                      <div className="mt-2">
+                        <Modal trigger="Koreksi" triggerClass="btn-secondary btn-sm" title={`Koreksi absensi ${a.employee.name}`} subtitle={fmtDay(a.date)}>
+                          <ModalForm action={correctAttendance} className="space-y-3">
+                            <input type="hidden" name="employeeId" value={a.employeeId} /><input type="hidden" name="date" value={dateStr(a.date)} />
+                            <Field label="Status sebenarnya">
+                              <select name="status" defaultValue={a.status === "ALPA" ? "HADIR" : a.status === "TERLAMBAT" ? "HADIR" : a.status} className="input">
+                                <option value="HADIR">Hadir (mis. lupa absen)</option>
+                                <option value="IZIN">Izin</option>
+                                <option value="SAKIT">Sakit</option>
+                                <option value="LIBUR">Libur</option>
+                                <option value="ALPA">Alpa</option>
+                              </select>
+                            </Field>
+                            <Field label="Jam masuk (bila hadir)" hint="Kosong = jam mulai shift"><input type="time" name="checkIn" className="input" /></Field>
+                            <Field label="Alasan koreksi (wajib)"><textarea name="reason" required minLength={3} rows={2} className="input" placeholder="Mis. lupa absen, hadir dikonfirmasi Kapten" /></Field>
+                            <Submit>Simpan koreksi</Submit>
+                          </ModalForm>
+                        </Modal>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Paged>
       </div>
-      <div className="mt-3"><Submit>Validasi yang dipilih</Submit></div>
-    </ActionForm>
+    </div>
   );
 }
 

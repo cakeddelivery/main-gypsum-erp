@@ -38,7 +38,8 @@
     "backup": "bash scripts/backup.sh",
     "restore": "bash scripts/restore.sh",
     "backup:buka": "bash scripts/decrypt-backup.sh",
-    "test:hp": "node scripts/cek-tampilan-hp.cjs"
+    "test:hp": "node scripts/cek-tampilan-hp.cjs",
+    "validasi:otomatis": "tsx scripts/validasi-otomatis.ts"
   },
   "author": "",
   "license": "ISC",
