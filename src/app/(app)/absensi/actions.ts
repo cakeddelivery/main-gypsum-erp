@@ -10,6 +10,7 @@ import type { AttendanceStatus, LeaveKind } from "@prisma/client";
 import { cancelLeave, decideLeave, leaveError, submitLeave } from "@/lib/leave";
 import { parseChanges } from "@/lib/scheduleEdit";
 import { applyScheduleChanges } from "@/lib/scheduleSave";
+import { reconcileAfterSchedule } from "@/lib/attendanceAuto";
 import { MAX_PROOF_BYTES, MAX_PROOF_TEXT, saveProof } from "@/lib/storage";
 import { sniffMime } from "@/lib/imageCompress";
 
@@ -100,15 +101,38 @@ export const saveAttendance = action(
   ["/absensi"],
 );
 
-export const validateAttendance = action(
-  "attendance.manage",
+/** Koreksi satu baris absensi (Supervisor/Owner), alasan wajib; tercatat di audit log */
+export const correctAttendance = action(
+  "attendance.view",
   async (fd, user) => {
-    const ids = fd.getAll("ids").map(String);
-    if (!ids.length) throw new Error("Pilih minimal satu absensi");
-    const where = { id: { in: ids }, ...(user.role !== "OWNER" && user.employeeId ? { employeeId: { not: user.employeeId } } : {}), ...(user.role === "KAPTEN_DIVISI" && user.divisionId ? { employee: { divisionId: user.divisionId } } : {}) };
-    const r = await prisma.attendance.updateMany({ where, data: { validated: true, validatedBy: user.name, validatedAt: new Date() } });
-    await audit(user, "ABSENSI_DIVALIDASI", "Attendance", null, { ids });
-    return r.count < ids.length ? `${r.count} absensi divalidasi (${ids.length - r.count} dilewati: absensi sendiri / di luar divisi)` : `${r.count} absensi divalidasi`;
+    if (user.role !== "SUPERVISOR" && user.role !== "OWNER") throw new ForbiddenError();
+    const employeeId = str(fd, "employeeId");
+    await guardEmployee(employeeId, user);
+    const date = str(fd, "date");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Tanggal tidak valid");
+    const reason = str(fd, "reason");
+    if (reason.length < 3) throw new Error("Alasan koreksi wajib diisi");
+    let status = str(fd, "status") as AttendanceStatus;
+    if (!["HADIR", "IZIN", "SAKIT", "LIBUR", "ALPA"].includes(status)) throw new Error("Status tidak valid");
+    const prev = await prisma.attendance.findUnique({ where: { employeeId_date: { employeeId, date: dateOnly(date) } } });
+    const sched = await prisma.shiftSchedule.findUnique({ where: { employeeId_date: { employeeId, date: dateOnly(date) } } });
+    const shiftId = prev?.shiftId ?? sched?.shiftId ?? (await prisma.shift.findFirstOrThrow({ where: { active: true }, orderBy: { code: "asc" } })).id;
+    const shift = await prisma.shift.findUniqueOrThrow({ where: { id: shiftId } });
+    let checkIn: Date | null = prev?.checkIn ?? null;
+    let lateMinutes = 0;
+    if (status === "HADIR") {
+      const time = optStr(fd, "checkIn");
+      if (time) checkIn = jakartaDateTime(date, time);
+      if (!checkIn) checkIn = jakartaDateTime(date, shift.startTime);
+      const ev = evaluateCheckIn(shift, checkIn);
+      status = ev.status;
+      lateMinutes = ev.lateMinutes;
+    } else checkIn = null;
+    const data = { shiftId, status, lateMinutes, checkIn, note: `Koreksi ${user.name}: ${reason}`.slice(0, 300), validated: true, validatedBy: user.name, validatedAt: new Date() };
+    const a = await prisma.attendance.upsert({ where: { employeeId_date: { employeeId, date: dateOnly(date) } }, create: { employeeId, date: dateOnly(date), ...data }, update: data });
+    if (status === "HADIR" || status === "TERLAMBAT") await prisma.shiftSchedule.upsert({ where: { employeeId_date: { employeeId, date: dateOnly(date) } }, create: { employeeId, date: dateOnly(date), shiftId }, update: {} });
+    await audit(user, "ABSENSI_DIKOREKSI", "Attendance", a.id, { tanggal: date, dari: prev?.status ?? null, ke: status, alasan: reason });
+    return "Koreksi tersimpan";
   },
   ["/absensi", "/"],
 );
@@ -127,6 +151,8 @@ export const saveScheduleCells = action(
     if (!changes.length) return "Tidak ada perubahan";
     for (const employeeId of new Set(changes.map((c) => c.employeeId))) await guardEmployee(employeeId, user);
     const r = await applyScheduleChanges(changes);
+    // Jadwal hari yang sudah lewat diubah → status absensi otomatis hari itu ikut dihitung ulang
+    await reconcileAfterSchedule(changes.map((c) => c.date), [...new Set(changes.map((c) => c.employeeId))]);
     await audit(user, "JADWAL_DIATUR", "ShiftSchedule", null, { perubahan: changes.length, masuk: r.saved, libur: r.removed });
     return `Jadwal tersimpan (${changes.length} perubahan)`;
   },

@@ -1,6 +1,7 @@
 import { prisma } from "./db";
 import { audit } from "./audit";
-import { checkGeofence, evaluateCheckIn, nearestShift, type GeoPoint } from "./attendance";
+import { checkGeofence, evaluateCheckIn, type GeoPoint } from "./attendance";
+import { SHIFT_NOTE_PREFIX, SYSTEM_VALIDATOR, actualShift, divisionShifts, isShiftDivision } from "./attendanceRules";
 import { dateOnly, todayStr } from "./time";
 
 type Actor = { id: string; name: string; employeeId: string | null };
@@ -17,16 +18,28 @@ export async function selfCheckIn(user: Actor, pos: GeoPoint | null, via: "WEB" 
   const geo = checkGeofence(pos, await activeSites());
   if (!geo.ok) throw new Error(geo.error);
   const now = new Date();
-  // Jadwal dari admin dipakai bila ada; selain itu shift dikenali dari jam masuk terdekat
-  const shift = sched ? await prisma.shift.findUniqueOrThrow({ where: { id: sched.shiftId } }) : nearestShift(await prisma.shift.findMany({ where: { active: true } }), now);
+  // Divisi 2 shift (Cetak, Oven): shift mengikuti jam masuk walau jadwalnya shift lain (jadwal ikut diperbarui).
+  // Divisi 1 shift: shift jadwal bila ada, selain itu shift terdekat. Absen tanpa jadwal → jadwal hari itu diisi otomatis.
+  const emp = await prisma.employee.findUniqueOrThrow({ where: { id: user.employeeId }, select: { division: { select: { shiftCount: true } } } });
+  const active = await prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" } });
+  const shiftDiv = isShiftDivision(emp.division);
+  const shift = actualShift(shiftDiv ? divisionShifts(active, emp.division.shiftCount) : active, now, sched?.shiftId ?? null, shiftDiv) ?? (sched ? await prisma.shift.findUnique({ where: { id: sched.shiftId } }) : null);
   if (!shift) throw new Error("Belum ada shift aktif. Hubungi admin.");
   const ev = evaluateCheckIn(shift, now);
-  const a = await prisma.attendance.create({
-    data: {
-      employeeId: user.employeeId, shiftId: shift.id, date: dateOnly(date), checkIn: now, status: ev.status, lateMinutes: ev.lateMinutes,
-      checkInLat: pos?.lat, checkInLng: pos?.lng, checkInAccuracy: pos?.accuracy, checkInDistance: geo.distance, checkInSiteId: geo.site?.id,
-      ...(via === "TELEGRAM" ? { note: "Absen via Telegram" } : {}),
-    },
+  const moved = !!sched && sched.shiftId !== shift.id;
+  const notes = [moved ? `${SHIFT_NOTE_PREFIX}: ${active.find((x) => x.id === sched!.shiftId)?.name ?? "jadwal"} → ${shift.name}` : null, via === "TELEGRAM" ? "Absen via Telegram" : null].filter(Boolean);
+  const a = await prisma.$transaction(async (tx) => {
+    const row = await tx.attendance.create({
+      data: {
+        employeeId: user.employeeId!, shiftId: shift.id, date: dateOnly(date), checkIn: now, status: ev.status, lateMinutes: ev.lateMinutes,
+        checkInLat: pos?.lat, checkInLng: pos?.lng, checkInAccuracy: pos?.accuracy, checkInDistance: geo.distance, checkInSiteId: geo.site?.id,
+        note: notes.length ? notes.join(" · ") : null,
+        // Tervalidasi otomatis (GPS & jam dicek sistem); koreksi lewat tab Alpa & koreksi
+        validated: true, validatedBy: SYSTEM_VALIDATOR, validatedAt: now,
+      },
+    });
+    await tx.shiftSchedule.upsert({ where: { employeeId_date: { employeeId: user.employeeId!, date: dateOnly(date) } }, create: { employeeId: user.employeeId!, date: dateOnly(date), shiftId: shift.id }, update: { shiftId: shift.id } });
+    return row;
   });
   await audit(user, "ABSEN_MASUK", "Attendance", a.id, { ...ev, lat: pos?.lat, lng: pos?.lng, lokasi: geo.site?.name, jarak: geo.distance, via });
   return { status: ev.status, lateMinutes: ev.lateMinutes, shift: shift.name, site: geo.site?.name ?? null, distance: geo.distance };
