@@ -1921,6 +1921,8 @@ model PushSubscription {
   failCount  Int       @default(0)
 
   @@index([userId])
+}
+
 // ============ RETUR (video unboxing) ============
 
 enum ReturnStatus {
