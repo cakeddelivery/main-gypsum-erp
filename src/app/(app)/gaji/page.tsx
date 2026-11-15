@@ -24,7 +24,7 @@ export default async function GajiPage() {
     <div>
       <PageHeader
         title="Penggajian"
-        subtitle="Gaji bulanan (otomatis, gajian H+7 setelah siklus), tunjangan tiap tanggal 15, klaim borongan, upah harian, slip & pembayaran"
+        subtitle="Gaji bulanan (otomatis, gajian H+7 setelah siklus), tunjangan sesuai tanggal bayar masing-masing (bawaan tgl 15), klaim borongan, upah harian, slip & pembayaran"
         actions={
           <>
             {user.employeeId && <Link href="/gaji/saya" className="btn-secondary">Slip saya</Link>}

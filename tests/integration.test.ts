@@ -187,10 +187,14 @@ describe("Aturan bisnis: gaji bulanan, kasbon, borongan, pembelian, sisihan", ()
     const shift = await prisma.shift.findUniqueOrThrow({ where: { code: "S1" } });
     const a = await prisma.employee.create({ data: { code: "B001", name: "Bulanan A", divisionId: div.id, position: "Staf", wageType: "BULANAN", monthlySalary: BigInt(2_600_000), joinDate: dateOnly("2026-05-10") } });
     const b = await prisma.employee.create({ data: { code: "B002", name: "Bulanan B", divisionId: div.id, position: "Staf", wageType: "BULANAN", monthlySalary: BigInt(2_600_000), joinDate: dateOnly("2026-05-10"), resignDate: dateOnly("2026-11-12") } });
-    // A hadir semua kecuali 2 hari di minggu pertama (1 libur + 1 bolos)
+    // A hadir semua kecuali 2 hari di minggu pertama (1 Libur + 1 Alpa)
     for (let i = 0; i < 31; i++) {
       const day = new Date(Date.UTC(2026, 9, 10 + i)).toISOString().slice(0, 10);
-      if (i === 1 || i === 2) continue;
+      // 11 Okt Libur (tidak dicentang di jadwal), 12 Okt Alpa (dijadwalkan masuk, tidak absen)
+      if (i === 1 || i === 2) {
+        await prisma.attendance.create({ data: { employeeId: a.id, shiftId: shift.id, date: dateOnly(day), status: i === 1 ? "LIBUR" : "ALPA", validated: true } });
+        continue;
+      }
       await prisma.attendance.create({ data: { employeeId: a.id, shiftId: shift.id, date: dateOnly(day), status: "HADIR", validated: true } });
     }
     await giveAdvance({ employeeId: a.id, amount: 500_000, installment: 200_000, bankAccountId: bank.SEABANK, storeId, date: "2026-10-20" }, actor);
@@ -200,10 +204,13 @@ describe("Aturan bisnis: gaji bulanan, kasbon, borongan, pembelian, sisihan", ()
     const p = await prisma.payrollPeriod.findUniqueOrThrow({ where: { code: "GJB-20261109" }, include: { payslips: true } });
     expect(p.payDate?.toISOString().slice(0, 10)).toBe("2026-11-17");
     const sa = p.payslips.find((x) => x.employeeId === a.id)!;
+    // Aturan Alpa (keputusan Owner 15 Nov 2026): potongan = gaji pokok ÷ 30 × hari ALPA final; Libur tidak dipotong
     expect(sa).toMatchObject({ offDays: 1, absentDays: 1 });
-    expect(Number(sa.deduction)).toBe(100_000);
+    expect(Number(sa.alpaDeduction)).toBe(Math.round(2_600_000 / 30));
+    expect(sa.alpaDetail).toMatchObject({ rule: "alpa30", dates: ["2026-10-12"] });
+    expect(Number(sa.deduction)).toBe(0);
     expect(Number(sa.advanceDeduction)).toBe(200_000);
-    expect(Number(sa.total)).toBe(2_600_000 - 100_000 - 200_000);
+    expect(Number(sa.total)).toBe(2_600_000 - Math.round(2_600_000 / 30) - 200_000);
     expect(Number(p.payslips.find((x) => x.employeeId === b.id)!.total)).toBe(0);
     await approvePeriod(p.id, actor);
     await payPeriod(p.id, bank.SEABANK, storeId, actor, d("2026-11-17"));
