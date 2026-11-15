@@ -15,6 +15,7 @@ import { canDecideLeave } from "@/lib/leave";
 import { nearestShift } from "@/lib/attendance";
 import { divisionReportSent } from "@/lib/attendanceSelf";
 import { AbsenToday } from "./AbsenToday";
+import { scheduleGroups } from "@/lib/scheduleGroups";
 import { IzinSakit, Riwayat } from "./SelfTabs";
 
 export const metadata = { title: "Absensi" };
@@ -136,7 +137,9 @@ async function Schedule({ date, divFilter, shifts }: { date: string; divFilter: 
   const dow = (dateOnly(date).getUTCDay() + 6) % 7;
   const start = addDays(date, -dow);
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
-  const employees = await prisma.employee.findMany({ where: { status: { not: "NONAKTIF" }, ...divFilter }, orderBy: { name: "asc" } });
+  const rows = await prisma.employee.findMany({ where: { status: { not: "NONAKTIF" }, ...divFilter }, include: { division: true, user: { select: { role: true } } }, orderBy: { name: "asc" } });
+  const groups = scheduleGroups(rows.map((e) => ({ ...e, role: e.user?.role ?? null })));
+  const employees = groups.flatMap((g) => g.rows);
   const sched = await prisma.shiftSchedule.findMany({ where: { date: { gte: dateOnly(days[0]), lte: dateOnly(days[6]) }, employeeId: { in: employees.map((e) => e.id) } }, include: { shift: true } });
   return (
     <div className="space-y-4">
@@ -154,7 +157,12 @@ async function Schedule({ date, divFilter, shifts }: { date: string; divFilter: 
               <label className="block"><span className="label">Shift</span><select name="shiftId" className="input">{shifts.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.startTime})</option>)}</select></label>
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="skipSunday" defaultChecked /> Lewati hari Minggu</label>
               <div className="max-h-48 space-y-1 overflow-y-auto rounded-lg border p-2">
-                {employees.map((e) => <label key={e.id} className="flex items-center gap-2 text-sm"><input type="checkbox" name="employeeIds" value={e.id} /> {e.name}</label>)}
+                {groups.map((g) => (
+                  <div key={g.key}>
+                    <div className="pt-1 text-xs font-bold uppercase tracking-wide text-slate-500">{g.name}</div>
+                    {g.rows.map((e) => <label key={e.id} className="flex items-center gap-2 text-sm"><input type="checkbox" name="employeeIds" value={e.id} /> {e.name}</label>)}
+                  </div>
+                ))}
               </div>
               <Submit>Simpan jadwal</Submit>
             </ModalForm>
@@ -162,12 +170,17 @@ async function Schedule({ date, divFilter, shifts }: { date: string; divFilter: 
         </div>
       </div>
       <div className="table-wrap">
-        <Paged><table className="tbl">
+        <Paged size={15}><table className="tbl">
           <thead><tr><th>Karyawan</th>{days.map((d) => <th key={d}>{fmtDay(dateOnly(d)).split(",")[0]} {d.slice(8)}</th>)}</tr></thead>
           <tbody>
-            {employees.map((e) => (
-              <tr key={e.id}><td>{e.name}</td>{days.map((d) => { const s = sched.find((x) => x.employeeId === e.id && x.date.toISOString().slice(0, 10) === d); return <td key={d}>{s ? <Badge tone={s.shift.code === "S1" ? "blue" : "purple"}>{s.shift.name}</Badge> : <span className="text-slate-300">—</span>}</td>; })}</tr>
-            ))}
+            {groups.map((g) => [
+              <tr key={`g-${g.key}`} data-pg-group className="bg-slate-50 hover:bg-slate-50">
+                <td colSpan={8} className="sticky left-0 text-xs font-bold uppercase tracking-wide text-slate-600">{g.name} <span className="font-medium normal-case text-slate-500">· {g.rows.length} orang</span></td>
+              </tr>,
+              ...g.rows.map((e) => (
+                <tr key={e.id}><td>{e.name}</td>{days.map((d) => { const s = sched.find((x) => x.employeeId === e.id && x.date.toISOString().slice(0, 10) === d); return <td key={d}>{s ? <Badge tone={s.shift.code === "S1" ? "blue" : "purple"}>{s.shift.name}</Badge> : <span className="text-slate-300">—</span>}</td>; })}</tr>
+              )),
+            ])}
           </tbody>
         </table></Paged>
       </div>
