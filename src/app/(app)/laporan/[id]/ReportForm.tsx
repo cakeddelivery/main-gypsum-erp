@@ -34,7 +34,8 @@ import { FormDraft, clearFormDraft } from "@/components/FormDraft";
 /** Baris pesanan yang sedang dikirim (Stok → Pembelian) untuk barang divisi ini */
 export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean; vendor: string; itemName: string; unit: string };
 export type ReceiptView = { id: string; number: string; itemName: string; unit: string; qty: number; supplierName: string | null; hasPhoto: boolean; linked: boolean };
-export type ResultCountRow = { key: string; label: string; unit: string; qty: number | null; group?: string };
+/** Barang tahap "Stok jadi": `group` produk induk, `sub` paket (baris katalog), `col` series (kolom katalog) */
+export type ResultCountRow = { key: string; label: string; unit: string; qty: number | null; group?: string; sub?: string; col?: string };
 
 type Props = {
   id: string;
@@ -147,7 +148,8 @@ export function ReportForm(p: Props) {
   const [rc, setRc] = useState<Record<string, string>>(() => Object.fromEntries(p.resultCount.map((r) => [r.key, r.qty == null ? "" : String(r.qty)])));
   const rcFilled = Object.values(rc).filter((v) => v !== "").length;
   const [rcQuery, setRcQuery] = useState("");
-  const matches = (label: string) => !rcQuery.trim() || label.toLowerCase().includes(rcQuery.trim().toLowerCase());
+  // Cari per kata (mis. "24 cewek" cocok dengan "Paket Single Pack 24 pcs · Cewek")
+  const matches = (label: string) => rcQuery.trim().toLowerCase().split(/\s+/).every((w) => label.toLowerCase().includes(w));
   const rcGroups = Object.entries(
     p.resultCount.reduce<Record<string, ResultCountRow[]>>((m, r) => ((m[r.group ?? "Lainnya"] ??= []).push(r), m), {}),
   );
@@ -421,20 +423,48 @@ export function ReportForm(p: Props) {
                     <span className="min-w-0">{g}</span>
                     <span className="flex shrink-0 items-center gap-2 text-xs text-slate-500 tabular-nums">{filled}/{rows.length}<span className="transition group-open:rotate-180" aria-hidden>▾</span></span>
                   </summary>
-                  <ul className="divide-y divide-slate-100 border-t border-slate-100 px-3">
-                    {rows.map((r) => (
-                      <CountRow
-                        key={r.key}
-                        hidden={!matches(r.label)}
-                        name={r.label}
-                        unit={r.unit}
-                        inputName={`rc.${r.key}`}
-                        inputMode="numeric"
-                        value={rc[r.key] ?? ""}
-                        onChange={(v) => setRc((x) => ({ ...x, [r.key]: v }))}
-                      />
-                    ))}
-                  </ul>
+                  {rows.some((r) => r.col) ? (
+                    // Produk induk: per paket (baris katalog), series dalam 2 kolom agar tidak banyak gulir
+                    <div className="space-y-2 border-t border-slate-100 p-2">
+                      {Object.entries(rows.reduce<Record<string, ResultCountRow[]>>((m, r) => ((m[r.sub ?? ""] ??= []).push(r), m), {})).map(([sub, cells]) => {
+                        const vis = cells.filter((r) => matches(r.label));
+                        const sum = cells.reduce((a, r) => a + (Number(rc[r.key]) || 0), 0);
+                        return (
+                          <div key={sub || "-"} className={`rounded-lg border border-slate-200 p-2.5 ${vis.length ? "" : "hidden"}`}>
+                            {sub && (
+                              <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                                <span className="text-sm font-semibold text-slate-800">{sub}</span>
+                                <span className="text-xs text-slate-500 tabular-nums">{sum ? `${sum.toLocaleString("id-ID")} ${cells[0].unit}` : "—"}</span>
+                              </div>
+                            )}
+                            <div className="keep-cols grid grid-cols-2 gap-2">
+                              {cells.map((r) => (
+                                <label key={r.key} className={`block min-w-0 ${matches(r.label) ? "" : "hidden"}`}>
+                                  <span className="block truncate text-xs text-slate-500" title={r.label}>{r.col || r.label}</span>
+                                  <input name={`rc.${r.key}`} inputMode="numeric" value={rc[r.key] ?? ""} onChange={(e) => setRc((x) => ({ ...x, [r.key]: e.target.value }))} className={`input py-1.5 text-right ${rc[r.key] ? "border-brand-400 bg-brand-50" : ""}`} placeholder="0" aria-label={r.label} />
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <ul className="divide-y divide-slate-100 border-t border-slate-100 px-3">
+                      {rows.map((r) => (
+                        <CountRow
+                          key={r.key}
+                          hidden={!matches(r.label)}
+                          name={r.label}
+                          unit={r.unit}
+                          inputName={`rc.${r.key}`}
+                          inputMode="numeric"
+                          value={rc[r.key] ?? ""}
+                          onChange={(v) => setRc((x) => ({ ...x, [r.key]: v }))}
+                        />
+                      ))}
+                    </ul>
+                  )}
                 </details>
               );
             })}

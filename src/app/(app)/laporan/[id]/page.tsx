@@ -9,6 +9,7 @@ import { refreshDraftChecklists } from "@/lib/shiftReportChecklist";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { flowEnabled } from "@/lib/shiftReportFlow";
 import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
+import { resultPlaces } from "@/lib/resultCountGroups";
 import { divisionPendingReturns } from "@/lib/borongan";
 import { confirmReturnForReport } from "../actions";
 import Link from "next/link";
@@ -90,11 +91,8 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const banks = [...bankRows].sort((a, b) => (a.code === "KAS" ? -1 : b.code === "KAS" ? 1 : 0)).map((b) => ({ id: b.id, name: b.name }));
   const extraLines = [...bLines, ...(await receiptReportLines(r.divisionId, r.date)), ...(resultStatus ? resultLines(resultStatus) : [])];
   const [rItems, rv] = await Promise.all([resultItems(r.divisionId), resultValues(work, r.division.reportTemplate)]);
-  // Kelompok tahap "Stok jadi": per produk induk (mis. Giftbox) agar daftar panjang bisa dilipat
-  const rFamilies = rItems.length
-    ? await prisma.product.findMany({ where: { finishedItemId: { in: rItems.map((i) => i.id) } }, select: { finishedItemId: true, family: { select: { name: true } } } })
-    : [];
-  const familyOf = new Map(rFamilies.map((x) => [x.finishedItemId!, x.family?.name ?? null]));
+  // Tahap "Stok jadi": hanya barang milik divisi ini, dikelompokkan produk induk → paket → series
+  const places = await resultPlaces(rItems);
   const receiptLines = receipts.map((x) => `${x.item.name}: ${Number(x.qty).toLocaleString("id-ID")} ${x.item.unit}${x.supplierName ? ` · ${x.supplierName}` : ""}${x.purchaseId ? "" : " (belum dicatat di Pembelian)"}`);
   const flow = flowOn && template ? flowLines(plannedFlow(template, work)) : [];
   const fname = `laporan-${r.division.code}-${r.shift.code}-${day}`;
@@ -139,7 +137,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   applied={r.stockApplied}
                   resultTitle={rItems.length ? RESULT_TITLE : null}
                   catalogs={catalogs}
-                  resultCount={rItems.map((i) => ({ key: i.id, label: i.name, unit: i.unit, qty: rv[i.id] ?? null, group: i.type === "BARANG_DALAM_PROSES" ? "Barang setengah jadi" : familyOf.get(i.id) ?? "Produk jadi lainnya" }))}
+                  resultCount={[...rItems].sort((a, b) => (places.get(a.id)?.order ?? 0) - (places.get(b.id)?.order ?? 0)).map((i) => { const pl = places.get(i.id); return { key: i.id, label: i.name, unit: i.unit, qty: rv[i.id] ?? null, group: pl?.group, sub: pl?.sub, col: pl?.col }; })}
                   flow={flowOn && template ? flow : null}
                   sent={r.workPostedVersion > 0 || r.status !== "DRAFT"}
                 />

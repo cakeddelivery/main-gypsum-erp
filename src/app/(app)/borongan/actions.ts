@@ -6,8 +6,10 @@ import { clearLoginBlocks, passwordChangeData } from "@/lib/loginGuard";
 import { prisma } from "@/lib/db";
 import { autoCode } from "@/lib/codes";
 import { audit } from "@/lib/audit";
-import { BoronganError, assertPoint, boronganScope, canWarehouse, isSetoranOnly, cancelHandover, checkSplit, createHandover, deleteResult, receiveHandover, recordResults, removePerson, savePerson, settlePoint, cancelSettlement } from "@/lib/borongan";
+import { BoronganError, assertPoint, boronganScope, canWarehouse, isSetoranOnly, cancelHandover, checkSplit, createHandover, createHandovers, deleteResult, receiveHandover, recordResults, removePerson, savePerson, settlePoint, cancelSettlement } from "@/lib/borongan";
 import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
+import { pointConfig } from "@/lib/boronganSetup";
+import { allowedByPoint, kirimGroups, pointKits } from "@/lib/boronganKirim";
 
 // /laporan: setoran juga dicatat dari popup di halaman Laporan Shift (ringkasan setoran ikut segar)
 const PATHS = ["/borongan", "/stok", "/laporan"];
@@ -32,6 +34,48 @@ export const sendHandover = action(
     }
     const h = await createHandover({ kind, pointId, driverId: optStr(fd, "driverId"), date: when(fd), note: optStr(fd, "note"), lines: lines(fd) }, user);
     return `Serah terima ${h.number} tercatat, menunggu dikonfirmasi penerima`;
+  },
+  PATHS,
+);
+
+/**
+ * Kirim bahan (form baru): satu kali simpan ke beberapa titik. Isian "kq:<titik>:<barang>" = jumlah.
+ * Hanya bahan resep tugas borongan aktif yang dijalankan titik itu; driver untuk titik yang lewat driver.
+ */
+export const sendMaterials = action(
+  ["borongan.manage", "borongan.point"],
+  async (fd, user) => {
+    const scope = await boronganScope(prisma, user);
+    if (!canWarehouse(scope)) throw new BoronganError("Pengiriman bahan dicatat oleh pengelola gudang / Kapten Assembling");
+    const [tasks, points, cfg] = await Promise.all([
+      prisma.pieceTask.findMany({ where: { active: true }, include: { inputs: { include: { item: true } } } }),
+      prisma.boronganPoint.findMany({ where: { active: true } }),
+      pointConfig(prisma),
+    ]);
+    const kitIds = [...new Set(Object.values(cfg).flatMap((c) => c.kit))];
+    const kitItems = await prisma.item.findMany({ where: { id: { in: kitIds } } });
+    const allowed = allowedByPoint(kirimGroups(tasks, points, cfg, new Map()), pointKits(points, cfg, kitItems, new Map()));
+    const byPoint = new Map<string, { itemId: string; qty: number }[]>();
+    for (const [k, v] of fd.entries()) {
+      if (!k.startsWith("kq:")) continue;
+      const qty = num(v);
+      if (qty <= 0) continue;
+      const [, pointId, itemId] = k.split(":");
+      if (!allowed.get(pointId)?.has(itemId)) throw new BoronganError("Ada bahan yang tidak termasuk bahan aktif untuk titik tujuannya. Muat ulang halaman lalu coba lagi.");
+      byPoint.set(pointId, [...(byPoint.get(pointId) ?? []), { itemId, qty }]);
+    }
+    if (!byPoint.size) throw new BoronganError("Isi jumlah minimal satu bahan");
+    const driverId = optStr(fd, "driverId");
+    const viaDriver = points.filter((p) => byPoint.has(p.id) && p.viaDriver);
+    const hasDrivers = (await prisma.boronganPerson.count({ where: { role: "DRIVER", active: true } })) > 0;
+    if (viaDriver.length && hasDrivers && !driverId) throw new BoronganError(`Pilih driver untuk kiriman ke ${viaDriver.map((p) => p.name).join(", ")}`);
+    const date = when(fd);
+    const note = optStr(fd, "note");
+    const hs = await createHandovers(
+      [...byPoint].map(([pointId, lines]) => ({ kind: "KIRIM" as const, pointId, driverId: points.find((p) => p.id === pointId)?.viaDriver ? driverId : null, date, note, lines })),
+      user,
+    );
+    return `Kiriman ke ${hs.length} titik tercatat (${hs.map((h) => h.number).join(", ")}), menunggu dikonfirmasi penerima`;
   },
   PATHS,
 );

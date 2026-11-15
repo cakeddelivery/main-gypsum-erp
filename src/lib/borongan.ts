@@ -141,9 +141,24 @@ export type HandoverInput = { kind: HandoverKind; pointId: string; driverId?: st
 
 /** Barang diserahkan ke driver: keluar dari gudang (KIRIM) atau titik (KEMBALI) ke lokasi driver */
 export async function createHandover(input: HandoverInput, actor: Actor) {
+  return prisma.$transaction((tx) => createHandoverTx(tx, input, actor));
+}
+
+/** Kirim bahan ke beberapa titik sekaligus: satu serah terima per titik, semua tersimpan atau tidak sama sekali */
+export async function createHandovers(inputs: HandoverInput[], actor: Actor) {
+  const list = inputs.filter((x) => x.lines.some((l) => l.itemId && l.qty > 0));
+  if (!list.length) throw new BoronganError("Isi minimal satu barang beserta jumlahnya");
+  return prisma.$transaction(async (tx) => {
+    const out = [];
+    for (const x of list) out.push(await createHandoverTx(tx, x, actor));
+    return out;
+  }, { timeout: 30000 });
+}
+
+async function createHandoverTx(tx: Tx, input: HandoverInput, actor: Actor) {
   const lines = input.lines.filter((l) => l.itemId && l.qty > 0);
   if (!lines.length) throw new BoronganError("Isi minimal satu barang beserta jumlahnya");
-  return prisma.$transaction(async (tx) => {
+  {
     const point = await tx.boronganPoint.findUniqueOrThrow({ where: { id: input.pointId } });
     const drv = await driverLocation(tx);
     const date = input.date ?? new Date();
@@ -168,7 +183,7 @@ export async function createHandover(input: HandoverInput, actor: Actor) {
     });
     await audit(actor, "SERAH_TERIMA_BORONGAN", "BoronganHandover", h.id, { number, kind: input.kind, point: point.code }, tx);
     return h;
-  });
+  }
 }
 
 /**

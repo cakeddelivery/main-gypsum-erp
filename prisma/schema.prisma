@@ -474,6 +474,8 @@ model BoronganPoint {
   locationId   String                @unique
   location     Location              @relation(fields: [locationId], references: [id])
   active       Boolean               @default(true)
+  /// Kiriman bahan ke titik ini lewat driver (false = diantar/diambil langsung, mis. Beringin)
+  viaDriver    Boolean               @default(true)
   createdAt    DateTime              @default(now())
   people       BoronganPerson[]
   handovers    BoronganHandover[]

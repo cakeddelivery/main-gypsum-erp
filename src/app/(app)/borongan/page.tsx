@@ -12,12 +12,13 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Paged } from "@/components/Paged";
 import { ItemLines } from "@/components/ItemLines";
-import { KitSend, ResultRows } from "./BoronganForms";
+import { KirimBahan, ResultRows } from "./BoronganForms";
+import { kirimGroups, pointKits } from "@/lib/boronganKirim";
 import { ReceiveForm } from "./ReceiveForm";
 import { diffLines, receiptDiff } from "@/lib/boronganReceipt";
 import { dateOnly } from "@/lib/time";
 import { pointConfig } from "@/lib/boronganSetup";
-import { addResults, cancelPayPoint, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, saveTask, sendHandover, voidDivisionReceipt, voidHandover } from "./actions";
+import { addResults, cancelPayPoint, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, saveTask, sendHandover, sendMaterials, voidDivisionReceipt, voidHandover } from "./actions";
 
 export const metadata = { title: "Borongan" };
 
@@ -78,18 +79,19 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
     <Field label="Driver"><select name="driverId" className="input" defaultValue={drivers[0].id}>{drivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
   );
 
+  // Kirim bahan: per jenis pekerjaan borongan aktif → titik sesuai pengaturan → bahan resep (satu kali ke beberapa titik)
+  const kirim = kirimGroups(tasks, points, cfg, warehouseStock);
+  const kits = pointKits(points, cfg, items, warehouseStock);
   const sendMaterial = canWarehouse(scope) && (
-    <Modal trigger="+ Kirim Bahan" title="Kirim bahan ke titik lewat driver" wide>
-      <ModalForm action={sendHandover} className="space-y-3">
-        <input type="hidden" name="kind" value="KIRIM" />
+    <Modal trigger="+ Kirim Bahan" title="Kirim bahan ke titik" wide>
+      <ModalForm action={sendMaterials} className="space-y-3">
+        <KirimBahan groups={kirim} kits={kits} drivers={drivers.map((d) => ({ id: d.id, name: d.name }))} />
         <div className="grid gap-3 sm:grid-cols-2">
-          {driverField}
           <Field label="Tanggal"><input type="date" name="date" defaultValue={t} className="input" /></Field>
+          <Field label="Catatan"><input name="note" className="input" /></Field>
         </div>
-        <KitSend points={points.map((p) => ({ id: p.id, name: p.name }))} kits={Object.fromEntries(Object.entries(cfg).map(([k, v]) => [k, v.kit]))} items={items.map((i) => ({ id: i.id, name: i.name, unit: i.unit, stock: Math.round((warehouseStock.get(i.id) ?? 0) * 1000) / 1000 }))} />
-        <Field label="Catatan"><input name="note" className="input" /></Field>
-        <p className="text-xs text-slate-500">Bahan keluar dari gudang begitu diserahkan ke driver, lalu masuk stok titik setelah koordinator menekan Terima.</p>
-        <Submit>Serahkan Ke Driver</Submit>
+        <p className="text-xs text-slate-500">Bahan keluar dari gudang saat diserahkan, lalu masuk stok titik setelah koordinator menekan Terima.</p>
+        <Submit>Serahkan</Submit>
       </ModalForm>
     </Modal>
   );
