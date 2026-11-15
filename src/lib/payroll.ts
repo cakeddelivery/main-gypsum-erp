@@ -544,62 +544,90 @@ export async function approvePeriod(periodId: string, actor: Actor) {
   });
 }
 
-/** Bayar gaji: integrasi biaya tenaga kerja ke keuangan (jurnal beban gaji & transport). */
+type PayOpts = { messageId?: string | null; proofPath?: string | null };
+
+/**
+ * Inti pembayaran gaji (dipakai web Penggajian → Bayar dan bot Telegram): bayar slip-slip yang belum lunas pada satu periode.
+ * Slip yang sudah disetujui diakui sebagai Hutang Gaji saat disetujui, jadi pembayaran = Dr Hutang Gaji / Cr Kas-Bank
+ * (+ Cr Piutang karyawan untuk potongan kasbon), BUKAN beban baru. Periode berstatus Dibayar bila semua slipnya lunas.
+ */
+async function paySlipsTx(tx: Tx, periodId: string, slipIds: string[] | "all", bankAccountId: string, storeId: string | null, actor: Actor, paidAt: Date, opts: PayOpts = {}) {
+  await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
+  const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId }, include: { payslips: true } });
+  if (p.status === "DIBAYAR") throw new PayrollError(`Gaji ${p.code} sudah lunas`);
+  if (p.status !== "DISETUJUI") throw new PayrollError("Periode harus disetujui sebelum dibayar");
+  const unpaid = p.payslips.filter((x) => !x.paidAt);
+  const slips = slipIds === "all" ? unpaid : unpaid.filter((x) => slipIds.includes(x.id));
+  if (slipIds !== "all" && slips.length !== slipIds.length) throw new PayrollError("Slip ini sudah dibayar");
+  if (!slips.length) throw new PayrollError(`Semua slip ${p.code} sudah dibayar`);
+  if (opts.messageId && (await tx.payslip.findUnique({ where: { paidMessageId: opts.messageId } }))) throw new PayrollError("Pesan/bukti ini sudah dipakai untuk membayar slip gaji");
+  const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: bankAccountId } });
+  // Nilai slip saat disetujui (sudah diakui sebagai Hutang Gaji)
+  const before = payrollCost(slips);
+  if (p.kind === "BULANAN") {
+    // Resign setelah slip dihitung tetapi sebelum tanggal gajian: slip menjadi Rp0
+    const payDay = p.payDate ? dateStr(p.payDate) : todayStr(paidAt);
+    const resigned = await tx.employee.findMany({ where: { id: { in: slips.map((x) => x.employeeId) }, resignDate: { lt: dateOnly(payDay) } } });
+    for (const e of resigned) {
+      const slip = slips.find((x) => x.employeeId === e.id)!;
+      if (slip.total === BigInt(0)) continue;
+      await tx.payslip.update({ where: { id: slip.id }, data: { total: BigInt(0), transport: BigInt(0), advanceDeduction: BigInt(0), advanceDetail: [], note: "Resign sebelum tanggal gajian: tidak menerima gaji" } });
+      slip.total = BigInt(0);
+      slip.transport = BigInt(0);
+      slip.advanceDeduction = BigInt(0);
+      slip.advanceDetail = [];
+    }
+  }
+  // Beban = gaji kotor; kasbon yang dipotong melunasi piutang karyawan, sisanya keluar dari rekening
+  const advances = slips.reduce((t, x) => t + Number(x.advanceDeduction), 0);
+  const { wages, transport } = payrollCost(slips);
+  const net = wages + transport - advances;
+  const accrued = (await activeAccrual(tx, p.id)) ? before.wages + before.transport : 0;
+  const lines = accrued ? [
+    { accountCode: COA.UTANG_GAJI, debit: accrued, memo: `Pelunasan hutang gaji ${p.code}` },
+    ...(accrued - wages - transport > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, credit: accrued - wages - transport, memo: "Slip dinolkan (resign sebelum gajian)" }] : []),
+    ...(advances > 0 ? [{ accountCode: COA.PIUTANG_KARYAWAN, credit: advances, memo: "Potongan kasbon" }] : []),
+    ...(net > 0 ? [{ accountId: bank.coaAccountId, credit: net }] : []),
+  ] : [
+    ...(wages > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, debit: wages, memo: p.kind === "TUNJANGAN" ? "Tunjangan karyawan" : "Gaji bulanan, upah harian & borongan" }] : []),
+    ...(transport > 0 ? [{ accountCode: COA.BEBAN_TRANSPORT, debit: transport, memo: "Transport assembling" }] : []),
+    ...(advances > 0 ? [{ accountCode: COA.PIUTANG_KARYAWAN, credit: advances, memo: "Potongan kasbon" }] : []),
+    ...(net > 0 ? [{ accountId: bank.coaAccountId, credit: net }] : []),
+  ];
+  for (const x of slips)
+    for (const d of x.advanceDetail as AdvanceAlloc[]) {
+      await tx.$queryRaw`SELECT id FROM "CashAdvance" WHERE id = ${d.id} FOR UPDATE`;
+      const a = await tx.cashAdvance.findUniqueOrThrow({ where: { id: d.id } });
+      if (a.repaid + BigInt(d.amount) > a.amount) throw new PayrollError(`Potongan kasbon ${a.number} melebihi sisa kasbon (sudah dilunasi di luar gaji). Hitung ulang periode ini sebelum dibayar.`);
+      await tx.cashAdvance.update({ where: { id: d.id }, data: { repaid: { increment: BigInt(d.amount) } } });
+    }
+  const whole = slips.length === unpaid.length && unpaid.length === p.payslips.length;
+  const names = slips.length === 1 ? ` · ${(await tx.employee.findUnique({ where: { id: slips[0].employeeId }, select: { name: true } }))?.name ?? ""}` : "";
+  const j = lines.length ? await postJournal(tx, { date: paidAt, storeId, description: `Pembayaran gaji ${p.code}${names}`.slice(0, 150), source: "PAYROLL", sourceId: whole ? p.id : `${p.id}:${slips.map((x) => x.id).join(",")}`.slice(0, 190), actor, lines }) : null;
+  await tx.payslip.updateMany({ where: { id: { in: slips.map((x) => x.id) } }, data: { paidAt, paidJournalId: j?.id ?? null, paidFromAccountId: bankAccountId } });
+  if (opts.messageId || opts.proofPath) await tx.payslip.update({ where: { id: slips[0].id }, data: { paidMessageId: opts.messageId ?? null, paidProofPath: opts.proofPath ?? null } });
+  const done = slips.length === unpaid.length;
+  if (done) await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DIBAYAR", paidAt, paidFromAccountId: bankAccountId, journalId: whole ? (j?.id ?? null) : null } });
+  await audit(actor, slips.length === 1 && !whole ? "GAJI_SLIP_DIBAYAR" : "GAJI_DIBAYAR", "PayrollPeriod", periodId, { journal: j?.number ?? null, total: net, advances, slip: slips.map((x) => x.id), lunasSemua: done, pesan: opts.messageId ?? undefined }, tx);
+  return { journal: j, net, done, code: p.code };
+}
+
+/** Bayar gaji (web Penggajian → Bayar): semua slip yang belum lunas pada periode ini */
 export async function payPeriod(periodId: string, bankAccountId: string, storeId: string | null, actor: Actor, paidAt: Date = new Date()) {
-  return prisma.$transaction(async (tx: Tx) => {
-    await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
-    const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId }, include: { payslips: true } });
-    if (p.status !== "DISETUJUI") throw new PayrollError("Periode harus disetujui sebelum dibayar");
-    const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: bankAccountId } });
-    if (p.kind === "BULANAN") {
-      // Resign setelah slip dihitung tetapi sebelum tanggal gajian: slip menjadi Rp0
-      const payDay = p.payDate ? dateStr(p.payDate) : todayStr(paidAt);
-      const resigned = await tx.employee.findMany({ where: { id: { in: p.payslips.map((x) => x.employeeId) }, resignDate: { lt: dateOnly(payDay) } } });
-      for (const e of resigned) {
-        const slip = p.payslips.find((x) => x.employeeId === e.id)!;
-        if (slip.total === BigInt(0)) continue;
-        await tx.payslip.update({ where: { id: slip.id }, data: { total: BigInt(0), transport: BigInt(0), advanceDeduction: BigInt(0), advanceDetail: [], note: "Resign sebelum tanggal gajian: tidak menerima gaji" } });
-        slip.total = BigInt(0);
-        slip.transport = BigInt(0);
-        slip.advanceDeduction = BigInt(0);
-        slip.advanceDetail = [];
-      }
-    }
-    // Beban = gaji kotor; kasbon yang dipotong melunasi piutang karyawan, sisanya keluar dari rekening
-    const advances = p.payslips.reduce((s, x) => s + Number(x.advanceDeduction), 0);
-    const { wages, transport } = payrollCost(p.payslips);
-    const net = wages + transport - advances;
-    // Sudah diakui sebagai Hutang Gaji saat disetujui: pembayaran melunasi hutangnya (selisih karena resign dikembalikan ke beban)
-    const accrual = await activeAccrual(tx, p.id);
-    const accrued = accrual ? accrual.lines.filter((l) => l.account.code === COA.UTANG_GAJI).reduce((s, l) => s + Number(l.credit), 0) : 0;
-    const lines = accrual ? [
-      { accountCode: COA.UTANG_GAJI, debit: accrued, memo: `Pelunasan hutang gaji ${p.code}` },
-      ...(accrued - wages - transport > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, credit: accrued - wages - transport, memo: "Slip dinolkan (resign sebelum gajian)" }] : []),
-      ...(advances > 0 ? [{ accountCode: COA.PIUTANG_KARYAWAN, credit: advances, memo: "Potongan kasbon" }] : []),
-      ...(net > 0 ? [{ accountId: bank.coaAccountId, credit: net }] : []),
-    ] : [
-      ...(wages > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, debit: wages, memo: p.kind === "TUNJANGAN" ? "Tunjangan karyawan" : "Gaji bulanan, upah harian & borongan" }] : []),
-      ...(transport > 0 ? [{ accountCode: COA.BEBAN_TRANSPORT, debit: transport, memo: "Transport assembling" }] : []),
-      ...(advances > 0 ? [{ accountCode: COA.PIUTANG_KARYAWAN, credit: advances, memo: "Potongan kasbon" }] : []),
-      ...(net > 0 ? [{ accountId: bank.coaAccountId, credit: net }] : []),
-    ];
-    for (const x of p.payslips)
-      for (const d of x.advanceDetail as AdvanceAlloc[]) {
-        await tx.$queryRaw`SELECT id FROM "CashAdvance" WHERE id = ${d.id} FOR UPDATE`;
-        const a = await tx.cashAdvance.findUniqueOrThrow({ where: { id: d.id } });
-        if (a.repaid + BigInt(d.amount) > a.amount) throw new PayrollError(`Potongan kasbon ${a.number} melebihi sisa kasbon (sudah dilunasi di luar gaji). Hitung ulang periode ini sebelum dibayar.`);
-        await tx.cashAdvance.update({ where: { id: d.id }, data: { repaid: { increment: BigInt(d.amount) } } });
-      }
-    if (wages + transport === 0 && !accrued) {
-      await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DIBAYAR", paidAt, paidFromAccountId: bankAccountId } });
-      await audit(actor, "GAJI_DIBAYAR", "PayrollPeriod", periodId, { total: 0 }, tx);
-      return { number: "tanpa jurnal (Rp0)" } as { number: string };
-    }
-    const j = await postJournal(tx, { date: paidAt, storeId, description: `Pembayaran gaji ${p.code}`, source: "PAYROLL", sourceId: p.id, actor, lines });
-    await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DIBAYAR", paidAt, paidFromAccountId: bankAccountId, journalId: j.id } });
-    await audit(actor, "GAJI_DIBAYAR", "PayrollPeriod", periodId, { journal: j.number, total: net, advances }, tx);
-    return j;
-  });
+  const r = await prisma.$transaction((tx: Tx) => paySlipsTx(tx, periodId, "all", bankAccountId, storeId, actor, paidAt));
+  return r.journal ?? ({ number: "tanpa jurnal (Rp0)" } as { number: string });
+}
+
+/** Bayar SATU slip (bot Telegram): pelunasan Hutang Gaji karyawan itu saja; pesan/bukti yang sama tidak bisa dipakai dua kali */
+export async function paySlip(slipId: string, bankAccountId: string, storeId: string | null, actor: Actor, paidAt: Date = new Date(), opts: PayOpts = {}) {
+  const slip = await prisma.payslip.findUniqueOrThrow({ where: { id: slipId }, select: { periodId: true } });
+  try {
+    return await prisma.$transaction((tx: Tx) => paySlipsTx(tx, slip.periodId, [slipId], bankAccountId, storeId, actor, paidAt, opts));
+  } catch (e) {
+    // Klik ganda / pesan ganda bersamaan: indeks unik pesan menolak yang kedua
+    if ((e as { code?: string }).code === "P2002") throw new PayrollError("Pesan/bukti ini sudah dipakai untuk membayar slip gaji");
+    throw e;
+  }
 }
 
 /**
@@ -611,12 +639,15 @@ export async function cancelPayment(periodId: string, reason: string, actor: Act
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
     const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId }, include: { payslips: true } });
-    if (p.status !== "DIBAYAR") throw new PayrollError("Hanya periode berstatus Dibayar yang pembayarannya bisa dibatalkan");
+    if (p.status !== "DIBAYAR" && !p.payslips.some((x) => x.paidAt)) throw new PayrollError("Hanya periode berstatus Dibayar (atau yang sebagian slipnya sudah dibayar) yang pembayarannya bisa dibatalkan");
     const paidAt = p.paidAt ?? now;
     const date = await assertPeriodOpen(tx, paidAt).then(() => paidAt, () => now);
-    if (p.journalId) await reverseJournal(tx, p.journalId, date, actor, `batal bayar ${p.code} — ${reason.trim()}`.slice(0, 150));
+    // Jurnal pembayaran: satu per periode (web) dan/atau per slip (bot); masing-masing dibalik sekali
+    const journals = [...new Set([p.journalId, ...p.payslips.map((x) => x.paidJournalId)].filter((x): x is string => !!x))];
+    for (const jid of journals) await reverseJournal(tx, jid, date, actor, `batal bayar ${p.code} — ${reason.trim()}`.slice(0, 150));
     for (const x of p.payslips)
       for (const d of x.advanceDetail as AdvanceAlloc[]) await tx.cashAdvance.update({ where: { id: d.id }, data: { repaid: { decrement: BigInt(d.amount) } } });
+    await tx.payslip.updateMany({ where: { periodId }, data: { paidAt: null, paidJournalId: null, paidFromAccountId: null, paidMessageId: null } });
     await tx.payrollPeriod.update({ where: { id: periodId }, data: { status: "DISETUJUI", paidAt: null, paidFromAccountId: null, journalId: null } });
     await audit(actor, "GAJI_BATAL_BAYAR", "PayrollPeriod", periodId, { code: p.code, reason }, tx);
   });
@@ -629,6 +660,7 @@ export async function unapprovePeriod(periodId: string, reason: string, actor: A
     await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
     const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId } });
     if (p.status !== "DISETUJUI") throw new PayrollError("Hanya periode berstatus Disetujui yang bisa dikembalikan ke draft");
+    if (await tx.payslip.count({ where: { periodId, paidAt: { not: null } } })) throw new PayrollError("Sebagian slip periode ini sudah dibayar. Batalkan pembayarannya dulu sebelum mengembalikan ke draft.");
     const acc = await activeAccrual(tx, p.id);
     if (acc) {
       const date = await assertPeriodOpen(tx, acc.date).then(() => acc.date, () => now);
