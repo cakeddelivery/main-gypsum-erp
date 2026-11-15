@@ -29,6 +29,7 @@ import {
   type WorkData,
 } from "@/lib/shiftReport";
 import { addReceipt, removeChecklistPhoto, removeReceipt, saveReport, uploadChecklistPhoto } from "../actions";
+import { FormDraft, clearFormDraft } from "@/components/FormDraft";
 
 /** Baris pesanan yang sedang dikirim (Stok → Pembelian) untuk barang divisi ini */
 export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean; vendor: string; itemName: string; unit: string };
@@ -115,6 +116,7 @@ export function ReportForm(p: Props) {
   const last = step >= steps.length - 1;
   const close = useCloseModal();
   const formRef = useRef<HTMLDivElement>(null);
+  const draftKey = `mg_draf_laporan_${p.id}`;
   const bodyTop = useRef<HTMLElement>(null);
   const go = (i: number) => {
     setStep(i);
@@ -177,6 +179,8 @@ export function ReportForm(p: Props) {
 
   return (
     <div ref={formRef} onInput={() => setDirty(true)} onChange={() => setDirty(true)}>
+      {/* Cadangan isian di HP: dipulihkan bila halaman dimuat ulang (mis. saat kamera foto checklist dibuka) */}
+      <FormDraft storageKey={draftKey} target={formRef} />
       <nav ref={bodyTop} aria-label="Langkah laporan" className="sticky -top-4 z-10 -mx-5 -mt-4 mb-4 flex-none border-b border-slate-200 bg-white px-3 py-2">
         <ol className="flex gap-1 overflow-x-auto">
           {steps.map((x, i) => (
@@ -192,6 +196,8 @@ export function ReportForm(p: Props) {
     <ActionForm
       action={async (prev, fd) => {
         const r = await saveReport(prev, fd);
+        // Tersimpan di server: draf cadangan di HP tidak diperlukan lagi
+        if (r.ok) clearFormDraft(draftKey);
         // Selebrasi dipicu langsung dari respons server: setelah terkirim, halaman mengunci laporan
         // (form bisa hilang sebelum efek onSuccess sempat berjalan)
         if (r.ok && fd.get("intent") === "send") {
@@ -519,7 +525,7 @@ export function ReportForm(p: Props) {
               <span className="flex" onClickCapture={() => (sending.current = false)}>
                 <Submit className="btn-primary flex-1" name="intent" value="draft" pendingText="Menyimpan…">Simpan draf</Submit>
               </span>
-              <button type="button" className="btn-danger" onClick={() => { setCloseAsk(false); close(); }}>Buang perubahan</button>
+              <button type="button" className="btn-danger" onClick={() => { clearFormDraft(draftKey); setCloseAsk(false); close(); }}>Buang perubahan</button>
               <button type="button" className="btn-secondary" onClick={() => setCloseAsk(false)} autoFocus>Batal</button>
             </div>
           </div>
@@ -752,7 +758,7 @@ function PhotoTask({ id, index, entry }: { id: string; index: number; entry: Che
         }}
       />
       <div className="flex shrink-0 flex-col gap-1 sm:flex-row">
-        <button type="button" className="btn-secondary btn-sm" disabled={busy} onClick={() => input.current?.click()}>{busy ? "…" : src ? "Ganti" : "Foto"}</button>
+        <button type="button" data-flush-draft className="btn-secondary btn-sm" disabled={busy} onClick={() => input.current?.click()}>{busy ? "…" : src ? "Ganti" : "Foto"}</button>
         {src && (
           <button
             type="button"

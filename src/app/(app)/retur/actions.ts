@@ -2,6 +2,7 @@
 import { redirect } from "next/navigation";
 import { action, str, optStr, int } from "@/lib/action";
 import { assertPerm } from "@/lib/auth";
+import { assertReturnItems, returnItemScope } from "@/lib/returnScope";
 import { prisma } from "@/lib/db";
 import { StockError } from "@/lib/stock";
 import { MAX_PROOF_BYTES, MAX_PROOF_TEXT, saveProof } from "@/lib/storage";
@@ -21,14 +22,16 @@ const day = (fd: FormData, k = "date") => jakartaDateTime(str(fd, k) || todayStr
  */
 export async function readLabelAction(fd: FormData): Promise<{ ok: boolean; error?: string; source?: string; read?: LabelRead; matches?: (string | null)[] }> {
   try {
-    await assertPerm("retur.manage", "refund.request");
+    const user = await assertPerm("retur.manage", "refund.request");
     const file = fd.get("label");
     if (!(file instanceof File) || !file.size) return { ok: false, error: "Foto label belum dipilih" };
     if (!file.type.startsWith("image/")) return { ok: false, error: "Foto label harus berupa gambar" };
     if (file.size > MAX_PROOF_BYTES) return { ok: false, error: MAX_PROOF_TEXT };
     const r = await readReturnLabel(Buffer.from(await file.arrayBuffer()), file.type);
     const [catalog, maps] = await Promise.all([returnCatalog(), skuMaps()]);
-    const matches = r.read.lines.map((l) => matchItem(l, catalog, maps)?.itemId ?? null);
+    // Anggota divisi: hasil pencocokan SKU hanya produk jadi divisinya
+    const scope = await returnItemScope(user);
+    const matches = r.read.lines.map((l) => matchItem(l, catalog, maps)?.itemId ?? null).map((id) => (id && scope && !scope.includes(id) ? null : id));
     return { ok: true, source: r.source, read: r.read, matches, ...(r.error ? { error: r.error } : {}) };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : "Gagal membaca label" };
@@ -68,7 +71,9 @@ function inputOf(fd: FormData): ReturnInput {
 export const saveReturn = action(
   "retur.manage",
   async (fd, user) => {
-    const r = await createReturn(inputOf(fd), user);
+    const input = inputOf(fd);
+    await assertReturnItems(user, input.lines.map((l) => l.itemId));
+    const r = await createReturn(input, user);
     redirect(`/retur/${r.id}?rekam=1`);
   },
   PATHS,
@@ -77,7 +82,9 @@ export const saveReturn = action(
 export const editReturn = action(
   "retur.manage",
   async (fd, user) => {
-    const r = await updateReturn(str(fd, "id"), inputOf(fd), user);
+    const input = inputOf(fd);
+    await assertReturnItems(user, input.lines.map((l) => l.itemId));
+    const r = await updateReturn(str(fd, "id"), input, user);
     return `${r.number} diperbarui`;
   },
   PATHS,

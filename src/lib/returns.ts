@@ -28,7 +28,7 @@ export const returnStatusOf = (r: { status: ReturnStatus; cancelledAt?: Date | n
 
 /** Pengaturan retur (Pengaturan → parameter) */
 export const RETURN_SETTINGS = {
-  videoMaxMinutes: { key: "retur_video_maks_menit", def: 5 },
+  videoMaxMinutes: { key: "retur_video_maks_menit", def: 10 },
   videoKeepDays: { key: "retur_video_hapus_hari", def: 60 },
   diskWarnPct: { key: "disk_peringatan_persen", def: 15 },
   staleDays: { key: "retur_menggantung_hari", def: 14 },

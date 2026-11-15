@@ -53,7 +53,7 @@ export function VideoRecorder({ returnId, number, trackingNo, autoStart }: { ret
   const [resume, setResume] = useState<Pending[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const st = useRef<{ p: Pending | null; pumping: boolean; stream?: MediaStream; rec?: MediaRecorder; draw?: number; tick?: number; wake?: { release(): Promise<void> } | null; t0: number; maxSec: number; frames: number; failed?: boolean }>({ p: null, pumping: false, t0: 0, maxSec: 300, frames: 0 });
+  const st = useRef<{ p: Pending | null; pumping: boolean; stream?: MediaStream; rec?: MediaRecorder; draw?: number; tick?: number; wake?: { release(): Promise<void> } | null; t0: number; maxSec: number; frames: number; failed?: boolean }>({ p: null, pumping: false, t0: 0, maxSec: 600, frames: 0 });
 
   useEffect(() => {
     listPending(returnId).then(setResume);
@@ -195,7 +195,7 @@ export function VideoRecorder({ returnId, number, trackingNo, autoStart }: { ret
       const res = await fetch(`/api/retur/${returnId}/video`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ mime, recordedAt: new Date().toISOString(), device: navigator.userAgent }) });
       const j = (await res.json()) as { mediaId?: string; maxMinutes?: number; error?: string };
       if (!res.ok || !j.mediaId) throw new Error(j.error ?? "Gagal memulai unggahan");
-      s.maxSec = (j.maxMinutes ?? 5) * 60;
+      s.maxSec = (j.maxMinutes ?? 10) * 60;
       s.p = { mediaId: j.mediaId, returnId, base: 0, blob: new Blob([], { type: mime }), total: 0, ended: false, durationSec: 0, mime: mime.split(";")[0] };
       s.frames = 0;
       const rec = new MediaRecorder(out, { mimeType: mime, videoBitsPerSecond: 1_000_000, audioBitsPerSecond: 64_000 });
