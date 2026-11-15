@@ -89,12 +89,15 @@ function audit(rootSel) {
       await p.waitForTimeout(400);
       await check(path);
     }
-    // Popup laporan shift: buka laporan pertama yang bisa diisi, periksa setiap langkah
-    await p.goto(`${BASE}/laporan`, { waitUntil: "networkidle" });
-    const link = p.locator('a[href^="/laporan/c"]').first();
-    if (await link.count()) {
-      await link.click();
-      await p.waitForLoadState("networkidle");
+    // Popup laporan shift: laporan di REPORTS (id dipisah koma) atau laporan pertama di daftar; periksa setiap langkah
+    let ids = (process.env.REPORTS || "").split(",").filter(Boolean);
+    if (!ids.length) {
+      await p.goto(`${BASE}/laporan`, { waitUntil: "networkidle" });
+      const href = await p.locator('a[href^="/laporan/c"]').first().getAttribute("href").catch(() => null);
+      if (href) ids = [href.split("/")[2].split("?")[0]];
+    }
+    for (const id of ids) {
+      await p.goto(`${BASE}/laporan/${id}`, { waitUntil: "networkidle" });
       const open = p.getByRole("button", { name: /Lanjutkan isi laporan|Ubah laporan/ });
       if (await open.count()) {
         await open.click();
@@ -104,7 +107,8 @@ function audit(rootSel) {
           await steps.nth(i).click();
           await p.locator("dialog[open] details:not([open]) summary").evaluateAll((els) => els.forEach((e) => e.click()));
           await p.waitForTimeout(300);
-          await check(`popup laporan › ${(await steps.nth(i).innerText()).replace(/\s+/g, " ").trim()}`, "dialog[open]");
+          await check(`popup laporan ${id.slice(-4)} › ${(await steps.nth(i).innerText()).replace(/\s+/g, " ").trim()}`, "dialog[open]");
+          if (SHOTS && process.env.SHOT_STEP && (await steps.nth(i).innerText()).includes(process.env.SHOT_STEP)) await p.screenshot({ path: `${SHOTS}/${w}-langkah-${process.env.SHOT_STEP.replace(/\s+/g, "_")}.png` });
         }
       }
     }

@@ -60,7 +60,7 @@ export default async function MutasiRekening({ searchParams }: { searchParams: P
               <tr key={x.id}>
                 <td>{fmtDateTime(x.date)}<div className="font-mono text-xs text-slate-400">{x.number}</div></td>
                 <td><Badge tone={src(x.number) === "FINANCE" ? "gray" : "purple"}>{SOURCE[src(x.number)] ?? src(x.number)}</Badge></td>
-                <td className="max-w-xs truncate">{x.description}</td>
+                <td className="min-w-[12rem] max-w-xs whitespace-normal break-words">{x.description}</td>
                 <td className="num text-emerald-600">{x.debit ? idr(x.debit) : ""}</td>
                 <td className="num text-rose-600">{x.credit ? idr(x.credit) : ""}</td>
                 <td className="num">{idr(x.balance)}</td>

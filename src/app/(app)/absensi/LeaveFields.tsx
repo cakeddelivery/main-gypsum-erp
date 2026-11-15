@@ -27,7 +27,7 @@ export function LeaveFields({ today, min, maxDays }: { today: string; min: strin
       <Field label={needDoc ? "Foto surat dokter (wajib)" : kind === "SAKIT" ? "Foto surat dokter (opsional untuk 1 hari)" : "Foto bukti (opsional)"}>
         <label className={`input flex cursor-pointer items-center gap-2 ${needDoc && !file ? "border-amber-400" : ""}`}>
           <span aria-hidden>📷</span>
-          <span className="truncate text-slate-600">{file ?? "Ambil / pilih foto"}</span>
+          <span className="break-all text-slate-600">{file ?? "Ambil / pilih foto"}</span>
           <input type="file" name="attachment" accept="image/*,application/pdf" className="sr-only" required={needDoc} onChange={(e) => setFile(e.target.files?.[0]?.name ?? null)} />
         </label>
       </Field>

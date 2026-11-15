@@ -49,7 +49,7 @@ dialog { @apply bg-white text-slate-800; }
   .choice-seg button.choice-on { @apply bg-brand-600 text-white hover:bg-brand-600; }
   .choice-search { @apply relative w-full; }
   .choice-trigger { @apply flex items-center justify-between gap-2 text-left; }
-  .choice-text { @apply truncate; }
+  .choice-text { @apply min-w-0 break-words leading-snug; }
   .choice-placeholder .choice-text { @apply text-slate-400; }
   .choice-caret { @apply shrink-0 text-xs text-slate-500; }
   /* Panel melayang di atas isi halaman agar kolom di sebelahnya tidak ikut bergeser/kosong */

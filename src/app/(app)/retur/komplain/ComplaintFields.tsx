@@ -79,7 +79,7 @@ export function ComplaintFields({ items, today }: { items: Opt[]; today: string 
                 <option value="">— produk ERP —</option>
                 {items.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
               </select>
-              {(r.labelSku || r.labelName) && <p className="mt-1 truncate text-xs text-slate-500">Label: {[r.labelSku, r.labelName].filter(Boolean).join(" · ")}</p>}
+              {(r.labelSku || r.labelName) && <p className="mt-1 break-words text-xs text-slate-500">Label: {[r.labelSku, r.labelName].filter(Boolean).join(" · ")}</p>}
               <input type="hidden" name="labelSku" value={r.labelSku} /><input type="hidden" name="labelName" value={r.labelName} />
             </div>
             <label className="col-span-5 sm:col-span-2"><span className="text-xs text-slate-500">Qty bermasalah</span><input name="qty" inputMode="numeric" value={r.qty} onChange={(e) => set(i, { qty: e.target.value, sendQty: e.target.value })} className="input" required /></label>

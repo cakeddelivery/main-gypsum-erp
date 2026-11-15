@@ -106,7 +106,7 @@ export function Modal({ trigger, title, children, triggerClass = "btn-primary", 
               <div className="modal-head">
                 <div className="min-w-0">
                   <h2 className="font-semibold capitalize text-slate-900">{title}</h2>
-                  {subtitle && <p className="truncate text-xs text-slate-500">{subtitle}</p>}
+                  {subtitle && <p className="break-words text-xs text-slate-500">{subtitle}</p>}
                 </div>
                 <button type="button" aria-label="Tutup" className="modal-x" onClick={requestClose}>
                   ✕

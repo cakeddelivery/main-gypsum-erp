@@ -93,7 +93,7 @@ export async function Riwayat({ employeeId, month }: { employeeId: string; month
                 <li key={r.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <div className="min-w-0">
                     <div className="font-medium text-slate-900">{fmtDay(r.date)}</div>
-                    <div className="truncate text-sm text-slate-500">{r.checkIn ? `${hm(r.checkIn)} – ${hm(r.checkOut) ?? "…"}` : r.note || "—"}</div>
+                    <div className="break-words text-sm text-slate-500">{r.checkIn ? `${hm(r.checkIn)} – ${hm(r.checkOut) ?? "…"}` : r.note || "—"}</div>
                   </div>
                   <Badge tone={TONE[r.status]}>{r.status === "TERLAMBAT" ? `Telat ${r.lateMinutes} mnt` : r.status === "ALPA" ? "Alpa" : ATT_LABEL[r.status]}</Badge>
                 </li>

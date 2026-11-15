@@ -62,7 +62,16 @@ export function formDirty(form: HTMLFormElement): boolean {
  * Pengguna sedang mengisi sesuatu: popup terbuka, kolom sedang diketik, atau ada form yang sudah diubah.
  * Popup pemberitahuan tanpa isian (pengingat, pratinjau) ditandai data-update-safe agar tidak menahan pembaruan.
  */
+/** Tandai unggahan sedang berjalan (mis. foto checklist): pembaruan otomatis menunggu sampai selesai */
+export function setUploading(on: boolean, doc: Document = document) {
+  const el = doc.documentElement;
+  const n = Number(el.dataset.uploading || 0) + (on ? 1 : -1);
+  if (n > 0) el.dataset.uploading = String(n);
+  else delete el.dataset.uploading;
+}
+
 export function isBusy(doc: Document): boolean {
+  if (doc.documentElement?.dataset?.uploading) return true;
   if (doc.querySelector("dialog[open]:not([data-update-safe])")) return true;
   const a = doc.activeElement as HTMLElement | null;
   if (a && (a.isContentEditable || ((a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT") && !(a as HTMLInputElement).readOnly))) return true;

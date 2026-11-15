@@ -56,3 +56,18 @@ describe("Pembaruan otomatis aplikasi (PWA)", () => {
     }
   });
 });
+
+describe("Pembaruan otomatis menunggu unggahan selesai", () => {
+  it("isBusy true selama ada unggahan (bertumpuk), false setelah semua selesai", async () => {
+    const { isBusy, setUploading } = await import("@/lib/appVersion");
+    const el = { dataset: {} as Record<string, string> };
+    const doc = { documentElement: el, querySelector: () => null, activeElement: null, forms: [] } as unknown as Document;
+    expect(isBusy(doc)).toBe(false);
+    setUploading(true, doc);
+    setUploading(true, doc);
+    setUploading(false, doc);
+    expect(isBusy(doc)).toBe(true);
+    setUploading(false, doc);
+    expect(isBusy(doc)).toBe(false);
+  });
+});

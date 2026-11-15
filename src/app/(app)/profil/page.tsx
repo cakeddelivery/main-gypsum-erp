@@ -73,7 +73,7 @@ export default async function ProfilPage({ searchParams }: { searchParams: Promi
           <div className="mb-4 flex items-center gap-3">
             <Avatar name={u.name} src={photo} size={56} />
             <div className="min-w-0">
-              <div className="truncate text-lg font-semibold text-slate-900">{u.name}</div>
+              <div className="break-words text-lg font-semibold text-slate-900">{u.name}</div>
               <div className="text-sm text-slate-500">{ROLE_LABEL[u.role]}{division ? ` · ${division}` : ""}</div>
             </div>
           </div>

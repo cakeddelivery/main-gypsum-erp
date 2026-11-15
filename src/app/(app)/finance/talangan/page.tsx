@@ -80,7 +80,7 @@ export default async function TalanganPage({ searchParams }: { searchParams: Pro
                       <tr key={i.journalId}>
                         <td className="whitespace-nowrap">{fmtDate(i.date)}</td>
                         <td>{i.label} {i.href ? <Link className="link font-mono text-xs" href={i.href}>{i.ref}</Link> : <span className="font-mono text-xs">{i.ref}</span>}</td>
-                        <td className="max-w-md truncate text-sm">{i.description}</td>
+                        <td className="min-w-[12rem] max-w-md whitespace-normal break-words text-sm">{i.description}</td>
                         <td className="num">{idr(i.amount)}</td>
                         <td>{!o ? <Badge tone="green">Sudah kembali</Badge> : o.amount < i.amount ? <Badge tone="amber">Sisa {idr(o.amount)}</Badge> : <Badge tone="red">Belum</Badge>}</td>
                       </tr>

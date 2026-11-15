@@ -32,6 +32,7 @@ import { addReceipt, removeChecklistPhoto, removeReceipt, saveReport, uploadChec
 import { FormDraft, clearFormDraft } from "@/components/FormDraft";
 import { CameraCapture } from "@/components/CameraCapture";
 import { readReopen, reportReopenKey, writeReopen } from "@/lib/reopen";
+import { setUploading } from "@/lib/appVersion";
 
 /** Baris pesanan yang sedang dikirim (Stok → Pembelian) untuk barang divisi ini */
 export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean; vendor: string; itemName: string; unit: string };
@@ -456,7 +457,7 @@ export function ReportForm(p: Props) {
                             <div className="keep-cols grid grid-cols-2 gap-2">
                               {cells.map((r) => (
                                 <label key={r.key} className={`block min-w-0 ${matches(r.label) ? "" : "hidden"}`}>
-                                  <span className="block truncate text-xs text-slate-500" title={r.label}>{r.col || r.label}</span>
+                                  <span className="block break-words text-xs leading-tight text-slate-500">{r.col || r.label}</span>
                                   <input name={`rc.${r.key}`} inputMode="numeric" value={rc[r.key] ?? ""} onChange={(e) => setRc((x) => ({ ...x, [r.key]: e.target.value }))} className={`input py-1.5 text-right ${rc[r.key] ? "border-brand-400 bg-brand-50" : ""}`} placeholder="0" aria-label={r.label} />
                                 </label>
                               ))}
@@ -777,14 +778,16 @@ function PhotoTask({ id, index, entry }: { id: string; index: number; entry: Che
     }
   };
   // Foto langsung diunggah begitu diambil (sudah dikompres di HP) → tersimpan di draf laporan di server
-  const upload = (blob: Blob) =>
-    run(async () => {
+  const upload = (blob: Blob) => {
+    setUploading(true);
+    return run(async () => {
       const fd = new FormData();
       fd.set("id", id);
       fd.set("index", String(index));
       fd.set("photo", new File([blob], "foto.jpg", { type: blob.type || "image/jpeg" }));
       return uploadChecklistPhoto(fd);
-    }, "Foto tersimpan");
+    }, "Foto tersimpan").finally(() => setUploading(false));
+  };
   const src = entry.photoPath ? `/api/files/report/${id}/${index}?v=${encodeURIComponent(entry.photoPath.split("/").pop() ?? "")}` : null;
   return (
     <div className="flex flex-1 items-center gap-3">
@@ -843,12 +846,12 @@ function CountRow({ name, sub, unit, inputName, inputMode, value, onChange, warn
   return (
     <li className={`flex items-center gap-3 py-2 ${hidden ? "hidden" : ""}`}>
       <div className="min-w-0 flex-1">
-        <div className={`line-clamp-2 text-sm leading-snug ${warn ? "font-medium text-amber-700" : "text-slate-800"}`}>{name}</div>
+        <div className={`break-words text-sm leading-snug ${warn ? "font-medium text-amber-700" : "text-slate-800"}`}>{name}</div>
         {sub && <div className="text-xs text-slate-500">{sub}</div>}
       </div>
       <label className="flex shrink-0 items-center gap-1.5">
-        <input name={inputName} inputMode={inputMode} value={value} onChange={(e) => onChange(e.target.value)} className="input w-20 py-1.5 text-right" placeholder="0" aria-label={typeof name === "string" ? name : undefined} />
-        <span className="w-14 truncate text-xs text-slate-500" title={unit}>{unit}</span>
+        <input name={inputName} inputMode={inputMode} value={value} onChange={(e) => onChange(e.target.value)} className="input w-[4.5rem] py-1.5 text-right" placeholder="0" aria-label={typeof name === "string" ? name : undefined} />
+        <span className="w-12 break-words text-[11px] leading-tight text-slate-500">{unit}</span>
       </label>
     </li>
   );

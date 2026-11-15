@@ -46,7 +46,7 @@ export function ResultRows({ points, workers, tasks: allTasks, pointTasks = {}, 
             </div>
             {list.map((w) => (
               <div key={w.id} className="flex items-center gap-2">
-                <span className="min-w-0 flex-1 truncate text-sm">{w.name}</span>
+                <span className="min-w-0 flex-1 break-words text-sm">{w.name}</span>
                 <input name={`qty_${w.id}`} aria-label={`Bagus ${w.name}`} inputMode="numeric" value={qty[w.id] ?? ""} onChange={(e) => setQty((q) => ({ ...q, [w.id]: e.target.value }))} className="input w-20 text-right sm:w-24" placeholder="0" />
                 <input name={`rej_${w.id}`} aria-label={`Reject ${w.name}`} inputMode="numeric" value={rej[w.id] ?? ""} onChange={(e) => setRej((q) => ({ ...q, [w.id]: e.target.value }))} className="input w-20 text-right sm:w-24" placeholder="0" />
               </div>
@@ -100,7 +100,7 @@ export function KirimBahan({ groups, kits = {}, drivers }: { groups: KGroup[]; k
     return (
       <label key={k} className="grid grid-cols-[1fr_6.5rem] items-center gap-2 border-t border-slate-100 px-3 py-2">
         <span className="min-w-0 text-sm">
-          <span className="block truncate">{it.name}</span>
+          <span className="block break-words">{it.name}</span>
           <span className={`text-xs ${it.stock < 0 ? "text-rose-600" : "text-slate-500"}`}>stok {fmt(it.stock)} {it.unit}</span>
         </span>
         <input name={`kq:${k}`} inputMode="decimal" value={qty[k] ?? ""} onChange={(e) => setQty((q) => ({ ...q, [k]: e.target.value }))} placeholder="0" aria-label={`Jumlah ${it.name} ke ${pointName.get(pid)?.name} (${it.unit})`} className={`input py-1.5 text-right ${qty[k] ? "border-brand-400 bg-brand-50" : ""}`} />

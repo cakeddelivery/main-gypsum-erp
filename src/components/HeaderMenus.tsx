@@ -103,8 +103,8 @@ export function ProfileMenu({ user }: { user: { name: string; username: string; 
         <div className="flex items-center gap-3 border-b border-slate-200 px-4 py-4">
           <Avatar name={user.name} src={user.photoUrl} size={44} />
           <div className="min-w-0">
-            <div className="truncate font-semibold text-slate-900">{user.name}</div>
-            <div className="truncate text-sm text-slate-500">@{user.username} · {user.role}{user.division ? ` · ${user.division}` : ""}</div>
+            <div className="break-words font-semibold text-slate-900">{user.name}</div>
+            <div className="break-words text-sm text-slate-500">@{user.username} · {user.role}{user.division ? ` · ${user.division}` : ""}</div>
           </div>
         </div>
         <div className="p-2">
