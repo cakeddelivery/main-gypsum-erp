@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { BoronganError, boronganScope } from "@/lib/borongan";
 import { cancelPickup, cancelShipment, createPickup, createShipment, receivePickup, resolvePickup, saveAllots, saveWorkReport } from "@/lib/boronganFlow";
 import { todayStr } from "@/lib/time";
+import { autoClaims } from "@/lib/boronganClaim";
 
 /** Alur kiriman borongan (KRM → bagi → lapor → AMB → terima). Driver punya izin borongan.driver. */
 const PERMS = ["borongan.manage", "borongan.point", "borongan.driver"] as const;
@@ -107,6 +108,8 @@ export const terimaSetoran = action(
     const counts = [...fd.entries()].filter(([k]) => k.startsWith("c:")).map(([k, v]) => ({ taskId: k.slice(2), qty: String(v).trim() === "" ? -1 : int(v) }));
     if (counts.some((c) => c.qty < 0)) throw new BoronganError("Isi hitungan setiap jenis (0 bila tidak ada)");
     const r = await receivePickup(str(fd, "pickupId"), counts, user, await boronganScope(prisma, user));
+    // Setiap 7× setoran Assembling per titik, klaim upah dibuat otomatis
+    if (!r.short) await autoClaims(r.pointIds);
     return r.short ? `${r.number} diterima dengan hitungan kurang. Upah ditahan, driver & Supervisor diberi notifikasi.` : `${r.number} cocok, barang masuk gudang`;
   },
   [...PATHS, "/gaji/borongan"],
@@ -119,7 +122,40 @@ export const tindakTahanan = action(
     const lepas = str(fd, "mode") === "lepas";
     const lines = lepas ? undefined : [...fd.entries()].filter(([k]) => k.startsWith("l:")).map(([k, v]) => ({ id: k.slice(2), qty: Number(String(v).replace(/\./g, "")) }));
     const r = await resolvePickup(str(fd, "pickupId"), { reason: str(fd, "reason"), lines }, user, await boronganScope(prisma, user));
+    if (!r.short) await autoClaims((await prisma.boronganPickupLine.findMany({ where: { pickupId: str(fd, "pickupId") }, select: { pointId: true } })).map((l) => l.pointId));
     return lepas ? `Tahanan ${r.number} dilepas` : r.short ? `Koreksi ${r.number} tersimpan, hitungan masih kurang (upah tetap ditahan)` : `Koreksi ${r.number} tersimpan, cocok dan upah dilepas`;
   },
   [...PATHS, "/gaji/borongan"],
+);
+
+// ---------------- KLAIM UPAH ----------------
+
+export const klaimSekarang = action(
+  [...PERMS],
+  async (fd, user) => {
+    const { requestClaim } = await import("@/lib/boronganClaim");
+    const c = await requestClaim(str(fd, "pointId"), user, await boronganScope(prisma, user));
+    return `Klaim ${c.number} diajukan (Rp${Number(c.total).toLocaleString("id-ID")}), menunggu persetujuan Finance / Owner`;
+  },
+  [...PATHS, "/borongan/klaim"],
+);
+
+export const setujuiKlaim = action(
+  "borongan.pay",
+  async (fd, user) => {
+    const { approveClaim } = await import("@/lib/boronganClaim");
+    const r = await approveClaim(str(fd, "id"), str(fd, "bankAccountId"), user);
+    return `Klaim ${r.claim.number} disetujui & dibayar (${r.settlement.number}, Rp${Number(r.settlement.total).toLocaleString("id-ID")})`;
+  },
+  [...PATHS, "/borongan/klaim", "/akuntansi"],
+);
+
+export const tolakKlaim = action(
+  "borongan.pay",
+  async (fd, user) => {
+    const { rejectClaim } = await import("@/lib/boronganClaim");
+    const c = await rejectClaim(str(fd, "id"), str(fd, "reason"), user);
+    return `Klaim ${c.number} ditolak, setorannya bisa diklaim lagi`;
+  },
+  [...PATHS, "/borongan/klaim"],
 );

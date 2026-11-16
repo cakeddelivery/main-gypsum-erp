@@ -530,6 +530,7 @@ model BoronganPoint {
   allots       BoronganAllot[]
   reports      BoronganWorkReport[]
   pickupLines  BoronganPickupLine[]
+  claims       BoronganClaim[]
 }
 
 /// Tetangga yang bekerja borongan (bukan karyawan): pekerja & koordinator per titik, driver tanpa titik
@@ -623,6 +624,9 @@ model BoronganResult {
   pickup          BoronganPickup?     @relation(fields: [pickupId], references: [id])
   /// Upah ditahan (hitungan divisi kurang dari setoran driver) sampai dicek/dikoreksi; tidak ikut dibayar
   held            Boolean             @default(false)
+  /// Klaim upah titik yang memuat setoran ini (menunggu persetujuan Finance/Owner)
+  claimId         String?
+  claim           BoronganClaim?      @relation(fields: [claimId], references: [id])
   /// Akun yang mencatat (pencatat boleh membatalkan setorannya sendiri selama belum dibayar)
   createdById     String?
   createdBy       String
@@ -685,6 +689,7 @@ model BoronganSettlement {
   /// Dibatalkan: jurnal dibalik, dokumen tetap tersimpan
   cancelledAt   DateTime?
   cancelReason  String?
+  claim         BoronganClaim?
 }
 
 /// Hasil kerja borongan per pekerja; periodId terisi setelah diklaim
@@ -2407,4 +2412,34 @@ model BoronganPickupCount {
   taskId   String
   task     PieceTask      @relation(fields: [taskId], references: [id])
   qty      Int
+}
+
+/// MENUNGGU = diajukan koordinator / otomatis tiap 7× setoran Assembling; DIBAYAR = disetujui & dibayar Finance/Owner
+enum ClaimStatus {
+  MENUNGGU
+  DIBAYAR
+  DITOLAK
+}
+
+/// Klaim upah borongan satu titik (pekerja + koordinator + fee driver), nomor KLM-DDMMYY-<KODE TITIK>
+model BoronganClaim {
+  id            String              @id @default(cuid())
+  number        String              @unique
+  pointId       String
+  point         BoronganPoint       @relation(fields: [pointId], references: [id])
+  status        ClaimStatus         @default(MENUNGGU)
+  /// true = dibuat otomatis setelah 7× setoran Assembling
+  auto          Boolean             @default(false)
+  total         BigInt
+  requestedBy   String
+  requestedById String?
+  createdAt     DateTime            @default(now())
+  decidedBy     String?
+  decidedAt     DateTime?
+  rejectReason  String?
+  settlementId  String?             @unique
+  settlement    BoronganSettlement? @relation(fields: [settlementId], references: [id])
+  results       BoronganResult[]
+
+  @@index([pointId, status])
 }

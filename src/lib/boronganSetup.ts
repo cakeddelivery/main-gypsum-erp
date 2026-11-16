@@ -135,3 +135,26 @@ export async function setupBorongan(db: PrismaClient, apply: boolean): Promise<s
 
 class Rollback extends Error {}
 
+
+/**
+ * Keputusan Owner: Cat Plastik tanpa bagian koordinator (Beringin tidak punya koordinator).
+ * Bagian koordinator dijadikan Rp0 dan budget per pcs turun sebesar itu (upah pekerja & driver tetap).
+ * Setoran lama tidak berubah (tarif tersimpan per setoran). Pratinjau dulu, lalu `-- --jalankan`.
+ */
+export async function zeroCatPlastikCoordinator(db: PrismaClient, apply: boolean, only?: string[]): Promise<string[]> {
+  const tasks = await db.pieceTask.findMany({ where: { name: { startsWith: "Cat plastik", mode: "insensitive" }, ...(only ? { id: { in: only } } : {}) }, orderBy: { name: "asc" } });
+  const log: string[] = [];
+  const todo = tasks.filter((t) => t.coordinatorRate > 0n);
+  for (const t of tasks) {
+    if (t.coordinatorRate === 0n) log.push(`= ${t.name}: koordinator sudah Rp0`);
+    else log.push(`~ ${t.name}: koordinator Rp${t.coordinatorRate} → Rp0, budget Rp${t.ratePerPcs} → Rp${t.workerRate + t.driverRate} (pekerja tetap Rp${t.workerRate}, driver Rp${t.driverRate})`);
+  }
+  if (!tasks.length) log.push("! Tidak ada tugas Cat plastik");
+  if (apply && todo.length) {
+    await db.$transaction(async (tx) => {
+      for (const t of todo) await tx.pieceTask.update({ where: { id: t.id }, data: { coordinatorRate: 0n, ratePerPcs: t.workerRate + t.driverRate } });
+      await tx.auditLog.create({ data: { actorName: "Skrip tarif Cat Plastik", action: "TARIF_CAT_PLASTIK_KOORDINATOR_0", entity: "PieceTask", entityId: todo.map((t) => t.code).join(","), data: { tugas: todo.map((t) => ({ nama: t.name, koordinatorLama: Number(t.coordinatorRate), budgetLama: Number(t.ratePerPcs) })) } } });
+    });
+  }
+  return log;
+}

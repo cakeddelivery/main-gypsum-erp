@@ -76,6 +76,8 @@ export async function loadUser(userId: string, sv = 0) {
     const grant = (user.role === "KAPTEN_DIVISI" && division.reportTemplate === "ASSEMBLING") || (await prisma.pieceTask.count({ where: { divisionId: division.id, active: true } })) > 0;
     if (grant) for (const p of ["borongan.view", "borongan.point"] as const) perms.add(p);
   }
+  // Tim Oven ikut melihat Riwayat Pengiriman borongan (info selisih patung kering)
+  if (division && /oven/i.test(division.name)) perms.add("borongan.view");
   // Anggota divisi Giftbox & Packing mencatat retur paket (video unboxing) tanpa akses refund/komplain
   if (divisionReturGrant(user.role, division?.reportTemplate)) perms.add("retur.manage");
   return {
