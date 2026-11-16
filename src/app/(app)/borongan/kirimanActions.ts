@@ -121,9 +121,11 @@ export const terimaSetoran = action(
 export const tindakTahanan = action(
   "borongan.manage",
   async (fd, user) => {
+    const scope = await boronganScope(prisma, user);
+    if (!scope.owner) throw new BoronganError("Koreksi / lepas tahanan setoran hanya oleh Owner");
     const lepas = str(fd, "mode") === "lepas";
     const lines = lepas ? undefined : [...fd.entries()].filter(([k]) => k.startsWith("l:")).map(([k, v]) => ({ id: k.slice(2), qty: Number(String(v).replace(/\./g, "")) }));
-    const r = await resolvePickup(str(fd, "pickupId"), { reason: str(fd, "reason"), lines }, user, await boronganScope(prisma, user));
+    const r = await resolvePickup(str(fd, "pickupId"), { reason: str(fd, "reason"), lines }, user, scope);
     if (!r.short) await autoClaims((await prisma.boronganPickupLine.findMany({ where: { pickupId: str(fd, "pickupId") }, select: { pointId: true } })).map((l) => l.pointId));
     return lepas ? `Tahanan ${r.number} dilepas` : r.short ? `Koreksi ${r.number} tersimpan, hitungan masih kurang (upah tetap ditahan)` : `Koreksi ${r.number} tersimpan, cocok dan upah dilepas`;
   },

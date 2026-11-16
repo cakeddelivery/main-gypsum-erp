@@ -12,7 +12,7 @@ import { stockBalances } from "@/lib/stock";
 vi.mock("@/lib/push", async (orig) => ({ ...(await orig<typeof import("@/lib/push")>()), sendPush: vi.fn(async () => ({ sent: 0, removed: 0, failed: 0, users: 0 })) }));
 import { sendPush } from "@/lib/push";
 
-const all: Scope = { all: true, pointIds: [], personId: null, taskIds: null };
+const all: Scope = { all: true, owner: true, pointIds: [], personId: null, taskIds: null };
 
 describe("Alur kiriman borongan: hitungan murni", () => {
   it("sisa / selisih dan Selesai semua (isi otomatis)", () => {

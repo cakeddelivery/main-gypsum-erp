@@ -86,7 +86,7 @@ function divisionGuide(d: DivSpec): Guide {
         items: [
           "Ada kiriman dari supplier/toko: menu bawah «Laporan» → «+ Barang masuk». Catat **sebelum** menghitung stok akhir.",
           ...(d.terima ? ["Hasil borongan datang: buka laporan hari ini → «Terima setoran borongan» → pilih nomor AMB → «Terima», isi total per jenis."] : []),
-          ...(d.kering ? ["Patung kering untuk borongan Assembling siap: menu «Borongan» → «+ Patung Kering» → isi jumlah per jenis (Cowok, Cewek, Hewan, Transport) → «Simpan patung kering»."] : []),
+          ...(d.kering ? ["Patung kering untuk borongan Assembling siap: menu «Borongan» → «+ Kirim Assembling» → isi jumlah per jenis (Cowok, Cewek, Hewan, Transport) → «Simpan patung kering»."] : []),
           "Stok bahan di bawah limit? Permintaan stok dibuat **otomatis** dari laporan, tidak perlu lapor manual.",
         ],
       }),
@@ -123,7 +123,7 @@ const SUPERVISOR: Guide = {
     ph("blue", { icon: "eye", when: "Sepanjang hari", title: "Pantau laporan shift", items: ["«Laporan Shift»: laporan dikelompokkan per tanggal (terbaru di atas), 1 laporan per divisi per shift. Tekan «Lihat».", "Angka harian: «Rekap» dan «Resi & patung». Draf yang belum dikirim ditandai **Draf**: ingatkan divisinya."] }),
     ph("teal", { icon: "check", when: "Harian", title: "Cek Alpa & izin", items: ["Status absensi otomatis tiap pagi (tanpa validasi). «Absensi» → «Alpa & koreksi»: lupa absen? «Koreksi» + alasan.", "Tab «Izin & Sakit»: «Setujui» / «Tolak» (tulis alasan). Hari yang disetujui otomatis tercatat Izin/Sakit (menggantikan Alpa)."] }),
     ph("amber", { icon: "stock", when: "Harian", title: "Stok & bahan baku", items: ["«Stok & Persediaan» → «Permintaan»: «Setujui» / «Tolak», lalu «Penuhi». Kirim daftar ke grup: «Kirim ke WhatsApp».", "«Laporan Shift» → «Order bahan baku»: item online pakai «🛒 Order online» (Link Produk).", "Barang pembelian datang: «Stok & Persediaan» → «Pembelian» → «Terima barang»."] }),
-    ph("violet", { icon: "truck", when: "Saat ada kiriman", title: "Borongan", items: ["«Borongan» → tab «Kiriman» → «+ Kirim Bahan» → isi jumlah per jenis → «Simpan & kirim» (nomor KRM otomatis).", "Setoran kurang = upah ditahan: tab «Kiriman» → «Upah ditahan» → «Cek / koreksi»."] }),
+    ph("violet", { icon: "truck", when: "Saat ada kiriman", title: "Borongan", items: ["«Borongan» → tab «Kiriman» → «+ Kirim Cat» → isi jumlah per jenis → «Simpan & kirim» (nomor KRM otomatis).", "Setoran kurang = upah ditahan: tab «Kiriman» → «Upah ditahan» → «Cek / koreksi»."] }),
     ph("red", { icon: "stock", when: "Paket retur datang", title: "Retur & video unboxing", items: ["«Retur & Komplain» → «+ Retur baru» → «📷 Foto label resi» → cek isian & produk → «Simpan & rekam video».", "Rekam tanpa jeda: tunjukkan label, buka paket → «■ Selesai rekam». Lalu «Periksa barang» (baik / rusak + foto) → «Ajukan klaim» bila ada yang rusak → «Tandai selesai».", "Komplain pembeli: «💬 Komplain & refund» → «+ Komplain» → Refund (isi rekening pembeli) atau Kirim ganti. Bukti bayar refund dikirim bot ke Anda."] }),
   ],
   periodic: ["Mingguan: cek «Rekap» per divisi dan laporan berlabel Kendala yang belum selesai.", "Pastikan setiap divisi punya bahan & limit yang benar di «Bahan & checklist divisi» (minta Owner bila perlu diubah)."],

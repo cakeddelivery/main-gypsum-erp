@@ -141,7 +141,7 @@ export function ScheduleTable({ days, groups, saved, canEdit, save, locked = [] 
                 </tr>,
                 ...g.rows.map((e) => (
                   <tr key={e.id}>
-                    <td className="sticky left-0 z-[1] min-w-[8.5rem] max-w-[10.5rem] !whitespace-normal break-words bg-white font-medium leading-snug shadow-[1px_0_0_rgb(var(--bd-slate-200))]">{e.name}{editing && locked.includes(e.id) && <span className="block text-[11px] font-normal text-slate-500">jadwal Anda diatur Owner</span>}</td>
+                    <td className="sticky left-0 z-[1] min-w-[8.5rem] max-w-[10.5rem] !whitespace-normal break-words bg-white font-medium leading-snug shadow-[1px_0_0_rgb(var(--bd-slate-200))]">{e.name}{editing && locked.includes(e.id) && <span className="block text-[11px] font-normal text-slate-500">jadwal Anda diatur atasan</span>}</td>
                     {days.map((d) => {
                       const k = cellKey(e.id, d.date);
                       const v = (editing ? draft[k] : saved[k]) ?? "";

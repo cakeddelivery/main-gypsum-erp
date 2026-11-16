@@ -9,7 +9,7 @@ let actor: { id: string; name: string };
 let storeId: string;
 let locs: Awaited<ReturnType<typeof locationSettings>>;
 let base: { shiftId: string; divisionId: string; employeeId: string; createdBy: string };
-const all: Scope = { all: true, pointIds: [], personId: null };
+const all: Scope = { all: true, owner: true, pointIds: [], personId: null };
 const avg = async (id: string) => Number((await prisma.item.findUniqueOrThrow({ where: { id } })).avgCost);
 const receive = (itemId: string, qty: number, unitCost: number, toLocationId: string) => prisma.$transaction((tx) => recordMovement(tx, { type: "PENERIMAAN", itemId, qty, toLocationId, unitCost }, actor));
 

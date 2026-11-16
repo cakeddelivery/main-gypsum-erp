@@ -502,7 +502,7 @@ function TaskForm({ task, items, divisions, kit = [] }: { task?: TaskRow; items:
       <fieldset className="rounded-lg border border-slate-200 p-3">
         <legend className="px-1 text-xs font-medium text-slate-600">Bahan pendukung yang ikut dikirim (kit)</legend>
         <input type="hidden" name="kitSent" value="1" />
-        <p className="mb-2 text-xs text-slate-500">Muncul di form Kirim Bahan untuk jenis pekerjaan ini. Bahan per pcs di atas sudah ikut otomatis.</p>
+        <p className="mb-2 text-xs text-slate-500">Muncul di form Kirim Cat / Kirim Assembling untuk jenis pekerjaan ini. Bahan per pcs di atas sudah ikut otomatis.</p>
         <div className="grid max-h-56 gap-1 overflow-y-auto sm:grid-cols-2">
           {items.map((i) => <label key={i.id} className="flex min-h-9 items-center gap-2 text-sm"><input type="checkbox" name="kitIds" value={i.id} defaultChecked={kit.includes(i.id)} className="h-4 w-4 shrink-0" /><span className="break-words">{i.name}</span></label>)}
         </div>

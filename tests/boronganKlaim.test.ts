@@ -9,7 +9,7 @@ import { saveSubscription, sendPush } from "@/lib/push";
 
 vi.mock("@/lib/push", async (orig) => ({ ...(await orig<typeof import("@/lib/push")>()), sendPush: vi.fn(async () => ({ sent: 0, removed: 0, failed: 0, users: 0 })) }));
 
-const all: Scope = { all: true, pointIds: [], personId: null, taskIds: null };
+const all: Scope = { all: true, owner: true, pointIds: [], personId: null, taskIds: null };
 
 describe("Rincian klaim upah (contoh BMR dari pratinjau)", () => {
   it("pekerja, koordinator, fee driver (selalu ada), total", () => {

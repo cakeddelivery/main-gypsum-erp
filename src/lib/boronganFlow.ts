@@ -133,18 +133,28 @@ export const canInputKering = (scope: Scope) => scope.all || !!scope.kering;
 export const canCompleteAssembling = (scope: Scope) => scope.all || scope.division?.template === "ASSEMBLING" || !!scope.warehouse;
 /** Tim divisi (Assembling / Giftbox) yang mencatat semua jenis pekerjaan kiriman ini */
 const divisionCovers = (scope: Scope, taskIds: string[]) => !!scope.division && !scope.driver && taskIds.every((id) => canTask(scope, id));
-/** Pembagian & ambil setoran: lewat driver = driver; diantar langsung = tim divisi; Supervisor/pengelola selalu boleh */
-export const canDistribute = (scope: Scope, s: { mode: ShipmentMode; taskIds: string[] }) => scope.all || (s.mode === "DRIVER" ? !!scope.driver : divisionCovers(scope, s.taskIds));
+/** Pembagian & ambil setoran: lewat driver = driver; diantar langsung = tim divisi; Owner selalu boleh (Supervisor hanya memantau) */
+export const canDistribute = (scope: Scope, s: { mode: ShipmentMode; taskIds: string[] }) => !!scope.owner || (s.mode === "DRIVER" ? !!scope.driver : divisionCovers(scope, s.taskIds));
 export const canPickup = canDistribute;
 export const isCoordinatorOf = (scope: Scope, pointId: string) => !scope.all && !scope.driver && !scope.division && !!scope.personId && scope.pointIds.includes(pointId);
-/** Lapor hasil: koordinator titik; titik tanpa koordinator (Beringin) oleh tim divisi; Supervisor/pengelola selalu boleh */
-export const canReport = (scope: Scope, s: { taskIds: string[] }, pointId: string, hasCoordinator: boolean) => scope.all || isCoordinatorOf(scope, pointId) || (!hasCoordinator && divisionCovers(scope, s.taskIds));
+/** Lapor hasil: koordinator titik; titik tanpa koordinator (Beringin) oleh tim divisi; Owner selalu boleh */
+export const canReport = (scope: Scope, s: { taskIds: string[] }, pointId: string, hasCoordinator: boolean) => !!scope.owner || isCoordinatorOf(scope, pointId) || (!hasCoordinator && divisionCovers(scope, s.taskIds));
 /**
  * Terima setoran: patung Assembling diterima tim PACKING; pekerjaan lain oleh divisi tugasnya (Cat Plastik: Assembling,
- * Cat Giftbox: Giftbox); Supervisor/pengelola selalu boleh.
+ * Cat Giftbox: Giftbox); Owner selalu boleh.
  */
 export const canReceive = (scope: Scope, tasks: { name: string; divisionId: string | null }[]) =>
-  scope.all || (!!scope.division && !scope.driver && tasks.every((t) => (isAssemblingName(t.name) ? !!scope.packing : t.divisionId === scope.division!.id)));
+  !!scope.owner || (!!scope.division && !scope.driver && tasks.every((t) => (isAssemblingName(t.name) ? !!scope.packing : t.divisionId === scope.division!.id)));
+
+/**
+ * Batalkan kiriman: Owner kapan saja (sebelum ada pengambilan); pencatatnya selama belum dibagi ke pekerja.
+ * Isian patung kering yang belum dilengkapi: juga tim Assembling. Supervisor lain hanya memantau.
+ */
+export function canCancelShipment(scope: Scope, s: { waitingSupport: boolean; createdById: string | null; _count?: { allots: number } }, userId: string) {
+  if (scope.owner) return true;
+  if (s.waitingSupport) return (canCompleteAssembling(scope) && !scope.all) || s.createdById === userId;
+  return s.createdById === userId && (s._count?.allots ?? 0) === 0;
+}
 
 // ---------------- DATA ----------------
 
@@ -429,10 +439,8 @@ export async function completeShipment(id: string, input: Omit<ShipmentInput, "t
 export async function cancelShipment(id: string, actor: Actor, scope: Scope) {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "BoronganShipment" WHERE id = ${id} FOR UPDATE`;
-    const s = await tx.boronganShipment.findUniqueOrThrow({ where: { id }, include: { pickups: true } });
-    // Isian patung kering yang belum dilengkapi: dibatalkan pengisinya, tim Assembling, atau Supervisor
-    const allowed = s.waitingSupport ? canCompleteAssembling(scope) || (canInputKering(scope) && s.createdById === actor.id) : canShip(scope);
-    if (!allowed) throw new BoronganError("Kiriman dibatalkan oleh pencatatnya / Supervisor");
+    const s = await tx.boronganShipment.findUniqueOrThrow({ where: { id }, include: { pickups: true, _count: { select: { allots: true } } } });
+    if (!canCancelShipment(scope, s, actor.id)) throw new BoronganError("Kiriman hanya bisa dibatalkan Owner, atau pencatatnya selama belum dibagi ke pekerja");
     if (s.cancelledAt) throw new BoronganError(`${s.number} sudah dibatalkan`);
     if (s.pickups.some((p) => p.status !== "DIBATALKAN")) throw new BoronganError("Kiriman yang sudah diambil setorannya tidak bisa dibatalkan");
     await reverseMovementsByRef(tx, `BGI:${s.number}`, `BATAL-BGI:${s.number}`, "Kiriman dibatalkan", actor);
@@ -648,7 +656,7 @@ export async function cancelPickup(id: string, actor: Actor, scope: Scope) {
     await tx.$queryRaw`SELECT id FROM "BoronganPickup" WHERE id = ${id} FOR UPDATE`;
     const p = await tx.boronganPickup.findUniqueOrThrow({ where: { id }, include: { shipment: { include: { tasks: true } } } });
     if (p.status !== "DIBAWA") throw new BoronganError("Pengambilan yang sudah diterima divisi tidak bisa dibatalkan");
-    if (!scope.all && p.createdById !== actor.id) throw new BoronganError("Hanya pencatat atau Supervisor yang bisa membatalkan");
+    if (!scope.owner && p.createdById !== actor.id) throw new BoronganError("Hanya pencatat atau Owner yang bisa membatalkan");
     await tx.boronganPickup.update({ where: { id }, data: { status: "DIBATALKAN" } });
     await audit(actor, "AMBIL_SETORAN_DIBATALKAN", "BoronganPickup", id, { number: p.number }, tx);
   });
