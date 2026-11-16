@@ -402,3 +402,9 @@ button.is-done.btn-secondary { @apply border-emerald-300 text-emerald-700; }
 .claim-doc tr.claim-grp td { background: #f1f6fd; font-weight: 700; font-size: 12.5px; letter-spacing: .05em; text-transform: uppercase; color: #475569; }
 .claim-doc tr.claim-sub td { font-weight: 700; border-bottom: 2px solid #e2e8f0; }
 .claim-doc tr.claim-grand td { font-weight: 700; font-size: 16px; background: #dbeafe; color: #1e3a8a; }
+
+/* Barang masuk: nama bahan satu baris di samping jumlah (tidak dipecah) */
+.rcv-row .choice-trigger { font-size: 14px; padding-left: .5rem; padding-right: .5rem; }
+.rcv-row .choice-text { white-space: nowrap; }
+.rcv-row .choice-trigger { min-width: 0; }
+.rcv-row .choice-text { display: block; flex: 1 1 auto; overflow: hidden; }

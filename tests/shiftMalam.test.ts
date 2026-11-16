@@ -3,8 +3,9 @@ import { prisma } from "@/lib/db";
 import { carryOver, checkoutDiff, crossesMidnight, shiftWindow } from "@/lib/workday";
 import { resolveWorkday, selfCheckIn, selfCheckOut } from "@/lib/attendanceSelf";
 import { reconcileDay } from "@/lib/attendanceAuto";
-import { applyNightFixes, findNightFixes } from "@/lib/nightShiftFix";
-import { dateOnly, jakartaDateTime } from "@/lib/time";
+import { applyNightFixes, applyNightReportFixes, findNightFixes, findNightReportFixes } from "@/lib/nightShiftFix";
+import { reportSlot } from "@/components/ReportStartForm";
+import { dateOnly, dateStr, jakartaDateTime } from "@/lib/time";
 
 /**
  * Shift malam lintas hari (kasus produksi 16 Nov): Shift 2 Cetak/Oven 16:00–01:00.
@@ -44,6 +45,19 @@ describe("Tanggal kerja shift malam (murni)", () => {
     // Non-shift / shift siang yang lupa pulang tidak terpengaruh
     expect(carryOver(at(N, "01:03"), D, { att: { checkIn: at(D, "08:25"), checkOut: null, shift: S1 }, sched: { shift: S1 } })).toBeNull();
     expect(carryOver(at(N, "00:30"), D, { att: null, sched: { shift: S1 } })).toBeNull();
+  });
+});
+
+describe("Tanggal laporan shift malam (murni)", () => {
+  const shifts = [{ id: "s1", name: "Shift 1", ...S1 }, { id: "s2", name: "Shift 2", ...S2 }];
+  const at2 = (h: number, m: number) => new Date(2034, 0, 16, h, m);
+  it("lewat tengah malam s.d. 07:00 → Shift 2 tanggal kemarin; siang → hari ini; non-shift tidak terpengaruh", () => {
+    expect(reportSlot(shifts, N, at2(1, 3))).toEqual({ shift: shifts[1], date: D });
+    expect(reportSlot(shifts, N, at2(0, 30))).toEqual({ shift: shifts[1], date: D });
+    expect(reportSlot(shifts, N, at2(6, 30))).toEqual({ shift: shifts[1], date: D });
+    expect(reportSlot(shifts, N, at2(9, 0))).toEqual({ shift: shifts[0], date: N });
+    expect(reportSlot(shifts, N, at2(18, 0))).toEqual({ shift: shifts[1], date: N });
+    expect(reportSlot([shifts[0]], N, at2(1, 3)).date).toBe(N);
   });
 });
 
@@ -179,4 +193,22 @@ describe("Absen shift malam di database (web & bot memakai fungsi yang sama)", (
     expect(await prisma.attendance.count({ where: { id: wrong.id } })).toBe(0);
     expect(await prisma.auditLog.count({ where: { action: "ABSEN_SHIFT_MALAM_DIPERBAIKI", entityId: prev.id } })).toBe(1);
   });
+
+  it("Skrip perbaikan: laporan Shift 2 yang dibuka 01:10 dipindah ke tanggal mulai shift; bentrok tidak dipindah", async () => {
+    const k = `${tag}R`;
+    const div = await prisma.division.create({ data: { code: `LR${k}`, name: `Cetak Lap ${k}`, shiftCount: 2 } });
+    const div2 = await prisma.division.create({ data: { code: `LB${k}`, name: `Oven Lap ${k}`, shiftCount: 2 } });
+    const wrong = await prisma.shiftReport.create({ data: { date: dateOnly(N), shiftId: s2Id, divisionId: div.id, createdBy: "uji", createdAt: at(N, "01:10") } });
+    // Laporan Shift 2 sungguhan tanggal N (dibuka sore) tidak tersentuh
+    const real = await prisma.shiftReport.create({ data: { date: dateOnly(N), shiftId: s1Id, divisionId: div.id, createdBy: "uji", createdAt: at(N, "08:40") } });
+    // Bentrok: tanggal D sudah punya laporan divisi & shift yang sama
+    await prisma.shiftReport.create({ data: { date: dateOnly(D), shiftId: s2Id, divisionId: div2.id, createdBy: "uji", createdAt: at(D, "16:05") } });
+    const clash = await prisma.shiftReport.create({ data: { date: dateOnly(N), shiftId: s2Id, divisionId: div2.id, createdBy: "uji", createdAt: at(N, "01:20") } });
+    const fixes = (await findNightReportFixes(14, at(N, "09:00"))).filter((f) => [wrong.id, real.id, clash.id].includes(f.id)).sort((a, b) => Number(!!a.conflictWith) - Number(!!b.conflictWith));
+    expect(fixes.map((f) => [f.id, f.to, !!f.conflictWith])).toEqual([[wrong.id, D, false], [clash.id, D, true]]);
+    expect(await applyNightReportFixes(fixes)).toBe(1);
+    expect(dateStr((await prisma.shiftReport.findUniqueOrThrow({ where: { id: wrong.id } })).date)).toBe(D);
+    expect(dateStr((await prisma.shiftReport.findUniqueOrThrow({ where: { id: clash.id } })).date)).toBe(N);
+  });
+
 });

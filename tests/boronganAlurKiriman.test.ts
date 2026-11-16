@@ -6,6 +6,7 @@ import {
   saveAllots, saveWorkReport, shipmentState, shipmentView, shortTaskName, splitByWeights, canDistribute, canReceive, canReport,
 } from "@/lib/boronganFlow";
 import { saveItemRecord } from "@/lib/items";
+import { saveTaskKit } from "@/lib/boronganSetup";
 import { stockBalances } from "@/lib/stock";
 
 vi.mock("@/lib/push", async (orig) => ({ ...(await orig<typeof import("@/lib/push")>()), sendPush: vi.fn(async () => ({ sent: 0, removed: 0, failed: 0, users: 0 })) }));
@@ -88,6 +89,9 @@ describe("Alur kiriman borongan di database", () => {
     const mkTask = (name: string, input: string, output: string) => prisma.pieceTask.create({ data: { code: `T${name.slice(-5)}${tag}`.toUpperCase(), name, divisionId: div.id, ratePerPcs: 60n, workerRate: 30n, coordinatorRate: 15n, driverRate: 15n, outputItemId: output, inputs: { create: [{ itemId: input, qty: 1 }] } } });
     const tCowok = await mkTask(`Rakit${tag} Cowok`, keringCowok.id, jadiCowok.id);
     const tCewek = await mkTask(`Rakit${tag} Cewek`, keringCewek.id, jadiCewek.id);
+    // Kit bahan pendukung per tugas (Tugas & Tarif): plastik single pack ikut kiriman Rakit
+    await saveTaskKit(prisma, tCowok.id, [plastik.id]);
+    await saveTaskKit(prisma, tCewek.id, [plastik.id]);
     const coord = await savePerson({ name: `Koordinator ${tag}`, role: "KOORDINATOR", pointId: p1.id }, actor, all);
     const driver = await savePerson({ name: `Driver ${tag}`, role: "DRIVER" }, actor, all);
     const wA = await savePerson({ name: `Icuk ${tag}`, role: "PEKERJA", pointId: p1.id }, actor, all);
@@ -116,6 +120,8 @@ describe("Alur kiriman borongan di database", () => {
     // 1. Kirim bahan lewat driver ke dua titik: bahan resep otomatis + bahan pendukung
     const s = await createShipment({ date: "2027-05-15", mode: "DRIVER", pointIds: [p1.id, p2.id], driverId: ctx.driver.id, tasks: [{ taskId: tCowok.id, qty: 60 }, { taskId: tCewek.id, qty: 40 }], support: [{ itemId: plastik.id, qty: 50 }] }, actor, all);
     expect(s.number).toMatch(/^KRM-150527-\d{2}$/);
+    // Bahan di luar kit tugas ditolak (mis. cat Cat Giftbox tidak ikut kiriman Assembling)
+    await expect(createShipment({ date: "2027-05-15", mode: "DRIVER", pointIds: [p1.id], driverId: ctx.driver.id, tasks: [{ taskId: tCowok.id, qty: 1 }], support: [{ itemId: ctx.keringCewek.id, qty: 1 }] }, actor, all)).rejects.toThrow(/bukan kit/);
     expect(await at(keringCowok.id, locs.loc_wip)).toBe(40);
     expect(await at(keringCowok.id, drv)).toBeGreaterThanOrEqual(60);
     await expect(createShipment({ date: "2027-05-15", mode: "DRIVER", pointIds: [p1.id], driverId: ctx.driver.id, tasks: [{ taskId: tCowok.id, qty: 5 }] }, actor, ctx.coordScope)).rejects.toThrow(/Supervisor/);

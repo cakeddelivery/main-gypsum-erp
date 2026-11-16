@@ -8,7 +8,7 @@ import { autoCode } from "@/lib/codes";
 import { audit } from "@/lib/audit";
 import { BoronganError, assertPoint, boronganScope, canWarehouse, isSetoranOnly, cancelHandover, checkSplit, createHandover, createHandovers, deleteResult, receiveHandover, recordResults, removePerson, savePerson, settlePoint, cancelSettlement } from "@/lib/borongan";
 import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
-import { pointConfig } from "@/lib/boronganSetup";
+import { pointConfig, saveTaskKit } from "@/lib/boronganSetup";
 import { allowedByPoint, kirimGroups, pointKits } from "@/lib/boronganKirim";
 
 // /laporan: setoran juga dicatat dari popup di halaman Laporan Shift (ringkasan setoran ikut segar)
@@ -132,7 +132,7 @@ export const savePersonAction = action(
   ["borongan.manage", "borongan.point"],
   async (fd, user) => {
     const scope = await boronganScope(prisma, user);
-    const p = await savePerson({ id: optStr(fd, "id"), name: str(fd, "name"), phone: optStr(fd, "phone"), role: (str(fd, "role") || "PEKERJA") as BoronganRole, pointId: optStr(fd, "pointId") ?? scope.pointIds[0], active: fd.get("active") !== "off", note: optStr(fd, "note"), taskIds: fd.has("tasksSent") ? fd.getAll("taskIds").map(String).filter(Boolean) : undefined }, user, scope);
+    const p = await savePerson({ id: optStr(fd, "id"), name: str(fd, "name"), phone: optStr(fd, "phone"), role: (str(fd, "role") || "PEKERJA") as BoronganRole, pointId: optStr(fd, "pointId") ?? scope.pointIds[0], active: fd.get("active") !== "off", note: optStr(fd, "note"), taskIds: fd.has("tasksSent") ? fd.getAll("taskIds").map(String).filter(Boolean) : undefined, coordinatorId: fd.has("coordinatorId") ? String(fd.get("coordinatorId") ?? "") : undefined }, user, scope);
     return p.active || scope.all ? `${p.name} tersimpan` : `${p.name} tersimpan, menunggu diaktifkan pengelola borongan`;
   },
   PATHS,
@@ -190,6 +190,7 @@ export const saveTask = action(
       if (inputs.length) await tx.pieceTaskInput.createMany({ data: inputs.map((l) => ({ taskId: t.id, itemId: l.itemId, qty: l.qty })) });
       return t;
     });
+    if (fd.has("kitSent")) await saveTaskKit(prisma, t.id, fd.getAll("kitIds").map(String));
     await audit(user, "TUGAS_BORONGAN", "PieceTask", t.id, { name, ...split, inputs: inputs.length });
     return `Tugas ${t.name} tersimpan (budget Rp${total}/pcs)`;
   },

@@ -18,7 +18,7 @@ import { boronganLines } from "@/lib/shiftReportBorongan";
 import { receiptReportLines } from "@/lib/boronganReceipt";
 import { saveProof } from "@/lib/storage";
 import { divisionChecklist, refreshDraftChecklists } from "@/lib/shiftReportChecklist";
-import { addShiftReceipt, removeShiftReceipt } from "@/lib/shiftReceipt";
+import { addShiftReceipt, addShiftReceipts, removeShiftReceipt } from "@/lib/shiftReceipt";
 import { RESULT_KEY, applyResultCount, parseResultCount, resultCountStatus, resultItems, resultLines } from "@/lib/shiftResultCount";
 import { reportCatalogs } from "@/lib/productFamily";
 import { isDone, isTemplate, needsOrder, parseWork, summaryOf, targetLine, targetOf, toEntries, workLines, type ChecklistEntry, type StockCountRow } from "@/lib/shiftReport";
@@ -288,6 +288,49 @@ export async function addReceipt(fd: FormData): Promise<{ ok: boolean; error?: s
     await addShiftReceipt(id, { itemId: str(fd, "itemId"), qty, supplierName: optStr(fd, "supplierName"), photoPath, photoMime, purchaseLineId, bankAccountId: optStr(fd, "bankAccountId") }, user);
     revalidatePath(`/laporan/${id}`);
     return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Gagal menyimpan barang masuk" };
+  }
+}
+
+/**
+ * Banyak barang masuk sekaligus: isian "lines" = JSON [{ itemId, qty, purchaseLineId?, supplierName? }], satu foto nota
+ * opsional untuk semua baris, "bankAccountId" untuk pesanan COD.
+ */
+export async function addReceipts(fd: FormData): Promise<{ ok: boolean; error?: string; count?: number }> {
+  try {
+    const user = await assertPerm("report.create");
+    const id = str(fd, "id");
+    await guardEditable(id, user);
+    let raw: unknown;
+    try {
+      raw = JSON.parse(str(fd, "lines") || "[]");
+    } catch {
+      throw new Error("Data barang tidak terbaca. Muat ulang halaman.");
+    }
+    const lines = (Array.isArray(raw) ? raw : []).map((l: { itemId?: unknown; qty?: unknown; purchaseLineId?: unknown; supplierName?: unknown }) => ({
+      itemId: String(l.itemId ?? ""), qty: num(String(l.qty ?? "")), purchaseLineId: l.purchaseLineId ? String(l.purchaseLineId) : null, supplierName: l.supplierName ? String(l.supplierName) : null,
+    }));
+    if (!lines.length) throw new Error("Isi minimal satu barang");
+    if (lines.some((l) => !l.itemId)) throw new Error("Pilih barang di setiap baris");
+    if (lines.some((l) => l.qty == null || l.qty <= 0)) throw new Error("Isi jumlah di setiap baris");
+    // Pesanan COD hanya boleh divalidasi yang berwenang Terima barang (lihat addReceipt)
+    const orderIds = lines.map((l) => l.purchaseLineId).filter((x): x is string => !!x);
+    if (orderIds.length && !user.can("stock.receive")) {
+      const cod = await prisma.purchaseLine.count({ where: { id: { in: orderIds }, purchase: { cod: true } } });
+      if (cod) throw new ForbiddenError();
+    }
+    let photoPath: string | null = null;
+    let photoMime: string | null = null;
+    const file = fd.get("photo");
+    if (file instanceof File && file.size > 0) {
+      photoMime = file.type || "image/jpeg";
+      photoPath = await saveProof(Buffer.from(await file.arrayBuffer()), photoMime);
+    }
+    const bankAccountId = optStr(fd, "bankAccountId");
+    await addShiftReceipts(id, lines.map((l) => ({ itemId: l.itemId, qty: l.qty!, supplierName: l.supplierName, photoPath, photoMime, purchaseLineId: l.purchaseLineId, bankAccountId })), user);
+    revalidatePath(`/laporan/${id}`);
+    return { ok: true, count: lines.length };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : "Gagal menyimpan barang masuk" };
   }

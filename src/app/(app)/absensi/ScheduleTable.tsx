@@ -48,12 +48,12 @@ function Seg({ value, label, onChange }: { value: Cell; label: string; onChange:
  * Tabel jadwal mingguan. "Atur jadwal" mengubah tabel ke mode atur di tempat: sel jadi kotak centang (masuk/libur),
  * divisi 2 shift memakai saklar S1 · — · S2. Tombol cepat per tanggal, bar simpan menempel di bawah.
  */
-export function ScheduleTable({ days, groups, saved, canEdit, save }: { days: Day[]; groups: SchedGroupView[]; saved: Record<string, Cell>; canEdit: boolean; save: (p: ActionResult | null, fd: FormData) => Promise<ActionResult> }) {
+export function ScheduleTable({ days, groups, saved, canEdit, save, locked = [] }: { days: Day[]; groups: SchedGroupView[]; saved: Record<string, Cell>; canEdit: boolean; save: (p: ActionResult | null, fd: FormData) => Promise<ActionResult>; /** Karyawan yang jadwalnya tidak boleh diatur akun ini (jadwal sendiri → Owner) */ locked?: string[] }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Record<string, Cell>>(saved);
   const [pending, start] = useTransition();
   const router = useRouter();
-  const rows: SchedRow[] = useMemo(() => groups.flatMap((g) => g.rows.map((r) => ({ employeeId: r.id, shiftDiv: g.shiftDiv }))), [groups]);
+  const rows: SchedRow[] = useMemo(() => groups.flatMap((g) => g.rows.filter((r) => !locked.includes(r.id)).map((r) => ({ employeeId: r.id, shiftDiv: g.shiftDiv }))), [groups, locked]);
   const changes = useMemo(() => diffCells(saved, draft), [saved, draft]);
   const dirty = editing && changes.length > 0;
 
@@ -141,14 +141,14 @@ export function ScheduleTable({ days, groups, saved, canEdit, save }: { days: Da
                 </tr>,
                 ...g.rows.map((e) => (
                   <tr key={e.id}>
-                    <td className="sticky left-0 z-[1] min-w-[8.5rem] max-w-[10.5rem] !whitespace-normal break-words bg-white font-medium leading-snug shadow-[1px_0_0_rgb(var(--bd-slate-200))]">{e.name}</td>
+                    <td className="sticky left-0 z-[1] min-w-[8.5rem] max-w-[10.5rem] !whitespace-normal break-words bg-white font-medium leading-snug shadow-[1px_0_0_rgb(var(--bd-slate-200))]">{e.name}{editing && locked.includes(e.id) && <span className="block text-[11px] font-normal text-slate-500">jadwal Anda diatur Owner</span>}</td>
                     {days.map((d) => {
                       const k = cellKey(e.id, d.date);
                       const v = (editing ? draft[k] : saved[k]) ?? "";
                       const label = `${e.name}, ${d.label}`;
                       return (
                         <td key={d.date} className="text-center">
-                          {!editing ? (
+                          {!editing || locked.includes(e.id) ? (
                             VIEW[v]
                           ) : g.shiftDiv ? (
                             <Seg value={v} label={label} onChange={(nv) => set(e.id, d.date, nv)} />

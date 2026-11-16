@@ -6,7 +6,7 @@
  *   npm run perbaiki:shift-malam -- --jalankan   -> menyimpan (jalankan npm run backup dulu)
  */
 import { prisma } from "../src/lib/db";
-import { applyNightFixes, findNightFixes } from "../src/lib/nightShiftFix";
+import { applyNightFixes, applyNightReportFixes, findNightFixes, findNightReportFixes } from "../src/lib/nightShiftFix";
 
 const apply = process.argv.includes("--jalankan");
 (async () => {
@@ -14,7 +14,12 @@ const apply = process.argv.includes("--jalankan");
   console.log(`${apply ? "DISIMPAN" : "PRATINJAU (belum disimpan)"}: ${fixes.length} absen shift malam perlu diperbaiki`);
   for (const f of fixes) console.log("  " + f.line);
   if (apply && fixes.length) await applyNightFixes(fixes);
-  if (!apply && fixes.length) console.log("\nBila sudah sesuai, jalankan: npm run perbaiki:shift-malam -- --jalankan");
+  // Laporan shift malam yang tercatat di tanggal hari baru → tanggal mulai shift
+  const reports = await findNightReportFixes(14);
+  console.log(`\n${reports.length} laporan shift malam perlu dipindah ke tanggal mulai shift`);
+  for (const r of reports) console.log("  " + r.label);
+  if (apply && reports.length) console.log(`  ${await applyNightReportFixes(reports)} laporan dipindah`);
+  if (!apply && (fixes.length || reports.length)) console.log("\nBila sudah sesuai, jalankan: npm run perbaiki:shift-malam -- --jalankan");
 })()
   .catch((e) => {
     console.error(e);
