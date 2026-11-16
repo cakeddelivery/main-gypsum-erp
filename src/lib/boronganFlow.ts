@@ -140,7 +140,7 @@ type ShipmentRow = Prisma.BoronganShipmentGetPayload<{ include: typeof shipmentI
 export type CellView = { pointId: string; workerId: string; worker: string; taskId: string; dibagi: number; diambil: number; good: number; reject: number; reported: boolean; done: boolean };
 export type PickupView = { id: string; number: string; date: string; status: PickupStatus; driver: string | null; holdNote: string | null; lines: { id: string; pointId: string; workerId: string; worker: string; taskId: string; qty: number; reject: number; done: boolean }[]; counts: { taskId: string; qty: number }[] };
 export type ShipmentView = {
-  id: string; number: string; date: string; mode: ShipmentMode; driver: string | null; state: ShipmentState; note: string | null; createdBy: string;
+  id: string; number: string; date: string; mode: ShipmentMode; driver: string | null; state: ShipmentState; note: string | null; createdBy: string; cancelled: boolean;
   group: string;
   points: { id: string; name: string; coordinator: boolean }[];
   tasks: { id: string; name: string; short: string; qty: number; divisionId: string | null }[];
@@ -180,7 +180,7 @@ export async function buildViews(rows: ShipmentRow[]): Promise<ShipmentView[]> {
     const reject = cells.reduce((a, c) => a + c.reject, 0);
     const taken = cells.reduce((a, c) => a + c.diambil, 0);
     return {
-      id: s.id, number: s.number, date: dateStr(s.date), mode: s.mode, driver: s.driver?.name ?? null, state, note: s.note, createdBy: s.createdBy,
+      id: s.id, number: s.number, date: dateStr(s.date), mode: s.mode, driver: s.driver?.name ?? null, state, note: s.note, createdBy: s.createdBy, cancelled: !!s.cancelledAt,
       group: s.tasks[0] ? taskGroupName(s.tasks[0].task.name) : "",
       points: s.pointIds.map((id) => ({ id, name: points.find((p) => p.id === id)?.name ?? "?", coordinator: coords.some((c) => c.pointId === id) })),
       tasks: byColumn(s.tasks, (t) => t.task.name).map((t) => ({ id: t.taskId, name: t.task.name, short: shortTaskName(t.task.name), qty: t.qty, divisionId: t.task.divisionId })),

@@ -1,4 +1,6 @@
+import { redirect } from "next/navigation";
 import { requirePerm } from "@/lib/auth";
+import { canSeeHistory } from "./riwayat/access";
 import { PasswordInput } from "@/components/PasswordInput";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
@@ -14,6 +16,7 @@ import { Paged } from "@/components/Paged";
 import { ItemLines } from "@/components/ItemLines";
 import { ReceiveForm } from "./ReceiveForm";
 import { KirimanTab } from "./KirimanTab";
+import { KlaimTab } from "./KlaimTab";
 import { diffLines, receiptDiff } from "@/lib/boronganReceipt";
 import { dateOnly } from "@/lib/time";
 import { cancelPayPoint, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, saveTask, sendHandover, voidDivisionReceipt, voidHandover } from "./actions";
@@ -22,17 +25,18 @@ export const metadata = { title: "Borongan" };
 
 const TABS = [
   { key: "kiriman", label: "Kiriman" },
+  { key: "klaim", label: "Klaim Upah" },
   { key: "ringkasan", label: "Ringkasan" },
   { key: "serah", label: "Serah Terima (lama)" },
   { key: "hasil", label: "Setoran Hasil" },
   { key: "terima", label: "Penerimaan (lama)" },
-  { key: "upah", label: "Upah" },
+  { key: "upah", label: "Bayar Upah (lama)" },
   { key: "orang", label: "Orang" },
   { key: "tugas", label: "Tugas & Tarif" },
 ];
 
 export default async function BoronganPage({ searchParams }: { searchParams: Promise<{ tab?: string; dari?: string; sampai?: string }> }) {
-  const user = await requirePerm("borongan.view");
+  const user = await requirePerm("borongan.view", "borongan.point", "borongan.manage", "borongan.driver");
   const sp = await searchParams;
   const scope = await boronganScope(prisma, user);
   const manage = scope.all;
@@ -43,10 +47,11 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
   const taskFilter = scope.taskIds ? { taskId: { in: scope.taskIds } } : {};
   const tabs = TABS.filter((t) => manage || !["tugas"].includes(t.key))
     .filter((t) => t.key !== "upah" || manage || user.can("borongan.pay"))
-    .filter((t) => !setoranOnly || ["kiriman", "ringkasan", "hasil", "terima"].includes(t.key))
+    .filter((t) => !setoranOnly || ["kiriman", "klaim", "ringkasan", "hasil", "terima"].includes(t.key))
     // Driver: hanya Pembagian & Ambil Setoran (tab Kiriman)
     .filter((t) => !scope.driver || t.key === "kiriman");
-  const tab = tabs.some((t) => t.key === sp.tab) ? sp.tab! : "kiriman";
+  // Finance (hanya bayar upah): langsung ke Klaim Upah
+  const tab = tabs.some((t) => t.key === sp.tab) ? sp.tab! : !manage && !scope.pointIds.length && user.can("borongan.pay") ? "klaim" : "kiriman";
   if (scope.driver) {
     return (
       <div className="space-y-4">
@@ -65,7 +70,11 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
     prisma.boronganHandover.findMany({ where: { status: "DIKIRIM", ...resultFilter }, include: { lines: { include: { item: true } }, point: true, driver: true }, orderBy: { date: "asc" } }),
     stockBalances(prisma),
   ]);
-  if (!manage && !points.length) {
+  const history = await canSeeHistory(user);
+  // Finance (bayar upah) tetap membuka halaman ini (tab Klaim Upah) walau tidak punya titik
+  if (!manage && !points.length && !user.can("borongan.pay")) {
+    // Tim Oven tanpa titik: langsung ke Riwayat Pengiriman
+    if (history) redirect("/borongan/riwayat");
     return (
       <div className="space-y-5">
         <PageHeader title="Borongan" />
@@ -105,9 +114,10 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
         subtitle={canWarehouse(scope) ? "Kiriman bernomor: kirim bahan → bagi ke pekerja → lapor hasil → ambil setoran → diterima divisi" : `Titik ${points.map((p) => p.name).join(", ")}`}
         actions={tab === "serah" && !setoranOnly ? <div className="flex flex-wrap gap-2">{sendBack}</div> : undefined}
       />
-      <Tabs current={tab} tabs={tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: x.key === "serah" ? pending.length || undefined : undefined }))} />
+      <Tabs current={tab} tabs={[...tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: x.key === "serah" ? pending.length || undefined : undefined })), ...(history ? [{ key: "riwayat", label: "Riwayat", href: "/borongan/riwayat" }] : [])]} />
 
       {tab === "kiriman" && <KirimanTab scope={scope} userId={user.id} />}
+      {tab === "klaim" && <KlaimTab scope={scope} canPay={user.can("borongan.pay")} />}
       {tab === "ringkasan" && (
         <>
           {pending.length > 0 && !setoranOnly && <PendingList pending={pending} scope={scope} />}

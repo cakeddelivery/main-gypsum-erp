@@ -397,3 +397,8 @@ button.is-done.btn-secondary { @apply border-emerald-300 text-emerald-700; }
   .cetak-page:last-child { break-after: auto; page-break-after: auto; }
   .cetak-panduan * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* Rincian klaim upah borongan (JPG/PDF, selalu terang) */
+.claim-doc tr.claim-grp td { background: #f1f6fd; font-weight: 700; font-size: 12.5px; letter-spacing: .05em; text-transform: uppercase; color: #475569; }
+.claim-doc tr.claim-sub td { font-weight: 700; border-bottom: 2px solid #e2e8f0; }
+.claim-doc tr.claim-grand td { font-weight: 700; font-size: 16px; background: #dbeafe; color: #1e3a8a; }

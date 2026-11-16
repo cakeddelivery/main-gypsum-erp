@@ -20,7 +20,7 @@ function NumIn({ name, value, onChange, label }: { name: string; value: string; 
 }
 
 /** Satu tabel per pekerja */
-function WorkerCard({ name, sub, tasks, rows, footer }: { name: string; sub?: React.ReactNode; tasks: Task[]; rows: { label: string; muted?: boolean; foot?: boolean; cells: (React.ReactNode | null)[] }[]; footer?: React.ReactNode }) {
+export function WorkerCard({ name, sub, tasks, rows, footer }: { name: string; sub?: React.ReactNode; tasks: Task[]; rows: { label: string; muted?: boolean; foot?: boolean; cells: (React.ReactNode | null)[] }[]; footer?: React.ReactNode }) {
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-slate-200 px-3 py-2 text-sm font-bold text-slate-900"><span className="break-words">{name}</span>{sub}</div>

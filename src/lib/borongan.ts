@@ -430,7 +430,8 @@ const resultPeople = { worker: true, coordinator: true, driver: true } as const;
 
 export async function unpaidResults(db: DB, pointId: string, upTo?: Date) {
   // Upah yang ditahan (hitungan divisi kurang) tidak ikut dibayar sampai dicek
-  return db.boronganResult.findMany({ where: { pointId, settlementId: null, held: false, ...(upTo ? { date: { lte: upTo } } : {}) }, include: { ...resultPeople, task: true }, orderBy: { date: "asc" } });
+  // Setoran yang sudah masuk klaim upah dibayar lewat persetujuan klaim (bukan Bayar Upah per tanggal)
+  return db.boronganResult.findMany({ where: { pointId, settlementId: null, held: false, claimId: null, ...(upTo ? { date: { lte: upTo } } : {}) }, include: { ...resultPeople, task: true }, orderBy: { date: "asc" } });
 }
 
 /**
@@ -440,35 +441,47 @@ export async function unpaidResults(db: DB, pointId: string, upTo?: Date) {
 export async function settlePoint(input: { pointId: string; upTo: Date; bankAccountId: string; date?: Date }, actor: Actor) {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "BoronganPoint" WHERE id = ${input.pointId} FOR UPDATE`;
-    const point = await tx.boronganPoint.findUniqueOrThrow({ where: { id: input.pointId } });
-    const results = await unpaidResults(tx, point.id, input.upTo);
+    const results = await unpaidResults(tx, input.pointId, input.upTo);
     if (!results.length) throw new BoronganError("Tidak ada upah yang belum dibayar sampai tanggal itu");
-    const lines = payLines(results);
-    const driver = lines.filter((l) => l.role === "DRIVER").reduce((s, l) => s + l.amount, 0);
-    const wages = lines.filter((l) => l.role !== "DRIVER").reduce((s, l) => s + l.amount, 0);
-    const total = wages + driver;
-    const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: input.bankAccountId } });
-    const date = input.date ?? new Date();
-    const number = await nextNumber(tx, "UPB", date);
-    const st = await tx.boronganSettlement.create({ data: { number, pointId: point.id, date, upTo: input.upTo, bankAccountId: bank.id, total: BigInt(total), createdBy: actor.name } });
-    const j = await postJournal(tx, {
-      date,
-      storeId: await defaultStore(tx),
-      description: `Upah borongan ${point.name} s.d. ${input.upTo.toISOString().slice(0, 10)} (${number})`,
-      source: "BORONGAN",
-      sourceId: st.id,
-      actor,
-      lines: [
-        ...(wages > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, debit: wages, memo: "Upah borongan pekerja & koordinator" }] : []),
-        ...(driver > 0 ? [{ accountCode: COA.BEBAN_TRANSPORT, debit: driver, memo: "Jatah driver borongan" }] : []),
-        { accountId: bank.coaAccountId, credit: total },
-      ],
-    });
-    const paid = await tx.boronganSettlement.update({ where: { id: st.id }, data: { journalId: j.id } });
-    await tx.boronganResult.updateMany({ where: { id: { in: results.map((r) => r.id) } }, data: { settlementId: st.id } });
-    await audit(actor, "UPAH_BORONGAN_DIBAYAR", "BoronganSettlement", st.id, { number, point: point.code, total }, tx);
-    return paid;
+    return settleResultsTx(tx, { pointId: input.pointId, upTo: input.upTo, bankAccountId: input.bankAccountId, date: input.date, results }, actor);
   });
+}
+
+/**
+ * Bayar sekumpulan setoran satu titik (dipakai Bayar Upah per tanggal dan persetujuan klaim upah).
+ * Upah pekerja & koordinator = beban gaji produksi; fee driver = beban transport borongan.
+ */
+export async function settleResultsTx(tx: Tx, input: { pointId: string; upTo: Date; bankAccountId: string; date?: Date; results: Awaited<ReturnType<typeof unpaidResults>>; label?: string }, actor: Actor) {
+  const point = await tx.boronganPoint.findUniqueOrThrow({ where: { id: input.pointId } });
+  const results = input.results;
+  const lines = payLines(results);
+  const driver = lines.filter((l) => l.role === "DRIVER").reduce((s, l) => s + l.amount, 0);
+  const wages = lines.filter((l) => l.role !== "DRIVER").reduce((s, l) => s + l.amount, 0);
+  const total = wages + driver;
+  if (total <= 0) throw new BoronganError("Total upah Rp0, tidak ada yang dibayar");
+  const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: input.bankAccountId } });
+  const date = input.date ?? new Date();
+  const number = await nextNumber(tx, "UPB", date);
+  const st = await tx.boronganSettlement.create({ data: { number, pointId: point.id, date, upTo: input.upTo, bankAccountId: bank.id, total: BigInt(total), createdBy: actor.name } });
+  const j = await postJournal(tx, {
+    date,
+    storeId: await defaultStore(tx),
+    description: `Upah borongan ${point.name} ${input.label ?? `s.d. ${input.upTo.toISOString().slice(0, 10)}`} (${number})`,
+    source: "BORONGAN",
+    sourceId: st.id,
+    actor,
+    lines: [
+      ...(wages > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, debit: wages, memo: "Upah borongan pekerja & koordinator" }] : []),
+      ...(driver > 0 ? [{ accountCode: COA.BEBAN_TRANSPORT, debit: driver, memo: "Jatah driver borongan" }] : []),
+      { accountId: bank.coaAccountId, credit: total },
+    ],
+  });
+  const paid = await tx.boronganSettlement.update({ where: { id: st.id }, data: { journalId: j.id } });
+  // Hanya setoran yang belum dibayar (cegah bayar dobel bila dua permintaan bersamaan)
+  const upd = await tx.boronganResult.updateMany({ where: { id: { in: results.map((r) => r.id) }, settlementId: null }, data: { settlementId: st.id } });
+  if (upd.count !== results.length) throw new BoronganError("Sebagian setoran sudah dibayar. Muat ulang halaman.");
+  await audit(actor, "UPAH_BORONGAN_DIBAYAR", "BoronganSettlement", st.id, { number, point: point.code, total }, tx);
+  return paid;
 }
 
 /** Batalkan pembayaran upah satu titik: jurnal dibalik, setorannya kembali menjadi belum dibayar */
@@ -481,6 +494,8 @@ export async function cancelSettlement(id: string, reason: string, actor: Actor,
     const date = await assertPeriodOpen(tx, st.date).then(() => st.date, () => now);
     if (st.journalId) await reverseJournal(tx, st.journalId, date, actor, `batal ${st.number} — ${reason.trim()}`.slice(0, 150));
     await tx.boronganResult.updateMany({ where: { settlementId: id }, data: { settlementId: null } });
+    // Klaim upah yang dibayar lewat pembayaran ini kembali menunggu persetujuan
+    await tx.boronganClaim.updateMany({ where: { settlementId: id }, data: { status: "MENUNGGU", settlementId: null, decidedAt: null, decidedBy: null } });
     const out = await tx.boronganSettlement.update({ where: { id }, data: { cancelledAt: now, cancelReason: reason.trim().slice(0, 300) } });
     await audit(actor, "UPAH_BORONGAN_DIBATALKAN", "BoronganSettlement", id, { number: st.number, reason }, tx);
     return out;
