@@ -9,6 +9,7 @@ import { stockBalances } from "@/lib/stock";
 import { recipeUnit } from "@/lib/unitcost";
 import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, canWarehouse, isSetoranOnly, payLines, resultShares } from "@/lib/borongan";
 import { Badge, Card, Empty, Field, PageHeader, Tabs } from "@/components/ui";
+import { StokTitikTab } from "./StokTitikTab";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
@@ -26,6 +27,7 @@ export const metadata = { title: "Borongan" };
 
 const TABS = [
   { key: "kiriman", label: "Kiriman" },
+  { key: "stok", label: "Stok" },
   { key: "klaim", label: "Klaim Upah" },
   { key: "ringkasan", label: "Ringkasan" },
   { key: "serah", label: "Serah Terima (lama)" },
@@ -53,7 +55,9 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
     // Driver: hanya Pembagian & Ambil Setoran (tab Kiriman)
     .filter((t) => !scope.driver || t.key === "kiriman")
     // Koordinator titik: lapor hasil (Kiriman), Klaim Upah, dan pekerja titiknya (Orang)
-    .filter((t) => !isCoordinatorOnly || ["kiriman", "klaim", "orang"].includes(t.key))
+    .filter((t) => !isCoordinatorOnly || ["kiriman", "stok", "klaim", "orang"].includes(t.key))
+    // Stok bahan titik: koordinator & pengelola
+    .filter((t) => t.key !== "stok" || isCoordinatorOnly || manage)
     // Tim Cetak/Oven (isi patung kering) & Packing (terima setoran Assembling): hanya Kiriman
     .filter((t) => !(scope.kering || scope.packing) || t.key === "kiriman");
   // Finance (hanya bayar upah): langsung ke Klaim Upah
@@ -120,9 +124,11 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
         subtitle={canWarehouse(scope) ? "Kiriman bernomor: kirim bahan → bagi ke pekerja → lapor hasil → ambil setoran → diterima divisi" : `Titik ${points.map((p) => p.name).join(", ")}`}
         actions={tab === "serah" && !setoranOnly ? <div className="flex flex-wrap gap-2">{sendBack}</div> : undefined}
       />
-      <Tabs current={tab} tabs={[...tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: x.key === "serah" ? pending.length || undefined : undefined })), ...(history ? [{ key: "riwayat", label: "Riwayat", href: "/borongan/riwayat" }] : [])]} />
+      {/* Koordinator: menu tab pindah ke navigasi bawah */}
+      {!isCoordinatorOnly && <Tabs current={tab} tabs={[...tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: x.key === "serah" ? pending.length || undefined : undefined })), ...(history ? [{ key: "riwayat", label: "Riwayat", href: "/borongan/riwayat" }] : [])]} />}
 
       {tab === "kiriman" && <KirimanTab scope={scope} userId={user.id} />}
+      {tab === "stok" && <StokTitikTab scope={scope} />}
       {tab === "klaim" && <KlaimTab scope={scope} canPay={user.can("borongan.pay")} />}
       {tab === "ringkasan" && (
         <>
