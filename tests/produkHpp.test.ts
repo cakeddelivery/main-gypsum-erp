@@ -119,3 +119,19 @@ describe("Giftbox Mix: 1 tiap karakter + 1 varian bebas", () => {
     expect(steps.reduce((a, s) => a + s.qty, 0)).toBe(15);
   });
 });
+
+import { pickDivision, setupDivisions } from "@/lib/produkHppSetup";
+describe("Divisi dicari dari jenis laporan / nama, bukan kode", () => {
+  const d = (code: string, name: string, reportTemplate: string | null, active = true) => ({ id: code, code, name, reportTemplate, active });
+  const rule = { template: "PACKING", name: /\bpacking\b/i, code: "QCP" };
+  it("kode berbeda di production tetap ditemukan", () => {
+    expect(pickDivision([d("PCK", "Divisi QC & Packing", "PACKING")], rule)?.code).toBe("PCK");
+    expect(pickDivision([d("D07", "divisi PACKING", null)], rule)?.code).toBe("D07");
+    expect(pickDivision([d("QCP", "Lain", null)], rule)?.code).toBe("QCP");
+    expect(pickDivision([d("PCK", "Packing", "PACKING", false)], rule)).toBeNull();
+  });
+  it("tidak ketemu → pesan memuat daftar divisi yang ada", async () => {
+    const fake = { division: { findMany: async () => [d("CTK", "Divisi Cetak", "CETAK")] } } as never;
+    await expect(setupDivisions(fake)).rejects.toThrow(/Assembling \/ Giftbox \/ Packing tidak ditemukan.*CTK "Divisi Cetak"/);
+  });
+});

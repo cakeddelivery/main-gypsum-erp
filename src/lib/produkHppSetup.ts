@@ -86,13 +86,39 @@ export async function setupProdukHpp(db: PrismaClient, apply: boolean): Promise<
   return plan;
 }
 
+type DivisionRow = { id: string; code: string; name: string; reportTemplate: string | null; active: boolean };
+const DIVISION_RULES = {
+  asm: { label: "Assembling", template: "ASSEMBLING", name: /\bassembl/i, code: "ASM" },
+  gft: { label: "Giftbox", template: "GIFTBOX", name: /\bgift\s*box\b/i, code: "GFT" },
+  qcp: { label: "Packing", template: "PACKING", name: /\bpacking\b/i, code: "QCP" },
+} as const;
+
+/**
+ * Cari divisi Assembling / Giftbox / Packing: jenis laporan (reportTemplate) dulu, lalu nama (tanpa beda huruf besar),
+ * lalu kode lama (ASM/GFT/QCP). Kode divisi di production bisa berbeda. Bila tidak ketemu, pesan error memuat
+ * daftar divisi yang ada (kode + nama) agar bisa dipetakan.
+ */
+export function pickDivision(list: DivisionRow[], rule: { template: string; name: RegExp; code: string }) {
+  const act = list.filter((d) => d.active);
+  return act.find((d) => d.reportTemplate === rule.template) ?? act.find((d) => rule.name.test(d.name)) ?? act.find((d) => d.code.toUpperCase() === rule.code) ?? null;
+}
+
+export async function setupDivisions(db: Tx | PrismaClient) {
+  const list = await db.division.findMany({ select: { id: true, code: true, name: true, reportTemplate: true, active: true }, orderBy: { code: "asc" } });
+  const out = Object.fromEntries(Object.entries(DIVISION_RULES).map(([k, r]) => [k, pickDivision(list, r)])) as Record<keyof typeof DIVISION_RULES, DivisionRow | null>;
+  const missing = (Object.keys(DIVISION_RULES) as (keyof typeof DIVISION_RULES)[]).filter((k) => !out[k]);
+  if (missing.length) {
+    const ada = list.filter((d) => d.active).map((d) => `${d.code} "${d.name}"${d.reportTemplate ? ` (laporan ${d.reportTemplate})` : ""}`).join(", ");
+    throw new Error(`Divisi ${missing.map((k) => DIVISION_RULES[k].label).join(" / ")} tidak ditemukan (dicari dari jenis laporan, nama, lalu kode). Divisi yang ada: ${ada || "—"}`);
+  }
+  return out as Record<keyof typeof DIVISION_RULES, DivisionRow>;
+}
+
 async function run(tx: Tx, plan: ProdukHppPlan) {
   // Resep diringkas: satu baris per barang / produk
   const rec = new Map<string, string[]>();
   const note = (target: string, text: string) => rec.set(target, [...(rec.get(target) ?? []), text]);
-  const div = async (code: string) => tx.division.findFirst({ where: { code } });
-  const [asm, gft, qcp] = await Promise.all([div("ASM"), div("GFT"), div("QCP")]);
-  if (!asm || !gft || !qcp) throw new Error("Divisi ASM / GFT / QCP belum ada (jalankan npm run setup:divisi dulu)");
+  const { asm, gft, qcp } = await setupDivisions(tx);
   const locs = await locationSettings(tx);
   const allItems = await tx.item.findMany({ where: { active: true } });
   const find = (name: string) => allItems.filter((i) => i.name.trim().toLowerCase() === name.toLowerCase()).sort((a, b) => a.sku.localeCompare(b.sku));
