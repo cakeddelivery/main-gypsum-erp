@@ -113,7 +113,23 @@ export function shipmentState(allots: { workerId: string; taskId: string; qty: n
 
 // ---------------- AKSES ----------------
 
-export const canShip = (scope: Scope) => scope.all || !!scope.warehouse;
+/** Pekerjaan Assembling (patung): diawali isian patung kering Cetak/Oven, dilengkapi Assembling/Supervisor */
+export const isAssemblingName = (name: string) => /^assembling\b/i.test(name.trim());
+/** Boleh mencatat kiriman (Cat Plastik: tim Assembling; Cat Giftbox: tim Giftbox; Supervisor/pengelola: semua) */
+export const canShip = (scope: Scope) => scope.all || scope.division?.template === "ASSEMBLING" || scope.division?.template === "GIFTBOX" || !!scope.warehouse;
+/** Kelompok pekerjaan yang boleh dikirim langsung oleh akun ini (Assembling selalu lewat isian patung kering) */
+export function canShipGroup(scope: Scope, groupName: string) {
+  if (isAssemblingName(groupName)) return false;
+  if (scope.all) return true;
+  const t = scope.division?.template;
+  if (/^cat plastik/i.test(groupName)) return t === "ASSEMBLING" || !!scope.warehouse;
+  if (/^cat giftbox/i.test(groupName)) return t === "GIFTBOX";
+  return !!scope.warehouse;
+}
+/** Isi patung kering kiriman Assembling: tim Cetak/Oven atau Supervisor/pengelola */
+export const canInputKering = (scope: Scope) => scope.all || !!scope.kering;
+/** Lengkapi bahan pendukung, titik, driver kiriman Assembling: tim Assembling atau Supervisor/pengelola */
+export const canCompleteAssembling = (scope: Scope) => scope.all || scope.division?.template === "ASSEMBLING" || !!scope.warehouse;
 /** Tim divisi (Assembling / Giftbox) yang mencatat semua jenis pekerjaan kiriman ini */
 const divisionCovers = (scope: Scope, taskIds: string[]) => !!scope.division && !scope.driver && taskIds.every((id) => canTask(scope, id));
 /** Pembagian & ambil setoran: lewat driver = driver; diantar langsung = tim divisi; Supervisor/pengelola selalu boleh */
@@ -122,8 +138,12 @@ export const canPickup = canDistribute;
 export const isCoordinatorOf = (scope: Scope, pointId: string) => !scope.all && !scope.driver && !scope.division && !!scope.personId && scope.pointIds.includes(pointId);
 /** Lapor hasil: koordinator titik; titik tanpa koordinator (Beringin) oleh tim divisi; Supervisor/pengelola selalu boleh */
 export const canReport = (scope: Scope, s: { taskIds: string[] }, pointId: string, hasCoordinator: boolean) => scope.all || isCoordinatorOf(scope, pointId) || (!hasCoordinator && divisionCovers(scope, s.taskIds));
-/** Terima setoran: anggota divisi penerima semua jenis di pengambilan itu (Assembling / Giftbox), atau pengelola */
-export const canReceive = (scope: Scope, tasks: { divisionId: string | null }[]) => scope.all || (!!scope.division && !scope.driver && tasks.every((t) => t.divisionId === scope.division!.id));
+/**
+ * Terima setoran: patung Assembling diterima tim PACKING; pekerjaan lain oleh divisi tugasnya (Cat Plastik: Assembling,
+ * Cat Giftbox: Giftbox); Supervisor/pengelola selalu boleh.
+ */
+export const canReceive = (scope: Scope, tasks: { name: string; divisionId: string | null }[]) =>
+  scope.all || (!!scope.division && !scope.driver && tasks.every((t) => (isAssemblingName(t.name) ? !!scope.packing : t.divisionId === scope.division!.id)));
 
 // ---------------- DATA ----------------
 
@@ -140,7 +160,7 @@ type ShipmentRow = Prisma.BoronganShipmentGetPayload<{ include: typeof shipmentI
 export type CellView = { pointId: string; workerId: string; worker: string; taskId: string; dibagi: number; diambil: number; good: number; reject: number; reported: boolean; done: boolean };
 export type PickupView = { id: string; number: string; date: string; status: PickupStatus; driver: string | null; holdNote: string | null; lines: { id: string; pointId: string; workerId: string; worker: string; taskId: string; qty: number; reject: number; done: boolean }[]; counts: { taskId: string; qty: number }[] };
 export type ShipmentView = {
-  id: string; number: string; date: string; mode: ShipmentMode; driver: string | null; state: ShipmentState; note: string | null; createdBy: string; cancelled: boolean;
+  id: string; number: string; date: string; mode: ShipmentMode; driver: string | null; state: ShipmentState; note: string | null; createdBy: string; cancelled: boolean; waitingSupport: boolean;
   group: string;
   points: { id: string; name: string; coordinator: boolean }[];
   tasks: { id: string; name: string; short: string; qty: number; divisionId: string | null }[];
@@ -180,7 +200,7 @@ export async function buildViews(rows: ShipmentRow[]): Promise<ShipmentView[]> {
     const reject = cells.reduce((a, c) => a + c.reject, 0);
     const taken = cells.reduce((a, c) => a + c.diambil, 0);
     return {
-      id: s.id, number: s.number, date: dateStr(s.date), mode: s.mode, driver: s.driver?.name ?? null, state, note: s.note, createdBy: s.createdBy, cancelled: !!s.cancelledAt,
+      id: s.id, number: s.number, date: dateStr(s.date), mode: s.mode, driver: s.driver?.name ?? null, state, note: s.note, createdBy: s.createdBy, cancelled: !!s.cancelledAt, waitingSupport: s.waitingSupport,
       group: s.tasks[0] ? taskGroupName(s.tasks[0].task.name) : "",
       points: s.pointIds.map((id) => ({ id, name: points.find((p) => p.id === id)?.name ?? "?", coordinator: coords.some((c) => c.pointId === id) })),
       tasks: byColumn(s.tasks, (t) => t.task.name).map((t) => ({ id: t.taskId, name: t.task.name, short: shortTaskName(t.task.name), qty: t.qty, divisionId: t.task.divisionId })),
@@ -225,75 +245,147 @@ async function driverLocation(tx: Tx) {
 
 export type ShipmentInput = { date: string; mode: ShipmentMode; pointIds: string[]; driverId?: string | null; tasks: { taskId: string; qty: number }[]; support?: { itemId: string; qty: number }[]; note?: string | null };
 
-export async function createShipment(input: ShipmentInput, actor: Actor, scope: Scope) {
-  if (!canShip(scope)) throw new BoronganError("Kiriman bahan dicatat Supervisor / Kapten Assembling");
-  const tasksIn = input.tasks.filter((t) => t.qty > 0);
+type TaskWithInputs = Prisma.PieceTaskGetPayload<{ include: { inputs: { include: { item: true } } } }>;
+
+function cleanTasks(list: { taskId: string; qty: number }[]) {
+  const tasksIn = list.filter((t) => t.qty > 0);
   if (tasksIn.some((t) => !Number.isInteger(t.qty))) throw new BoronganError("Jumlah per jenis harus bilangan bulat");
   if (!tasksIn.length) throw new BoronganError("Isi jumlah minimal satu jenis pekerjaan");
+  return tasksIn;
+}
+
+async function loadTasks(tx: Tx, tasksIn: { taskId: string }[]) {
+  const tasks = await tx.pieceTask.findMany({ where: { id: { in: tasksIn.map((t) => t.taskId) } }, include: { inputs: { include: { item: true } } } });
+  if (tasks.length !== tasksIn.length || tasks.some((t) => !t.active)) throw new BoronganError("Ada jenis pekerjaan yang tidak aktif. Muat ulang halaman.");
+  if (new Set(tasks.map((t) => taskGroupName(t.name))).size > 1) throw new BoronganError("Satu kiriman untuk satu jenis pekerjaan (mis. Assembling saja)");
+  return tasks;
+}
+
+/**
+ * Titik, driver, bahan resep + bahan pendukung (kit tugas), lalu stok keluar gudang → mobil driver / titik.
+ * Dipakai kirim langsung (Cat Plastik, Cat Giftbox) dan saat kiriman Assembling dilengkapi.
+ */
+async function dispatchTx(tx: Tx, number: string, day: string, input: Omit<ShipmentInput, "tasks" | "date">, tasks: TaskWithInputs[], tasksIn: { taskId: string; qty: number }[], actor: Actor) {
   const pointIds = [...new Set(input.pointIds.filter(Boolean))];
   if (!pointIds.length) throw new BoronganError("Pilih titik tujuan");
   if (input.mode === "LANGSUNG" && pointIds.length !== 1) throw new BoronganError("Kiriman yang diantar langsung hanya ke satu titik");
+  const points = await tx.boronganPoint.findMany({ where: { id: { in: pointIds }, active: true } });
+  if (points.length !== pointIds.length) throw new BoronganError("Titik tujuan tidak aktif");
+  const cfg = await pointConfig(tx);
+  for (const p of points) if (cfg[p.id]?.tasks.length && !tasks.some((t) => cfg[p.id].tasks.includes(t.id))) throw new BoronganError(`Titik ${p.name} tidak mengerjakan ${taskGroupName(tasks[0].name)}`);
+  let driverId: string | null = null;
+  if (input.mode === "DRIVER") {
+    const drivers = await tx.boronganPerson.findMany({ where: { role: "DRIVER", active: true }, select: { id: true } });
+    if (drivers.length && !input.driverId) throw new BoronganError("Pilih driver");
+    if (input.driverId && !drivers.some((d) => d.id === input.driverId)) throw new BoronganError("Driver tidak aktif");
+    driverId = input.driverId ?? null;
+  }
+  // Bahan resep (otomatis dari jumlah per jenis) + bahan pendukung
+  const qty = new Map<string, { qty: number; support: boolean }>();
+  const add = (itemId: string, q: number, support: boolean) => {
+    if (!(q > 0)) return;
+    const cur = qty.get(itemId) ?? { qty: 0, support };
+    qty.set(itemId, { qty: Math.round((cur.qty + q) * 1000) / 1000, support: cur.support && support });
+  };
+  for (const t of tasks) for (const inp of t.inputs) add(inp.itemId, bomStockQty(inp.qty, inp.item) * tasksIn.find((x) => x.taskId === t.id)!.qty, false);
+  // Bahan pendukung hanya dari kit tugas yang dikirim (mis. Assembling tidak membawa cat Cat Giftbox)
+  const kit = new Set(Object.entries(await taskKits(tx)).filter(([id]) => tasks.some((t) => t.id === id)).flatMap(([, ids]) => ids));
+  for (const s of input.support ?? []) {
+    if (s.qty < 0) throw new BoronganError("Jumlah bahan tidak boleh minus");
+    if (s.qty > 0 && !kit.has(s.itemId)) throw new BoronganError("Ada bahan pendukung yang bukan kit jenis pekerjaan ini. Muat ulang halaman.");
+    add(s.itemId, s.qty, true);
+  }
+  const items = await tx.item.findMany({ where: { id: { in: [...qty.keys()] } } });
+  const to = input.mode === "DRIVER" ? await driverLocation(tx) : points[0].locationId;
+  const rows: Prisma.BoronganShipmentLineCreateWithoutShipmentInput[] = [];
+  for (const [itemId, l] of qty) {
+    const item = items.find((i) => i.id === itemId);
+    if (!item) throw new BoronganError("Bahan tidak ditemukan");
+    const warehouseId = await warehouseFor(tx, item.type);
+    await recordMovement(tx, { type: "TRANSFER", itemId, qty: l.qty, fromLocationId: warehouseId, toLocationId: to, ref: `KRM:${number}`, note: `Kiriman ${number} ${input.mode === "DRIVER" ? "naik ke mobil driver" : `diantar ke ${points[0].name}`}`, date: new Date(`${day}T05:00:00.000Z`) }, actor);
+    rows.push({ itemId, warehouseId, qty: new Prisma.Decimal(l.qty), support: l.support });
+  }
+  return { pointIds, driverId, rows, points };
+}
+
+async function notifyDispatched(s: { number: string; driverId: string | null; mode: ShipmentMode; pointIds: string[] }, total: number) {
+  // Push ke HP koordinator titik tujuan (dan driver bila lewat driver)
+  const driverUser = s.driverId ? (await prisma.boronganPerson.findUnique({ where: { id: s.driverId }, select: { userId: true } }))?.userId : null;
+  await notify([...(await coordinatorUsers(s.pointIds)), driverUser], { title: `Kiriman bahan ${s.number}`, body: `${total.toLocaleString("id-ID")} pcs ${s.mode === "DRIVER" ? "dibawa driver" : "diantar langsung"}. Pembagian ke pekerja menyusul.`, url: "/borongan?tab=kiriman", tag: `krm-${s.number}` });
+}
+
+/** Kirim langsung (Cat Plastik oleh tim Assembling, Cat Giftbox oleh tim Giftbox, atau Supervisor/pengelola) */
+export async function createShipment(input: ShipmentInput, actor: Actor, scope: Scope) {
+  if (!canShip(scope)) throw new BoronganError("Kiriman bahan dicatat Supervisor / tim divisi pengirim");
+  const tasksIn = cleanTasks(input.tasks);
   const s = await prisma.$transaction(async (tx) => {
-    const tasks = await tx.pieceTask.findMany({ where: { id: { in: tasksIn.map((t) => t.taskId) } }, include: { inputs: { include: { item: true } } } });
-    if (tasks.length !== tasksIn.length || tasks.some((t) => !t.active)) throw new BoronganError("Ada jenis pekerjaan yang tidak aktif. Muat ulang halaman.");
-    if (new Set(tasks.map((t) => taskGroupName(t.name))).size > 1) throw new BoronganError("Satu kiriman untuk satu jenis pekerjaan (mis. Assembling saja)");
-    const points = await tx.boronganPoint.findMany({ where: { id: { in: pointIds }, active: true } });
-    if (points.length !== pointIds.length) throw new BoronganError("Titik tujuan tidak aktif");
-    const cfg = await pointConfig(tx);
-    for (const p of points) if (cfg[p.id]?.tasks.length && !tasks.some((t) => cfg[p.id].tasks.includes(t.id))) throw new BoronganError(`Titik ${p.name} tidak mengerjakan ${taskGroupName(tasks[0].name)}`);
-    let driverId: string | null = null;
-    if (input.mode === "DRIVER") {
-      const drivers = await tx.boronganPerson.findMany({ where: { role: "DRIVER", active: true }, select: { id: true } });
-      if (drivers.length && !input.driverId) throw new BoronganError("Pilih driver");
-      if (input.driverId && !drivers.some((d) => d.id === input.driverId)) throw new BoronganError("Driver tidak aktif");
-      driverId = input.driverId ?? null;
-    }
-    // Bahan resep (otomatis dari jumlah per jenis) + bahan pendukung
-    const qty = new Map<string, { qty: number; support: boolean }>();
-    const add = (itemId: string, q: number, support: boolean) => {
-      if (!(q > 0)) return;
-      const cur = qty.get(itemId) ?? { qty: 0, support };
-      qty.set(itemId, { qty: Math.round((cur.qty + q) * 1000) / 1000, support: cur.support && support });
-    };
-    for (const t of tasks) for (const inp of t.inputs) add(inp.itemId, bomStockQty(inp.qty, inp.item) * tasksIn.find((x) => x.taskId === t.id)!.qty, false);
-    // Bahan pendukung hanya dari kit tugas yang dikirim (mis. Assembling tidak membawa cat Cat Giftbox)
-    const kit = new Set(Object.entries(await taskKits(tx)).filter(([id]) => tasks.some((t) => t.id === id)).flatMap(([, ids]) => ids));
-    for (const s of input.support ?? []) {
-      if (s.qty < 0) throw new BoronganError("Jumlah bahan tidak boleh minus");
-      if (s.qty > 0 && !kit.has(s.itemId)) throw new BoronganError("Ada bahan pendukung yang bukan kit jenis pekerjaan ini. Muat ulang halaman.");
-      add(s.itemId, s.qty, true);
-    }
-    const items = await tx.item.findMany({ where: { id: { in: [...qty.keys()] } } });
+    const tasks = await loadTasks(tx, tasksIn);
+    const group = taskGroupName(tasks[0].name);
+    if (tasks.some((t) => isAssemblingName(t.name))) throw new BoronganError("Kiriman Assembling diawali isian patung kering oleh Cetak/Oven, lalu dilengkapi Assembling/Supervisor");
+    if (!canShipGroup(scope, group)) throw new BoronganError(/^cat plastik/i.test(group) ? "Kiriman Cat Plastik dicatat tim Assembling / Supervisor" : /^cat giftbox/i.test(group) ? "Kiriman Cat Giftbox dicatat tim Giftbox / Supervisor" : "Kiriman bahan dicatat Supervisor");
     const number = await dailyNumber(tx, "KRM", input.date);
-    const date = dateOnly(input.date);
-    const to = input.mode === "DRIVER" ? await driverLocation(tx) : points[0].locationId;
-    const rows: Prisma.BoronganShipmentLineCreateWithoutShipmentInput[] = [];
-    for (const [itemId, l] of qty) {
-      const item = items.find((i) => i.id === itemId);
-      if (!item) throw new BoronganError("Bahan tidak ditemukan");
-      const warehouseId = await warehouseFor(tx, item.type);
-      await recordMovement(tx, { type: "TRANSFER", itemId, qty: l.qty, fromLocationId: warehouseId, toLocationId: to, ref: `KRM:${number}`, note: `Kiriman ${number} ${input.mode === "DRIVER" ? "naik ke mobil driver" : `diantar ke ${points[0].name}`}`, date: new Date(`${input.date}T05:00:00.000Z`) }, actor);
-      rows.push({ itemId, warehouseId, qty: new Prisma.Decimal(l.qty), support: l.support });
-    }
+    const d = await dispatchTx(tx, number, input.date, input, tasks, tasksIn, actor);
     const s = await tx.boronganShipment.create({
-      data: { number, date, mode: input.mode, pointIds, driverId, note: input.note ?? null, createdBy: actor.name, createdById: actor.id, tasks: { create: tasksIn.map((t) => ({ taskId: t.taskId, qty: t.qty })) }, lines: { create: rows } },
+      data: { number, date: dateOnly(input.date), mode: input.mode, pointIds: d.pointIds, driverId: d.driverId, note: input.note ?? null, createdBy: actor.name, createdById: actor.id, tasks: { create: tasksIn.map((t) => ({ taskId: t.taskId, qty: t.qty })) }, lines: { create: d.rows } },
     });
-    await audit(actor, "KIRIMAN_BORONGAN", "BoronganShipment", s.id, { number, mode: input.mode, titik: points.map((p) => p.code), jenis: tasksIn }, tx);
+    await audit(actor, "KIRIMAN_BORONGAN", "BoronganShipment", s.id, { number, mode: input.mode, titik: d.points.map((p) => p.code), jenis: tasksIn }, tx);
     return s;
   }, { timeout: 30000 });
-  // Push ke HP koordinator titik tujuan (dan driver bila lewat driver)
-  const total = tasksIn.reduce((a, t) => a + t.qty, 0).toLocaleString("id-ID");
-  const driverUser = s.driverId ? (await prisma.boronganPerson.findUnique({ where: { id: s.driverId }, select: { userId: true } }))?.userId : null;
-  await notify([...(await coordinatorUsers(pointIds)), driverUser], { title: `Kiriman bahan ${s.number}`, body: `${total} pcs ${s.mode === "DRIVER" ? "dibawa driver" : "diantar langsung"}. Pembagian ke pekerja menyusul.`, url: "/borongan?tab=kiriman", tag: `krm-${s.number}` });
+  await notifyDispatched(s, tasksIn.reduce((a, t) => a + t.qty, 0));
   return s;
+}
+
+/** Langkah 1 Assembling: tim Cetak/Oven mengisi patung kering per jenis. Stok belum keluar sampai dilengkapi. */
+export async function createKeringDraft(input: { date: string; tasks: { taskId: string; qty: number }[]; note?: string | null }, actor: Actor, scope: Scope) {
+  if (!canInputKering(scope)) throw new BoronganError("Patung kering diisi tim Cetak / Oven");
+  const tasksIn = cleanTasks(input.tasks);
+  const s = await prisma.$transaction(async (tx) => {
+    const tasks = await loadTasks(tx, tasksIn);
+    if (!tasks.every((t) => isAssemblingName(t.name))) throw new BoronganError("Isian patung kering hanya untuk pekerjaan Assembling");
+    const number = await dailyNumber(tx, "KRM", input.date);
+    const s = await tx.boronganShipment.create({
+      data: { number, date: dateOnly(input.date), mode: "DRIVER", pointIds: [], waitingSupport: true, note: input.note ?? null, createdBy: actor.name, createdById: actor.id, tasks: { create: tasksIn.map((t) => ({ taskId: t.taskId, qty: t.qty })) } },
+    });
+    await audit(actor, "PATUNG_KERING_DIISI", "BoronganShipment", s.id, { number, jenis: tasksIn }, tx);
+    return s;
+  });
+  // Beri tahu tim Assembling & Supervisor: lengkapi bahan pendukung
+  const users = await prisma.user.findMany({ where: { active: true, OR: [{ role: "SUPERVISOR" }, { role: { in: ["KAPTEN_DIVISI", "OPERATOR"] }, OR: [{ division: { reportTemplate: "ASSEMBLING" } }, { employee: { division: { reportTemplate: "ASSEMBLING" } } }] }] }, select: { id: true } });
+  await notify(users.map((u) => u.id), { title: `Patung kering ${s.number} siap`, body: `${tasksIn.reduce((a, t) => a + t.qty, 0).toLocaleString("id-ID")} pcs dari ${actor.name}. Lengkapi bahan pendukung, titik & driver.`, url: "/borongan?tab=kiriman", tag: `krm-${s.number}` });
+  return s;
+}
+
+/** Langkah 2 Assembling: tim Assembling/Supervisor melengkapi bahan pendukung, titik, driver → stok keluar gudang */
+export async function completeShipment(id: string, input: Omit<ShipmentInput, "tasks" | "date"> & { date?: string }, actor: Actor, scope: Scope) {
+  if (!canCompleteAssembling(scope)) throw new BoronganError("Bahan pendukung dilengkapi tim Assembling / Supervisor");
+  const s = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "BoronganShipment" WHERE id = ${id} FOR UPDATE`;
+    const cur = await tx.boronganShipment.findUniqueOrThrow({ where: { id }, include: { tasks: true } });
+    if (cur.cancelledAt) throw new BoronganError(`${cur.number} sudah dibatalkan`);
+    if (!cur.waitingSupport) throw new BoronganError(`${cur.number} sudah dikirim`);
+    const tasksIn = cur.tasks.map((t) => ({ taskId: t.taskId, qty: t.qty }));
+    const tasks = await loadTasks(tx, tasksIn);
+    const day = input.date || todayStr();
+    const d = await dispatchTx(tx, cur.number, day, input, tasks, tasksIn, actor);
+    const s = await tx.boronganShipment.update({
+      where: { id },
+      data: { waitingSupport: false, mode: input.mode, pointIds: d.pointIds, driverId: d.driverId, completedBy: actor.name, completedAt: new Date(), ...(input.note ? { note: [cur.note, input.note].filter(Boolean).join(" · ") } : {}), lines: { create: d.rows } },
+    });
+    await audit(actor, "KIRIMAN_BORONGAN", "BoronganShipment", id, { number: cur.number, mode: input.mode, titik: d.points.map((p) => p.code), jenis: tasksIn, dilengkapi: true }, tx);
+    return { s, total: tasksIn.reduce((a, t) => a + t.qty, 0) };
+  }, { timeout: 30000 });
+  await notifyDispatched(s.s, s.total);
+  return s.s;
 }
 
 /** Batalkan kiriman yang belum pernah diambil setorannya: semua bahan kembali ke gudang */
 export async function cancelShipment(id: string, actor: Actor, scope: Scope) {
-  if (!canShip(scope)) throw new BoronganError("Kiriman dibatalkan oleh Supervisor / Kapten Assembling");
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "BoronganShipment" WHERE id = ${id} FOR UPDATE`;
     const s = await tx.boronganShipment.findUniqueOrThrow({ where: { id }, include: { pickups: true } });
+    // Isian patung kering yang belum dilengkapi: dibatalkan pengisinya, tim Assembling, atau Supervisor
+    const allowed = s.waitingSupport ? canCompleteAssembling(scope) || (canInputKering(scope) && s.createdById === actor.id) : canShip(scope);
+    if (!allowed) throw new BoronganError("Kiriman dibatalkan oleh pencatatnya / Supervisor");
     if (s.cancelledAt) throw new BoronganError(`${s.number} sudah dibatalkan`);
     if (s.pickups.some((p) => p.status !== "DIBATALKAN")) throw new BoronganError("Kiriman yang sudah diambil setorannya tidak bisa dibatalkan");
     await reverseMovementsByRef(tx, `BGI:${s.number}`, `BATAL-BGI:${s.number}`, "Kiriman dibatalkan", actor);
@@ -352,6 +444,7 @@ export async function saveAllots(shipmentId: string, rows: AllotInput[], actor: 
     await tx.$queryRaw`SELECT id FROM "BoronganShipment" WHERE id = ${shipmentId} FOR UPDATE`;
     const s = await tx.boronganShipment.findUniqueOrThrow({ where: { id: shipmentId }, include: { tasks: { include: { task: { include: { inputs: { include: { item: true } } } } } }, lines: true, allots: true, pickups: { where: { status: { not: "DIBATALKAN" } }, include: { lines: true } } } });
     if (s.cancelledAt) throw new BoronganError(`${s.number} sudah dibatalkan`);
+    if (s.waitingSupport) throw new BoronganError(`${s.number} masih menunggu bahan pendukung dari tim Assembling`);
     const taskIds = s.tasks.map((t) => t.taskId);
     if (!canDistribute(scope, { mode: s.mode, taskIds })) throw new BoronganError(s.mode === "DRIVER" ? "Pembagian kiriman lewat driver dicatat driver" : "Pembagian kiriman ini dicatat tim divisi / Supervisor");
     const clean = new Map<string, AllotInput>();

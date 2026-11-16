@@ -5,13 +5,13 @@ import { stockBalances } from "@/lib/stock";
 import { canTask, type Scope } from "@/lib/borongan";
 import { taskGroupName } from "@/lib/boronganKirim";
 import { pointConfig, taskKits } from "@/lib/boronganSetup";
-import { STATE_LABEL, canDistribute, canPickup, canReceive, canReport, byColumn, canShip, openShipments, shortTaskName, type ShipmentView } from "@/lib/boronganFlow";
+import { STATE_LABEL, byColumn, canCompleteAssembling, canDistribute, canInputKering, canPickup, canReceive, canReport, canShip, canShipGroup, isAssemblingName, openShipments, shortTaskName, type ShipmentView } from "@/lib/boronganFlow";
 import { Badge, Empty } from "@/components/ui";
 import { ActionForm } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { AmbilForm, BagiForm, KirimForm, KoreksiForm, LaporForm, TerimaForm, type KirimGroupOpt } from "./KirimanForms";
-import { ambilSetoran, batalAmbil, batalKiriman, kirimBahan, laporHasil, simpanPembagian, terimaSetoran, tindakTahanan } from "./kirimanActions";
+import { AmbilForm, BagiForm, KeringForm, KirimForm, KoreksiForm, LaporForm, TerimaForm, type KirimGroupOpt } from "./KirimanForms";
+import { ambilSetoran, batalAmbil, batalKiriman, isiPatungKering, kirimBahan, laporHasil, lengkapiKiriman, simpanPembagian, terimaSetoran, tindakTahanan } from "./kirimanActions";
 
 const f = (n: number) => n.toLocaleString("id-ID");
 const Chip = ({ children }: { children: React.ReactNode }) => <span className="inline-block break-all rounded-md bg-brand-50 px-2 py-0.5 font-mono text-xs font-semibold text-brand-700">{children}</span>;
@@ -20,6 +20,11 @@ const STATE_TONE = { DI_PEKERJA: "amber", SEBAGIAN: "amber", SELESAI: "green" } 
 /** Kiriman yang relevan untuk akun ini */
 function visible(scope: Scope, s: ShipmentView) {
   if (scope.all) return true;
+  const asm = s.tasks.some((t) => isAssemblingName(t.name));
+  // Tim Cetak/Oven & Packing: hanya kiriman Assembling (isian patung kering / penerimaan setoran)
+  if (scope.kering || scope.packing) return asm;
+  // Isian patung kering yang belum dilengkapi hanya untuk tim Assembling / Supervisor
+  if (s.waitingSupport) return !!scope.warehouse || scope.division?.template === "ASSEMBLING";
   if (scope.driver) return s.mode === "DRIVER";
   if (scope.division) return !!scope.warehouse || s.tasks.some((t) => canTask(scope, t.id));
   return s.points.some((p) => scope.pointIds.includes(p.id));
@@ -61,26 +66,62 @@ async function kirimGroups(): Promise<KirimGroupOpt[]> {
 
 export async function KirimanTab({ scope, userId }: { scope: Scope; userId: string }) {
   const all = (await openShipments()).filter((s) => visible(scope, s));
-  const ship = canShip(scope);
-  const [groups, drivers, workers] = await Promise.all([
+  const complete = canCompleteAssembling(scope);
+  const kering = canInputKering(scope);
+  const ship = canShip(scope) || complete || kering;
+  const [allGroups, drivers, workers] = await Promise.all([
     ship ? kirimGroups() : Promise.resolve([]),
     ship ? prisma.boronganPerson.findMany({ where: { role: "DRIVER", active: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }) : Promise.resolve([]),
     prisma.boronganPerson.findMany({ where: { role: "PEKERJA", active: true, pointId: { in: [...new Set(all.flatMap((s) => s.points.map((p) => p.id)))] } }, orderBy: { name: "asc" }, select: { id: true, name: true, pointId: true, taskIds: true } }),
   ]);
+  // Kirim langsung: Cat Plastik (tim Assembling), Cat Giftbox (tim Giftbox); Assembling lewat isian patung kering
+  const groups = allGroups.filter((g) => canShipGroup(scope, g.name));
+  const asmGroup = allGroups.find((g) => isAssemblingName(g.name));
+  const waiting = all.filter((s) => s.waitingSupport);
   const creators = new Map((await prisma.boronganPickup.findMany({ where: { id: { in: all.flatMap((s) => s.pickups.map((p) => p.id)) } }, select: { id: true, createdById: true } })).map((p) => [p.id, p.createdById]));
   const toReceive = all.flatMap((s) => s.pickups.filter((p) => p.status === "DIBAWA" && canReceive(scope, s.tasks.filter((t) => p.lines.some((l) => l.taskId === t.id)))).map((p) => ({ s, p })));
   const held = scope.all ? all.flatMap((s) => s.pickups.filter((p) => p.status === "KURANG").map((p) => ({ s, p }))) : [];
-  const running = all.filter((s) => s.state !== "SELESAI" || s.pickups.some((p) => p.status === "DIBAWA"));
+  const running = all.filter((s) => !s.waitingSupport && (s.state !== "SELESAI" || s.pickups.some((p) => p.status === "DIBAWA")));
+  const draftCreators = new Map((await prisma.boronganShipment.findMany({ where: { id: { in: waiting.map((w) => w.id) } }, select: { id: true, createdById: true } })).map((x) => [x.id, x.createdById]));
 
   return (
     <div className="space-y-4">
-      {ship && (
+      {(kering && asmGroup) || groups.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2">
-          <Modal trigger="+ Kirim Bahan" title="Kirim bahan" subtitle="Nomor kiriman dibuat otomatis" wide>
-            <ModalForm action={kirimBahan} className="space-y-3"><KirimForm groups={groups} drivers={drivers} today={todayStr()} /></ModalForm>
-          </Modal>
-          <p className="text-xs text-slate-500">Kiriman berikutnya: pembagian ke pekerja → laporan hasil koordinator → ambil setoran → diterima divisi.</p>
+          {kering && asmGroup && (
+            <Modal trigger="+ Patung Kering" title="Patung kering untuk Assembling" subtitle="Nomor kiriman dibuat otomatis" wide>
+              <ModalForm action={isiPatungKering} className="space-y-3"><KeringForm tasks={asmGroup.tasks} today={todayStr()} /></ModalForm>
+            </Modal>
+          )}
+          {groups.length > 0 && (
+            <Modal trigger="+ Kirim Bahan" triggerClass={kering && asmGroup ? "btn-secondary" : "btn-primary"} title="Kirim bahan" subtitle="Nomor kiriman dibuat otomatis" wide>
+              <ModalForm action={kirimBahan} className="space-y-3"><KirimForm groups={groups} drivers={drivers} today={todayStr()} /></ModalForm>
+            </Modal>
+          )}
+          <p className="text-xs text-slate-500">{kering && !groups.length ? "Isi patung kering per jenis; tim Assembling melengkapi bahan pendukung lalu mengirim." : "Kiriman berikutnya: pembagian ke pekerja → laporan hasil koordinator → ambil setoran → diterima divisi."}</p>
         </div>
+      ) : null}
+
+      {waiting.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-amber-700">Menunggu bahan pendukung</h2>
+          {waiting.map((s) => (
+            <div key={s.id} className="card space-y-2 p-3">
+              <div className="flex flex-wrap items-center gap-2"><Chip>{s.number}</Chip><span className="text-sm font-semibold text-slate-800">{fmtDay(dateOnly(s.date))}</span><span className="text-xs text-slate-500">patung kering dari {s.createdBy}</span></div>
+              <div className="text-sm text-slate-700">{s.tasks.map((t) => `${t.short} ${f(t.qty)}`).join(" · ")} · <b>{f(s.totals.sent)} pcs</b></div>
+              <div className="flex flex-wrap gap-2">
+                {complete && asmGroup && (
+                  <Modal trigger="Lengkapi & kirim" triggerClass="btn-primary btn-sm" title="Lengkapi kiriman Assembling" subtitle={`${s.number} · bahan pendukung, titik & driver`} wide>
+                    <ModalForm action={lengkapiKiriman} className="space-y-3"><KirimForm groups={[asmGroup]} drivers={drivers} today={todayStr()} fixed={{ shipmentId: s.id, groupKey: asmGroup.key, qty: Object.fromEntries(s.tasks.map((t) => [t.id, t.qty])) }} /></ModalForm>
+                  </Modal>
+                )}
+                {(complete || draftCreators.get(s.id) === userId) && (
+                  <ActionForm action={batalKiriman} confirm={`Batalkan isian patung kering ${s.number}?`}><input type="hidden" name="id" value={s.id} /><button className="btn-secondary btn-sm text-rose-600">Batalkan</button></ActionForm>
+                )}
+              </div>
+            </div>
+          ))}
+        </section>
       )}
 
       {toReceive.length > 0 && (
@@ -171,7 +212,7 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
                     <ModalForm action={ambilSetoran} className="space-y-3"><AmbilForm view={s} /></ModalForm>
                   </Modal>
                 )}
-                {canShip(scope) && !activePickups.length && (
+                {canShip(scope) && !scope.kering && !scope.packing && !activePickups.length && (
                   <ActionForm action={batalKiriman} confirm={`Batalkan kiriman ${s.number}? Bahan kembali ke gudang.`}><input type="hidden" name="id" value={s.id} /><button className="btn-secondary btn-sm text-rose-600">Batalkan</button></ActionForm>
                 )}
               </div>

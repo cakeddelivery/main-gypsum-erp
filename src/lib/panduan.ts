@@ -40,14 +40,14 @@ const ph = (c: keyof typeof C, p: Omit<Phase, "color" | "soft">): Phase => ({ ..
 
 // ---------------- Panduan divisi ----------------
 
-type DivSpec = { id: DivisionGuideId; name: string; template: ReportTemplate; hasil: string[]; terima: boolean; catatan?: string };
+type DivSpec = { id: DivisionGuideId; name: string; template: ReportTemplate; hasil: string[]; terima: boolean; catatan?: string; kering?: boolean };
 
 const DIVISIONS: DivSpec[] = [
-  { id: "cetak", name: "Cetak", template: "CETAK", hasil: ["Hasil cetak per karyawan: pilih nama, isi jumlah per series (Hewan, Cowok, Transportasi, Cewek)."], terima: false },
-  { id: "produksi", name: "Produksi (Oven)", template: "PRODUKSI", hasil: ["Hasil panen per oven (Oven Besar, Oven Kecil) per series.", "Reject panen + pilih alasan reject (bila ada).", "Hasil cetak per karyawan (bila ikut mencetak)."], terima: false },
+  { id: "cetak", name: "Cetak", template: "CETAK", hasil: ["Hasil cetak per karyawan: pilih nama, isi jumlah per series (Hewan, Cowok, Transportasi, Cewek)."], terima: false, kering: true },
+  { id: "produksi", name: "Produksi (Oven)", template: "PRODUKSI", hasil: ["Hasil panen per oven (Oven Besar, Oven Kecil) per series.", "Reject panen + pilih alasan reject (bila ada).", "Hasil cetak per karyawan (bila ikut mencetak)."], terima: false, kering: true },
   { id: "giftbox", name: "Giftbox", template: "GIFTBOX", hasil: ["Resi: jumlah Shopee & Tiktok.", "Giftbox: jumlah box per jenis (Reguler, Bonus Palet, dll.).", "Jumlah patung dihitung otomatis."], terima: true },
-  { id: "packing", name: "Packing", template: "PACKING", hasil: ["Resi: jumlah Shopee & Tiktok.", "Patung mix (paket): jumlah paket per isi & series.", "Patung satuan: jumlah per series."], terima: false },
-  { id: "assembling", name: "Assembling", template: "ASSEMBLING", hasil: [], terima: true, catatan: "Assembling tidak mengisi hasil kerja di form: setoran borongan diterima lewat «Terima setoran borongan» (Borongan › Kiriman) dan tampil otomatis di laporan." },
+  { id: "packing", name: "Packing", template: "PACKING", hasil: ["Resi: jumlah Shopee & Tiktok.", "Patung mix (paket): jumlah paket per isi & series.", "Patung satuan: jumlah per series."], terima: true },
+  { id: "assembling", name: "Assembling", template: "ASSEMBLING", hasil: [], terima: true, catatan: "Assembling tidak mengisi hasil kerja di form. Patung kering dari Cetak/Oven dilengkapi lewat «Borongan» → «Lengkapi & kirim»; setoran Cat Plastik diterima lewat «Terima setoran borongan» (setoran patung diterima Packing)." },
 ];
 
 /** Tahap form laporan divisi (urutan sama dengan form di aplikasi) */
@@ -86,6 +86,7 @@ function divisionGuide(d: DivSpec): Guide {
         items: [
           "Ada kiriman dari supplier/toko: menu bawah «Laporan» → «+ Barang masuk». Catat **sebelum** menghitung stok akhir.",
           ...(d.terima ? ["Hasil borongan datang: buka laporan hari ini → «Terima setoran borongan» → pilih nomor AMB → «Terima», isi total per jenis."] : []),
+          ...(d.kering ? ["Patung kering untuk borongan Assembling siap: menu «Borongan» → «+ Patung Kering» → isi jumlah per jenis (Cowok, Cewek, Hewan, Transport) → «Simpan patung kering»."] : []),
           "Stok bahan di bawah limit? Permintaan stok dibuat **otomatis** dari laporan, tidak perlu lapor manual.",
         ],
       }),

@@ -159,3 +159,30 @@ export const tolakKlaim = action(
   },
   [...PATHS, "/borongan/klaim"],
 );
+
+// ---------------- ASSEMBLING BERTAHAP ----------------
+
+/** Tim Cetak/Oven: isian patung kering per jenis (t:<jenis>) */
+export const isiPatungKering = action(
+  [...PERMS],
+  async (fd, user) => {
+    const { createKeringDraft } = await import("@/lib/boronganFlow");
+    const tasks = [...fd.entries()].filter(([k]) => k.startsWith("t:")).map(([k, v]) => ({ taskId: k.slice(2), qty: int(v) }));
+    const s = await createKeringDraft({ date: str(fd, "date") || todayStr(), tasks, note: optStr(fd, "note") }, user, await boronganScope(prisma, user));
+    return `Patung kering ${s.number} tercatat (${fmt(tasks.reduce((a, t) => a + t.qty, 0))} pcs), menunggu tim Assembling melengkapi bahan pendukung`;
+  },
+  PATHS,
+);
+
+/** Tim Assembling/Supervisor: lengkapi bahan pendukung (s:<barang>), titik, driver → kirim */
+export const lengkapiKiriman = action(
+  [...PERMS],
+  async (fd, user) => {
+    const { completeShipment } = await import("@/lib/boronganFlow");
+    const support = [...fd.entries()].filter(([k, v]) => k.startsWith("s:") && dec(v) > 0).map(([k, v]) => ({ itemId: k.slice(2), qty: dec(v) }));
+    const mode = str(fd, "mode") === "LANGSUNG" ? "LANGSUNG" : "DRIVER";
+    const s = await completeShipment(str(fd, "shipmentId"), { date: str(fd, "date") || todayStr(), mode, pointIds: fd.getAll("pointId").map(String), driverId: optStr(fd, "driverId"), support, note: optStr(fd, "note") }, user, await boronganScope(prisma, user));
+    return `Kiriman ${s.number} lengkap & dikirim`;
+  },
+  PATHS,
+);

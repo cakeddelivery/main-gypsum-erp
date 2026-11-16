@@ -161,7 +161,7 @@ describe("Alur kiriman borongan di database", () => {
     await expect(createPickup(s.id, [{ pointId: p2.id, workerId: wC.id, taskId: tCowok.id, qty: 1, done: false }], actor, ctx.driverScope)).rejects.toThrow(/sudah selesai/);
 
     // 5. Terima: divisi penerima menghitung total per jenis → cocok, barang masuk gudang, upah per pekerja = setoran driver
-    expect(canReceive(ctx.coordScope, [{ divisionId: ctx.div.id }])).toBe(false);
+    expect(canReceive(ctx.coordScope, [{ name: "Rakit", divisionId: ctx.div.id }])).toBe(false);
     const r1 = await receivePickup(amb1.id, [{ taskId: tCowok.id, qty: 50 }], actor, ctx.divScope);
     expect(r1.short).toBe(false);
     expect(await at(jadiCowok.id, locs.loc_wip)).toBe(50);

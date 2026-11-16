@@ -19,12 +19,12 @@ describe("Lembar Panduan", () => {
     expect(allowedGuides("OWNER", null)).toHaveLength(8);
   });
 
-  it("tahap form sesuai aplikasi; Penerimaan borongan hanya Giftbox & Assembling", () => {
+  it("tahap form sesuai aplikasi; Penerimaan borongan: Giftbox, Assembling (Cat Plastik), Packing (patung)", () => {
     const flow = (id: keyof typeof GUIDES) => GUIDES[id].phases.find((p) => p.flow)?.flow;
     expect(flow("giftbox")).toEqual(["Hasil kerja", "Checklist", "Stok jadi", "Stok akhir", "Catatan & kirim"]);
     expect(flow("assembling")?.[0]).toBe("Checklist");
     const receives = GUIDE_LIST.filter((g) => g.phases.some((p) => p.items.some((t) => t.includes("«Terima setoran borongan»") && t.startsWith("Hasil borongan datang")))).map((g) => g.id);
-    expect(receives.sort()).toEqual(["assembling", "giftbox"]);
+    expect(receives.sort()).toEqual(["assembling", "giftbox", "packing"]);
   });
 
   it("penanda teks: «tombol» dan **tebal**", () => {

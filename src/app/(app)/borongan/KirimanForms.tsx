@@ -68,11 +68,15 @@ export type KirimGroupOpt = {
   support: { id: string; name: string; unit: string; stock: number }[];
 };
 
-export function KirimForm({ groups, drivers, today }: { groups: KirimGroupOpt[]; drivers: { id: string; name: string }[]; today: string }) {
-  const [key, setKey] = useState(groups[0]?.key ?? "");
+/**
+ * Kirim bahan. `fixed` = melengkapi kiriman Assembling yang patung keringnya sudah diisi Cetak/Oven: jumlah per jenis
+ * tidak bisa diubah, tinggal titik, cara kirim, driver, dan bahan pendukung.
+ */
+export function KirimForm({ groups, drivers, today, fixed }: { groups: KirimGroupOpt[]; drivers: { id: string; name: string }[]; today: string; fixed?: { shipmentId: string; groupKey: string; qty: Record<string, number> } }) {
+  const [key, setKey] = useState(fixed?.groupKey ?? groups[0]?.key ?? "");
   const g = groups.find((x) => x.key === key);
   const [pts, setPts] = useState<string[]>([]);
-  const [qty, setQty] = useState<Record<string, string>>({});
+  const [qty, setQty] = useState<Record<string, string>>(() => (fixed ? Object.fromEntries(Object.entries(fixed.qty).map(([k, v]) => [k, String(v)])) : {}));
   const chosen = g?.points.filter((p) => pts.includes(p.id)) ?? [];
   const direct = chosen.length === 1 && !chosen[0].viaDriver;
   const [modeRaw, setMode] = useState<"DRIVER" | "LANGSUNG" | null>(null);
@@ -90,10 +94,13 @@ export function KirimForm({ groups, drivers, today }: { groups: KirimGroupOpt[];
   if (!groups.length) return <p className="text-sm text-slate-500">Belum ada jenis pekerjaan borongan aktif dengan titik tujuan. Atur di tab Tugas &amp; Tarif.</p>;
   return (
     <div className="space-y-3">
+      {fixed && <input type="hidden" name="shipmentId" value={fixed.shipmentId} />}
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="block"><span className="label">Jenis pekerjaan</span>
-          <select className="input" value={key} onChange={(e) => { setKey(e.target.value); setPts([]); setQty({}); setMode(null); }}>{groups.map((x) => <option key={x.key} value={x.key}>{x.name}</option>)}</select>
-        </label>
+        {fixed ? <p className="text-sm">Jenis pekerjaan: <b>{g?.name}</b></p> : (
+          <label className="block"><span className="label">Jenis pekerjaan</span>
+            <select className="input" value={key} onChange={(e) => { setKey(e.target.value); setPts([]); setQty({}); setMode(null); }}>{groups.map((x) => <option key={x.key} value={x.key}>{x.name}</option>)}</select>
+          </label>
+        )}
         <label className="block"><span className="label">Tanggal</span><input type="date" name="date" defaultValue={today} className="input" /></label>
       </div>
       <fieldset>
@@ -121,9 +128,11 @@ export function KirimForm({ groups, drivers, today }: { groups: KirimGroupOpt[];
         <label className="block"><span className="label">Driver</span><select name="driverId" className="input" defaultValue={drivers[0].id}>{drivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
       )}
       <div className="rounded-xl border border-slate-200 p-3">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Jumlah per jenis (pcs)</p>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{fixed ? "Patung kering dari Cetak/Oven (pcs)" : "Jumlah per jenis (pcs)"}</p>
         <div className="grid grid-cols-2 gap-2 keep-cols sm:grid-cols-4">
-          {g?.tasks.map((t) => (
+          {g?.tasks.filter((t) => !fixed || fixed.qty[t.id]).map((t) => fixed ? (
+            <div key={t.id} className="rounded-lg bg-slate-50 px-3 py-2"><span className="block text-xs font-medium text-slate-600">{t.short}</span><b className="tabular-nums">{f(fixed.qty[t.id])}</b></div>
+          ) : (
             <label key={t.id} className="block"><span className="text-xs font-medium text-slate-600">{t.short}</span>
               <input name={`t:${t.id}`} inputMode="numeric" value={qty[t.id] ?? ""} onChange={(e) => setQty((x) => ({ ...x, [t.id]: e.target.value.replace(/[^\d]/g, "") }))} placeholder="0" className="input text-right tabular-nums" />
             </label>
@@ -147,7 +156,32 @@ export function KirimForm({ groups, drivers, today }: { groups: KirimGroupOpt[];
       )}
       <label className="block"><span className="label">Catatan</span><input name="note" className="input" /></label>
       <p className="text-xs text-slate-500">{mode === "DRIVER" ? "Bahan keluar gudang dan tercatat di mobil driver. Saat driver membagi ke pekerja, bahan tercatat pindah ke titik." : "Bahan keluar gudang langsung ke titik. Pembagian & pengambilan dicatat tim divisi / Supervisor."} Tidak ada lagi konfirmasi terima di titik.</p>
-      <Submit>Simpan &amp; kirim</Submit>
+      <Submit>{fixed ? "Lengkapi & kirim" : "Simpan & kirim"}</Submit>
+    </div>
+  );
+}
+
+/** Langkah 1 kiriman Assembling (tim Cetak/Oven): jumlah patung kering per jenis */
+export function KeringForm({ tasks, today }: { tasks: { id: string; short: string }[]; today: string }) {
+  const [qty, setQty] = useState<Record<string, string>>({});
+  const total = tasks.reduce((a, t) => a + toInt(qty[t.id]), 0);
+  return (
+    <div className="space-y-3">
+      <label className="block"><span className="label">Tanggal</span><input type="date" name="date" defaultValue={today} max={today} className="input" /></label>
+      <div className="rounded-xl border border-slate-200 p-3">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Patung kering per jenis (pcs)</p>
+        <div className="grid grid-cols-2 gap-2 keep-cols sm:grid-cols-4">
+          {tasks.map((t) => (
+            <label key={t.id} className="block"><span className="text-xs font-medium text-slate-600">{t.short}</span>
+              <input name={`t:${t.id}`} inputMode="numeric" value={qty[t.id] ?? ""} onChange={(e) => setQty((x) => ({ ...x, [t.id]: e.target.value.replace(/[^\d]/g, "") }))} placeholder="0" className="input text-right tabular-nums" />
+            </label>
+          ))}
+        </div>
+        <p className="mt-2 text-right text-sm">Total <b>{f(total)} pcs</b></p>
+      </div>
+      <label className="block"><span className="label">Catatan</span><input name="note" className="input" /></label>
+      <p className="text-xs text-slate-500">Setelah disimpan, tim Assembling / Supervisor melengkapi bahan pendukung, titik tujuan, dan driver. Stok baru keluar gudang saat kiriman dilengkapi.</p>
+      <Submit>Simpan patung kering</Submit>
     </div>
   );
 }
