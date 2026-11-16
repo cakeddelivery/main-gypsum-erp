@@ -53,7 +53,9 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
     // Driver: hanya Pembagian & Ambil Setoran (tab Kiriman)
     .filter((t) => !scope.driver || t.key === "kiriman")
     // Koordinator titik: lapor hasil (Kiriman), Klaim Upah, dan pekerja titiknya (Orang)
-    .filter((t) => !isCoordinatorOnly || ["kiriman", "klaim", "orang"].includes(t.key));
+    .filter((t) => !isCoordinatorOnly || ["kiriman", "klaim", "orang"].includes(t.key))
+    // Tim Cetak/Oven (isi patung kering) & Packing (terima setoran Assembling): hanya Kiriman
+    .filter((t) => !(scope.kering || scope.packing) || t.key === "kiriman");
   // Finance (hanya bayar upah): langsung ke Klaim Upah
   const tab = tabs.some((t) => t.key === sp.tab) ? sp.tab! : !manage && !scope.pointIds.length && user.can("borongan.pay") ? "klaim" : "kiriman";
   if (scope.driver) {

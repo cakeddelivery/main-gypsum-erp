@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/db";
 import { cancelSettlement, ratesFor, savePerson, settlePoint, type Scope } from "@/lib/borongan";
-import { createPickup, createShipment, receivePickup, saveAllots } from "@/lib/boronganFlow";
+import { canReceive, canShipGroup, completeShipment, createKeringDraft, createPickup, createShipment, receivePickup, saveAllots } from "@/lib/boronganFlow";
+import { stockBalances } from "@/lib/stock";
 import { CLAIM_EVERY, approveClaim, assemblingCount, autoClaims, canRequestClaim, claimBreakdown, rejectClaim, requestClaim } from "@/lib/boronganClaim";
 import { saveItemRecord } from "@/lib/items";
 import { sendPush } from "@/lib/push";
@@ -62,12 +63,21 @@ describe("Klaim upah di database", () => {
     const bank = (await prisma.bankAccount.findUniqueOrThrow({ where: { code: "SEABANK" } })).id;
     return { div, point, asm, cg, coord, driver, w, bank, coordScope: { all: false, pointIds: [point.id], personId: coord.id, taskIds: null } as Scope, divScope: { all: false, pointIds: [point.id], personId: null, taskIds: [asm.id, cg.id], division: { id: div.id, captain: true } } as Scope };
   }
+  /** Assembling: Cetak/Oven isi patung kering → Assembling/Supervisor lengkapi; pekerjaan lain dikirim langsung */
+  async function kirim(taskId: string, qty: number, day: string) {
+    if (taskId !== ctx.asm.id) return createShipment({ date: day, mode: "DRIVER", pointIds: [ctx.point.id], driverId: ctx.driver.id, tasks: [{ taskId, qty }] }, actor, all);
+    const d = await createKeringDraft({ date: day, tasks: [{ taskId, qty }] }, actor, all);
+    return completeShipment(d.id, { date: day, mode: "DRIVER", pointIds: [ctx.point.id], driverId: ctx.driver.id }, actor, all);
+  }
+  /** Setoran Assembling diterima tim Packing; pekerjaan lain oleh divisi tugasnya */
+  const packScope: Scope = { all: false, pointIds: [], personId: null, taskIds: [], division: { id: "packing", captain: true, template: "PACKING" }, packing: true };
+  const recv = (taskId: string) => (taskId === ctx.asm.id ? packScope : ctx.divScope);
   /** Satu setoran diterima divisi: kirim → bagi → ambil (selesai) → terima cocok */
   async function setoran(taskId: string, qty: number, day: string) {
-    const s = await createShipment({ date: day, mode: "DRIVER", pointIds: [ctx.point.id], driverId: ctx.driver.id, tasks: [{ taskId, qty }] }, actor, all);
+    const s = await kirim(taskId, qty, day);
     await saveAllots(s.id, [{ pointId: ctx.point.id, workerId: ctx.w.id, taskId, qty }], actor, all);
     const p = await createPickup(s.id, [{ pointId: ctx.point.id, workerId: ctx.w.id, taskId, qty, done: true }], actor, all, day);
-    return receivePickup(p.id, [{ taskId, qty }], actor, ctx.divScope);
+    return receivePickup(p.id, [{ taskId, qty }], actor, recv(taskId));
   }
 
   beforeAll(async () => {
@@ -130,10 +140,10 @@ describe("Klaim upah di database", () => {
   });
 
   it("upah ditahan tidak ikut klaim", async () => {
-    const s = await createShipment({ date: "2027-06-11", mode: "DRIVER", pointIds: [ctx.point.id], driverId: ctx.driver.id, tasks: [{ taskId: ctx.asm.id, qty: 5 }] }, actor, all);
+    const s = await kirim(ctx.asm.id, 5, "2027-06-11");
     await saveAllots(s.id, [{ pointId: ctx.point.id, workerId: ctx.w.id, taskId: ctx.asm.id, qty: 5 }], actor, all);
     const p = await createPickup(s.id, [{ pointId: ctx.point.id, workerId: ctx.w.id, taskId: ctx.asm.id, qty: 5, done: true }], actor, all, "2027-06-11");
-    expect((await receivePickup(p.id, [{ taskId: ctx.asm.id, qty: 3 }], actor, ctx.divScope)).short).toBe(true);
+    expect((await receivePickup(p.id, [{ taskId: ctx.asm.id, qty: 3 }], actor, packScope)).short).toBe(true);
     await expect(requestClaim(ctx.point.id, actor, ctx.coordScope)).rejects.toThrow(/Belum ada upah/);
   });
 
@@ -143,10 +153,10 @@ describe("Klaim upah di database", () => {
     // Pekerja dipilih tanpa koordinator walau titiknya punya koordinator
     const solo = await savePerson({ name: `Solo ${tag}`, role: "PEKERJA", pointId: ctx.point.id, coordinatorId: "-" }, actor, all);
     expect(solo.noCoordinator).toBe(true);
-    const s = await createShipment({ date: "2027-06-12", mode: "DRIVER", pointIds: [ctx.point.id], driverId: ctx.driver.id, tasks: [{ taskId: ctx.asm.id, qty: 4 }] }, actor, all);
+    const s = await kirim(ctx.asm.id, 4, "2027-06-12");
     await saveAllots(s.id, [{ pointId: ctx.point.id, workerId: solo.id, taskId: ctx.asm.id, qty: 2 }, { pointId: ctx.point.id, workerId: ctx.w.id, taskId: ctx.asm.id, qty: 2 }], actor, all);
     const p = await createPickup(s.id, [{ pointId: ctx.point.id, workerId: solo.id, taskId: ctx.asm.id, qty: 2, done: true }, { pointId: ctx.point.id, workerId: ctx.w.id, taskId: ctx.asm.id, qty: 2, done: true }], actor, all, "2027-06-12");
-    await receivePickup(p.id, [{ taskId: ctx.asm.id, qty: 4 }], actor, ctx.divScope);
+    await receivePickup(p.id, [{ taskId: ctx.asm.id, qty: 4 }], actor, packScope);
     const rs = await prisma.boronganResult.findMany({ where: { pickupId: p.id } });
     const of = (id: string) => rs.find((r) => r.workerId === id)!;
     expect([of(solo.id).workerRate, of(solo.id).coordinatorRate, of(solo.id).coordinatorId].map((x) => (typeof x === "bigint" ? Number(x) : x))).toEqual([45, 0, null]);
@@ -160,11 +170,44 @@ describe("Klaim upah di database", () => {
     const u = await prisma.user.create({ data: { username: `koor${tag.toLowerCase()}`, name: `Koor ${tag}`, role: "KOORDINATOR", passwordHash: "x" } });
     await prisma.boronganPerson.update({ where: { id: ctx.coord.id }, data: { userId: u.id } });
     vi.mocked(sendPush).mockClear();
-    const s = await createShipment({ date: "2027-06-13", mode: "DRIVER", pointIds: [ctx.point.id], driverId: ctx.driver.id, tasks: [{ taskId: ctx.asm.id, qty: 3 }] }, actor, all);
+    const s = await kirim(ctx.asm.id, 3, "2027-06-13");
     expect(vi.mocked(sendPush).mock.calls.some(([ids, p]) => ids.includes(u.id) && p.title.includes(s.number))).toBe(true);
     vi.mocked(sendPush).mockClear();
     await saveAllots(s.id, [{ pointId: ctx.point.id, workerId: ctx.w.id, taskId: ctx.asm.id, qty: 3 }], actor, all);
     expect(vi.mocked(sendPush).mock.calls.some(([ids, p]) => ids.includes(u.id) && p.title.includes("sudah dibagi"))).toBe(true);
+  });
+
+
+  it("Assembling bertahap: Cetak/Oven isi patung kering → Assembling lengkapi (stok baru keluar) → Packing terima", async () => {
+    const kering: Scope = { all: false, pointIds: [ctx.point.id], personId: null, taskIds: [], division: { id: "cetak", captain: false, template: "CETAK" }, kering: true };
+    const asmTeam: Scope = { all: false, pointIds: [ctx.point.id], personId: null, taskIds: [ctx.asm.id], division: { id: ctx.div.id, captain: true, template: "ASSEMBLING" } };
+    const giftbox: Scope = { all: false, pointIds: [ctx.point.id], personId: null, taskIds: [], division: { id: "gb", captain: true, template: "GIFTBOX" } };
+    // Siapa boleh kirim langsung per jenis
+    expect(canShipGroup(asmTeam, "Cat Plastik")).toBe(true);
+    expect(canShipGroup(giftbox, "Cat Plastik")).toBe(false);
+    expect(canShipGroup(giftbox, "Cat Giftbox")).toBe(true);
+    expect(canShipGroup(all, "Assembling")).toBe(false); // selalu lewat isian patung kering
+    await expect(createShipment({ date: "2027-06-14", mode: "DRIVER", pointIds: [ctx.point.id], driverId: ctx.driver.id, tasks: [{ taskId: ctx.asm.id, qty: 2 }] }, actor, all)).rejects.toThrow(/Cetak\/Oven/);
+    // Langkah 1: tim Cetak/Oven; tim Assembling tidak bisa mengisi patung kering
+    await expect(createKeringDraft({ date: "2027-06-14", tasks: [{ taskId: ctx.asm.id, qty: 2 }] }, actor, asmTeam)).rejects.toThrow(/Cetak \/ Oven/);
+    const keringItem = (await prisma.pieceTaskInput.findFirstOrThrow({ where: { taskId: ctx.asm.id } })).itemId;
+    const wip = (await prisma.setting.findUniqueOrThrow({ where: { key: "loc_wip" } })).value;
+    const qtyAt = async () => (await stockBalances(prisma, keringItem)).find((b) => b.locationId === wip)?.qty ?? 0;
+    const before = await qtyAt();
+    const d = await createKeringDraft({ date: "2027-06-14", tasks: [{ taskId: ctx.asm.id, qty: 2 }] }, actor, kering);
+    expect([d.waitingSupport, d.pointIds]).toEqual([true, []]);
+    expect(await qtyAt()).toBe(before); // stok belum keluar
+    await expect(saveAllots(d.id, [{ pointId: ctx.point.id, workerId: ctx.w.id, taskId: ctx.asm.id, qty: 2 }], actor, all)).rejects.toThrow(/menunggu bahan pendukung/);
+    // Langkah 2: tim Cetak tidak boleh melengkapi; tim Assembling melengkapi → stok keluar
+    await expect(completeShipment(d.id, { mode: "DRIVER", pointIds: [ctx.point.id], driverId: ctx.driver.id }, actor, kering)).rejects.toThrow(/Assembling \/ Supervisor/);
+    const done = await completeShipment(d.id, { date: "2027-06-14", mode: "DRIVER", pointIds: [ctx.point.id], driverId: ctx.driver.id }, actor, asmTeam);
+    expect([done.waitingSupport, done.pointIds, done.completedBy]).toEqual([false, [ctx.point.id], actor.name]);
+    expect(await qtyAt()).toBe(before - 2);
+    await expect(completeShipment(d.id, { mode: "DRIVER", pointIds: [ctx.point.id], driverId: ctx.driver.id }, actor, asmTeam)).rejects.toThrow(/sudah dikirim/);
+    // Penerimaan setoran Assembling: tim Packing, bukan tim Assembling
+    expect(canReceive(asmTeam, [{ name: ctx.asm.name, divisionId: ctx.div.id }])).toBe(false);
+    expect(canReceive(packScope, [{ name: ctx.asm.name, divisionId: ctx.div.id }])).toBe(true);
+    expect(canReceive(packScope, [{ name: ctx.cg.name, divisionId: ctx.div.id }])).toBe(false);
   });
 
 });

@@ -42,18 +42,23 @@ describe("Setoran borongan oleh anggota divisi", () => {
     expect(s.pointIds).toEqual([bmr.id]);
     expect(canTask(s, catGiftbox.id)).toBe(true);
     expect(canTask(s, asmTask.id)).toBe(false);
-    // Divisi tanpa tugas borongan tidak mendapat akses
+    // Packing: tanpa tugas sendiri, tetapi menerima setoran Assembling (alur kiriman)
     const pck = await prisma.division.findFirstOrThrow({ where: { reportTemplate: "PACKING" } });
-    expect((await boronganScope(prisma, { id: "u2", can: never, role: "OPERATOR", divisionId: pck.id })).pointIds).toEqual([]);
+    const sp = await boronganScope(prisma, { id: "u2", can: never, role: "OPERATOR", divisionId: pck.id });
+    expect([sp.packing, sp.taskIds, isSetoranOnly(sp)]).toEqual([true, [], true]);
+    // Divisi tanpa tugas & bukan Cetak/Oven/Packing tidak mendapat akses
+    const other = await prisma.division.create({ data: { code: `LN${Date.now().toString(36).slice(-4)}`, name: "Divisi Lain Uji" } });
+    expect((await boronganScope(prisma, { id: "u3", can: never, role: "OPERATOR", divisionId: other.id })).pointIds).toEqual([]);
   });
 
-  it("izin menu: Operator Giftbox & Assembling dapat akses setoran, Operator Packing tidak", async () => {
+  it("izin menu: Operator Giftbox & Packing (terima setoran Assembling) dapat akses Borongan, tanpa kelola", async () => {
     const a = await mkUser("op-gft-uji", "OPERATOR", gft.id);
     const pck = await prisma.division.findFirstOrThrow({ where: { reportTemplate: "PACKING" } });
     const b = await mkUser("op-pck-uji", "OPERATOR", pck.id);
     expect((await loadUser(a.id, 0))!.can("borongan.point")).toBe(true);
     expect((await loadUser(a.id, 0))!.can("borongan.manage")).toBe(false);
-    expect((await loadUser(b.id, 0))!.can("borongan.point")).toBe(false);
+    expect((await loadUser(b.id, 0))!.can("borongan.point")).toBe(true);
+    expect((await loadUser(b.id, 0))!.can("borongan.manage")).toBe(false);
   });
 
   it("setoran per pekerja khusus koordinator/pengelola; divisi mencatat penerimaan per barang (stok titik → gudang, tidak dobel, selisih tampil)", async () => {

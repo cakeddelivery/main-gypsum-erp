@@ -28,7 +28,7 @@ export default async function KirimanDetail({ params }: { params: Promise<{ id: 
     <div className="mx-auto max-w-3xl space-y-4">
       <PageHeader title={s.number} subtitle={`${fmtDay(dateOnly(s.date))} · ${s.points.map((p) => p.name).join(", ")} · ${s.group} · ${s.mode === "DRIVER" ? `lewat driver${s.driver ? ` (${s.driver})` : ""}` : "diantar langsung"}`} />
       <div className="flex flex-wrap items-center gap-2">
-        {s.cancelled ? <Badge tone="gray">Dibatalkan</Badge> : <Badge tone={s.state === "SELESAI" ? "green" : "amber"}>{STATE_LABEL[s.state]}</Badge>}
+        {s.cancelled ? <Badge tone="gray">Dibatalkan</Badge> : s.waitingSupport ? <Badge tone="amber">Menunggu bahan pendukung</Badge> : <Badge tone={s.state === "SELESAI" ? "green" : "amber"}>{STATE_LABEL[s.state]}</Badge>}
         <span className="text-sm text-slate-500">dicatat {s.createdBy}</span>
         <Link href="/borongan/riwayat" className="ml-auto text-sm font-semibold text-brand-700 underline">← Riwayat</Link>
       </div>
