@@ -80,3 +80,28 @@ describe("Skrip setup:produk-hpp", () => {
     expect(await prisma.itemRecipeLine.count()).toBe(recipes);
   });
 });
+
+import { scaleStockUnit } from "@/lib/produkHppSetup";
+describe("Konversi satuan stok gendel → pcs (×200)", () => {
+  it("stok ×200, harga ÷200, nilai persediaan tetap", async () => {
+    const loc = await prisma.location.create({ data: { code: `${tag}L`, name: `Lok ${tag}` } });
+    const it = await mk("Background tes", { unit: "gendel", lastCost: 40000 });
+    await prisma.$transaction(async (tx) => {
+      const { recordMovement } = await import("@/lib/stock");
+      await recordMovement(tx, { type: "PENERIMAAN", itemId: it.id, qty: 3, toLocationId: loc.id, unitCost: 40000, ref: `TES:${tag}` }, { id: "system", name: "Tes" });
+    });
+    const before = await prisma.item.findUniqueOrThrow({ where: { id: it.id } });
+    const r = await prisma.$transaction(async (tx) => {
+      const x = await scaleStockUnit(tx, before, 200, "pcs");
+      await tx.item.update({ where: { id: it.id }, data: { ...x.data, unit: "pcs" } });
+      return x;
+    });
+    expect(r.notes[0]).toMatch(/stok 3 gendel → 600 pcs/);
+    const after = await prisma.item.findUniqueOrThrow({ where: { id: it.id } });
+    const { qtyAt } = await import("@/lib/stock");
+    const q = await qtyAt(prisma, it.id, loc.id);
+    expect(q).toBe(600);
+    expect(Number(after.avgCost)).toBe(200);
+    expect(q * Number(after.avgCost)).toBe(3 * Number(before.avgCost)); // nilai tetap Rp120.000
+  });
+});

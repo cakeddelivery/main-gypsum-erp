@@ -19,6 +19,30 @@ const SYSTEM_ACTOR = { id: "system", name: "Setup produk & HPP" };
 
 class Rollback extends Error {}
 
+/**
+ * Konversi satuan stok (mis. 1 gendel = 200 pcs): stok tiap lokasi dikali `k` lewat penyesuaian TANPA jurnal,
+ * harga per unit dibagi `k`, batas minimum & jumlah order dikali `k` → nilai persediaan (qty × harga) tetap.
+ */
+export async function scaleStockUnit(tx: Tx, it: Item, k: number, unit: string) {
+  const notes: string[] = [];
+  const bal = await tx.$queryRaw<{ loc: string; qty: Prisma.Decimal }[]>`
+    SELECT l.id AS loc, COALESCE(SUM(CASE WHEN m."toLocationId" = l.id THEN m.qty ELSE 0 END) - SUM(CASE WHEN m."fromLocationId" = l.id THEN m.qty ELSE 0 END), 0) AS qty
+    FROM "Location" l JOIN "StockMovement" m ON m."itemId" = ${it.id} AND (m."toLocationId" = l.id OR m."fromLocationId" = l.id) GROUP BY l.id`;
+  for (const b of bal) {
+    const q = Number(b.qty);
+    if (Math.abs(q) < 0.0005) continue;
+    const extra = Math.round(Math.abs(q) * (k - 1) * 1000) / 1000;
+    await recordMovement(tx, { type: "PENYESUAIAN", itemId: it.id, qty: extra, fromLocationId: b.loc, increase: q > 0, allowNegative: true, noJournal: true, ref: "SETUP:PRODUK-HPP", note: `Konversi satuan ${it.unit} → ${unit} (1 ${it.unit} = ${k} ${unit}); nilai persediaan tetap` }, SYSTEM_ACTOR);
+    notes.push(`stok ${q.toLocaleString("id-ID")} ${it.unit} → ${(q * k).toLocaleString("id-ID")} ${unit}`);
+  }
+  const div = (x: bigint) => BigInt(Math.round(Number(x) / k));
+  notes.push(`harga per ${unit} = harga lama ÷ ${k}, batas minimum & jumlah order ×${k}`);
+  return {
+    notes,
+    data: { avgCost: div(it.avgCost), lastCost: div(it.lastCost), prevCost: div(it.prevCost), buyQty: Number(it.buyQty) * k, minStock: Number(it.minStock) * k, orderQty: Number(it.orderQty) * k } satisfies Prisma.ItemUpdateInput,
+  };
+}
+
 /** Satuan resep "pcs" (unit stok pcs, atau satuan resep pcs dengan isi per kemasan) */
 export const isPcs = (i: Pick<Item, "unit" | "hppUnit">) => /^(pcs|buah|biji)$/i.test(recipeUnit(i).trim());
 /** Satuan resep gram */
@@ -110,8 +134,55 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
     pot = await tx.item.create({ data: { sku: await autoCode.divisionMaterial(tx, gft.code), name: "Pot cat plastik", unit: "strip", hppUnit: "pcs", hppFactor: 6, type: "BAHAN_BAKU", divisionId: gft.id, note: "Stok hanya di lokasi titik BMR (koordinator)" } });
     plan.dibuat.push(`+ ${pot.sku} Pot cat plastik · bahan baku · Giftbox · beli per strip (1 strip = 6 pcs), stok awal 0`);
   } else pot = (await unitFix(pot, "satuan beli strip, resep pcs (1 strip = 6 pcs)", { unit: "strip", hppUnit: "pcs", factor: 6 }))!;
-  for (const old of allItems.filter((i) => /pot cat/i.test(i.name) && i.id !== pot!.id)) plan.bentrok.push(`MIRIP "Pot cat plastik" vs ${old.sku} "${old.name}" (${old.unit}) — sama arti? (tidak digabung otomatis)`);
   plan.menunggu.push("Pot cat plastik: stok hanya di lokasi titik BMR — catat stok awal lewat Borongan › Stok › Koreksi stok di titik BMR");
+
+  /**
+   * Ubah satuan stok / satuan resep. `scale` > 1 = satuan stok lama dikonversi (mis. 1 gendel = 200 pcs):
+   * stok tiap lokasi dikali `scale` lewat penyesuaian TANPA jurnal, harga per unit dibagi `scale` → nilai persediaan tetap.
+   */
+  const setUnit = async (it: Item | null, label: string, want: { unit: string; hppUnit: string | null; factor: number; scale?: number }) => {
+    if (!it) {
+      plan.menunggu.push(`Bahan "${label}" belum ada di Master data`);
+      return null;
+    }
+    const changes: string[] = [];
+    const data: Prisma.ItemUpdateInput = {};
+    if (it.unit.toLowerCase() !== want.unit.toLowerCase()) {
+      data.unit = want.unit;
+      changes.push(`satuan stok ${it.unit} → ${want.unit}`);
+    }
+    if ((it.hppUnit ?? null) !== want.hppUnit || Math.abs(Number(it.hppFactor) - want.factor) > 0.00005) {
+      data.hppUnit = want.hppUnit;
+      data.hppFactor = want.factor;
+      if (want.hppUnit) changes.push(`resep per ${want.hppUnit} (1 ${want.unit} = ${want.factor.toLocaleString("id-ID", { maximumFractionDigits: 4 })} ${want.hppUnit})`);
+    }
+    const k = want.scale ?? 1;
+    if (k !== 1 && data.unit) {
+      const r = await scaleStockUnit(tx, it, k, want.unit);
+      changes.push(...r.notes);
+      Object.assign(data, r.data);
+    } else if (data.unit) {
+      const total = Number((await tx.$queryRaw<{ q: Prisma.Decimal | null }[]>`SELECT SUM(CASE WHEN "toLocationId" IS NOT NULL THEN qty ELSE 0 END) - SUM(CASE WHEN "fromLocationId" IS NOT NULL THEN qty ELSE 0 END) AS q FROM "StockMovement" WHERE "itemId" = ${it.id}`)[0]?.q ?? 0);
+      if (Math.abs(total) > 0.0005) plan.bentrok.push(`${it.sku} ${it.name}: stok sekarang ${total.toLocaleString("id-ID")} ${it.unit} akan dibaca ${total.toLocaleString("id-ID")} ${want.unit} — benar, atau perlu dikonversi?`);
+    }
+    if (!changes.length) return it;
+    plan.diubah.push(`~ ${it.sku} ${it.name}: ${changes.join("; ")}`);
+    return tx.item.update({ where: { id: it.id }, data });
+  };
+  // Isi kemasan (Owner)
+  const klip2x3 = await setUnit(one("Plastik klip 2x3"), "Plastik klip 2x3", { unit: "slop", hppUnit: "pcs", factor: 1000 });
+  const oppItem = await setUnit(one("Plastik OPP"), "Plastik OPP", { unit: "pack", hppUnit: "pcs", factor: 250 });
+  const cottonItem = await setUnit(one("Cotton bud"), "Cotton bud", { unit: "ball", hppUnit: "pcs", factor: 5000 });
+  // Piring plastik: beli per kg; 1.000 pcs = 850 g → 1 kg ≈ 1.176,4706 pcs
+  const piringItem = await setUnit(one("Piring plastik"), "Piring plastik", { unit: "kg", hppUnit: "pcs", factor: 1176.4706 });
+  // Background & Klip per varian: satuan stok gendel → pcs (1 gendel = 200 pcs)
+  const perVariant = new Map<string, Item | null>();
+  for (const v of VARIANTS) {
+    for (const kind of ["Background", "Klip"] as const) {
+      const it = one(`${kind} ${v.toLowerCase()}`);
+      perVariant.set(`${kind} ${v}`, await setUnit(it, `${kind} ${v.toLowerCase()}`, it && /^gendel$/i.test(it.unit.trim()) ? { unit: "pcs", hppUnit: null, factor: 1, scale: 200 } : { unit: "pcs", hppUnit: null, factor: 1 }));
+    }
+  }
 
   const pcsOnly = (it: Item | null, label: string) => {
     if (!it) {
@@ -126,8 +197,8 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
   // ---------- 2. Barang setengah jadi hasil borongan ----------
   const raw = locs.raw;
   const wip = locs.wip;
-  const semi = async (name: string, sku: string, divisionId: string, divLabel: string) => {
-    const it = one(name);
+  const semi = async (name: string, sku: string, divisionId: string, divLabel: string, existing?: Item, rename?: string) => {
+    const it = existing ?? one(name);
     if (!it) {
       const created = await tx.item.create({ data: { sku, name, unit: "pcs", type: "BARANG_DALAM_PROSES", divisionId } });
       plan.dibuat.push(`+ ${sku} ${name} · setengah jadi · ${divLabel}`);
@@ -135,6 +206,10 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
     }
     const changes: string[] = [];
     const data: Prisma.ItemUpdateInput = {};
+    if (rename && it.name !== rename) {
+      data.name = rename;
+      changes.push(`ganti nama → "${rename}" (stok & riwayat tetap)`);
+    }
     if (it.type !== "BARANG_DALAM_PROSES") {
       data.type = "BARANG_DALAM_PROSES";
       changes.push(`tipe ${it.type === "BAHAN_BAKU" ? "bahan baku" : "produk jadi"} → setengah jadi`);
@@ -147,11 +222,13 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
     const next = await tx.item.update({ where: { id: it.id }, data });
     plan.diubah.push(`~ ${it.sku} ${it.name}: ${changes.join(", ")}`);
     // Tipe berubah → gudang asalnya berubah (bahan baku → setengah jadi): stok yang ada ikut dipindah
-    if (it.type === "BAHAN_BAKU" && raw && wip && raw !== wip) {
-      const q = await qtyAt(tx, it.id, raw);
+    const fromLoc = it.type === "BAHAN_BAKU" ? raw : it.type === "BARANG_JADI" ? locs.finished : null;
+    if (fromLoc && wip && fromLoc !== wip) {
+      const q = await qtyAt(tx, it.id, fromLoc);
       if (q > 0.0005) {
-        await recordMovement(tx, { type: "TRANSFER", itemId: it.id, qty: q, fromLocationId: raw, toLocationId: wip, ref: "SETUP:PRODUK-HPP", note: "Pindah gudang: bahan baku → setengah jadi" }, SYSTEM_ACTOR);
-        plan.diubah.push(`~ ${it.sku} ${it.name}: stok ${q.toLocaleString("id-ID")} pindah gudang bahan baku → gudang setengah jadi`);
+        const label = it.type === "BAHAN_BAKU" ? "bahan baku" : "barang jadi";
+        await recordMovement(tx, { type: "TRANSFER", itemId: it.id, qty: q, fromLocationId: fromLoc, toLocationId: wip, ref: "SETUP:PRODUK-HPP", note: `Pindah gudang: ${label} → setengah jadi` }, SYSTEM_ACTOR);
+        plan.diubah.push(`~ ${it.sku} ${it.name}: stok ${q.toLocaleString("id-ID")} pindah gudang ${label} → gudang setengah jadi`);
       }
     }
     return next;
@@ -182,7 +259,7 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
   };
 
   // A. Cat Plastik (Assembling): cat warna 3 g + plastik klip 2x3 1 pcs
-  const klip = pcsOnly(one("Plastik klip 2x3"), "Plastik klip 2x3");
+  const klip = pcsOnly(klip2x3, "Plastik klip 2x3");
   const cp = new Map<string, Item>();
   for (const c of CP_COLORS) {
     const it = await semi(`Cat plastik ${c.toLowerCase()}`, `SJ-CP-${c.toUpperCase()}`, asm.id, "Assembling");
@@ -196,33 +273,32 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
   const cg = await semi("Cat Giftbox", "SJ-CAT-GIFTBOX", gft.id, "Giftbox");
   for (const c of GB_COLORS) await recipe(cg, cats.get(c) ?? null, 9, "gram", `Cat ${c}`);
   await recipe(cg, pot, 5, "pcs", "Pot cat plastik");
+  // "Pot cat giftbox" barang berbeda (Owner): dilepas dari resep Cat Giftbox bila pernah terpasang
+  for (const old of allItems.filter((i) => /^pot cat giftbox$/i.test(i.name.trim()))) {
+    const del = await tx.itemRecipeLine.deleteMany({ where: { itemId: cg.id, componentId: old.id } });
+    if (del.count) plan.resep.push(`Cat Giftbox: baris lama ${old.name} dilepas (diganti Pot cat plastik)`);
+  }
   await labor(cg, /^cat giftbox$/i, "Cat giftbox");
 
   // C. Single Pack (Packing): bahan per varian + 3 Cat Plastik
-  const common = { opp: pcsOnly(one("Plastik OPP"), "Plastik OPP"), cotton: pcsOnly(one("Cotton bud"), "Cotton bud"), piring: pcsOnly(one("Piring plastik"), "Piring plastik") };
+  const common = { opp: pcsOnly(oppItem, "Plastik OPP"), cotton: pcsOnly(cottonItem, "Cotton bud"), piring: pcsOnly(piringItem, "Piring plastik") };
   const sp = new Map<string, Item>();
   for (const v of VARIANTS) {
     let it = one(`Single Pack ${v}`);
     if (!it) {
-      // Barang lama yang kemungkinan sama arti: hasil tugas Assembling <varian> / produk Satuan
+      // Barang lama yang sama arti (disetujui Owner): hasil tugas Assembling <varian> / produk Satuan → diganti nama
       const task = taskOf(new RegExp(`^assembling ${v}$`, "i"));
       const old = (task?.outputItemId && allItems.find((i) => i.id === task.outputItemId)) || allItems.find((i) => i.sku === `BJ-SAT-${v.toUpperCase()}`);
-      if (old) {
-        plan.bentrok.push(`SAMA ARTI? "Single Pack ${v}" belum ada; barang lama ${old.sku} "${old.name}" (${old.type === "BARANG_JADI" ? "produk jadi" : old.type}, hasil tugas Assembling ${v}). Usulan: ganti nama jadi "Single Pack ${v}", tipe setengah jadi · Packing — MENUNGGU KONFIRMASI. Resep & HPP dipasang di barang lama ini dulu.`);
-        it = old;
-      } else {
-        it = await tx.item.create({ data: { sku: `SJ-SP-${v.toUpperCase()}`, name: `Single Pack ${v}`, unit: "pcs", type: "BARANG_DALAM_PROSES", divisionId: qcp.id } });
-        plan.dibuat.push(`+ ${it.sku} Single Pack ${v} · setengah jadi · Packing`);
-      }
-    } else if (it.type !== "BARANG_DALAM_PROSES" || it.divisionId !== qcp.id) {
-      it = await semi(it.name, it.sku, qcp.id, "Packing");
-    }
+      it = old
+        ? await semi(old.name, old.sku, qcp.id, "Packing", old, `Single Pack ${v}`)
+        : await semi(`Single Pack ${v}`, `SJ-SP-${v.toUpperCase()}`, qcp.id, "Packing");
+    } else it = await semi(it.name, it.sku, qcp.id, "Packing", it);
     sp.set(v, it);
     await recipe(it, common.opp, 1, "pcs", "Plastik OPP");
-    await recipe(it, pcsOnly(one(`Background ${v.toLowerCase()}`), `Background ${v.toLowerCase()}`), 1, "pcs", `Background ${v.toLowerCase()}`);
-    await recipe(it, pcsOnly(one(`Klip ${v.toLowerCase()}`), `Klip ${v.toLowerCase()}`), 1, "pcs", `Klip ${v.toLowerCase()}`);
+    await recipe(it, pcsOnly(perVariant.get(`Background ${v}`) ?? null, `Background ${v.toLowerCase()}`), 1, "pcs", `Background ${v.toLowerCase()}`);
+    await recipe(it, pcsOnly(perVariant.get(`Klip ${v}`) ?? null, `Klip ${v.toLowerCase()}`), 1, "pcs", `Klip ${v.toLowerCase()}`);
     await recipe(it, pcsOnly(one(`Patung kering ${v}`), `Patung kering ${v}`), 1, "pcs", `Patung kering ${v}`);
-    await recipe(it, common.cotton, 1, "pcs", "Cotton bud");
+    await recipe(it, common.cotton, 2, "pcs", "Cotton bud");
     await recipe(it, common.piring, 1, "pcs", "Piring plastik");
     for (const c of CP_COLORS) await recipe(it, cp.get(c)!, 1, "pcs", `Cat plastik ${c.toLowerCase()}`);
     await labor(it, new RegExp(`^assembling ${v}$`, "i"), `Assembling ${v}`);
@@ -322,7 +398,10 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
         for (const [k, q] of KEMAS[n]) await bom(p.id, p.name, kemas[k], q, kemas[k]?.name ?? k);
         const known = new Set([...sp.values(), ...Object.values(kemas)].filter(Boolean).map((x) => x!.id));
         const others = (await tx.bomLine.findMany({ where: { productId: p.id }, include: { item: true } })).filter((o) => !known.has(o.itemId));
-        if (others.length) plan.bentrok.push(`${p.sku} ${p.name}: baris resep lama tetap (${others.map((o) => `${o.item.name} ${Number(o.qty)}`).join(", ")}) — hapus bila dobel dengan Single Pack`);
+        if (others.length) {
+          await tx.bomLine.deleteMany({ where: { id: { in: others.map((o) => o.id) } } });
+          plan.resep.push(`${p.name}: resep lama diganti (dihapus: ${others.map((o) => `${o.item.name} ${Number(o.qty)}`).join(", ")})`);
+        }
       }
     }
   }
@@ -334,7 +413,8 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
   const kuas = pcsOnly(one("Kuas lancip"), "Kuas lancip");
   const sabuk = pcsOnly(one("Sabuk label giftbox"), "Sabuk label giftbox");
   const gBubble = allItems.find((i) => /^bubble ?wrap/i.test(i.name) && i.divisionId === gft.id) ?? null;
-  const gBubbleCm = gBubble ? await material({ name: gBubble.name, unit: "roll", hppUnit: "cm", factor: 5000, ...G }) : kemas.bubble;
+  // 1 roll besar dipotong 5 roll kecil @50 m → 1 roll = 25.000 cm
+  const gBubbleCm = gBubble ? await material({ name: gBubble.name, unit: "roll", hppUnit: "cm", factor: 25000, ...G }) : kemas.bubble;
   const magnet = await material({ name: "Magnet", unit: "pcs", hppUnit: "pcs", factor: 1, ...G, create: true });
   const pallet = pcsOnly(one("Pallet cat"), "Pallet cat");
   const mixGiftbox: string[] = [];
@@ -346,14 +426,14 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
     await bom(p.id, p.name, kuas, 1, "Kuas lancip");
     await bom(p.id, p.name, cg, 1, "Cat Giftbox");
     await bom(p.id, p.name, sabuk, 1, "Sabuk label giftbox");
-    await bom(p.id, p.name, gBubbleCm, 12, `${gBubbleCm?.name ?? "Bubble wrap"} (cm)`);
+    await bom(p.id, p.name, gBubbleCm, 60, `${gBubbleCm?.name ?? "Bubble wrap"} (cm, 12 cm × 5 patung)`);
     if (/magnet/i.test(p.name)) await bom(p.id, p.name, magnet, 1, "Magnet");
     if (/palet|pallet/i.test(p.name)) await bom(p.id, p.name, pallet, 1, "Pallet cat");
     const v = VARIANTS.find((x) => VARIANT_ENUM[x] === p.variant);
     if (v) await bom(p.id, p.name, pcsOnly(one(`Patung kering ${v}`), `Patung kering ${v}`), 5, `Patung kering ${v}`);
     else mixGiftbox.push(p.name);
   }
-  if (mixGiftbox.length) plan.menunggu.push(`Giftbox Mix (${mixGiftbox.length} SKU): komposisi 5 patung kering campur menunggu konfirmasi`);
+  if (mixGiftbox.length) plan.bentrok.push(`Giftbox Mix (${mixGiftbox.length} SKU) ada di produk, tapi Owner: Giftbox Mix dianggap tidak ada — patung kering tidak dipasang; nonaktifkan SKU ini? (${mixGiftbox.slice(0, 2).join(", ")}…)`);
   plan.menunggu.push("Pot cat plastik: HPP 5 pcs per Cat Giftbox (strip 6 dipotong: isi 3 untuk merah/kuning/biru, isi 2 untuk hitam/putih)");
 
   for (const [target, xs] of rec) plan.resep.push(`${target}: ${xs.join(" · ")}`);
@@ -364,6 +444,10 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
     for (let j = i + 1; j < active.length; j++) {
       const a = active[i];
       const b = active[j];
+      // Sudah dijawab Owner: barang berbeda
+      const pair = `${a.name}|${b.name}`.toLowerCase();
+      if (/cat plastik/.test(pair) && /\|?cat (merah|biru|kuning)\b/.test(pair.replace(/cat plastik \w+/g, ""))) continue;
+      if (/pot cat giftbox/.test(pair)) continue;
       if (a.name.toLowerCase() !== b.name.toLowerCase() && similarNames(a.name, b.name)) plan.bentrok.push(`MIRIP ${a.sku} "${a.name}" vs ${b.sku} "${b.name}" — sama arti? (tidak digabung otomatis)`);
     }
   }
