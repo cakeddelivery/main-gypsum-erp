@@ -80,17 +80,36 @@ export async function lockItems(tx: Tx, itemIds: string[]) {
   await tx.$queryRaw`SELECT id FROM "Item" WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`;
 }
 
+/**
+ * Lokasi stok di luar gudang: titik borongan & mobil driver. Barang di sana sudah dibagikan ke borongan,
+ * jadi TIDAK dihitung untuk batas order (stok gudang saja).
+ */
+export async function nonWarehouseLocations(db: DB = prisma) {
+  const [points, drv] = await Promise.all([db.boronganPoint.findMany({ select: { locationId: true } }), db.setting.findUnique({ where: { key: "loc_borongan_driver" } })]);
+  const codeDrv = await db.location.findUnique({ where: { code: "DRV" }, select: { id: true } });
+  return new Set([...points.map((p) => p.locationId), drv?.value, codeDrv?.id].filter((x): x is string => !!x));
+}
+
+/** Stok gudang per barang (semua lokasi kecuali titik borongan & driver) */
+export async function warehouseTotals(db: DB = prisma) {
+  const [rows, skip] = await Promise.all([stockBalances(db), nonWarehouseLocations(db)]);
+  const m = new Map<string, number>();
+  for (const r of rows) if (!skip.has(r.locationId)) m.set(r.itemId, (m.get(r.itemId) ?? 0) + r.qty);
+  return m;
+}
+
+/** Barang yang stok GUDANG-nya menyentuh / di bawah batas minimum */
 export async function lowStockItems(db: DB = prisma) {
   const items = await db.item.findMany({ where: { active: true } });
-  const totals = await itemTotals(db);
+  const totals = await warehouseTotals(db);
   return items
     .map((i) => ({ ...i, qty: totals.get(i.id) ?? 0, min: Number(i.minStock) }))
     .filter((i) => needsReorder(i.qty, i.min));
 }
 
-/** Perlu reorder bila stok menyentuh atau di bawah batas minimum (sama dengan Laporan Shift) */
+/** Perlu reorder bila stok menyentuh atau di bawah batas minimum (sama dengan Laporan Shift; toleransi pembulatan) */
 export function needsReorder(qty: number, min: number) {
-  return min > 0 && qty <= min;
+  return min > 0 && qty <= min + 1e-9;
 }
 
 /** Nilai persediaan (qty × harga rata-rata) per jenis, untuk dicocokkan dengan buku besar */

@@ -19,6 +19,7 @@ import { scheduleGroups } from "@/lib/scheduleGroups";
 import { cellKey, cellOf, type Cell } from "@/lib/scheduleEdit";
 import { ScheduleTable } from "./ScheduleTable";
 import { IzinSakit, Riwayat } from "./SelfTabs";
+import { canSetOwnSchedule } from "@/lib/scheduleAccess";
 
 export const metadata = { title: "Absensi" };
 const TONE = { HADIR: "green", TERLAMBAT: "amber", IZIN: "blue", SAKIT: "purple", ALPA: "red", LIBUR: "gray" } as const;
@@ -56,7 +57,7 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
       {isSelf && tab === "riwayat" && <Riwayat employeeId={user.employeeId!} month={month} />}
       {tab === "izin" && <IzinSakit user={user} />}
       {canManage && tab === "harian" && <Daily date={date} divFilter={divFilter} shifts={shifts} />}
-      {canManage && tab === "jadwal" && <Schedule date={date} divFilter={divFilter} shifts={shifts} lockedId={user.role === "OWNER" ? null : user.employeeId} />}
+      {canManage && tab === "jadwal" && <Schedule date={date} divFilter={divFilter} shifts={shifts} lockedId={canSetOwnSchedule(user.role) ? null : user.employeeId} />}
       {canManage && tab === "koreksi" && <Corrections divFilter={divFilter} canCorrect={user.role === "SUPERVISOR" || user.role === "OWNER"} shifts={shifts} f={{ dari: sp.dari, sampai: sp.sampai, status: sp.status, divisi: sp.divisi }} />}
       {canManage && tab === "telat" && <LateTab date={date} month={sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : date.slice(0, 7)} divisionId={user.role === "KAPTEN_DIVISI" ? user.divisionId : null} />}
       {canLocation && tab === "lokasi" && <WorkSites />}

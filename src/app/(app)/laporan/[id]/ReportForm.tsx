@@ -19,6 +19,8 @@ import {
   sectionFilled,
   sectionTotal,
   catalogLines,
+  MIX_BEBAS_KEY,
+  VARIANTS,
   type CatalogLine,
   type ReportCatalogs,
   type ChecklistEntry,
@@ -64,6 +66,8 @@ type Props = {
   resultCount: ResultCountRow[];
   /** SKU katalog untuk bagian isian katalog (Giftbox, Paket & Satuan Single Pack) */
   catalogs: ReportCatalogs;
+  /** Giftbox Mix: karakter patung ke-5 bawaan (stok terbanyak) */
+  mixDefault?: string | null;
   /** Hasil kerja yang masuk stok saat dikirim (kosong bila fitur mati) */
   flow: string[] | null;
   /** Laporan sudah pernah dikirim (kirim ulang = revisi) */
@@ -353,6 +357,15 @@ export function ReportForm(p: Props) {
                       </tbody>
                     </table>
                   </div>
+                  {p.template === "GIFTBOX" && lines.some((l) => l.variant === "MIX") && (
+                    <label className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                      <span className="text-slate-700">Patung ke-5 Giftbox Mix (varian bebas)</span>
+                      <select name={`w.${MIX_BEBAS_KEY}`} value={(work[MIX_BEBAS_KEY] as string | undefined) ?? p.mixDefault ?? VARIANTS[0]} onChange={(e) => setWork((w) => ({ ...w, [MIX_BEBAS_KEY]: e.target.value }))} className="input w-auto py-1.5">
+                        {VARIANTS.map((v) => <option key={v} value={v}>{v}{v === p.mixDefault ? " (stok terbanyak)" : ""}</option>)}
+                      </select>
+                      <span className="w-full text-xs text-slate-500">Giftbox Mix = 1 patung tiap karakter + 1 patung karakter ini.</span>
+                    </label>
+                  )}
                 </div>
               );
             }

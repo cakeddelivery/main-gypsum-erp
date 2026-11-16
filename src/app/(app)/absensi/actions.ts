@@ -14,6 +14,7 @@ import { reconcileAfterSchedule } from "@/lib/attendanceAuto";
 import { MAX_PROOF_BYTES, MAX_PROOF_TEXT, saveProof } from "@/lib/storage";
 import { sniffMime } from "@/lib/imageCompress";
 import { withField } from "@/lib/fieldError";
+import { canSetOwnSchedule } from "@/lib/scheduleAccess";
 
 export const checkIn = action(
   "attendance.self",
@@ -162,8 +163,9 @@ export const saveScheduleCells = action(
       throw new Error("Data jadwal tidak valid");
     }
     const all = parseChanges(raw);
-    // Jadwal sendiri diatur atasan lain (Owner); baris itu dilewati, perubahan karyawan lain tetap tersimpan
-    const self = user.role !== "OWNER" && user.employeeId ? all.filter((c) => c.employeeId === user.employeeId) : [];
+    // Jadwal sendiri diatur atasan (Owner); Supervisor boleh mengatur jadwalnya sendiri. Baris yang dikunci dilewati,
+    // perubahan karyawan lain tetap tersimpan
+    const self = !canSetOwnSchedule(user.role) && user.employeeId ? all.filter((c) => c.employeeId === user.employeeId) : [];
     const changes = all.filter((c) => !self.includes(c));
     if (!changes.length) return self.length ? "Jadwal Anda sendiri diatur Owner, tidak ada perubahan lain" : "Tidak ada perubahan";
     for (const employeeId of new Set(changes.map((c) => c.employeeId))) await guardEmployee(employeeId, user);

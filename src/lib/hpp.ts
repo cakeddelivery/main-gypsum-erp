@@ -102,7 +102,7 @@ export async function recipeCosting(itemId: string, costs?: Map<string, UnitCost
   const it = await prisma.item.findUniqueOrThrow({ where: { id: itemId }, include: { recipe: { include: { component: true } }, recipeLabor: true, recipeOverhead: { include: { overhead: true } } } });
   const lines = it.recipe.map((l) => {
     const c = map.get(l.componentId) ?? { cur: 0, prev: 0, fromRecipe: false, mat: 0 };
-    return { id: l.id, component: l.component, qty: Number(l.qty), useUnit: l.useUnit, unit: recipeUnit(l.component), unitPrice: costPerRecipeUnit(c.cur, l.component), cost: bomLineCost(l.qty, l.component, c.cur), fromRecipe: c.fromRecipe };
+    return { id: l.id, component: l.component, qty: Number(l.qty), useUnit: l.useUnit, unit: recipeUnit(l.component), unitPrice: costPerRecipeUnit(c.cur, l.component), cost: bomLineCost(l.qty, l.component, c.cur), fromRecipe: c.fromRecipe, noPrice: c.cur <= 0 };
   });
   const material = Math.round(lines.reduce((s, l) => s + l.cost, 0));
   const total = map.get(itemId);
@@ -137,7 +137,7 @@ export async function productCosting(productId: string, costs?: Map<string, Unit
   const unit = (i: Item) => map.get(i.id) ?? { cur: latestCost(i), prev: previousCost(i), fromRecipe: false, mat: latestCost(i) };
   const lines = p.bom.map((b) => {
     const c = unit(b.item);
-    return { id: b.id, item: b.item, qty: Number(b.qty), useUnit: b.useUnit, unit: recipeUnit(b.item), unitPrice: costPerRecipeUnit(c.cur, b.item), cost: bomLineCost(b.qty, b.item, c.cur), prevCost: bomLineCost(b.qty, b.item, c.prev), trend: trendOf(c.cur, c.prev), fromRecipe: c.fromRecipe, packaging: b.item.category === PACKAGING_CATEGORY };
+    return { id: b.id, item: b.item, qty: Number(b.qty), useUnit: b.useUnit, unit: recipeUnit(b.item), unitPrice: costPerRecipeUnit(c.cur, b.item), cost: bomLineCost(b.qty, b.item, c.cur), prevCost: bomLineCost(b.qty, b.item, c.prev), trend: trendOf(c.cur, c.prev), fromRecipe: c.fromRecipe, packaging: b.item.category === PACKAGING_CATEGORY, noPrice: c.cur <= 0 };
   });
   const sum = (xs: typeof lines, k: "cost" | "prevCost") => Math.round(xs.reduce((s, l) => s + l[k], 0));
   const packaging = sum(lines.filter((l) => l.packaging), "cost") + Number(p.extraPackaging);

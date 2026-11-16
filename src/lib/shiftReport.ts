@@ -365,6 +365,10 @@ export function parseWork(template: ReportTemplate, get: (k: string) => string |
       }
     }
   }
+  if (template === "GIFTBOX") {
+    const b = (get(`w.${MIX_BEBAS_KEY}`) ?? "").trim();
+    if (VARIANTS.includes(b)) work[MIX_BEBAS_KEY] = b;
+  }
   return work;
 }
 
@@ -400,9 +404,9 @@ export type ChecklistEntry = ChecklistTask & { done: boolean; photoPath?: string
 /** rcpt = id barang masuk yang sudah diperhitungkan saat hitungan ini diterapkan (hanya di snapshot stockAppliedCount) */
 export type StockCountRow = { itemId: string; name: string; unit: string; limit: number; qty: number | null; rcpt?: string[] };
 
-/** Bahan perlu diorder bila stok akhir ≤ limit */
+/** Bahan perlu diorder bila stok akhir menyentuh / di bawah limit (stok = limit ikut; toleransi pembulatan desimal) */
 export function needsOrder(r: { qty: number | null; limit: number }) {
-  return r.qty != null && r.qty <= r.limit;
+  return r.qty != null && Number(r.limit) > 0 && Number(r.qty) <= Number(r.limit) + 1e-9;
 }
 
 /** Tugas dianggap selesai bila dicentang; tugas wajib foto selesai bila fotonya ada */
@@ -544,6 +548,13 @@ export function splitEven(total: number): Record<string, number> {
   return Object.fromEntries(VARIANTS.map((v, i) => [v, base + (i < rest ? 1 : 0)]));
 }
 
+/** Kunci isian laporan Giftbox: karakter patung ke-5 ("varian bebas") untuk Giftbox Mix */
+export const MIX_BEBAS_KEY = "_mixBebas";
+export function mixBebasOf(work: WorkData): string | null {
+  const v = work[MIX_BEBAS_KEY];
+  return typeof v === "string" && VARIANTS.includes(v) ? v : null;
+}
+
 export function plannedFlow(template: ReportTemplate, work: WorkData): FlowStep[] {
   const t = TEMPLATES[template];
   const acc = new Map<string, FlowStep>();
@@ -575,6 +586,14 @@ export function plannedFlow(template: ReportTemplate, work: WorkData): FlowStep[
       });
     }
   } else if (template === "GIFTBOX") {
+    // Giftbox Mix: tiap karakter sama banyak, sisanya ("varian bebas") ke karakter pilihan di laporan (bawaan: dibagi rata)
+    const bebas = mixBebasOf(work);
+    const mixOut = (patung: number, boxes: number, emit: (v: string, q: number) => void) => {
+      if (!bebas) return Object.entries(splitEven(patung)).forEach(([vv, q]) => emit(vv, q));
+      const per = Math.floor(patung / boxes / VARIANTS.length) * boxes;
+      for (const vv of VARIANTS) emit(vv, per);
+      emit(bebas, patung - per * VARIANTS.length);
+    };
     const v = countValues(work, "giftbox");
     for (const code of GIFTBOX_CODES) {
       const box = n(v[code]);
@@ -582,14 +601,16 @@ export function plannedFlow(template: ReportTemplate, work: WorkData): FlowStep[
       const variant = GIFTBOX_VARIANT[code.replace(/-PLT$/, "")] ?? null;
       const patung = box * GIFTBOX_PATUNG;
       if (variant) add("kering", variant, patung, "out");
-      else for (const [vv, q] of Object.entries(splitEven(patung))) add("kering", vv, q, "out");
+      else mixOut(patung, box, (vv, q) => add("kering", vv, q, "out"));
       // Giftbox dibuat lalu dikirim dari divisi Giftbox sendiri (keluar = HPP)
       add("giftbox", code, box, "in");
       add("giftbox", code, box, "out");
     }
     // Giftbox dari katalog: patung kering keluar sesuai Series × jumlah patung per SKU, item barang jadi SKU masuk lalu keluar
     for (const l of catalogLines(work, "gb")) {
-      byVariant(l.variant, l.qty * Math.max(1, n(l.patung)), (vv, q) => add("kering", vv, q, "out"));
+      const total = l.qty * Math.max(1, n(l.patung));
+      if (VARIANT_OF[l.variant] === null) mixOut(total, l.qty, (vv, q) => add("kering", vv, q, "out"));
+      else byVariant(l.variant, total, (vv, q) => add("kering", vv, q, "out"));
       add("produk", l.productId, l.qty, "in", l.label);
       add("produk", l.productId, l.qty, "out", l.label);
     }

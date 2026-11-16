@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { CLOSE_MS } from "./Modal";
 import { todayStr } from "@/lib/time";
-import { isIos, isStandalone } from "./Pwa";
+import { InstallAppCard, isIos, isStandalone } from "./Pwa";
 import { removePushSubscription, savePushSubscription, sendTestPush } from "@/app/(app)/profil/pushActions";
 
 type Status = "loading" | "unsupported" | "ios-install" | "default" | "denied" | "granted-off" | "on";
@@ -233,6 +233,24 @@ export function PushSettings({ publicKey }: { publicKey: string | null }) {
         )}
       </div>
       {msg && <p role="status" className={msg.ok ? "text-emerald-700" : "text-rose-700"}>{msg.text}</p>}
+    </div>
+  );
+}
+
+/**
+ * Portal Koordinator / Driver (tanpa menu ☰): kartu "Pasang aplikasi" + notifikasi langsung di halaman Borongan.
+ * Hilang sendiri setelah aplikasi terpasang dan notifikasi aktif di HP ini.
+ */
+export function PortalSetup({ publicKey }: { publicKey: string | null }) {
+  const { status } = usePushStatus(publicKey);
+  const [standalone, setStandalone] = useState(true);
+  useEffect(() => setStandalone(isStandalone()), []);
+  const pushDone = status === "on" || status === "unsupported" || status === "loading";
+  if (standalone && pushDone) return null;
+  return (
+    <div className="space-y-3">
+      <InstallAppCard />
+      {!pushDone && <PushSettings publicKey={publicKey} />}
     </div>
   );
 }

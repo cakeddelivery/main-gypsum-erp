@@ -7,7 +7,7 @@ import { dateOnly } from "@/lib/time";
 import { COA } from "@/lib/accounting";
 
 let actor: { id: string; name: string };
-const all: Scope = { all: true, pointIds: [], personId: null };
+const all: Scope = { all: true, owner: true, pointIds: [], personId: null };
 let bmr: { id: string; locationId: string };
 let mst: { id: string; locationId: string };
 let seabank: string;

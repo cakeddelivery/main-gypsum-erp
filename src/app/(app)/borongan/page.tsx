@@ -10,6 +10,8 @@ import { recipeUnit } from "@/lib/unitcost";
 import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, canWarehouse, isSetoranOnly, payLines, resultShares } from "@/lib/borongan";
 import { Badge, Card, Empty, Field, PageHeader, Tabs } from "@/components/ui";
 import { StokTitikTab } from "./StokTitikTab";
+import { PortalSetup } from "@/components/PushNotif";
+import { pushPublicKey } from "@/lib/push";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
@@ -69,6 +71,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
     return (
       <div className="space-y-4">
         <PageHeader title="Borongan" subtitle="Pembagian ke pekerja & ambil setoran" />
+        <PortalSetup publicKey={pushPublicKey()} />
         <KirimanTab scope={scope} userId={user.id} />
       </div>
     );
@@ -130,6 +133,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
       {/* Koordinator: menu tab pindah ke navigasi bawah */}
       {!isCoordinatorOnly && <Tabs current={tab} tabs={[...tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: x.key === "serah" ? pending.length || undefined : undefined })), ...(history ? [{ key: "riwayat", label: "Riwayat", href: "/borongan/riwayat" }] : [])]} />}
 
+      {isCoordinatorOnly && tab === "kiriman" && <PortalSetup publicKey={pushPublicKey()} />}
       {tab === "kiriman" && <KirimanTab scope={scope} userId={user.id} />}
       {tab === "stok" && <StokTitikTab scope={scope} />}
       {tab === "klaim" && <KlaimTab scope={scope} canPay={user.can("borongan.pay")} />}
@@ -498,7 +502,7 @@ function TaskForm({ task, items, divisions, kit = [] }: { task?: TaskRow; items:
       <fieldset className="rounded-lg border border-slate-200 p-3">
         <legend className="px-1 text-xs font-medium text-slate-600">Bahan pendukung yang ikut dikirim (kit)</legend>
         <input type="hidden" name="kitSent" value="1" />
-        <p className="mb-2 text-xs text-slate-500">Muncul di form Kirim Bahan untuk jenis pekerjaan ini. Bahan per pcs di atas sudah ikut otomatis.</p>
+        <p className="mb-2 text-xs text-slate-500">Muncul di form Kirim Cat / Kirim Assembling untuk jenis pekerjaan ini. Bahan per pcs di atas sudah ikut otomatis.</p>
         <div className="grid max-h-56 gap-1 overflow-y-auto sm:grid-cols-2">
           {items.map((i) => <label key={i.id} className="flex min-h-9 items-center gap-2 text-sm"><input type="checkbox" name="kitIds" value={i.id} defaultChecked={kit.includes(i.id)} className="h-4 w-4 shrink-0" /><span className="break-words">{i.name}</span></label>)}
         </div>

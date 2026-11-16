@@ -21,6 +21,7 @@ import { divisionChecklist, refreshDraftChecklists } from "@/lib/shiftReportChec
 import { addShiftReceipt, addShiftReceipts, removeShiftReceipt } from "@/lib/shiftReceipt";
 import { RESULT_KEY, applyResultCount, parseResultCount, resultCountStatus, resultItems, resultLines } from "@/lib/shiftResultCount";
 import { reportCatalogs } from "@/lib/productFamily";
+import { withCurrentLimits } from "@/lib/shiftReportStock";
 import { isDone, isTemplate, needsOrder, parseWork, summaryOf, targetLine, targetOf, toEntries, workLines, type ChecklistEntry, type StockCountRow } from "@/lib/shiftReport";
 
 
@@ -198,7 +199,7 @@ async function sendReportData(id: string, user: User): Promise<string> {
     const receipts = await prisma.shiftReceipt.findMany({ where: { reportId: id }, include: { item: true }, orderBy: { number: "asc" } });
     const template = r.division.reportTemplate;
     const checklist = toEntries(r.checklist) as ChecklistEntry[];
-    const stock = r.stockCount as StockCountRow[];
+    const stock = await withCurrentLimits(r.stockCount as StockCountRow[]);
     const order = stock.filter(needsOrder);
     let body: string[];
     if (isTemplate(template)) {

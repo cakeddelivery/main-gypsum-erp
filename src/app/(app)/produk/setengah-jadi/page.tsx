@@ -71,7 +71,7 @@ export default async function SetengahJadiPage() {
                       <tbody>
                         {r.lines.map((l) => {
                           const q = initial.comp.find((c) => c.itemId === l.component.id)!;
-                          return <tr key={l.id}><td>{l.component.name}{l.fromRecipe && <div className="text-xs text-slate-400">setengah jadi</div>}</td><td className="num">{q.qty.toLocaleString("id-ID")} {q.useUnit}</td><td className="num">{fmtUnitPrice(l.unitPrice)}/{l.unit}</td><td className="num">{idr(Math.round(l.cost))}</td></tr>;
+                          return <tr key={l.id}><td>{l.component.name}{l.fromRecipe && <div className="text-xs text-slate-400">setengah jadi</div>}</td><td className="num">{q.qty.toLocaleString("id-ID")} {q.useUnit}</td><td className="num">{l.noPrice ? <span className="font-semibold text-rose-700">harga belum ada</span> : fmtUnitPrice(l.unitPrice)}/{l.unit}</td><td className="num">{idr(Math.round(l.cost))}</td></tr>;
                         })}
                         {r.item.recipeLabor.map((l) => <tr key={l.id}><td colSpan={3}>Tenaga kerja: {l.name}</td><td className="num">{idr(l.rate)}</td></tr>)}
                         {r.item.recipeOverhead.map((o) => <tr key={o.id}><td colSpan={3}>Overhead: {o.overhead.name}{Number(o.factor) !== 1 && ` × ${Number(o.factor).toLocaleString("id-ID")}`}</td><td className="num">{idr(Math.round(r.overheadRows.get(o.id) ?? 0))}</td></tr>)}

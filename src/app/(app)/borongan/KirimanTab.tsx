@@ -7,7 +7,7 @@ import { stockBalances } from "@/lib/stock";
 import { canTask, type Scope } from "@/lib/borongan";
 import { taskGroupName } from "@/lib/boronganKirim";
 import { pointConfig, taskKits } from "@/lib/boronganSetup";
-import { STATE_LABEL, byColumn, canCompleteAssembling, canDistribute, canInputKering, canPickup, canReceive, canReport, canShip, canShipGroup, isAssemblingName, isCoordinatorScope, openShipments, scopeShipments, shipmentViews, shortTaskName, type ShipmentView } from "@/lib/boronganFlow";
+import { STATE_LABEL, byColumn, canCompleteAssembling, canCancelShipment, canDistribute, canInputKering, canPickup, canReceive, canReport, canShip, canShipGroup, isAssemblingName, isCoordinatorScope, openShipments, scopeShipments, shipmentViews, shortTaskName, type ShipmentView } from "@/lib/boronganFlow";
 import { Badge, Empty } from "@/components/ui";
 import { ActionForm } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
@@ -83,13 +83,15 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
   const waiting = all.filter((s) => s.waitingSupport);
   const creators = new Map((await prisma.boronganPickup.findMany({ where: { id: { in: all.flatMap((s) => s.pickups.map((p) => p.id)) } }, select: { id: true, createdById: true } })).map((p) => [p.id, p.createdById]));
   const toReceive = all.flatMap((s) => s.pickups.filter((p) => p.status === "DIBAWA" && canReceive(scope, s.tasks.filter((t) => p.lines.some((l) => l.taskId === t.id)))).map((p) => ({ s, p })));
-  const held = scope.all ? all.flatMap((s) => s.pickups.filter((p) => p.status === "KURANG").map((p) => ({ s, p }))) : [];
+  // Koreksi / lepas tahanan: Owner (Supervisor hanya memantau)
+  const held = scope.owner ? all.flatMap((s) => s.pickups.filter((p) => p.status === "KURANG").map((p) => ({ s, p }))) : [];
   const running = all.filter((s) => !s.waitingSupport && (s.state !== "SELESAI" || s.pickups.some((p) => p.status === "DIBAWA")));
   // Koordinator: riwayat kiriman yang sudah selesai (bagian titiknya saja)
   const coordinator = isCoordinatorScope(scope);
   const done = coordinator
     ? scopeShipments(scope, await shipmentViews({ cancelledAt: null, pointIds: { hasSome: scope.pointIds }, date: { gte: dateOnly(addDays(todayStr(), -180)) } }, 200)).filter((s) => !running.some((r) => r.id === s.id))
     : [];
+  const shipCreators = new Map((await prisma.boronganShipment.findMany({ where: { id: { in: running.map((r) => r.id) } }, select: { id: true, createdById: true } })).map((x) => [x.id, x.createdById]));
   const draftCreators = new Map((await prisma.boronganShipment.findMany({ where: { id: { in: waiting.map((w) => w.id) } }, select: { id: true, createdById: true } })).map((x) => [x.id, x.createdById]));
 
   return (
@@ -97,12 +99,12 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
       {(kering && asmGroup) || groups.length > 0 ? (
         <div className="flex flex-wrap items-center gap-2">
           {kering && asmGroup && (
-            <Modal trigger="+ Patung Kering" title="Patung kering untuk Assembling" subtitle="Nomor kiriman dibuat otomatis" wide>
+            <Modal trigger="+ Kirim Assembling" title="Kirim Assembling (patung kering)" subtitle="Nomor kiriman dibuat otomatis" wide>
               <ModalForm action={isiPatungKering} className="space-y-3"><KeringForm tasks={asmGroup.tasks} today={todayStr()} /></ModalForm>
             </Modal>
           )}
           {groups.length > 0 && (
-            <Modal trigger="+ Kirim Bahan" triggerClass={kering && asmGroup ? "btn-secondary" : "btn-primary"} title="Kirim bahan" subtitle="Nomor kiriman dibuat otomatis" wide>
+            <Modal trigger="+ Kirim Cat" triggerClass={kering && asmGroup ? "btn-secondary" : "btn-primary"} title="Kirim Cat" subtitle="Nomor kiriman dibuat otomatis" wide>
               <ModalForm action={kirimBahan} className="space-y-3"><KirimForm groups={groups} drivers={drivers} today={todayStr()} /></ModalForm>
             </Modal>
           )}
@@ -123,7 +125,7 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
                     <ModalForm action={lengkapiKiriman} className="space-y-3"><KirimForm groups={[asmGroup]} drivers={drivers} today={todayStr()} fixed={{ shipmentId: s.id, groupKey: asmGroup.key, qty: Object.fromEntries(s.tasks.map((t) => [t.id, t.qty])) }} /></ModalForm>
                   </Modal>
                 )}
-                {(complete || draftCreators.get(s.id) === userId) && (
+                {canCancelShipment(scope, { waitingSupport: true, createdById: draftCreators.get(s.id) ?? null }, userId) && (
                   <ActionForm action={batalKiriman} confirm={`Batalkan isian patung kering ${s.number}?`}><input type="hidden" name="id" value={s.id} /><button className="btn-secondary btn-sm text-rose-600">Batalkan</button></ActionForm>
                 )}
               </div>
@@ -168,7 +170,7 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
 
       <section className="space-y-2">
         <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Kiriman berjalan</h2>
-        {!running.length && <Empty title="Belum ada kiriman berjalan" hint={ship ? "Tekan + Kirim Bahan untuk mencatat kiriman baru." : undefined} />}
+        {!running.length && <Empty title="Belum ada kiriman berjalan" hint={ship ? "Tekan + Kirim Assembling / + Kirim Cat untuk mencatat kiriman baru." : undefined} />}
         {running.map((s) => {
           const ids = s.tasks.map((t) => t.id);
           const bagi = canDistribute(scope, { mode: s.mode, taskIds: ids });
@@ -197,7 +199,7 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
                     <li key={p.id} className="flex flex-wrap items-center gap-2">
                       <Chip>{p.number}</Chip> ke-{i + 1} · {f(p.lines.reduce((a, l) => a + l.qty, 0))} pcs ·
                       {p.status === "DIBAWA" ? <span className="font-semibold text-amber-700">menunggu dihitung</span> : p.status === "KURANG" ? <span className="font-semibold text-rose-700">kurang, upah ditahan</span> : <span className="font-semibold text-emerald-700">diterima</span>}
-                      {p.status === "DIBAWA" && (scope.all || creators.get(p.id) === userId) && (
+                      {p.status === "DIBAWA" && (scope.owner || creators.get(p.id) === userId) && (
                         <ActionForm action={batalAmbil} confirm={`Batalkan pengambilan ${p.number}?`}><input type="hidden" name="id" value={p.id} /><button className="text-xs font-semibold text-rose-600 underline">Batalkan</button></ActionForm>
                       )}
                     </li>
@@ -220,7 +222,7 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
                     <ModalForm action={ambilSetoran} className="space-y-3"><AmbilForm view={s} /></ModalForm>
                   </Modal>
                 )}
-                {canShip(scope) && !scope.kering && !scope.packing && !activePickups.length && (
+                {!activePickups.length && canCancelShipment(scope, { waitingSupport: false, createdById: shipCreators.get(s.id) ?? null, _count: { allots: s.totals.allotted > 0 ? 1 : 0 } }, userId) && (
                   <ActionForm action={batalKiriman} confirm={`Batalkan kiriman ${s.number}? Bahan kembali ke gudang.`}><input type="hidden" name="id" value={s.id} /><button className="btn-secondary btn-sm text-rose-600">Batalkan</button></ActionForm>
                 )}
               </div>

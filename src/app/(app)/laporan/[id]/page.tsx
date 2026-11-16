@@ -7,6 +7,7 @@ import { STAGE_LABEL } from "@/lib/stock";
 import { flowLines, isTemplate, plannedFlow, toEntries, type StockCountRow, type WorkData } from "@/lib/shiftReport";
 import { refreshDraftChecklists } from "@/lib/shiftReportChecklist";
 import { boronganLines } from "@/lib/shiftReportBorongan";
+import { withCurrentLimits } from "@/lib/shiftReportStock";
 import { flowEnabled } from "@/lib/shiftReportFlow";
 import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
 import { resultPlaces } from "@/lib/resultCountGroups";
@@ -28,6 +29,7 @@ import { boronganScope } from "@/lib/borongan";
 import { receiptItems, receiptReportLines } from "@/lib/boronganReceipt";
 import { ReportSheet } from "./ReportSheet";
 import { reportCatalogs } from "@/lib/productFamily";
+import { mostStockedVariant } from "@/lib/shiftReportFlow";
 import { letterhead } from "@/lib/letterhead";
 
 export const metadata = { title: "Laporan Penutup Shift" };
@@ -54,7 +56,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   // Saat diisi: daftar bahan mengikuti master bahan baku divisi terkini (hitungan yang sudah ada dipertahankan)
   const items = await prisma.item.findMany({ where: { divisionId: r.divisionId, active: true, type: "BAHAN_BAKU" }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] });
   const editStock: StockCountRow[] = items.map((i) => ({ itemId: i.id, name: i.name, unit: i.unit, limit: Number(i.minStock), qty: saved.find((x) => x.itemId === i.id)?.qty ?? null }));
-  const stock = saved;
+  const stock = await withCurrentLimits(saved);
   const work = r.work as WorkData;
   // Anggota divisi tidak bisa mengubah laporan yang sudah terkirim (Supervisor/Admin/Owner tetap bisa)
   const locked = r.status !== "DRAFT" && reportDivision(user) !== null;
@@ -99,6 +101,8 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const setoranSum = setoranRows.length ? `${setoranRows.length} catatan · ${bLines[bLines.length - 1].replace(/^TOTAL SETORAN: /, "")}` : null;
   const receiptViews = receipts.map((x) => ({ id: x.id, number: x.number, itemName: x.item.name, unit: x.item.unit, qty: Number(x.qty), supplierName: x.supplierName, hasPhoto: !!x.photoPath, linked: !!x.purchaseId }));
   const materials = items.map((i) => ({ id: i.id, name: i.name, unit: i.unit }));
+  // Giftbox Mix: bawaan patung ke-5 = karakter patung kering dengan stok terbanyak
+  const mixDefault = template === "GIFTBOX" ? await mostStockedVariant() : null;
 
   return (
     <div className="space-y-5">
@@ -134,6 +138,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   applied={r.stockApplied}
                   resultTitle={rItems.length ? RESULT_TITLE : null}
                   catalogs={catalogs}
+                  mixDefault={mixDefault}
                   resultCount={[...rItems].sort((a, b) => (places.get(a.id)?.order ?? 0) - (places.get(b.id)?.order ?? 0)).map((i) => { const pl = places.get(i.id); return { key: i.id, label: i.name, unit: i.unit, qty: rv[i.id] ?? null, group: pl?.group, sub: pl?.sub, col: pl?.col }; })}
                   flow={flowOn && template ? flow : null}
                   sent={r.workPostedVersion > 0 || r.status !== "DRAFT"}

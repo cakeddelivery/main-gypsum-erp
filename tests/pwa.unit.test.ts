@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import manifest from "@/app/manifest";
+import { buildManifest as manifest } from "@/lib/pwaManifest";
 import { existsSync } from "node:fs";
 
 const env = process.env.APP_ENV;
@@ -20,6 +20,14 @@ describe("PWA manifest", () => {
     expect(sizes).toEqual(expect.arrayContaining(["192x192:any", "512x512:any", "512x512:maskable"]));
     for (const i of m.icons ?? []) expect(existsSync(`public${i.src}`)).toBe(true);
     expect((m.shortcuts ?? []).map((s) => s.url)).toEqual(["/finance", "/finance?baru=1", "/penjualan", "/stok"]);
+  });
+
+  it("Koordinator & Driver: aplikasi membuka portal Borongan", () => {
+    const k = manifest("KOORDINATOR");
+    expect(k.start_url).toBe("/borongan?tab=kiriman&source=pwa");
+    expect((k.shortcuts ?? []).map((s) => s.url)).toEqual(["/borongan?tab=kiriman", "/borongan?tab=stok", "/borongan?tab=klaim"]);
+    expect((manifest("DRIVER").shortcuts ?? []).map((s) => s.url)).toEqual(["/borongan?tab=kiriman"]);
+    expect(manifest("OWNER").start_url).toBe("/?source=pwa");
   });
 
   it("staging memakai nama & ikon berbeda", () => {
