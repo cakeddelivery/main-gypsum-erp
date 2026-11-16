@@ -9,24 +9,34 @@ import type { ActionResult } from "@/lib/action";
 export type SchedGroupView = { key: string; name: string; shiftDiv: boolean; rows: { id: string; name: string }[] };
 type Day = { date: string; label: string };
 
+/**
+ * Warna solid + teks putih, sama di mode terang & gelap (tidak ikut token tema). Kontras teks putih:
+ * S1 #2453b5 ≈ 7.3:1 · S2 #b45309 ≈ 5.0:1 · libur #475569 ≈ 7.6:1 (semua ≥ 4.5:1).
+ */
+const SOLID = {
+  S1: { backgroundColor: "#2453b5", color: "#fff" },
+  S2: { backgroundColor: "#b45309", color: "#fff" },
+  OFF: { backgroundColor: "#475569", color: "#fff" },
+} as const;
+
 const VIEW: Record<Cell, React.ReactNode> = {
   "": <span className="text-slate-400" aria-label="Libur">—</span>,
   IN: <span className="inline-grid h-6 min-w-[1.75rem] place-items-center rounded-md bg-emerald-50 px-1.5 text-xs font-bold text-emerald-700" aria-label="Masuk">✓</span>,
-  S1: <span className="inline-grid h-6 min-w-[1.75rem] place-items-center rounded-md bg-brand-50 px-1.5 text-xs font-bold text-brand-700">S1</span>,
-  S2: <span className="inline-grid h-6 min-w-[1.75rem] place-items-center rounded-md bg-amber-50 px-1.5 text-xs font-bold text-amber-700">S2</span>,
+  S1: <span className="inline-grid h-6 min-w-[1.75rem] place-items-center rounded-md px-1.5 text-xs font-bold" style={SOLID.S1}>S1</span>,
+  S2: <span className="inline-grid h-6 min-w-[1.75rem] place-items-center rounded-md px-1.5 text-xs font-bold" style={SOLID.S2}>S2</span>,
 };
 
 /** Saklar 3 posisi untuk divisi 2 shift: S1 · — · S2 */
 function Seg({ value, label, onChange }: { value: Cell; label: string; onChange: (v: Cell) => void }) {
-  const opts: [Cell, string, string][] = [
-    ["S1", "S1", "bg-brand-50 text-brand-700"],
-    ["", "—", "bg-white text-slate-800"],
-    ["S2", "S2", "bg-amber-50 text-amber-700"],
+  const opts: [Cell, string, React.CSSProperties][] = [
+    ["S1", "S1", SOLID.S1],
+    ["", "—", SOLID.OFF],
+    ["S2", "S2", SOLID.S2],
   ];
   return (
     <span role="group" aria-label={label} className="inline-flex overflow-hidden rounded-lg border border-slate-300 bg-slate-100">
       {opts.map(([v, t, on], i) => (
-        <button key={t} type="button" aria-pressed={value === v} onClick={() => onChange(v)} className={`h-8 min-w-[2rem] px-1.5 text-xs font-bold ${i ? "border-l border-slate-300" : ""} ${value === v ? on : "text-slate-500"}`}>
+        <button key={t} type="button" aria-pressed={value === v} onClick={() => onChange(v)} style={value === v ? on : undefined} className={`h-8 min-w-[2rem] px-1.5 text-xs font-bold ${i ? "border-l border-slate-300" : ""} ${value === v ? "" : "text-slate-600"}`}>
           {t}
         </button>
       ))}
