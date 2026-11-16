@@ -42,7 +42,8 @@
     "test:hp": "node scripts/cek-tampilan-hp.cjs",
     "validasi:otomatis": "tsx scripts/validasi-otomatis.ts",
     "perbaiki:shift-malam": "tsx scripts/perbaiki-shift-malam.ts",
-    "setup:kit-tugas": "tsx scripts/kit-tugas-borongan.ts"
+    "setup:kit-tugas": "tsx scripts/kit-tugas-borongan.ts",
+    "setup:produk-hpp": "tsx scripts/setup-produk-hpp.ts"
   },
   "author": "",
   "license": "ISC",
