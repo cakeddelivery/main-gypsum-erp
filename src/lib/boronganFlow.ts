@@ -234,6 +234,47 @@ export async function openShipments(now = new Date()) {
   return list.filter((s) => s.state !== "SELESAI" || s.pickups.some((p) => p.status === "DIBAWA" || p.status === "KURANG"));
 }
 
+/** Akun koordinator titik (bukan pengelola, driver, atau tim divisi) */
+export const isCoordinatorScope = (scope: Scope) => !scope.all && !scope.driver && !scope.division && !!scope.personId;
+
+/**
+ * Tampilan kiriman untuk koordinator: HANYA titiknya sendiri. Kiriman baru tampil setelah driver membagi bahan
+ * ke pekerja di titik itu (null bila belum ada pembagian). Angka = bagian titik itu saja; nama titik lain,
+ * bahan kiriman total, dan hitungan divisi yang mencakup titik lain dibuang di server.
+ */
+export function forCoordinator(v: ShipmentView, pointIds: string[]): ShipmentView | null {
+  const own = (id: string) => pointIds.includes(id);
+  const cells = v.cells.filter((c) => own(c.pointId) && c.dibagi > 0);
+  if (!cells.length) return null;
+  const taskIds = new Set(cells.map((c) => c.taskId));
+  const pickups = v.pickups
+    .map((p) => ({ ...p, lines: p.lines.filter((l) => own(l.pointId)), counts: p.lines.every((l) => own(l.pointId)) ? p.counts : [] }))
+    .filter((p) => p.lines.length);
+  const active = pickups.filter((p) => p.status !== "DIBATALKAN");
+  const sent = cells.reduce((a, c) => a + c.dibagi, 0);
+  const taken = cells.reduce((a, c) => a + c.diambil, 0);
+  const reject = cells.reduce((a, c) => a + c.reject, 0);
+  const received = active.filter((p) => p.status !== "DIBAWA").reduce((a, p) => a + p.lines.reduce((x, l) => x + l.qty, 0), 0);
+  const state = shipmentState(cells.map((c) => ({ workerId: c.workerId, taskId: c.taskId, qty: c.dibagi })), active);
+  return {
+    ...v,
+    state,
+    points: v.points.filter((p) => own(p.id)),
+    tasks: v.tasks.filter((t) => taskIds.has(t.id)).map((t) => ({ ...t, qty: cells.filter((c) => c.taskId === t.id).reduce((a, c) => a + c.dibagi, 0) })),
+    lines: [],
+    cells,
+    pickups,
+    reports: v.reports.filter((r) => own(r.pointId)),
+    totals: { sent, allotted: sent, received, reject, atWorkers: Math.max(0, sent - taken - reject), gap: state === "SELESAI" ? sent - taken - reject : null },
+  };
+}
+
+/** Saring daftar kiriman menurut akses: koordinator hanya bagian titiknya, lainnya apa adanya */
+export function scopeShipments(scope: Scope, list: ShipmentView[]): ShipmentView[] {
+  if (!isCoordinatorScope(scope)) return list;
+  return list.map((v) => forCoordinator(v, scope.pointIds)).filter((v): v is ShipmentView => !!v);
+}
+
 // ---------------- 1. KIRIM BAHAN ----------------
 
 async function driverLocation(tx: Tx) {
@@ -310,9 +351,10 @@ async function dispatchTx(tx: Tx, number: string, day: string, input: Omit<Shipm
 }
 
 async function notifyDispatched(s: { number: string; driverId: string | null; mode: ShipmentMode; pointIds: string[] }, total: number) {
-  // Push ke HP koordinator titik tujuan (dan driver bila lewat driver)
+  // Push ke HP driver (bila lewat driver) atau koordinator bila diantar langsung. Kiriman lewat driver baru
+  // diberitahukan ke koordinator saat driver menyimpan pembagian di titiknya (lihat saveAllots).
   const driverUser = s.driverId ? (await prisma.boronganPerson.findUnique({ where: { id: s.driverId }, select: { userId: true } }))?.userId : null;
-  await notify([...(await coordinatorUsers(s.pointIds)), driverUser], { title: `Kiriman bahan ${s.number}`, body: `${total.toLocaleString("id-ID")} pcs ${s.mode === "DRIVER" ? "dibawa driver" : "diantar langsung"}. Pembagian ke pekerja menyusul.`, url: "/borongan?tab=kiriman", tag: `krm-${s.number}` });
+  await notify(s.mode === "DRIVER" ? [driverUser] : [], { title: `Kiriman bahan ${s.number}`, body: `${total.toLocaleString("id-ID")} pcs ${s.mode === "DRIVER" ? "dibawa driver" : "diantar langsung"}. Pembagian ke pekerja menyusul.`, url: "/borongan?tab=kiriman", tag: `krm-${s.number}` });
 }
 
 /** Kirim langsung (Cat Plastik oleh tim Assembling, Cat Giftbox oleh tim Giftbox, atau Supervisor/pengelola) */

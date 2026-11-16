@@ -5,7 +5,7 @@ import { stockBalances } from "@/lib/stock";
 import { canTask, type Scope } from "@/lib/borongan";
 import { taskGroupName } from "@/lib/boronganKirim";
 import { pointConfig, taskKits } from "@/lib/boronganSetup";
-import { STATE_LABEL, byColumn, canCompleteAssembling, canDistribute, canInputKering, canPickup, canReceive, canReport, canShip, canShipGroup, isAssemblingName, openShipments, shortTaskName, type ShipmentView } from "@/lib/boronganFlow";
+import { STATE_LABEL, byColumn, canCompleteAssembling, canDistribute, canInputKering, canPickup, canReceive, canReport, canShip, canShipGroup, isAssemblingName, openShipments, scopeShipments, shortTaskName, type ShipmentView } from "@/lib/boronganFlow";
 import { Badge, Empty } from "@/components/ui";
 import { ActionForm } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
@@ -65,7 +65,8 @@ async function kirimGroups(): Promise<KirimGroupOpt[]> {
 }
 
 export async function KirimanTab({ scope, userId }: { scope: Scope; userId: string }) {
-  const all = (await openShipments()).filter((s) => visible(scope, s));
+  // Koordinator: hanya bagian titiknya, dan baru tampil setelah bahan dibagi ke pekerja di titik itu (disaring di server)
+  const all = scopeShipments(scope, (await openShipments()).filter((s) => visible(scope, s)));
   const complete = canCompleteAssembling(scope);
   const kering = canInputKering(scope);
   const ship = canShip(scope) || complete || kering;
