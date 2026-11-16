@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/db";
 import { cancelSettlement, coordinatorFor, ratesFor, savePerson, settlePoint, type Scope } from "@/lib/borongan";
-import { canReceive, canShipGroup, completeShipment, createKeringDraft, createPickup, createShipment, receivePickup, saveAllots } from "@/lib/boronganFlow";
+import { canReceive, canShipGroup, completeShipment, createKeringDraft, createPickup, createShipment, receivePickup, saveAllots, saveWorkReport } from "@/lib/boronganFlow";
 import { stockBalances } from "@/lib/stock";
 import { CLAIM_EVERY, approveClaim, assemblingCount, autoClaims, canRequestClaim, claimBreakdown, rejectClaim, requestClaim } from "@/lib/boronganClaim";
 import { saveItemRecord } from "@/lib/items";
-import { sendPush } from "@/lib/push";
+import { saveSubscription, sendPush } from "@/lib/push";
 
 vi.mock("@/lib/push", async (orig) => ({ ...(await orig<typeof import("@/lib/push")>()), sendPush: vi.fn(async () => ({ sent: 0, removed: 0, failed: 0, users: 0 })) }));
 
@@ -181,6 +181,24 @@ describe("Klaim upah di database", () => {
     vi.mocked(sendPush).mockClear();
     await saveAllots(s.id, [{ pointId: ctx.point.id, workerId: ctx.w.id, taskId: ctx.asm.id, qty: 3 }], actor, all);
     expect(vi.mocked(sendPush).mock.calls.some(([ids, p]) => ids.includes(u.id) && p.title.includes("sudah dibagi"))).toBe(true);
+    // Driver (login sendiri): setoran titik siap diambil setelah koordinator lapor hasil
+    const du = await prisma.user.create({ data: { username: `drv${tag.toLowerCase()}`, name: `Drv ${tag}`, role: "DRIVER", passwordHash: "x" } });
+    await prisma.boronganPerson.update({ where: { id: ctx.driver.id }, data: { userId: du.id } });
+    vi.mocked(sendPush).mockClear();
+    await saveWorkReport(s.id, ctx.point.id, [{ workerId: ctx.w.id, taskId: ctx.asm.id, good: 3, reject: 0 }], false, actor, ctx.coordScope);
+    expect(vi.mocked(sendPush).mock.calls.some(([ids, p]) => ids.includes(du.id) && p.title.includes("siap diambil"))).toBe(true);
+    // Langganan push tersimpan per akun koordinator / driver
+    await saveSubscription(u.id, { endpoint: `https://push.example/${tag}-k`, keys: { p256dh: "p", auth: "a" } }, "tes");
+    await saveSubscription(du.id, { endpoint: `https://push.example/${tag}-d`, keys: { p256dh: "p", auth: "a" } }, "tes");
+    expect(await prisma.pushSubscription.count({ where: { userId: { in: [u.id, du.id] } } })).toBe(2);
+  });
+
+  it("koordinator dapat push saat klaim ditolak / disetujui", async () => {
+    const u = (await prisma.boronganPerson.findUniqueOrThrow({ where: { id: ctx.coord.id } })).userId!;
+    const c = await prisma.boronganClaim.create({ data: { number: `KLM-T${tag}`, pointId: ctx.point.id, status: "MENUNGGU", total: 0n, requestedBy: "tes", auto: false } });
+    vi.mocked(sendPush).mockClear();
+    await rejectClaim(c.id, "Cek ulang", actor);
+    expect(vi.mocked(sendPush).mock.calls.some(([ids, p]) => ids.includes(u) && p.title.includes("ditolak"))).toBe(true);
   });
 
 

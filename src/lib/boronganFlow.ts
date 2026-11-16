@@ -354,6 +354,10 @@ async function notifyDispatched(s: { number: string; driverId: string | null; mo
   // Push ke HP driver (bila lewat driver) atau koordinator bila diantar langsung. Kiriman lewat driver baru
   // diberitahukan ke koordinator saat driver menyimpan pembagian di titiknya (lihat saveAllots).
   const driverUser = s.driverId ? (await prisma.boronganPerson.findUnique({ where: { id: s.driverId }, select: { userId: true } }))?.userId : null;
+  // Koordinator yang baru minta bahan (7 hari terakhir): permintaannya dijawab dengan kiriman ini
+  const asked = await prisma.auditLog.findMany({ where: { action: "MINTA_BAHAN_TITIK", entityId: { in: s.pointIds }, at: { gte: new Date(Date.now() - 7 * 86400000) } }, select: { entityId: true } });
+  const askedPoints = [...new Set(asked.map((a) => a.entityId!).filter(Boolean))];
+  if (askedPoints.length) await notify(await coordinatorUsers(askedPoints), { title: `Permintaan bahan dijawab`, body: `Kiriman ${s.number} sedang disiapkan untuk titik Anda (${total.toLocaleString("id-ID")} pcs). Pembagian ke pekerja menyusul.`, url: "/borongan?tab=stok", tag: `minta-${s.number}` });
   await notify(s.mode === "DRIVER" ? [driverUser] : [], { title: `Kiriman bahan ${s.number}`, body: `${total.toLocaleString("id-ID")} pcs ${s.mode === "DRIVER" ? "dibawa driver" : "diantar langsung"}. Pembagian ke pekerja menyusul.`, url: "/borongan?tab=kiriman", tag: `krm-${s.number}` });
 }
 
@@ -559,6 +563,18 @@ export async function saveAllots(shipmentId: string, rows: AllotInput[], actor: 
 export type ReportInput = { workerId: string; taskId: string; good: number; reject: number };
 
 export async function saveWorkReport(shipmentId: string, pointId: string, rows: ReportInput[], checked: boolean, actor: Actor, scope: Scope) {
+  const rep = await saveWorkReportTx(shipmentId, pointId, rows, checked, actor, scope);
+  // Driver: setoran titik ini siap diambil
+  const s = await prisma.boronganShipment.findUnique({ where: { id: shipmentId }, select: { number: true, mode: true, driver: { select: { userId: true } } } });
+  const point = await prisma.boronganPoint.findUnique({ where: { id: pointId }, select: { name: true } });
+  if (s?.mode === "DRIVER" && s.driver?.userId) {
+    const good = rows.reduce((a, r) => a + r.good, 0);
+    await notify([s.driver.userId], { title: `Setoran ${point?.name ?? ""} siap diambil`, body: `${s.number}: ${good.toLocaleString("id-ID")} pcs dilaporkan ${actor.name}. Ambil lewat Borongan › Kiriman › Ambil setoran.`, url: "/borongan?tab=kiriman", tag: `ambil-${s.number}-${pointId}` });
+  }
+  return rep;
+}
+
+async function saveWorkReportTx(shipmentId: string, pointId: string, rows: ReportInput[], checked: boolean, actor: Actor, scope: Scope) {
   return prisma.$transaction(async (tx) => {
     const s = await tx.boronganShipment.findUniqueOrThrow({ where: { id: shipmentId }, include: { tasks: true, allots: { where: { pointId } } } });
     if (s.cancelledAt) throw new BoronganError(`${s.number} sudah dibatalkan`);

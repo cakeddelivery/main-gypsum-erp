@@ -10,6 +10,8 @@ import { recipeUnit } from "@/lib/unitcost";
 import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, canWarehouse, isSetoranOnly, payLines, resultShares } from "@/lib/borongan";
 import { Badge, Card, Empty, Field, PageHeader, Tabs } from "@/components/ui";
 import { StokTitikTab } from "./StokTitikTab";
+import { PortalSetup } from "@/components/PushNotif";
+import { pushPublicKey } from "@/lib/push";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
@@ -69,6 +71,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
     return (
       <div className="space-y-4">
         <PageHeader title="Borongan" subtitle="Pembagian ke pekerja & ambil setoran" />
+        <PortalSetup publicKey={pushPublicKey()} />
         <KirimanTab scope={scope} userId={user.id} />
       </div>
     );
@@ -130,6 +133,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
       {/* Koordinator: menu tab pindah ke navigasi bawah */}
       {!isCoordinatorOnly && <Tabs current={tab} tabs={[...tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: x.key === "serah" ? pending.length || undefined : undefined })), ...(history ? [{ key: "riwayat", label: "Riwayat", href: "/borongan/riwayat" }] : [])]} />}
 
+      {isCoordinatorOnly && tab === "kiriman" && <PortalSetup publicKey={pushPublicKey()} />}
       {tab === "kiriman" && <KirimanTab scope={scope} userId={user.id} />}
       {tab === "stok" && <StokTitikTab scope={scope} />}
       {tab === "klaim" && <KlaimTab scope={scope} canPay={user.can("borongan.pay")} />}

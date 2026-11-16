@@ -145,8 +145,21 @@ export async function autoClaims(pointIds: string[]) {
 
 // ---------------- SETUJUI & BAYAR / TOLAK ----------------
 
+/** Push ke koordinator titik & pengaju klaim */
+async function notifyClaimant(c: { pointId: string; requestedById: string | null }, title: string, body: string, tag: string) {
+  const coords = await prisma.boronganPerson.findMany({ where: { role: "KOORDINATOR", active: true, pointId: c.pointId, userId: { not: null } }, select: { userId: true } });
+  const ids = [...new Set([...coords.map((x) => x.userId!), ...(c.requestedById ? [c.requestedById] : [])])];
+  if (ids.length) await sendPush(ids, { title, body, url: "/borongan?tab=klaim", tag }).catch(() => {});
+}
+
 /** Finance/Owner menyetujui & membayar klaim (sekali saja; dua permintaan bersamaan tidak membayar dobel) */
 export async function approveClaim(id: string, bankAccountId: string, actor: Actor) {
+  const r = await approveClaimTx(id, bankAccountId, actor);
+  await notifyClaimant(r.claim, `Klaim ${r.claim.number} disetujui`, `${r.claim.point.name}: Rp${Number(r.settlement.total).toLocaleString("id-ID")} dibayar oleh ${actor.name}.`, `klaim-${id}`);
+  return r;
+}
+
+async function approveClaimTx(id: string, bankAccountId: string, actor: Actor) {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "BoronganClaim" WHERE id = ${id} FOR UPDATE`;
     const c = await tx.boronganClaim.findUniqueOrThrow({ where: { id }, include: { point: true } });
@@ -163,6 +176,12 @@ export async function approveClaim(id: string, bankAccountId: string, actor: Act
 
 export async function rejectClaim(id: string, reason: string, actor: Actor) {
   if (!reason?.trim()) throw withField(new BoronganError("Alasan penolakan wajib diisi"), "reason");
+  const c = await rejectClaimTx(id, reason, actor);
+  await notifyClaimant(c, `Klaim ${c.number} ditolak`, `Alasan: ${reason.trim().slice(0, 200)}. Setorannya bisa diklaim lagi setelah diperbaiki.`, `klaim-${id}`);
+  return c;
+}
+
+async function rejectClaimTx(id: string, reason: string, actor: Actor) {
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "BoronganClaim" WHERE id = ${id} FOR UPDATE`;
     const c = await tx.boronganClaim.findUniqueOrThrow({ where: { id } });
