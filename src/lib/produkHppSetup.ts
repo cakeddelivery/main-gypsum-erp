@@ -322,13 +322,13 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
   };
 
   // Bahan kemas & konversi satuan beli → satuan pakai (Owner): cari nama persis, lalu nama lama yang mirip; buat bila belum ada
-  const material = async (want: { name: string; alias?: RegExp; unit: string; hppUnit: string; factor: number; divisionId: string; divLabel: string; create?: boolean }) => {
+  const material = async (want: { name: string; alias?: RegExp; unit: string; hppUnit: string; factor: number; divisionId: string; divLabel: string; create?: boolean; /** Barang lama sudah dikonfirmasi Owner */ confirmed?: boolean; /** Ganti nama barang lama */ rename?: boolean }) => {
     let it = one(want.name);
     if (!it && want.alias) {
       const xs = allItems.filter((i) => want.alias!.test(i.name)).sort((a, b) => Number(b.divisionId === want.divisionId) - Number(a.divisionId === want.divisionId) || a.sku.localeCompare(b.sku));
       if (xs[0]) {
         it = xs[0];
-        plan.bentrok.push(`DIPAKAI barang lama ${it.sku} "${it.name}" untuk "${want.name}"${xs.length > 1 ? ` (calon lain: ${xs.slice(1).map((x) => `${x.sku} "${x.name}"`).join(", ")})` : ""} — benar?`);
+        if (!want.confirmed) plan.bentrok.push(`DIPAKAI barang lama ${it.sku} "${it.name}" untuk "${want.name}"${xs.length > 1 ? ` (calon lain: ${xs.slice(1).map((x) => `${x.sku} "${x.name}"`).join(", ")})` : ""} — benar?`);
       }
     }
     if (!it) {
@@ -342,9 +342,13 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
     }
     const data: Prisma.ItemUpdateInput = {};
     const changes: string[] = [];
+    if (want.rename && it.name !== want.name) {
+      data.name = want.name;
+      changes.push(`ganti nama → "${want.name}"`);
+    }
     if (it.unit.toLowerCase() !== want.unit.toLowerCase()) {
       data.unit = want.unit;
-      changes.push(`satuan beli ${it.unit} → ${want.unit}`);
+      changes.push(`satuan beli ${it.unit} → ${want.unit} (angka stok tetap, memang jumlah ${want.unit})`);
     }
     const hu = want.hppUnit === want.unit ? null : want.hppUnit;
     if ((it.hppUnit ?? null) !== hu || Number(it.hppFactor) !== want.factor) {
@@ -365,11 +369,11 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
     dus12: await material({ name: "Dus 12", unit: "pcs", hppUnit: "pcs", factor: 1, ...P }),
     dus24: await material({ name: "Dus 24", unit: "pcs", hppUnit: "pcs", factor: 1, ...P }),
     bening: await material({ name: "Solasi bening", unit: "roll", hppUnit: "yard", factor: 500, ...P }),
-    fragile: await material({ name: "Solasi fragile 48mm", alias: /^solasi fragile/i, unit: "roll", hppUnit: "yard", factor: 300, ...P }),
-    bubble: await material({ name: "Bubble wrap", alias: /^bubble ?wrap/i, unit: "roll", hppUnit: "cm", factor: 5000, ...P }),
-    wrap: await material({ name: "Plastik wrap hitam", alias: /^plastik wrap/i, unit: "roll", hppUnit: "cm", factor: 20000, ...P }),
+    fragile: await material({ name: "Solasi fragile 48mm", alias: /^solasi fragile/i, unit: "roll", hppUnit: "yard", factor: 300, ...P, confirmed: true }),
+    bubble: await material({ name: "Bubblewrap hitam", alias: /^bubble ?wrap hitam/i, unit: "roll", hppUnit: "cm", factor: 5000, ...P, confirmed: true }),
+    wrap: await material({ name: "Plastik wrap bening", alias: /^plastik wrap/i, unit: "roll", hppUnit: "cm", factor: 20000, ...P, confirmed: true, rename: true }),
     stiker: await material({ name: "Stiker unboxing", unit: "pack", hppUnit: "pcs", factor: 1000, ...P, create: true }),
-    thermal: await material({ name: "Print thermal", alias: /^label (termal|thermal) 100/i, unit: "roll", hppUnit: "pcs", factor: 500, ...P }),
+    thermal: await material({ name: "Print thermal", alias: /^label (termal|thermal) 100/i, unit: "roll", hppUnit: "pcs", factor: 500, ...P, confirmed: true }),
   };
   /** Bahan kemas per 1 paket (Owner) */
   const KEMAS: Record<12 | 24 | 48 | 96, [keyof typeof kemas, number][]> = {
@@ -417,6 +421,15 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
   const gBubbleCm = gBubble ? await material({ name: gBubble.name, unit: "roll", hppUnit: "cm", factor: 25000, ...G }) : kemas.bubble;
   const magnet = await material({ name: "Magnet", unit: "pcs", hppUnit: "pcs", factor: 1, ...G, create: true });
   const pallet = pcsOnly(one("Pallet cat"), "Pallet cat");
+  // Giftbox Mix: 1 patung tiap karakter + 1 "varian bebas" (dipilih di laporan); HPP varian bebas = rata-rata 4 karakter
+  const keringH = one("Patung kering Hewan");
+  // Nonaktif: tidak muncul di stok / laporan; HPP tetap dihitung dari resepnya
+  let bebas = await tx.item.findUnique({ where: { sku: "SJ-PTG-BEBAS" } });
+  if (!bebas) {
+    bebas = await tx.item.create({ data: { sku: "SJ-PTG-BEBAS", name: "Patung kering varian bebas", unit: "pcs", type: "BARANG_DALAM_PROSES", active: false, divisionId: keringH?.divisionId ?? null, note: "Hanya untuk HPP Giftbox Mix (rata-rata 4 karakter); tidak distok" } });
+    plan.dibuat.push(`+ SJ-PTG-BEBAS Patung kering varian bebas · setengah jadi (hanya HPP Giftbox Mix: rata-rata 4 karakter, tidak distok)`);
+  }
+  for (const v of VARIANTS) await recipe(bebas, pcsOnly(one(`Patung kering ${v}`), `Patung kering ${v}`), 0.25, "pcs", `Patung kering ${v}`);
   const mixGiftbox: string[] = [];
   const giftboxes = await tx.product.findMany({ where: { active: true, type: "GIFTBOX" }, orderBy: { sku: "asc" } });
   for (const p of giftboxes) {
@@ -431,9 +444,13 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
     if (/palet|pallet/i.test(p.name)) await bom(p.id, p.name, pallet, 1, "Pallet cat");
     const v = VARIANTS.find((x) => VARIANT_ENUM[x] === p.variant);
     if (v) await bom(p.id, p.name, pcsOnly(one(`Patung kering ${v}`), `Patung kering ${v}`), 5, `Patung kering ${v}`);
-    else mixGiftbox.push(p.name);
+    else {
+      for (const vv of VARIANTS) await bom(p.id, p.name, pcsOnly(one(`Patung kering ${vv}`), `Patung kering ${vv}`), 1, `Patung kering ${vv}`);
+      await bom(p.id, p.name, bebas, 1, "Patung kering varian bebas");
+      mixGiftbox.push(p.name);
+    }
   }
-  if (mixGiftbox.length) plan.bentrok.push(`Giftbox Mix (${mixGiftbox.length} SKU) ada di produk, tapi Owner: Giftbox Mix dianggap tidak ada — patung kering tidak dipasang; nonaktifkan SKU ini? (${mixGiftbox.slice(0, 2).join(", ")}…)`);
+  if (!mixGiftbox.length) plan.menunggu.push("Produk Giftbox Mix belum ada — tambahkan pilihan Series Mix di Produk Induk Giftbox (add-on sama), lalu jalankan skrip lagi");
   plan.menunggu.push("Pot cat plastik: HPP 5 pcs per Cat Giftbox (strip 6 dipotong: isi 3 untuk merah/kuning/biru, isi 2 untuk hitam/putih)");
 
   for (const [target, xs] of rec) plan.resep.push(`${target}: ${xs.join(" · ")}`);

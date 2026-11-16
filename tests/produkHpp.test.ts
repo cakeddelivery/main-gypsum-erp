@@ -105,3 +105,17 @@ describe("Konversi satuan stok gendel → pcs (×200)", () => {
     expect(q * Number(after.avgCost)).toBe(3 * Number(before.avgCost)); // nilai tetap Rp120.000
   });
 });
+
+import { MIX_BEBAS_KEY, plannedFlow } from "@/lib/shiftReport";
+describe("Giftbox Mix: 1 tiap karakter + 1 varian bebas", () => {
+  const line = { productId: "p", sku: "MG-001", label: "Mix", col: "Mix", variant: "MIX", patung: 5, qty: 3 };
+  it("varian bebas dipilih → 3 box = 3 per karakter + 3 ke pilihan", () => {
+    const steps = plannedFlow("GIFTBOX", { gb: [line], [MIX_BEBAS_KEY]: "Cowok" } as never).filter((s) => s.kind === "kering");
+    const q = Object.fromEntries(steps.map((s) => [s.key, s.qty]));
+    expect(q).toEqual({ Hewan: 3, Cowok: 6, Cewek: 3, Transportasi: 3 });
+  });
+  it("tanpa pilihan (laporan lama): dibagi rata seperti sebelumnya", () => {
+    const steps = plannedFlow("GIFTBOX", { gb: [line] } as never).filter((s) => s.kind === "kering");
+    expect(steps.reduce((a, s) => a + s.qty, 0)).toBe(15);
+  });
+});

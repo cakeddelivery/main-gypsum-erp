@@ -127,3 +127,20 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
   }, { timeout: 60000 });
   return { posted };
 }
+
+/** Karakter patung kering dengan stok terbanyak di gudang setengah jadi (bawaan "varian bebas" Giftbox Mix) */
+export async function mostStockedVariant(): Promise<string> {
+  const { VARIANTS } = await import("./shiftReport");
+  const { wip } = await locationSettings(prisma);
+  const items = await prisma.item.findMany({ where: { sku: { in: VARIANTS.map((v) => `SJ-PTG-${v.toUpperCase()}`) } }, select: { id: true, sku: true } });
+  if (!wip || !items.length) return VARIANTS[0];
+  const { qtyAt } = await import("./stock");
+  let best = VARIANTS[0];
+  let max = -Infinity;
+  for (const v of VARIANTS) {
+    const it = items.find((i) => i.sku === `SJ-PTG-${v.toUpperCase()}`);
+    const q = it ? await qtyAt(prisma, it.id, wip) : -Infinity;
+    if (q > max) [best, max] = [v, q];
+  }
+  return best;
+}

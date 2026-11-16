@@ -28,6 +28,7 @@ import { boronganScope } from "@/lib/borongan";
 import { receiptItems, receiptReportLines } from "@/lib/boronganReceipt";
 import { ReportSheet } from "./ReportSheet";
 import { reportCatalogs } from "@/lib/productFamily";
+import { mostStockedVariant } from "@/lib/shiftReportFlow";
 import { letterhead } from "@/lib/letterhead";
 
 export const metadata = { title: "Laporan Penutup Shift" };
@@ -99,6 +100,8 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const setoranSum = setoranRows.length ? `${setoranRows.length} catatan · ${bLines[bLines.length - 1].replace(/^TOTAL SETORAN: /, "")}` : null;
   const receiptViews = receipts.map((x) => ({ id: x.id, number: x.number, itemName: x.item.name, unit: x.item.unit, qty: Number(x.qty), supplierName: x.supplierName, hasPhoto: !!x.photoPath, linked: !!x.purchaseId }));
   const materials = items.map((i) => ({ id: i.id, name: i.name, unit: i.unit }));
+  // Giftbox Mix: bawaan patung ke-5 = karakter patung kering dengan stok terbanyak
+  const mixDefault = template === "GIFTBOX" ? await mostStockedVariant() : null;
 
   return (
     <div className="space-y-5">
@@ -134,6 +137,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   applied={r.stockApplied}
                   resultTitle={rItems.length ? RESULT_TITLE : null}
                   catalogs={catalogs}
+                  mixDefault={mixDefault}
                   resultCount={[...rItems].sort((a, b) => (places.get(a.id)?.order ?? 0) - (places.get(b.id)?.order ?? 0)).map((i) => { const pl = places.get(i.id); return { key: i.id, label: i.name, unit: i.unit, qty: rv[i.id] ?? null, group: pl?.group, sub: pl?.sub, col: pl?.col }; })}
                   flow={flowOn && template ? flow : null}
                   sent={r.workPostedVersion > 0 || r.status !== "DRAFT"}
