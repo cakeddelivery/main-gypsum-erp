@@ -20,7 +20,7 @@ export const metadata = { title: "Dashboard" };
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<{ store?: string }> }) {
   // Koordinator borongan langsung ke halaman titiknya
-  if ((await requireUser()).role === "KOORDINATOR") redirect("/borongan");
+  if (["KOORDINATOR", "DRIVER"].includes((await requireUser()).role)) redirect("/borongan");
   const user = await requirePerm("dashboard.view");
   const sp = await searchParams;
   const today = todayStr();

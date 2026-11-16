@@ -16,6 +16,8 @@ export const metadata = { title: "Buka laporan" };
 export default async function BukaLaporan({ searchParams }: { searchParams: Promise<{ f?: string }> }) {
   const user = await requirePerm("report.view");
   const { f } = await searchParams;
+  // Penerimaan borongan sekarang lewat Borongan › Kiriman (per pengambilan AMB)
+  if (f === "terima") redirect("/borongan?tab=kiriman");
   const go = f === "terima" ? "terima" : "masuk";
   const fixed = reportDivision(user);
   if (!fixed || fixed === "-" || !user.can("report.create")) redirect(go === "terima" ? "/borongan?tab=terima" : "/laporan");

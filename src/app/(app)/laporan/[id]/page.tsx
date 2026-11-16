@@ -24,12 +24,8 @@ import { Modal } from "@/components/Modal";
 import { ClearQuery } from "@/components/ClearQuery";
 import { ReportForm, ReceiptSection } from "./ReportForm";
 import { reportReopenKey } from "@/lib/reopen";
-import { ResultRows } from "../../borongan/BoronganForms";
-import { addResults } from "../../borongan/actions";
-import { setoranData } from "@/lib/boronganSetoran";
 import { boronganScope } from "@/lib/borongan";
 import { receiptItems, receiptReportLines } from "@/lib/boronganReceipt";
-import { ReceiveForm } from "../../borongan/ReceiveForm";
 import { ReportSheet } from "./ReportSheet";
 import { reportCatalogs } from "@/lib/productFamily";
 import { letterhead } from "@/lib/letterhead";
@@ -70,8 +66,6 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const canSetor = (template === "ASSEMBLING" || divTasks > 0) && (user.can("borongan.manage") || user.can("borongan.point"));
   // Anggota divisi: penerimaan total per barang; setoran per pekerja (dasar upah) khusus koordinator/pengelola
   const bScope = canSetor ? await boronganScope(prisma, user) : null;
-  const memberReceive = !!bScope && !bScope.all && !!bScope.division;
-  const setoran = canSetor && !memberReceive ? await setoranData(user, r.divisionId) : null;
   const canDivReceive = canSetor && (bScope?.all || bScope?.division?.id === r.divisionId) && (await receiptItems(r.divisionId)).length > 0;
   const [bLines, flowOn, resultStatus, receipts, pendingReturns] = await Promise.all([
     boronganLines(template, r.date, r.divisionId),
@@ -146,22 +140,8 @@ export default async function ReportDetail({ params, searchParams }: { params: P
               </Modal>
             )}
             {canEdit && canDivReceive && (
-              <Modal trigger="+ Penerimaan borongan" triggerClass="btn-secondary" title="Penerimaan hasil borongan" subtitle={`${r.division.name} · ${fmtDay(r.date)}`} defaultOpen={terima === "1"} wide>
-                <ReceiveForm divisionId={r.divisionId} date={day} />
-              </Modal>
-            )}
-            {canEdit && setoran && setoran.tasks.length > 0 && (
-              <Modal trigger="+ Setoran borongan" triggerClass="btn-secondary" title="Catat setoran borongan" subtitle={`${r.division.name} · ${fmtDay(r.date)}`} wide>
-                <ModalForm action={addResults} className="space-y-3">
-                  <ResultRows pointTasks={setoran.pointTasks} points={setoran.points} workers={setoran.workers} tasks={setoran.tasks} capacity={setoran.capacity} />
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="block"><span className="label">Tanggal</span><input type="date" name="date" defaultValue={day} className="input" /></label>
-                    <label className="block"><span className="label">Catatan</span><input name="note" className="input" /></label>
-                  </div>
-                  <p className="text-xs text-slate-500">Bahan sesuai resep tugas otomatis terpakai dari stok titik, dan barang hasil bertambah di stok titik.</p>
-                  <Submit>Simpan setoran</Submit>
-                </ModalForm>
-              </Modal>
+              // Alur kiriman: setoran diterima per pengambilan (AMB) di Borongan › Kiriman; setoran per pekerja tidak lagi dicatat di sini
+              <Link href="/borongan?tab=kiriman" className="btn-secondary">Terima setoran borongan</Link>
             )}
             {canEdit && (
               <Modal trigger={`+ Barang masuk${receipts.length ? ` (${receipts.length})` : ""}`} triggerClass="btn-secondary" title="Barang masuk hari ini" subtitle={`${r.division.name} · ${r.shift.name} · ${fmtDay(r.date)}`} defaultOpen={masuk === "1"} wide>

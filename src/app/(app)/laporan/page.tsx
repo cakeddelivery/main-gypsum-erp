@@ -10,7 +10,6 @@ import { ReportStartForm } from "@/components/ReportStartForm";
 import { ReportFilters } from "@/components/ReportFilters";
 import { Suspense } from "react";
 import { Paged } from "@/components/Paged";
-import { ReceiveForm } from "../borongan/ReceiveForm";
 import { receiptItems } from "@/lib/boronganReceipt";
 
 export const metadata = { title: "Laporan Shift" };
@@ -66,7 +65,8 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
   const member = fixedDivision !== null;
   // Anggota divisi penerima hasil borongan (Assembling/Giftbox): "+ Penerimaan borongan" (total per barang)
   const canReceive = member && (user.can("borongan.point") || user.can("borongan.manage")) && (await receiptItems(fixedDivision!)).length > 0;
-  const penerimaan = canReceive && <Modal trigger="+ Penerimaan borongan" triggerClass="btn-secondary" title="Penerimaan hasil borongan" wide><ReceiveForm divisionId={fixedDivision!} date={today} /></Modal>;
+  // Alur kiriman: setoran diterima per pengambilan (AMB) di Borongan › Kiriman
+  const penerimaan = canReceive && <Link href="/borongan?tab=kiriman" className="btn-secondary">Terima setoran borongan</Link>;
   const barangMasuk = canCreate && <Modal trigger="+ Barang masuk" triggerClass="btn-secondary" title="Catat barang masuk"><ReportStartForm data={startData} go="masuk" /></Modal>;
   const newForm = canCreate && (
     <>
