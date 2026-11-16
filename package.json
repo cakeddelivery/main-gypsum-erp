@@ -43,7 +43,8 @@
     "validasi:otomatis": "tsx scripts/validasi-otomatis.ts",
     "perbaiki:shift-malam": "tsx scripts/perbaiki-shift-malam.ts",
     "setup:kit-tugas": "tsx scripts/kit-tugas-borongan.ts",
-    "setup:produk-hpp": "tsx scripts/setup-produk-hpp.ts"
+    "setup:produk-hpp": "tsx scripts/setup-produk-hpp.ts",
+    "setup:shift-oven": "tsx scripts/setup-shift-oven.ts"
   },
   "author": "",
   "license": "ISC",
