@@ -245,8 +245,66 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
     }
   };
 
-  // A. Paket 12 & 24 (Packing): Single Pack × isi; Mix sementara rata per varian
-  for (const n of [12, 24] as const) {
+  // Bahan kemas & konversi satuan beli → satuan pakai (Owner): cari nama persis, lalu nama lama yang mirip; buat bila belum ada
+  const material = async (want: { name: string; alias?: RegExp; unit: string; hppUnit: string; factor: number; divisionId: string; divLabel: string; create?: boolean }) => {
+    let it = one(want.name);
+    if (!it && want.alias) {
+      const xs = allItems.filter((i) => want.alias!.test(i.name)).sort((a, b) => Number(b.divisionId === want.divisionId) - Number(a.divisionId === want.divisionId) || a.sku.localeCompare(b.sku));
+      if (xs[0]) {
+        it = xs[0];
+        plan.bentrok.push(`DIPAKAI barang lama ${it.sku} "${it.name}" untuk "${want.name}"${xs.length > 1 ? ` (calon lain: ${xs.slice(1).map((x) => `${x.sku} "${x.name}"`).join(", ")})` : ""} — benar?`);
+      }
+    }
+    if (!it) {
+      if (!want.create) {
+        plan.menunggu.push(`Bahan "${want.name}" belum ada di Master data`);
+        return null;
+      }
+      it = await tx.item.create({ data: { sku: await autoCode.divisionMaterial(tx, want.divisionId === qcp.id ? qcp.code : want.divisionId === gft.id ? gft.code : asm.code), name: want.name, unit: want.unit, hppUnit: want.hppUnit === want.unit ? null : want.hppUnit, hppFactor: want.factor, type: "BAHAN_BAKU", divisionId: want.divisionId } });
+      plan.dibuat.push(`+ ${it.sku} ${want.name} · bahan baku · ${want.divLabel} · beli per ${want.unit}${want.factor !== 1 ? ` (1 ${want.unit} = ${want.factor.toLocaleString("id-ID")} ${want.hppUnit})` : ""}, stok awal 0`);
+      return it;
+    }
+    const data: Prisma.ItemUpdateInput = {};
+    const changes: string[] = [];
+    if (it.unit.toLowerCase() !== want.unit.toLowerCase()) {
+      data.unit = want.unit;
+      changes.push(`satuan beli ${it.unit} → ${want.unit}`);
+    }
+    const hu = want.hppUnit === want.unit ? null : want.hppUnit;
+    if ((it.hppUnit ?? null) !== hu || Number(it.hppFactor) !== want.factor) {
+      data.hppUnit = hu;
+      data.hppFactor = want.factor;
+      if (want.factor !== 1) changes.push(`resep per ${want.hppUnit} (1 ${want.unit} = ${want.factor.toLocaleString("id-ID")} ${want.hppUnit})`);
+    }
+    if (it.divisionId !== want.divisionId) {
+      data.division = { connect: { id: want.divisionId } };
+      changes.push(`divisi → ${want.divLabel}`);
+    }
+    if (!changes.length) return it;
+    plan.diubah.push(`~ ${it.sku} ${it.name}: ${changes.join(", ")}`);
+    return tx.item.update({ where: { id: it.id }, data });
+  };
+  const P = { divisionId: qcp.id, divLabel: "Packing" };
+  const kemas = {
+    dus12: await material({ name: "Dus 12", unit: "pcs", hppUnit: "pcs", factor: 1, ...P }),
+    dus24: await material({ name: "Dus 24", unit: "pcs", hppUnit: "pcs", factor: 1, ...P }),
+    bening: await material({ name: "Solasi bening", unit: "roll", hppUnit: "yard", factor: 500, ...P }),
+    fragile: await material({ name: "Solasi fragile 48mm", alias: /^solasi fragile/i, unit: "roll", hppUnit: "yard", factor: 300, ...P }),
+    bubble: await material({ name: "Bubble wrap", alias: /^bubble ?wrap/i, unit: "roll", hppUnit: "cm", factor: 5000, ...P }),
+    wrap: await material({ name: "Plastik wrap hitam", alias: /^plastik wrap/i, unit: "roll", hppUnit: "cm", factor: 20000, ...P }),
+    stiker: await material({ name: "Stiker unboxing", unit: "pack", hppUnit: "pcs", factor: 1000, ...P, create: true }),
+    thermal: await material({ name: "Print thermal", alias: /^label (termal|thermal) 100/i, unit: "roll", hppUnit: "pcs", factor: 500, ...P }),
+  };
+  /** Bahan kemas per 1 paket (Owner) */
+  const KEMAS: Record<12 | 24 | 48 | 96, [keyof typeof kemas, number][]> = {
+    12: [["dus12", 1], ["bening", 0.3], ["fragile", 1.37], ["bubble", 160], ["stiker", 1], ["thermal", 1]],
+    24: [["dus24", 1], ["bening", 1.31], ["fragile", 1.31], ["wrap", 75], ["bubble", 80], ["stiker", 1], ["thermal", 1]],
+    48: [["dus24", 2], ["bening", 1.75], ["fragile", 1.75], ["wrap", 100], ["bubble", 160], ["thermal", 1]],
+    96: [["dus24", 4], ["bening", 3.5], ["fragile", 3.5], ["wrap", 200], ["bubble", 400], ["thermal", 1]],
+  };
+
+  // A. Paket 12/24/48/96 (Packing): Single Pack × isi (Mix = isi ÷ 4 per varian) + bahan kemas
+  for (const n of [12, 24, 48, 96] as const) {
     for (const pv of PAKET_VARIANTS) {
       const list = await tx.product.findMany({ where: { active: true, type: `PAKET_${n}`, variant: pv.key }, orderBy: { sku: "asc" } });
       if (!list.length) {
@@ -256,25 +314,29 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
       if (list.length > 1) plan.bentrok.push(`DOBEL produk Paket ${n} · ${pv.label}: ${list.map((p) => `${p.sku} "${p.name}"`).join(", ")} (resep dipasang di semuanya)`);
       for (const p of list) {
         await finishedDivision(p, qcp.id, "Packing");
-        if (pv.key === "MIX") {
-          for (const v of VARIANTS) await bom(p.id, p.name, sp.get(v)!, n / 4, `Single Pack ${v}`);
-          plan.menunggu.push(`${p.name}: komposisi Mix sementara ${n / 4}/${n / 4}/${n / 4}/${n / 4} — menunggu konfirmasi Owner`);
-        } else {
+        if (pv.key === "MIX") for (const v of VARIANTS) await bom(p.id, p.name, sp.get(v)!, n / 4, `Single Pack ${v}`);
+        else {
           const v = VARIANTS.find((x) => VARIANT_ENUM[x] === pv.key)!;
           await bom(p.id, p.name, sp.get(v)!, n, `Single Pack ${v}`);
         }
-        const others = await tx.bomLine.findMany({ where: { productId: p.id, itemId: { notIn: [...sp.values()].map((x) => x.id) } }, include: { item: true } });
-        if (others.length) plan.bentrok.push(`${p.sku} ${p.name}: baris resep lama tetap (${others.map((o) => `${o.item.name} ${Number(o.qty)}`).join(", ")}) — periksa apakah dobel dengan Single Pack`);
+        for (const [k, q] of KEMAS[n]) await bom(p.id, p.name, kemas[k], q, kemas[k]?.name ?? k);
+        const known = new Set([...sp.values(), ...Object.values(kemas)].filter(Boolean).map((x) => x!.id));
+        const others = (await tx.bomLine.findMany({ where: { productId: p.id }, include: { item: true } })).filter((o) => !known.has(o.itemId));
+        if (others.length) plan.bentrok.push(`${p.sku} ${p.name}: baris resep lama tetap (${others.map((o) => `${o.item.name} ${Number(o.qty)}`).join(", ")}) — hapus bila dobel dengan Single Pack`);
       }
     }
-    plan.menunggu.push(`Paket ${n} pcs: kemasan paket (mis. Dus ${n}) belum dimasukkan resep — menunggu konfirmasi`);
   }
 
-  // B. Giftbox (Giftbox): resep default per varian; add-on Magnet / Palet menunggu jumlah
+  // B. Giftbox (Giftbox): resep default per varian + bubble wrap 12 cm; add-on Magnet 1 / Pallet 1
+  const G = { divisionId: gft.id, divLabel: "Giftbox" };
   const dus = pcsOnly(one("Dus giftbox 16x16x5"), "Dus giftbox 16x16x5");
   const guide = pcsOnly(one("Color guide"), "Color guide");
   const kuas = pcsOnly(one("Kuas lancip"), "Kuas lancip");
   const sabuk = pcsOnly(one("Sabuk label giftbox"), "Sabuk label giftbox");
+  const gBubble = allItems.find((i) => /^bubble ?wrap/i.test(i.name) && i.divisionId === gft.id) ?? null;
+  const gBubbleCm = gBubble ? await material({ name: gBubble.name, unit: "roll", hppUnit: "cm", factor: 5000, ...G }) : kemas.bubble;
+  const magnet = await material({ name: "Magnet", unit: "pcs", hppUnit: "pcs", factor: 1, ...G, create: true });
+  const pallet = pcsOnly(one("Pallet cat"), "Pallet cat");
   const mixGiftbox: string[] = [];
   const giftboxes = await tx.product.findMany({ where: { active: true, type: "GIFTBOX" }, orderBy: { sku: "asc" } });
   for (const p of giftboxes) {
@@ -284,16 +346,15 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
     await bom(p.id, p.name, kuas, 1, "Kuas lancip");
     await bom(p.id, p.name, cg, 1, "Cat Giftbox");
     await bom(p.id, p.name, sabuk, 1, "Sabuk label giftbox");
+    await bom(p.id, p.name, gBubbleCm, 12, `${gBubbleCm?.name ?? "Bubble wrap"} (cm)`);
+    if (/magnet/i.test(p.name)) await bom(p.id, p.name, magnet, 1, "Magnet");
+    if (/palet|pallet/i.test(p.name)) await bom(p.id, p.name, pallet, 1, "Pallet cat");
     const v = VARIANTS.find((x) => VARIANT_ENUM[x] === p.variant);
     if (v) await bom(p.id, p.name, pcsOnly(one(`Patung kering ${v}`), `Patung kering ${v}`), 5, `Patung kering ${v}`);
     else mixGiftbox.push(p.name);
   }
   if (mixGiftbox.length) plan.menunggu.push(`Giftbox Mix (${mixGiftbox.length} SKU): komposisi 5 patung kering campur menunggu konfirmasi`);
-  if (giftboxes.length) {
-    plan.menunggu.push("Giftbox: jumlah bubble wrap per box menunggu konfirmasi (belum masuk resep)");
-    plan.menunggu.push("Giftbox add-on Magnet / Palet / Magnet+Palet: jumlah magnet & pallet per box menunggu konfirmasi (belum masuk resep)");
-    if (!allItems.some((i) => /magnet/i.test(i.name))) plan.menunggu.push(`Bahan "Magnet" belum ada di Master data`);
-  }
+  plan.menunggu.push("Pot cat plastik: HPP 5 pcs per Cat Giftbox (strip 6 dipotong: isi 3 untuk merah/kuning/biru, isi 2 untuk hitam/putih)");
 
   for (const [target, xs] of rec) plan.resep.push(`${target}: ${xs.join(" · ")}`);
 
