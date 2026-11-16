@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ModalForm } from "./ModalForm";
 import { Submit } from "./ActionForm";
 import { openReport } from "@/app/(app)/laporan/actions";
+import { NIGHT_GRACE_HOURS } from "@/lib/workday";
 
 type Shift = { id: string; name: string; startTime: string; endTime: string };
 export type ReportStartData = {
@@ -31,6 +32,22 @@ export function currentShift(shifts: Shift[], now = new Date()): Shift | undefin
   return [...shifts].sort((x, y) => dist(x) - dist(y))[0];
 }
 
+const prevDay = (day: string) => new Date(Date.parse(`${day}T00:00:00.000Z`) - 86_400_000).toISOString().slice(0, 10);
+
+/**
+ * Laporan yang sedang berjalan: tanggal laporan = TANGGAL MULAI SHIFT (sama dengan absen). Lewat tengah malam sampai
+ * jam selesai shift malam + batas wajar (NIGHT_GRACE_HOURS), laporan shift malam tetap milik tanggal kemarin.
+ */
+export function reportSlot(shifts: Shift[], today: string, now = new Date()): { shift: Shift | undefined; date: string } {
+  const t = now.getHours() * 60 + now.getMinutes();
+  const night = shifts.find((s) => {
+    const a = mins(s.startTime), b = mins(s.endTime);
+    return b <= a && t < a && t < b + NIGHT_GRACE_HOURS * 60;
+  });
+  if (night) return { shift: night, date: prevDay(today) };
+  return { shift: currentShift(shifts, now), date: today };
+}
+
 /**
  * Pilih tanggal, divisi, shift → buka (atau buat) draf laporan shift.
  * go="isi" membuka form laporan, go="masuk" membuka popup Barang masuk laporan itu.
@@ -43,7 +60,12 @@ export function ReportStartForm({ data, go = "isi" }: { data: ReportStartData; g
   const shiftOpts = useMemo(() => (d ? shifts.slice(0, Math.max(1, d.shiftCount)) : shifts), [d, shifts]);
   // Hitung shift dari jam HP setelah tampil di browser (bukan di server)
   const [guess, setGuess] = useState<string>("");
-  useEffect(() => setGuess(currentShift(shiftOpts)?.id ?? ""), [shiftOpts]);
+  const [date, setDate] = useState(today);
+  useEffect(() => {
+    const slot = reportSlot(shiftOpts, today);
+    setGuess(slot.shift?.id ?? "");
+    setDate(slot.date);
+  }, [shiftOpts, today]);
   const auto = !!data.auto && divisions.length === 1 && !!guess;
   const formWrap = useRef<HTMLDivElement>(null);
   const sent = useRef(false);
@@ -61,12 +83,12 @@ export function ReportStartForm({ data, go = "isi" }: { data: ReportStartData; g
         <input type="hidden" name="go" value={go} />
         {auto ? (
           <>
-            <input type="hidden" name="date" value={today} />
+            <input type="hidden" name="date" value={date} />
             <input type="hidden" name="divisionId" value={divisions[0].id} />
             <input type="hidden" name="shiftId" value={guess} />
             <div className="flex items-center gap-3 py-2 text-sm text-slate-600">
               <span className="btn-spinner text-brand-600" aria-hidden />
-              Membuka laporan {divisions[0].name}{shiftName ? ` · ${shiftName}` : ""} hari ini…
+              Membuka laporan {divisions[0].name}{shiftName ? ` · ${shiftName}` : ""} {date === today ? "hari ini" : "shift malam kemarin"}…
             </div>
             <div className="hidden"><Submit>Buka</Submit></div>
           </>
@@ -75,7 +97,8 @@ export function ReportStartForm({ data, go = "isi" }: { data: ReportStartData; g
             <p className="text-sm text-slate-500">{go === "masuk" ? "Barang masuk dicatat ke laporan shift ini (isi sebelum menghitung stok akhir)." : "Pilih laporan yang akan diisi. Bila laporan itu sudah ada, isiannya dilanjutkan."}</p>
             <label className="block">
               <span className="label">Tanggal</span>
-              <input type="date" name="date" defaultValue={today} max={today} className="input" required />
+              <input key={date} type="date" name="date" defaultValue={date} max={today} className="input" required />
+              {date !== today && <span className="mt-1 block text-xs text-amber-700">Shift malam lewat tengah malam: laporan masuk tanggal mulai shift (kemarin).</span>}
             </label>
             {divisions.length === 1 ? (
               <>

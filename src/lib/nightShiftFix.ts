@@ -57,3 +57,46 @@ export async function applyNightFixes(fixes: NightFix[]) {
   }
   return fixes.length;
 }
+
+// ---------------- LAPORAN SHIFT MALAM ----------------
+
+/**
+ * Laporan shift malam (mis. Cetak Shift 2 16:00–01:00) yang dibuka setelah tengah malam sebelum hotfix tercatat di
+ * tanggal hari baru. Tanggal laporan = tanggal MULAI shift, jadi dipindah ke kemarin.
+ * Syarat: shift lintas tengah malam, laporan DIBUAT pada tanggalnya sendiri sebelum jam selesai shift + batas wajar.
+ * Bila kemarin sudah ada laporan divisi & shift yang sama (bentrok), tidak dipindah — diputuskan manual.
+ */
+export type ReportFix = { id: string; label: string; from: string; to: string; conflictWith: string | null };
+
+export async function findNightReportFixes(days = 14, now = new Date()): Promise<ReportFix[]> {
+  const from = addDays(todayStr(now), -days);
+  const rows = await prisma.shiftReport.findMany({ where: { date: { gte: dateOnly(from) } }, include: { shift: true, division: { select: { name: true } } }, orderBy: { date: "asc" } });
+  const out: ReportFix[] = [];
+  for (const r of rows) {
+    if (!crossesMidnight(r.shift)) continue;
+    const date = dateStr(r.date);
+    if (todayStr(r.createdAt) !== date) continue;
+    const prev = addDays(date, -1);
+    const limit = shiftWindow(prev, r.shift).end.getTime() + NIGHT_GRACE_HOURS * 3600_000;
+    if (r.createdAt.getTime() >= limit) continue;
+    const clash = rows.find((x) => x.id !== r.id && dateStr(x.date) === prev && x.shiftId === r.shiftId && x.divisionId === r.divisionId)
+      ?? (await prisma.shiftReport.findFirst({ where: { date: dateOnly(prev), shiftId: r.shiftId, divisionId: r.divisionId, id: { not: r.id } }, select: { id: true, status: true, createdBy: true } }));
+    out.push({
+      id: r.id, from: date, to: prev, conflictWith: clash?.id ?? null,
+      label: `${r.division.name} · ${r.shift.name}: laporan ${fmtDay(r.date)} (dibuka ${fmtDateTime(r.createdAt)}, ${r.status}) → ${fmtDay(dateOnly(prev))}${clash ? " — BENTROK: tanggal itu sudah punya laporan divisi & shift yang sama, tidak dipindah (putuskan manual)" : ""}`,
+    });
+  }
+  return out;
+}
+
+export async function applyNightReportFixes(fixes: ReportFix[]) {
+  let n = 0;
+  for (const f of fixes.filter((x) => !x.conflictWith)) {
+    await prisma.$transaction(async (tx) => {
+      await tx.shiftReport.update({ where: { id: f.id }, data: { date: dateOnly(f.to) } });
+      await tx.auditLog.create({ data: { actorName: "Skrip perbaikan shift malam", action: "LAPORAN_SHIFT_MALAM_DIPINDAH", entity: "ShiftReport", entityId: f.id, data: { dari: f.from, ke: f.to } } });
+    });
+    n++;
+  }
+  return n;
+}
