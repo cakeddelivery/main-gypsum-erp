@@ -184,6 +184,15 @@ export async function claimDetail(id: string) {
   return { ...c, breakdown: claimBreakdown(c.results), from: dates[0] ?? null, to: dates[dates.length - 1] ?? null };
 }
 
+/**
+ * Rincian untuk satu pekerja saja (dokumen per pekerja): hanya fee pekerja itu; koordinator & driver tidak tampil.
+ */
+export function onlyWorker(b: ClaimBreakdown, workerId: string): ClaimBreakdown {
+  const workers = b.workers.filter((w) => w.id === workerId);
+  const t = workers.reduce((a, w) => a + w.total, 0);
+  return { workers, coordinators: [], drivers: [], totals: { workers: t, coordinators: 0, drivers: 0, all: t } };
+}
+
 /** Ringkasan upah titik untuk HP koordinator: progres 7× dan upah belum diklaim */
 export async function pointWageSummary(pointId: string) {
   const [count, results, claims] = await Promise.all([
@@ -192,5 +201,6 @@ export async function pointWageSummary(pointId: string) {
     prisma.boronganClaim.findMany({ where: { pointId }, orderBy: { createdAt: "desc" }, take: 20, select: { id: true, number: true, status: true, total: true, createdAt: true, auto: true, rejectReason: true } }),
   ]);
   const held = await prisma.boronganResult.count({ where: { pointId, settlementId: null, held: true } });
-  return { count, every: CLAIM_EVERY, breakdown: claimBreakdown(results), claims, held };
+  const dates = results.map((r) => r.date.toISOString().slice(0, 10)).sort();
+  return { count, every: CLAIM_EVERY, breakdown: claimBreakdown(results), claims, held, from: dates[0] ?? null, to: dates[dates.length - 1] ?? null, setoran: results.length };
 }

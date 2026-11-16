@@ -40,3 +40,18 @@ describe("Portal koordinator: hanya titik sendiri", () => {
     expect(scopeShipments(coord, list)).toHaveLength(0);
   });
 });
+
+import { onlyWorker, type ClaimBreakdown } from "@/lib/boronganClaim";
+describe("Dokumen klaim per pekerja", () => {
+  it("hanya fee pekerja itu; koordinator & driver tidak tampil", () => {
+    const b: ClaimBreakdown = {
+      workers: [{ id: "w1", name: "Icuk", lines: [{ label: "Assembling Hewan", qty: 10, rate: 30, amount: 300 }], total: 300 }, { id: "w2", name: "Sunny", lines: [], total: 500 }],
+      coordinators: [{ id: "k", name: "Koor", lines: [], total: 40 }], drivers: [{ id: "d", name: "Edy", lines: [], total: 20 }],
+      totals: { workers: 800, coordinators: 40, drivers: 20, all: 860 },
+    };
+    const w = onlyWorker(b, "w1");
+    expect(w.workers.map((x) => x.name)).toEqual(["Icuk"]);
+    expect([w.coordinators, w.drivers]).toEqual([[], []]);
+    expect(w.totals).toEqual({ workers: 300, coordinators: 0, drivers: 0, all: 300 });
+  });
+});

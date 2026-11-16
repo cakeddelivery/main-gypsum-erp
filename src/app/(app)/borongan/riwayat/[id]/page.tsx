@@ -2,7 +2,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requirePerm } from "@/lib/auth";
 import { dateOnly, fmtDay } from "@/lib/time";
-import { STATE_LABEL, shipmentView } from "@/lib/boronganFlow";
+import { STATE_LABEL, forCoordinator, isCoordinatorScope, shipmentView } from "@/lib/boronganFlow";
+import { boronganScope } from "@/lib/borongan";
+import { prisma } from "@/lib/db";
 import { isAssemblingTask } from "@/lib/boronganClaim";
 import { Badge, PageHeader } from "@/components/ui";
 import { WorkerCard } from "../../KirimanForms";
@@ -15,8 +17,12 @@ const PICKUP = { DIBAWA: ["menunggu dihitung", "amber"], DITERIMA: ["cocok / dit
 /** Detail satu kiriman: ringkasan angka, bahan dikirim, tabel per pekerja, setiap pengambilan, info untuk tim Oven */
 export default async function KirimanDetail({ params }: { params: Promise<{ id: string }> }) {
   const user = await requirePerm("borongan.view", "borongan.point", "borongan.manage");
-  if (!(await canSeeHistory(user))) notFound();
-  const s = await shipmentView((await params).id);
+  // Riwayat penuh: pengelola & tim divisi; koordinator hanya bagian titiknya sendiri (disaring di server)
+  const full = await canSeeHistory(user);
+  const scope = full ? null : await boronganScope(prisma, user);
+  if (!full && !(scope && isCoordinatorScope(scope))) notFound();
+  const raw = await shipmentView((await params).id);
+  const s = raw && (scope ? forCoordinator(raw, scope.pointIds) : raw);
   if (!s) notFound();
   const workers = [...new Map(s.cells.map((c) => [c.workerId, { id: c.workerId, name: c.worker, pointId: c.pointId }])).values()];
   const pname = (id: string) => s.points.find((p) => p.id === id)?.name ?? "";
@@ -30,7 +36,7 @@ export default async function KirimanDetail({ params }: { params: Promise<{ id: 
       <div className="flex flex-wrap items-center gap-2">
         {s.cancelled ? <Badge tone="gray">Dibatalkan</Badge> : s.waitingSupport ? <Badge tone="amber">Menunggu bahan pendukung</Badge> : <Badge tone={s.state === "SELESAI" ? "green" : "amber"}>{STATE_LABEL[s.state]}</Badge>}
         <span className="text-sm text-slate-500">dicatat {s.createdBy}</span>
-        <Link href="/borongan/riwayat" className="ml-auto text-sm font-semibold text-brand-700 underline">← Riwayat</Link>
+        <Link href={full ? "/borongan/riwayat" : "/borongan?tab=kiriman"} className="ml-auto text-sm font-semibold text-brand-700 underline">← {full ? "Riwayat" : "Kiriman"}</Link>
       </div>
 
       <div className="grid grid-cols-2 gap-2 keep-cols sm:grid-cols-4">
