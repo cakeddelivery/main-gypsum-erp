@@ -335,6 +335,9 @@ export async function coordinatorFor(db: DB, worker: { coordinatorId?: string | 
     if (c) return c;
   }
   if (!worker.pointId) return null;
+  // Titik disetel tanpa koordinator → upah koordinator ke pekerja
+  const point = await db.boronganPoint.findUnique({ where: { id: worker.pointId }, select: { noCoordinator: true } });
+  if (point?.noCoordinator) return null;
   return db.boronganPerson.findFirst({ where: { role: "KOORDINATOR", pointId: worker.pointId, active: true }, orderBy: { createdAt: "asc" } });
 }
 

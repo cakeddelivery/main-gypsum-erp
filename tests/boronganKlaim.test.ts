@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/db";
-import { cancelSettlement, ratesFor, savePerson, settlePoint, type Scope } from "@/lib/borongan";
+import { cancelSettlement, coordinatorFor, ratesFor, savePerson, settlePoint, type Scope } from "@/lib/borongan";
 import { canReceive, canShipGroup, completeShipment, createKeringDraft, createPickup, createShipment, receivePickup, saveAllots } from "@/lib/boronganFlow";
 import { stockBalances } from "@/lib/stock";
 import { CLAIM_EVERY, approveClaim, assemblingCount, autoClaims, canRequestClaim, claimBreakdown, rejectClaim, requestClaim } from "@/lib/boronganClaim";
@@ -161,6 +161,12 @@ describe("Klaim upah di database", () => {
     const of = (id: string) => rs.find((r) => r.workerId === id)!;
     expect([of(solo.id).workerRate, of(solo.id).coordinatorRate, of(solo.id).coordinatorId].map((x) => (typeof x === "bigint" ? Number(x) : x))).toEqual([45, 0, null]);
     expect([of(ctx.w.id).workerRate, of(ctx.w.id).coordinatorRate, of(ctx.w.id).coordinatorId].map((x) => (typeof x === "bigint" ? Number(x) : x))).toEqual([30, 15, ctx.coord.id]);
+    // Titik disetel tanpa koordinator → semua pekerja titik itu menerima penuh (pilihan per pekerja tetap diutamakan)
+    expect((await coordinatorFor(prisma, { pointId: ctx.point.id }))?.id).toBe(ctx.coord.id);
+    await prisma.boronganPoint.update({ where: { id: ctx.point.id }, data: { noCoordinator: true } });
+    expect(await coordinatorFor(prisma, { pointId: ctx.point.id })).toBeNull();
+    expect((await coordinatorFor(prisma, { pointId: ctx.point.id, coordinatorId: ctx.coord.id }))?.id).toBe(ctx.coord.id);
+    await prisma.boronganPoint.update({ where: { id: ctx.point.id }, data: { noCoordinator: false } });
     // Pilihan koordinator lain (aktif) dipakai; koordinator tidak aktif ditolak
     await expect(savePerson({ id: solo.id, name: solo.name, role: "PEKERJA", pointId: ctx.point.id, coordinatorId: ctx.w.id }, actor, all)).rejects.toThrow(/Koordinator tidak aktif/);
   });

@@ -241,3 +241,16 @@ export const voidDivisionReceipt = action(
   },
   [...PATHS, "/laporan"],
 );
+
+/** Setelan titik borongan: lewat driver / diantar langsung, dan ada tidaknya koordinator */
+export const savePointSettings = action(
+  "borongan.manage",
+  async (fd, user) => {
+    const id = str(fd, "id");
+    const data = { viaDriver: fd.get("viaDriver") === "on", noCoordinator: fd.get("noCoordinator") === "on" };
+    const p = await prisma.boronganPoint.update({ where: { id }, data });
+    await audit(user, "TITIK_BORONGAN_DIATUR", "BoronganPoint", id, { titik: p.code, lewatDriver: data.viaDriver, tanpaKoordinator: data.noCoordinator });
+    return `Titik ${p.name} tersimpan${data.noCoordinator ? " (tanpa koordinator: upah koordinator ke pekerja)" : ""}`;
+  },
+  PATHS,
+);

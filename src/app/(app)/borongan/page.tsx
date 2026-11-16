@@ -20,7 +20,7 @@ import { taskKits } from "@/lib/boronganSetup";
 import { KlaimTab } from "./KlaimTab";
 import { diffLines, receiptDiff } from "@/lib/boronganReceipt";
 import { dateOnly } from "@/lib/time";
-import { cancelPayPoint, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, saveTask, sendHandover, voidDivisionReceipt, voidHandover } from "./actions";
+import { cancelPayPoint, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, savePointSettings, saveTask, sendHandover, voidDivisionReceipt, voidHandover } from "./actions";
 
 export const metadata = { title: "Borongan" };
 
@@ -137,7 +137,12 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
       {tab === "hasil" && <ResultsTab filter={{ ...resultFilter, ...taskFilter }} scope={scope} userId={user.id} />}
       {tab === "upah" && <WagesTab points={points} banks={banks} canPay={user.can("borongan.pay")} />}
       {tab === "orang" && <PeopleTab people={people} points={points} manage={manage} canLogin={manage} tasks={tasks.filter((t) => t.active).map((t) => ({ id: t.id, name: t.name, division: divisionName.get(t.divisionId ?? "") ?? null }))} />}
-      {tab === "tugas" && manage && <TasksTab tasks={tasks} items={items} divisions={divisions} kits={await taskKits(prisma)} />}
+      {tab === "tugas" && manage && (
+        <>
+          <PointsCard points={points.map((p) => ({ id: p.id, name: p.name, viaDriver: p.viaDriver, noCoordinator: p.noCoordinator, coordinators: people.filter((x) => x.role === "KOORDINATOR" && x.active && x.pointId === p.id).map((x) => x.name) }))} />
+          <TasksTab tasks={tasks} items={items} divisions={divisions} kits={await taskKits(prisma)} />
+        </>
+      )}
     </div>
   );
 }
@@ -466,6 +471,31 @@ function TaskForm({ task, items, divisions, kit = [] }: { task?: TaskRow; items:
       {task && <Field label="Status"><select name="active" defaultValue={task.active ? "on" : "off"} className="input"><option value="on">Aktif</option><option value="off">Nonaktif</option></select></Field>}
       <Submit>Simpan</Submit>
     </ModalForm>
+  );
+}
+
+/** Setelan per titik: cara kirim bawaan & ada tidaknya koordinator (tanpa koordinator → upah koordinator ke pekerja) */
+function PointsCard({ points }: { points: { id: string; name: string; viaDriver: boolean; noCoordinator: boolean; coordinators: string[] }[] }) {
+  return (
+    <Card title="Titik borongan">
+      <ul className="divide-y divide-slate-100">
+        {points.map((p) => (
+          <li key={p.id} className="py-3">
+            <ActionForm action={savePointSettings} className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <input type="hidden" name="id" value={p.id} />
+              <div className="min-w-0 flex-1 basis-40">
+                <div className="font-semibold text-slate-900">{p.name}</div>
+                <div className="text-xs text-slate-500">{p.noCoordinator ? "Tanpa koordinator: upah koordinator dibayarkan ke pekerja" : p.coordinators.length ? `Koordinator: ${p.coordinators.join(", ")}` : "Belum ada koordinator: upah koordinator ke pekerja"}</div>
+              </div>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="viaDriver" defaultChecked={p.viaDriver} className="h-4 w-4" /> Lewat driver</label>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="noCoordinator" defaultChecked={p.noCoordinator} className="h-4 w-4" /> Tanpa koordinator</label>
+              <Submit className="btn-secondary btn-sm">Simpan</Submit>
+            </ActionForm>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-xs text-slate-500">Ada koordinator: bagian koordinator (mis. Cat Plastik Rp2) untuk koordinator. Tanpa koordinator: pekerja menerima penuh (Rp15). Pilihan per pekerja di tab Orang lebih diutamakan.</p>
+    </Card>
   );
 }
 
