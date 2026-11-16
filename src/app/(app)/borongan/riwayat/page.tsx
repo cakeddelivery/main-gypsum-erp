@@ -39,7 +39,7 @@ export default async function RiwayatPage() {
                     <td className="text-right tabular-nums">{f(s.totals.received)}</td>
                     <td className="text-right tabular-nums">{f(s.totals.reject)}</td>
                     <td className="text-right tabular-nums">{s.totals.gap == null ? <span className="text-slate-400">—</span> : s.totals.gap ? <b className="text-rose-700">−{f(s.totals.gap)}</b> : "0"}</td>
-                    <td>{s.cancelled ? <Badge tone="gray">Dibatalkan</Badge> : <Badge tone={TONE[s.state]}>{STATE_LABEL[s.state]}</Badge>}</td>
+                    <td>{s.cancelled ? <Badge tone="gray">Dibatalkan</Badge> : s.waitingSupport ? <Badge tone="amber">Menunggu bahan pendukung</Badge> : <Badge tone={TONE[s.state]}>{STATE_LABEL[s.state]}</Badge>}</td>
                   </tr>
                 ))}
               </tbody>

@@ -48,7 +48,11 @@ export type Scope = {
   personId: string | null;
   warehouse?: boolean;
   taskIds?: string[] | null;
-  division?: { id: string; captain: boolean } | null;
+  division?: { id: string; captain: boolean; template?: string | null } | null;
+  /** Tim Cetak/Oven: mengisi patung kering kiriman Assembling */
+  kering?: boolean;
+  /** Tim Packing: menerima setoran Assembling */
+  packing?: boolean;
   /** Akun driver borongan (role DRIVER): hanya pembagian & ambil setoran kiriman lewat driver */
   driver?: boolean;
 };
@@ -60,6 +64,9 @@ export async function isBoronganDivisionCaptain(db: DB, user: { role?: string; d
   const d = await db.division.findUnique({ where: { id: user.divisionId }, select: { reportTemplate: true } });
   return d?.reportTemplate === "ASSEMBLING";
 }
+
+/** Divisi Cetak / Oven: penghasil patung kering (mengisi patung kering kiriman Assembling) */
+export const isKeringDivision = (d: { name: string; reportTemplate: string | null } | null | undefined) => !!d && (d.reportTemplate === "CETAK" || /\b(cetak|oven)\b/i.test(d.name));
 
 /** Anggota divisi (Kapten/Operator) yang divisinya punya tugas borongan aktif boleh mencatat setoran tugas itu */
 export function isDivisionMemberRole(role?: string) {
@@ -82,13 +89,20 @@ export async function boronganScope(db: DB, user: ScopeUser): Promise<Scope> {
     const tasks = await db.pieceTask.findMany({ where: { divisionId: user.divisionId, active: true }, select: { id: true } });
     const captain = user.role === "KAPTEN_DIVISI";
     const warehouse = await isBoronganDivisionCaptain(db, user);
+    const dv = await db.division.findUnique({ where: { id: user.divisionId }, select: { name: true, reportTemplate: true } });
+    const kering = isKeringDivision(dv);
+    const packing = dv?.reportTemplate === "PACKING";
+    if (kering || packing) {
+      const points = await db.boronganPoint.findMany({ where: { active: true }, select: { id: true } });
+      return { all: false, pointIds: points.map((p) => p.id), personId: null, taskIds: [], division: { id: user.divisionId, captain, template: dv?.reportTemplate ?? null }, kering, packing };
+    }
     if (tasks.length || warehouse) {
       const taskIds = tasks.map((t) => t.id);
       const points = await db.boronganPoint.findMany({ where: { active: true }, select: { id: true } });
       // Titik yang mengerjakan tugas divisi (menurut pengaturan tugas per titik); tanpa pengaturan = semua titik aktif
       const cfg = await pointConfig(db);
       const pointIds = points.map((p) => p.id).filter((id) => warehouse || !cfg[id]?.tasks.length || cfg[id].tasks.some((t) => taskIds.includes(t)));
-      return { all: false, pointIds, personId: null, warehouse, taskIds, division: { id: user.divisionId, captain } };
+      return { all: false, pointIds, personId: null, warehouse, taskIds, division: { id: user.divisionId, captain, template: dv?.reportTemplate ?? null } };
     }
   }
   return { all: false, pointIds: [], personId: null, taskIds: null };
@@ -321,6 +335,9 @@ export async function coordinatorFor(db: DB, worker: { coordinatorId?: string | 
     if (c) return c;
   }
   if (!worker.pointId) return null;
+  // Titik disetel tanpa koordinator → upah koordinator ke pekerja
+  const point = await db.boronganPoint.findUnique({ where: { id: worker.pointId }, select: { noCoordinator: true } });
+  if (point?.noCoordinator) return null;
   return db.boronganPerson.findFirst({ where: { role: "KOORDINATOR", pointId: worker.pointId, active: true }, orderBy: { createdAt: "asc" } });
 }
 

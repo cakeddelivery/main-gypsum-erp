@@ -63,10 +63,11 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const lh = await letterhead();
   const divTasks = await prisma.pieceTask.count({ where: { divisionId: r.divisionId, active: true } });
   // "+ Setoran borongan": form setoran (#93) di popup, hanya bila divisi punya tugas borongan & user berhak
-  const canSetor = (template === "ASSEMBLING" || divTasks > 0) && (user.can("borongan.manage") || user.can("borongan.point"));
+  const canSetor = (template === "ASSEMBLING" || template === "PACKING" || divTasks > 0) && (user.can("borongan.manage") || user.can("borongan.point"));
   // Anggota divisi: penerimaan total per barang; setoran per pekerja (dasar upah) khusus koordinator/pengelola
   const bScope = canSetor ? await boronganScope(prisma, user) : null;
-  const canDivReceive = canSetor && (bScope?.all || bScope?.division?.id === r.divisionId) && (await receiptItems(r.divisionId)).length > 0;
+  // Packing menerima setoran Assembling (alur kiriman); divisi lain menerima hasil tugasnya sendiri
+  const canDivReceive = canSetor && (bScope?.all || bScope?.division?.id === r.divisionId) && (template === "PACKING" || (await receiptItems(r.divisionId)).length > 0);
   const [bLines, flowOn, resultStatus, receipts, pendingReturns] = await Promise.all([
     boronganLines(template, r.date, r.divisionId),
     flowEnabled(),

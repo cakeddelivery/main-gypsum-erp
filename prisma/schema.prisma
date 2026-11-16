@@ -513,24 +513,26 @@ enum HandoverStatus {
 
 /// Titik kerja borongan (BMR, Mastrip); stok bahan & hasil di titik memakai lokasi stok sendiri
 model BoronganPoint {
-  id           String                @id @default(cuid())
-  code         String                @unique
-  name         String
-  locationId   String                @unique
-  location     Location              @relation(fields: [locationId], references: [id])
-  active       Boolean               @default(true)
+  id            String                @id @default(cuid())
+  code          String                @unique
+  name          String
+  locationId    String                @unique
+  location      Location              @relation(fields: [locationId], references: [id])
+  active        Boolean               @default(true)
   /// Kiriman bahan ke titik ini lewat driver (false = diantar/diambil langsung, mis. Beringin)
-  viaDriver    Boolean               @default(true)
-  createdAt    DateTime              @default(now())
-  people       BoronganPerson[]
-  handovers    BoronganHandover[]
-  results      BoronganResult[]
-  settlements  BoronganSettlement[]
-  receiptLines BoronganReceiptLine[]
-  allots       BoronganAllot[]
-  reports      BoronganWorkReport[]
-  pickupLines  BoronganPickupLine[]
-  claims       BoronganClaim[]
+  viaDriver     Boolean               @default(true)
+  /// Titik tanpa koordinator: bagian upah koordinator dibayarkan ke pekerja (mis. Cat Plastik Rp15 penuh)
+  noCoordinator Boolean               @default(false)
+  createdAt     DateTime              @default(now())
+  people        BoronganPerson[]
+  handovers     BoronganHandover[]
+  results       BoronganResult[]
+  settlements   BoronganSettlement[]
+  receiptLines  BoronganReceiptLine[]
+  allots        BoronganAllot[]
+  reports       BoronganWorkReport[]
+  pickupLines   BoronganPickupLine[]
+  claims        BoronganClaim[]
 }
 
 /// Tetangga yang bekerja borongan (bukan karyawan): pekerja & koordinator per titik, driver tanpa titik
@@ -2269,25 +2271,30 @@ enum PickupStatus {
 /// Kiriman bahan borongan bernomor KRM-DDMMYY-NN. Lewat driver: bahan gudang → lokasi driver, lalu ke titik saat dibagi.
 /// Diantar langsung: bahan gudang → lokasi titik (satu titik).
 model BoronganShipment {
-  id          String                 @id @default(cuid())
-  number      String                 @unique
-  date        DateTime               @db.Date
-  mode        ShipmentMode
+  id             String                 @id @default(cuid())
+  number         String                 @unique
+  date           DateTime               @db.Date
+  mode           ShipmentMode
   /// Titik tujuan (BoronganPoint.id)
-  pointIds    String[]
-  driverId    String?
-  driver      BoronganPerson?        @relation(fields: [driverId], references: [id])
-  note        String?
-  createdBy   String
-  createdById String?
-  createdAt   DateTime               @default(now())
-  cancelledAt DateTime?
-  cancelledBy String?
-  tasks       BoronganShipmentTask[]
-  lines       BoronganShipmentLine[]
-  allots      BoronganAllot[]
-  reports     BoronganWorkReport[]
-  pickups     BoronganPickup[]
+  pointIds       String[]
+  driverId       String?
+  driver         BoronganPerson?        @relation(fields: [driverId], references: [id])
+  note           String?
+  createdBy      String
+  createdById    String?
+  createdAt      DateTime               @default(now())
+  cancelledAt    DateTime?
+  cancelledBy    String?
+  /// Assembling: patung kering sudah diisi Cetak/Oven, menunggu Assembling/Supervisor melengkapi bahan pendukung
+  /// (stok belum keluar gudang selama masih menunggu)
+  waitingSupport Boolean                @default(false)
+  completedBy    String?
+  completedAt    DateTime?
+  tasks          BoronganShipmentTask[]
+  lines          BoronganShipmentLine[]
+  allots         BoronganAllot[]
+  reports        BoronganWorkReport[]
+  pickups        BoronganPickup[]
 
   @@index([date])
 }
