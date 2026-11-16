@@ -549,6 +549,12 @@ model BoronganPerson {
   /// Jenis pekerjaan (PieceTask.id) yang dikerjakan pekerja ini; divisinya mengikuti divisi tugas.
   /// Kosong = belum diatur (boleh semua tugas di titiknya, seperti sebelumnya)
   taskIds       String[]                 @default([])
+  /// Koordinator pilihan pekerja ini (kosong = koordinator titik; tanpa koordinator = bagian koordinator masuk ke pekerja)
+  coordinatorId String?
+  coordinator   BoronganPerson?          @relation("WorkerCoordinator", fields: [coordinatorId], references: [id])
+  coordinates   BoronganPerson[]         @relation("WorkerCoordinator")
+  /// Pekerja dipilih TANPA koordinator walau titiknya punya koordinator (bagian koordinator dibayarkan ke pekerja)
+  noCoordinator Boolean                  @default(false)
   createdAt     DateTime                 @default(now())
   works         BoronganResult[]         @relation("ResultWorker")
   coordinated   BoronganResult[]         @relation("ResultCoordinator")

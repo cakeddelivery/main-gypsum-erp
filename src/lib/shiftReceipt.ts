@@ -26,8 +26,22 @@ export type ReceiptInput = {
 };
 
 export async function addShiftReceipt(reportId: string, input: ReceiptInput, actor: Actor, now: Date = new Date()) {
-  if (!(input.qty > 0)) throw new StockError("Jumlah barang masuk harus lebih dari 0");
+  return (await addShiftReceipts(reportId, [input], actor, now))[0];
+}
+
+/** Banyak barang masuk sekaligus (satu tombol Simpan): semua tersimpan, atau tidak sama sekali bila satu baris gagal */
+export async function addShiftReceipts(reportId: string, inputs: ReceiptInput[], actor: Actor, now: Date = new Date()) {
+  if (!inputs.length) throw new StockError("Isi minimal satu barang");
+  for (const i of inputs) if (!(i.qty > 0)) throw new StockError("Jumlah barang masuk harus lebih dari 0");
   return prisma.$transaction(async (tx) => {
+    const out = [];
+    for (const input of inputs) out.push(await addReceiptTx(tx, reportId, input, actor, now));
+    return out;
+  }, { timeout: 30000 });
+}
+
+async function addReceiptTx(tx: Prisma.TransactionClient, reportId: string, input: ReceiptInput, actor: Actor, now: Date) {
+  {
     const r = await tx.shiftReport.findUniqueOrThrow({ where: { id: reportId }, include: { shift: true } });
     const item = await tx.item.findUniqueOrThrow({ where: { id: input.itemId } });
     if (item.divisionId !== r.divisionId || item.type !== "BAHAN_BAKU") throw new StockError("Pilih bahan baku divisi ini");
@@ -50,7 +64,7 @@ export async function addShiftReceipt(reportId: string, input: ReceiptInput, act
     if (r.status === "TERKIRIM") await tx.shiftReport.update({ where: { id: r.id }, data: { status: "DIREVISI" } });
     await audit(actor, "BARANG_MASUK_LAPORAN", "ShiftReceipt", x.id, { number, item: item.sku, qty: input.qty }, tx);
     return x;
-  });
+  }
 }
 
 /** Hapus barang masuk yang salah catat: hanya sebelum laporannya dikirim dan belum ditautkan ke Pembelian */

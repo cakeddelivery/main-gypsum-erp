@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/db";
-import { cancelSettlement, savePerson, settlePoint, type Scope } from "@/lib/borongan";
+import { cancelSettlement, ratesFor, savePerson, settlePoint, type Scope } from "@/lib/borongan";
 import { createPickup, createShipment, receivePickup, saveAllots } from "@/lib/boronganFlow";
 import { CLAIM_EVERY, approveClaim, assemblingCount, autoClaims, canRequestClaim, claimBreakdown, rejectClaim, requestClaim } from "@/lib/boronganClaim";
-import { zeroCatPlastikCoordinator } from "@/lib/boronganSetup";
 import { saveItemRecord } from "@/lib/items";
+import { sendPush } from "@/lib/push";
 
 vi.mock("@/lib/push", async (orig) => ({ ...(await orig<typeof import("@/lib/push")>()), sendPush: vi.fn(async () => ({ sent: 0, removed: 0, failed: 0, users: 0 })) }));
 
@@ -137,13 +137,34 @@ describe("Klaim upah di database", () => {
     await expect(requestClaim(ctx.point.id, actor, ctx.coordScope)).rejects.toThrow(/Belum ada upah/);
   });
 
-  it("tarif Cat Plastik: bagian koordinator Rp0, budget turun, pratinjau tidak menyimpan", async () => {
-    const t = await prisma.pieceTask.create({ data: { code: `CP${tag}`, name: `Cat plastik uji ${tag}`, active: false, ratePerPcs: 15n, workerRate: 13n, coordinatorRate: 2n, driverRate: 0n } });
-    const log = await zeroCatPlastikCoordinator(prisma, false, [t.id]);
-    expect(log.some((l) => l.includes(`Cat plastik uji ${tag}`) && l.includes("Rp2 → Rp0"))).toBe(true);
-    expect(Number((await prisma.pieceTask.findUniqueOrThrow({ where: { id: t.id } })).coordinatorRate)).toBe(2);
-    await zeroCatPlastikCoordinator(prisma, true, [t.id]);
-    const after = await prisma.pieceTask.findUniqueOrThrow({ where: { id: t.id } });
-    expect([after.workerRate, after.coordinatorRate, after.driverRate, after.ratePerPcs].map(Number)).toEqual([13, 0, 0, 13]);
+  it("tanpa koordinator → bagian koordinator dibayarkan ke pekerja (Cat Plastik Rp13 + Rp2 = Rp15)", async () => {
+    expect(ratesFor({ workerRate: 13n, coordinatorRate: 2n, driverRate: 0n }, null)).toEqual({ workerRate: 15n, coordinatorRate: 0n, driverRate: 0n });
+    expect(ratesFor({ workerRate: 13n, coordinatorRate: 2n, driverRate: 0n }, "k1")).toEqual({ workerRate: 13n, coordinatorRate: 2n, driverRate: 0n });
+    // Pekerja dipilih tanpa koordinator walau titiknya punya koordinator
+    const solo = await savePerson({ name: `Solo ${tag}`, role: "PEKERJA", pointId: ctx.point.id, coordinatorId: "-" }, actor, all);
+    expect(solo.noCoordinator).toBe(true);
+    const s = await createShipment({ date: "2027-06-12", mode: "DRIVER", pointIds: [ctx.point.id], driverId: ctx.driver.id, tasks: [{ taskId: ctx.asm.id, qty: 4 }] }, actor, all);
+    await saveAllots(s.id, [{ pointId: ctx.point.id, workerId: solo.id, taskId: ctx.asm.id, qty: 2 }, { pointId: ctx.point.id, workerId: ctx.w.id, taskId: ctx.asm.id, qty: 2 }], actor, all);
+    const p = await createPickup(s.id, [{ pointId: ctx.point.id, workerId: solo.id, taskId: ctx.asm.id, qty: 2, done: true }, { pointId: ctx.point.id, workerId: ctx.w.id, taskId: ctx.asm.id, qty: 2, done: true }], actor, all, "2027-06-12");
+    await receivePickup(p.id, [{ taskId: ctx.asm.id, qty: 4 }], actor, ctx.divScope);
+    const rs = await prisma.boronganResult.findMany({ where: { pickupId: p.id } });
+    const of = (id: string) => rs.find((r) => r.workerId === id)!;
+    expect([of(solo.id).workerRate, of(solo.id).coordinatorRate, of(solo.id).coordinatorId].map((x) => (typeof x === "bigint" ? Number(x) : x))).toEqual([45, 0, null]);
+    expect([of(ctx.w.id).workerRate, of(ctx.w.id).coordinatorRate, of(ctx.w.id).coordinatorId].map((x) => (typeof x === "bigint" ? Number(x) : x))).toEqual([30, 15, ctx.coord.id]);
+    // Pilihan koordinator lain (aktif) dipakai; koordinator tidak aktif ditolak
+    await expect(savePerson({ id: solo.id, name: solo.name, role: "PEKERJA", pointId: ctx.point.id, coordinatorId: ctx.w.id }, actor, all)).rejects.toThrow(/Koordinator tidak aktif/);
   });
+
+
+  it("koordinator dapat push saat kiriman bahan disimpan dan saat pembagian disimpan", async () => {
+    const u = await prisma.user.create({ data: { username: `koor${tag.toLowerCase()}`, name: `Koor ${tag}`, role: "KOORDINATOR", passwordHash: "x" } });
+    await prisma.boronganPerson.update({ where: { id: ctx.coord.id }, data: { userId: u.id } });
+    vi.mocked(sendPush).mockClear();
+    const s = await createShipment({ date: "2027-06-13", mode: "DRIVER", pointIds: [ctx.point.id], driverId: ctx.driver.id, tasks: [{ taskId: ctx.asm.id, qty: 3 }] }, actor, all);
+    expect(vi.mocked(sendPush).mock.calls.some(([ids, p]) => ids.includes(u.id) && p.title.includes(s.number))).toBe(true);
+    vi.mocked(sendPush).mockClear();
+    await saveAllots(s.id, [{ pointId: ctx.point.id, workerId: ctx.w.id, taskId: ctx.asm.id, qty: 3 }], actor, all);
+    expect(vi.mocked(sendPush).mock.calls.some(([ids, p]) => ids.includes(u.id) && p.title.includes("sudah dibagi"))).toBe(true);
+  });
+
 });

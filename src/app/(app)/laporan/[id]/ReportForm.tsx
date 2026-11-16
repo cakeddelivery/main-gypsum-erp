@@ -28,7 +28,7 @@ import {
   type StockCountRow,
   type WorkData,
 } from "@/lib/shiftReport";
-import { addReceipt, removeChecklistPhoto, removeReceipt, saveReport, uploadChecklistPhoto } from "../actions";
+import { addReceipts, removeChecklistPhoto, removeReceipt, saveReport, uploadChecklistPhoto } from "../actions";
 import { FormDraft, clearFormDraft } from "@/components/FormDraft";
 import { CameraCapture } from "@/components/CameraCapture";
 import { readReopen, reportReopenKey, writeReopen } from "@/lib/reopen";
@@ -615,25 +615,24 @@ const reportLockNote = "Setelah terkirim, anggota tidak bisa mengubah laporan.";
 
 
 
+type ReceiptRow = { key: number; itemId: string; qty: string; orderLine: string; shop: string };
+let rowSeq = 0;
+const newRow = (): ReceiptRow => ({ key: ++rowSeq, itemId: "", qty: "", orderLine: "", shop: "" });
+
+/**
+ * Barang masuk hari ini: banyak baris sekaligus (+ Tambah barang, hapus baris, satu tombol Simpan semua).
+ * Pilihan barang hanya bahan milik divisi laporan (bisa diketik untuk mencari). Satu foto nota opsional per simpan.
+ */
 export function ReceiptSection({ id, receipts, materials, applied, orders, banks }: { id: string; receipts: ReceiptView[]; materials: { id: string; name: string; unit: string }[]; applied: boolean; orders: OrderOption[]; banks: { id: string; name: string }[] }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
-  const [itemId, setItemId] = useState("");
-  const [qty, setQty] = useState("");
-  const [shop, setShop] = useState("");
+  const [rows, setRows] = useState<ReceiptRow[]>(() => [newRow()]);
   const [photo, setPhoto] = useState<{ blob: Blob; url: string } | null>(null);
   const [cam, setCam] = useState(false);
-  const unit = materials.find((m) => m.id === itemId)?.unit;
-  const itemOrders = orders.filter((o) => o.itemId === itemId);
-  const [orderLine, setOrderLine] = useState("");
   const [bank, setBank] = useState(banks[0]?.id ?? "");
-  const order = itemOrders.find((o) => o.lineId === orderLine);
-  // Pilih barang manual: bukan dari pesanan → kolom supplier tidak ditampilkan & dikosongkan
-  const pick = (id: string) => {
-    setItemId(id);
-    setOrderLine("");
-    setShop("");
-  };
+  const orderOf = (r: ReceiptRow) => orders.find((o) => o.lineId === r.orderLine);
+  const anyCod = rows.some((r) => orderOf(r)?.cod);
+  const patch = (key: number, p: Partial<ReceiptRow>) => setRows((xs) => xs.map((x) => (x.key === key ? { ...x, ...p } : x)));
   const run = async (fn: () => Promise<{ ok: boolean; error?: string }>, ok: string) => {
     setBusy(true);
     try {
@@ -649,30 +648,47 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
       setBusy(false);
     }
   };
-  const add = () =>
+  // Rekomendasi pesanan: ketuk untuk mengisi baris kosong (atau menambah baris baru)
+  const toggleOrder = (o: OrderOption) => {
+    const on = rows.find((r) => r.orderLine === o.lineId);
+    if (on) return setRows((xs) => (xs.length > 1 ? xs.filter((x) => x.key !== on.key) : [newRow()]));
+    const fill = { itemId: o.itemId, orderLine: o.lineId, shop: o.vendor, qty: String(o.remaining).replace(".", ",") };
+    const empty = rows.find((r) => !r.itemId && !r.qty);
+    if (empty) patch(empty.key, fill);
+    else setRows((xs) => [...xs, { ...newRow(), ...fill }]);
+  };
+  // Nama bahan panjang: huruf mengecil sampai muat satu baris (tidak terpotong, tidak dipecah)
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const fit = () => box.current?.querySelectorAll<HTMLElement>(".rcv-row .choice-text").forEach((el) => {
+      let size = 14;
+      el.style.fontSize = `${size}px`;
+      while (el.scrollWidth > el.clientWidth - 2 && size > 10.5) el.style.fontSize = `${(size -= 0.5)}px`;
+    });
+    const t = window.setTimeout(fit, 60);
+    const mo = new MutationObserver(() => window.requestAnimationFrame(fit));
+    if (box.current) mo.observe(box.current, { childList: true, subtree: true, characterData: true });
+    return () => { window.clearTimeout(t); mo.disconnect(); };
+  }, [rows]);
+  const filled = rows.filter((r) => r.itemId || r.qty);
+  const save = () =>
     run(async () => {
-      if (!itemId) throw new Error("Pilih barang dulu");
+      if (!filled.length) throw new Error("Pilih barang dan isi jumlahnya");
+      if (filled.some((r) => !r.itemId)) throw new Error("Pilih barang di setiap baris");
+      if (filled.some((r) => !(Number(r.qty.replace(/\./g, "").replace(",", ".")) > 0))) throw new Error("Isi jumlah di setiap baris");
       const fd = new FormData();
       fd.set("id", id);
-      fd.set("itemId", itemId);
-      fd.set("qty", qty);
-      fd.set("supplierName", shop);
-      if (order) {
-        fd.set("purchaseLineId", order.lineId);
-        if (order.cod) fd.set("bankAccountId", bank);
-      }
+      fd.set("lines", JSON.stringify(filled.map((r) => ({ itemId: r.itemId, qty: r.qty, purchaseLineId: r.orderLine || null, supplierName: r.orderLine ? r.shop : null }))));
+      if (anyCod) fd.set("bankAccountId", bank);
       if (photo) fd.set("photo", new File([photo.blob], "nota.jpg", { type: photo.blob.type || "image/jpeg" }));
-      return addReceipt(fd);
-    }, "Barang masuk tercatat").then((ok) => {
+      return addReceipts(fd);
+    }, `${filled.length} barang masuk tercatat`).then((ok) => {
       if (!ok) return;
-      setItemId("");
-      setQty("");
-      setOrderLine("");
+      setRows([newRow()]);
       setPhoto(null);
     });
   return (
-    <section className="card p-4">
-      <h3 className="mb-1 font-semibold text-slate-800">Barang masuk hari ini</h3>
+    <section>
       <p className="mb-3 text-xs text-slate-500">Isi DULU sebelum menghitung stok akhir: barang dari supplier/toko yang datang di shift ini. Barang ini tidak dihitung sebagai pemakaian. Owner/Admin nanti mencatat harga & pembayarannya di Stok → Pembelian.</p>
       {receipts.length > 0 && (
         <ul className="mb-3 divide-y divide-slate-100 text-sm">
@@ -701,21 +717,11 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
           <p className="mb-1.5 text-xs font-medium text-slate-600">Rekomendasi: pesanan yang sedang dalam perjalanan</p>
           <ul className="space-y-1.5">
             {orders.map((o) => {
-              const on = orderLine === o.lineId;
+              const on = rows.some((r) => r.orderLine === o.lineId);
               return (
                 <li key={o.lineId}>
-                  <button
-                    type="button"
-                    aria-pressed={on}
-                    onClick={() => {
-                      if (on) return pick("");
-                      setItemId(o.itemId);
-                      setOrderLine(o.lineId);
-                      setShop(o.vendor);
-                      setQty(String(o.remaining).replace(".", ","));
-                    }}
-                    className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition ${on ? "border-brand-500 bg-brand-50 ring-2 ring-brand-100" : "border-slate-200 hover:bg-slate-50"}`}
-                  >
+                  <button type="button" aria-pressed={on} onClick={() => toggleOrder(o)}
+                    className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm transition ${on ? "border-brand-500 bg-brand-50 ring-2 ring-brand-100" : "border-slate-200 hover:bg-slate-50"}`}>
                     <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[11px] ${on ? "border-brand-600 bg-brand-600 text-white" : "border-slate-300"}`}>{on ? "✓" : ""}</span>
                     <span className="min-w-0 flex-1">
                       <span className="block font-medium text-slate-800">{o.itemName} · {fmt(o.remaining)} {o.unit}</span>
@@ -729,29 +735,38 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
           <p className="mt-1.5 text-xs text-slate-500">Atau pilih barang lain secara manual di bawah.</p>
         </div>
       )}
-      <div className="grid grid-cols-12 gap-2 rounded-lg border border-slate-200 p-2 [&>*]:min-w-0">
-        <label className="col-span-12 sm:col-span-6"><span className="text-xs text-slate-500">Barang</span>
-          <select value={itemId} onChange={(e) => pick(e.target.value)} className="input py-1.5">
-            <option value="">— pilih bahan —</option>
-            {materials.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </select>
-        </label>
-        <label className={order ? "col-span-5 sm:col-span-3" : "col-span-12 sm:col-span-6"}><span className="text-xs text-slate-500">Jumlah</span>
-          <span className="relative block">
-            <input value={qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" className={`input py-1.5 ${unit ? "pr-14" : ""}`} placeholder="0" />
-            {unit && <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-slate-800 opacity-25" aria-hidden>{unit}</span>}
-          </span>
-        </label>
-        {order && (
-          <label className="col-span-7 sm:col-span-3"><span className="text-xs text-slate-500">Supplier</span><input value={shop} readOnly tabIndex={-1} className="input bg-slate-100 py-1.5 dark:bg-slate-800" /></label>
-        )}
-        {order?.cod && (
-          <label className="col-span-12 sm:col-span-5"><span className="text-xs text-slate-500">Bayar COD dari</span>
-            <select value={bank} onChange={(e) => setBank(e.target.value)} className="input py-1.5">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
+      <div ref={box} className="space-y-2">
+        <div className="flex gap-1.5 text-xs font-semibold text-slate-500" aria-hidden><span className="flex-1">Nama bahan</span><span className={`w-[4.5rem] ${rows.length > 1 ? "mr-[1.875rem]" : ""}`}>Jumlah</span></div>
+        {rows.map((r, i) => {
+          const unit = materials.find((m) => m.id === r.itemId)?.unit;
+          const order = orderOf(r);
+          return (
+            <div key={r.key} className="rcv-row border-b border-slate-100 pb-2">
+              {/* Satu baris: nama bahan | jumlah + satuan | hapus */}
+              <div className="flex items-center gap-1.5">
+                <div className="min-w-0 flex-1">
+                  <select value={r.itemId} onChange={(e) => patch(r.key, { itemId: e.target.value, orderLine: "", shop: "" })} className="input px-2 text-sm" aria-label={`Barang ${i + 1}`}>
+                    <option value="">— pilih bahan —</option>
+                    {materials.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                </div>
+                <span className="relative w-[4.5rem] shrink-0">
+                  <input value={r.qty} onChange={(e) => patch(r.key, { qty: e.target.value })} inputMode="decimal" className={`input px-1.5 text-right tabular-nums ${unit ? "pr-8" : ""}`} placeholder="0" aria-label={`Jumlah barang ${i + 1}${unit ? ` (${unit})` : ""}`} />
+                  {unit && <span className="pointer-events-none absolute inset-y-0 right-1.5 flex items-center text-[10px] font-medium text-slate-500" aria-hidden>{unit.length > 4 ? unit.slice(0, 4) : unit}</span>}
+                </span>
+                {rows.length > 1 && <button type="button" className="grid h-9 w-6 shrink-0 place-items-center rounded-md text-rose-600 hover:bg-rose-50" onClick={() => setRows((xs) => xs.filter((x) => x.key !== r.key))} aria-label={`Hapus baris barang ${i + 1}`}>✕</button>}
+              </div>
+              {order && <p className="mt-1 text-xs text-sky-700">Dari pesanan {order.vendor}{order.cod ? " (COD)" : ""}: stok masuk dan {order.cod ? "pembayaran COD" : "uang muka/hutang"} tercatat otomatis. Tidak perlu dicatat lagi di Pembelian.</p>}
+            </div>
+          );
+        })}
+        <button type="button" className="btn-secondary w-full" onClick={() => setRows((xs) => [...xs, newRow()])}>+ Tambah barang</button>
+        {anyCod && (
+          <label className="block"><span className="text-xs font-medium text-slate-600">Bayar COD dari</span>
+            <select value={bank} onChange={(e) => setBank(e.target.value)} className="input">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select>
           </label>
         )}
-        {order && <p className="col-span-12 text-xs text-sky-700">Barang ini divalidasi sebagai penerimaan pesanan: stok masuk dan {order.cod ? "pembayaran COD" : "uang muka/hutang"} tercatat otomatis. Tidak perlu dicatat lagi di Pembelian.</p>}
-        <div className="col-span-12 sm:col-span-8"><span className="text-xs text-slate-500">Foto nota (opsional)</span>
+        <div><span className="text-xs font-medium text-slate-600">Foto nota (opsional, satu untuk semua barang di atas)</span>
           <div className="flex items-center gap-2">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             {photo && <img src={photo.url} alt="Foto nota" className="h-10 w-10 rounded-md object-cover" />}
@@ -760,7 +775,7 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
           </div>
           <CameraCapture open={cam} title="Foto nota" onClose={() => setCam(false)} onCapture={(blob) => setPhoto({ blob, url: URL.createObjectURL(blob) })} />
         </div>
-        <div className="col-span-12 flex items-end sm:col-span-4"><button type="button" className="btn-primary btn-sm w-full" disabled={busy} onClick={add}>{busy ? "Menyimpan…" : "+ Catat barang masuk"}</button></div>
+        <button type="button" className="btn-primary w-full py-3 text-base" disabled={busy} onClick={save}>{busy ? "Menyimpan…" : filled.length > 1 ? `Simpan semua (${filled.length} barang)` : "Simpan barang masuk"}</button>
       </div>
     </section>
   );

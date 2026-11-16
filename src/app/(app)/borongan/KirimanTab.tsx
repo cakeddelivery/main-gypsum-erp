@@ -4,7 +4,7 @@ import { bomStockQty } from "@/lib/unitcost";
 import { stockBalances } from "@/lib/stock";
 import { canTask, type Scope } from "@/lib/borongan";
 import { taskGroupName } from "@/lib/boronganKirim";
-import { pointConfig } from "@/lib/boronganSetup";
+import { pointConfig, taskKits } from "@/lib/boronganSetup";
 import { STATE_LABEL, canDistribute, canPickup, canReceive, canReport, byColumn, canShip, openShipments, shortTaskName, type ShipmentView } from "@/lib/boronganFlow";
 import { Badge, Empty } from "@/components/ui";
 import { ActionForm } from "@/components/ActionForm";
@@ -36,7 +36,9 @@ async function kirimGroups(): Promise<KirimGroupOpt[]> {
   const pointLocs = new Set(points.map((p) => p.locationId));
   const stock = new Map<string, number>();
   for (const b of balances) if (!pointLocs.has(b.locationId)) stock.set(b.itemId, (stock.get(b.itemId) ?? 0) + b.qty);
-  const kitIds = [...new Set(Object.values(cfg).flatMap((c) => c.kit ?? []))];
+  // Bahan pendukung mengikuti KIT per tugas (Tugas & Tarif), bukan gabungan paket bahan titik
+  const kits = await taskKits(prisma);
+  const kitIds = [...new Set(Object.values(kits).flat())];
   const kitItems = await prisma.item.findMany({ where: { id: { in: kitIds }, active: true }, select: { id: true, name: true, unit: true } });
   const groups = new Map<string, typeof tasks>();
   for (const t of tasks) groups.set(taskGroupName(t.name), [...(groups.get(taskGroupName(t.name)) ?? []), t]);
@@ -46,7 +48,7 @@ async function kirimGroups(): Promise<KirimGroupOpt[]> {
     const pts = points.filter((p) => !cfg[p.id]?.tasks.length || cfg[p.id].tasks.some((id) => ids.includes(id)));
     if (!pts.length) continue;
     const bomIds = new Set(ts.flatMap((t) => t.inputs.map((i) => i.itemId)));
-    const support = [...new Set(pts.flatMap((p) => cfg[p.id]?.kit ?? []))].filter((id) => !bomIds.has(id)).map((id) => kitItems.find((i) => i.id === id)).filter((i): i is (typeof kitItems)[number] => !!i);
+    const support = [...new Set(ts.flatMap((t) => kits[t.id] ?? []))].filter((id) => !bomIds.has(id)).map((id) => kitItems.find((i) => i.id === id)).filter((i): i is (typeof kitItems)[number] => !!i);
     out.push({
       key: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), name,
       tasks: byColumn(ts, (t) => t.name).map((t) => ({ id: t.id, short: shortTaskName(t.name), bom: t.inputs.map((i) => ({ itemId: i.itemId, name: i.item.name, unit: i.item.unit, per: bomStockQty(i.qty, i.item) })) })),

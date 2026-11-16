@@ -16,6 +16,7 @@ import { Paged } from "@/components/Paged";
 import { ItemLines } from "@/components/ItemLines";
 import { ReceiveForm } from "./ReceiveForm";
 import { KirimanTab } from "./KirimanTab";
+import { taskKits } from "@/lib/boronganSetup";
 import { KlaimTab } from "./KlaimTab";
 import { diffLines, receiptDiff } from "@/lib/boronganReceipt";
 import { dateOnly } from "@/lib/time";
@@ -44,12 +45,15 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
   const resultFilter = manage ? {} : { pointId: { in: scope.pointIds } };
   // Anggota divisi: hanya setoran tugas divisinya
   const setoranOnly = isSetoranOnly(scope);
+  const isCoordinatorOnly = !manage && !scope.driver && !scope.division && !!scope.personId;
   const taskFilter = scope.taskIds ? { taskId: { in: scope.taskIds } } : {};
   const tabs = TABS.filter((t) => manage || !["tugas"].includes(t.key))
     .filter((t) => t.key !== "upah" || manage || user.can("borongan.pay"))
     .filter((t) => !setoranOnly || ["kiriman", "klaim", "ringkasan", "hasil", "terima"].includes(t.key))
     // Driver: hanya Pembagian & Ambil Setoran (tab Kiriman)
-    .filter((t) => !scope.driver || t.key === "kiriman");
+    .filter((t) => !scope.driver || t.key === "kiriman")
+    // Koordinator titik: lapor hasil (Kiriman), Klaim Upah, dan pekerja titiknya (Orang)
+    .filter((t) => !isCoordinatorOnly || ["kiriman", "klaim", "orang"].includes(t.key));
   // Finance (hanya bayar upah): langsung ke Klaim Upah
   const tab = tabs.some((t) => t.key === sp.tab) ? sp.tab! : !manage && !scope.pointIds.length && user.can("borongan.pay") ? "klaim" : "kiriman";
   if (scope.driver) {
@@ -131,7 +135,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
       {tab === "hasil" && <ResultsTab filter={{ ...resultFilter, ...taskFilter }} scope={scope} userId={user.id} />}
       {tab === "upah" && <WagesTab points={points} banks={banks} canPay={user.can("borongan.pay")} />}
       {tab === "orang" && <PeopleTab people={people} points={points} manage={manage} canLogin={manage} tasks={tasks.filter((t) => t.active).map((t) => ({ id: t.id, name: t.name, division: divisionName.get(t.divisionId ?? "") ?? null }))} />}
-      {tab === "tugas" && manage && <TasksTab tasks={tasks} items={items} divisions={divisions} />}
+      {tab === "tugas" && manage && <TasksTab tasks={tasks} items={items} divisions={divisions} kits={await taskKits(prisma)} />}
     </div>
   );
 }
@@ -324,7 +328,7 @@ type PersonRow = Awaited<ReturnType<typeof prisma.boronganPerson.findMany<{ incl
 
 type TaskOpt = { id: string; name: string; division: string | null };
 
-function PersonForm({ p, points, manage, tasks }: { p?: PersonRow; points: { id: string; name: string }[]; manage: boolean; tasks: TaskOpt[] }) {
+function PersonForm({ p, points, manage, tasks, coordinators = [] }: { p?: PersonRow; points: { id: string; name: string }[]; manage: boolean; tasks: TaskOpt[]; coordinators?: { id: string; name: string; point: string }[] }) {
   // Jenis pekerjaan dikelompokkan per divisi pencatat setoran (divisi tugas)
   const byDiv = Object.entries(tasks.reduce<Record<string, TaskOpt[]>>((m, t) => ((m[t.division ?? "Tanpa divisi"] ??= []).push(t), m), {}));
   return (
@@ -357,6 +361,15 @@ function PersonForm({ p, points, manage, tasks }: { p?: PersonRow; points: { id:
           </div>
         </fieldset>
       )}
+      {manage && (!p || p.role === "PEKERJA") && (
+        <Field label="Koordinator (khusus pekerja)" hint="Tanpa koordinator: bagian upah koordinator dibayarkan ke pekerja (mis. Cat Plastik Rp13 + Rp2 = Rp15).">
+          <select name="coordinatorId" defaultValue={p?.noCoordinator ? "-" : p?.coordinatorId ?? ""} className="input">
+            <option value="">Ikut koordinator titik (bila ada)</option>
+            {coordinators.map((c) => <option key={c.id} value={c.id}>{c.name}{c.point ? ` · ${c.point}` : ""}</option>)}
+            <option value="-">Tanpa koordinator (upah utuh ke pekerja)</option>
+          </select>
+        </Field>
+      )}
       {p && <Field label="Status"><select name="active" defaultValue={p.active ? "on" : "off"} className="input"><option value="on">Aktif</option><option value="off">Nonaktif</option></select></Field>}
       <Field label="Catatan"><input name="note" defaultValue={p?.note ?? ""} className="input" /></Field>
       <Submit>Simpan</Submit>
@@ -366,11 +379,11 @@ function PersonForm({ p, points, manage, tasks }: { p?: PersonRow; points: { id:
 
 function PeopleTab({ people, points, manage, canLogin, tasks }: { people: PersonRow[]; points: { id: string; name: string }[]; manage: boolean; canLogin: boolean; tasks: TaskOpt[] }) {
   const taskName = new Map(tasks.map((t) => [t.id, t]));
-  const groups = [...points.map((p) => ({ key: p.id, title: `Titik ${p.name}`, rows: people.filter((x) => x.pointId === p.id) })), { key: "drv", title: "Driver", rows: people.filter((x) => x.role === "DRIVER") }];
+  const groups = [...points.map((p) => ({ key: p.id, title: `Titik ${p.name}`, rows: people.filter((x) => x.pointId === p.id) })), ...(manage ? [{ key: "drv", title: "Driver", rows: people.filter((x) => x.role === "DRIVER") }] : [])];
   return (
     <div className="space-y-5">
       <div className="flex justify-end">
-        <Modal trigger={manage ? "+ Orang" : "+ Pekerja"} title={manage ? "Tambah orang borongan" : "Tambah pekerja"}><PersonForm points={points} manage={manage} tasks={tasks} /></Modal>
+        <Modal trigger={manage ? "+ Orang" : "+ Pekerja"} title={manage ? "Tambah orang borongan" : "Tambah pekerja"}><PersonForm points={points} manage={manage} tasks={tasks} coordinators={people.filter((x) => x.role === "KOORDINATOR" && x.active).map((x) => ({ id: x.id, name: x.name, point: x.point?.name ?? "" }))} /></Modal>
       </div>
       <p className="text-sm text-slate-500">Pekerja borongan adalah tetangga, bukan karyawan: tidak masuk absensi, gaji bulanan, atau kasbon.</p>
       <div className="grid gap-5 lg:grid-cols-2">
@@ -404,7 +417,7 @@ function PeopleTab({ people, points, manage, canLogin, tasks }: { people: Person
                               </ModalForm>
                             </Modal>
                           )}
-                          <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${p.name}`}><PersonForm p={p} points={points} manage={manage} tasks={tasks} /></Modal>
+                          <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${p.name}`}><PersonForm p={p} points={points} manage={manage} tasks={tasks} coordinators={people.filter((x) => x.role === "KOORDINATOR" && x.active).map((x) => ({ id: x.id, name: x.name, point: x.point?.name ?? "" }))} /></Modal>
                           {p.active && <ActionForm action={removePersonAction} confirm={`Hapus ${p.name}? Yang sudah punya riwayat setoran hanya dinonaktifkan.`}><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary btn-sm" pendingText="…">Hapus</Submit></ActionForm>}
                         </span>
                       )}
@@ -423,7 +436,7 @@ function PeopleTab({ people, points, manage, canLogin, tasks }: { people: Person
 type TaskRow = Awaited<ReturnType<typeof prisma.pieceTask.findMany<{ include: { inputs: { include: { item: true } }; outputItem: true } }>>>[number];
 type ItemRow = Awaited<ReturnType<typeof prisma.item.findMany>>[number];
 
-function TaskForm({ task, items, divisions }: { task?: TaskRow; items: ItemRow[]; divisions: { id: string; name: string }[] }) {
+function TaskForm({ task, items, divisions, kit = [] }: { task?: TaskRow; items: ItemRow[]; divisions: { id: string; name: string }[]; kit?: string[] }) {
   return (
     <ModalForm action={saveTask} className="space-y-3">
       {task && <input type="hidden" name="id" value={task.id} />}
@@ -440,13 +453,21 @@ function TaskForm({ task, items, divisions }: { task?: TaskRow; items: ItemRow[]
         <span className="label">Bahan terpakai per 1 pcs hasil</span>
         <ItemLines items={items.map((i) => ({ id: i.id, name: i.name, unit: recipeUnit(i) }))} initial={task?.inputs.map((x) => ({ itemId: x.itemId, qty: Number(x.qty) })) ?? []} qtyLabel="Per pcs" emptyLabel="— pilih bahan —" />
       </div>
+      <fieldset className="rounded-lg border border-slate-200 p-3">
+        <legend className="px-1 text-xs font-medium text-slate-600">Bahan pendukung yang ikut dikirim (kit)</legend>
+        <input type="hidden" name="kitSent" value="1" />
+        <p className="mb-2 text-xs text-slate-500">Muncul di form Kirim Bahan untuk jenis pekerjaan ini. Bahan per pcs di atas sudah ikut otomatis.</p>
+        <div className="grid max-h-56 gap-1 overflow-y-auto sm:grid-cols-2">
+          {items.map((i) => <label key={i.id} className="flex min-h-9 items-center gap-2 text-sm"><input type="checkbox" name="kitIds" value={i.id} defaultChecked={kit.includes(i.id)} className="h-4 w-4 shrink-0" /><span className="break-words">{i.name}</span></label>)}
+        </div>
+      </fieldset>
       {task && <Field label="Status"><select name="active" defaultValue={task.active ? "on" : "off"} className="input"><option value="on">Aktif</option><option value="off">Nonaktif</option></select></Field>}
       <Submit>Simpan</Submit>
     </ModalForm>
   );
 }
 
-function TasksTab({ tasks, items, divisions }: { tasks: TaskRow[]; items: ItemRow[]; divisions: { id: string; name: string }[] }) {
+function TasksTab({ tasks, items, divisions, kits }: { tasks: TaskRow[]; items: ItemRow[]; divisions: { id: string; name: string }[]; kits: Record<string, string[]> }) {
   return (
     <Card title="Tugas & pembagian budget per pcs" actions={<Modal trigger="+ Tugas" triggerClass="btn-primary btn-sm" title="Tugas borongan baru" wide><TaskForm items={items} divisions={divisions} /></Modal>}>
       <div className="overflow-x-auto">
@@ -456,7 +477,7 @@ function TasksTab({ tasks, items, divisions }: { tasks: TaskRow[]; items: ItemRo
             <tr key={x.id} className={x.active ? "" : "opacity-50"}>
               <td>{x.name}</td><td>{divisions.find((d) => d.id === x.divisionId)?.name ?? <span className="text-slate-400">—</span>}</td><td className="num">{idr(x.ratePerPcs)}</td><td className="num">{idr(x.workerRate)}</td><td className="num">{idr(x.coordinatorRate)}</td><td className="num">{idr(x.driverRate)}</td>
               <td className="text-xs">{x.outputItem ? `→ ${x.outputItem.name}` : "—"}{x.inputs.length > 0 && <><br />{x.inputs.map((i) => `${i.item.name} ${Number(i.qty).toLocaleString("id-ID")} ${recipeUnit(i.item)}`).join(", ")}</>}</td>
-              <td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${x.name}`} wide><TaskForm task={x} items={items} divisions={divisions} /></Modal></td>
+              <td><Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${x.name}`} wide><TaskForm task={x} items={items} divisions={divisions} kit={kits[x.id] ?? []} /></Modal></td>
             </tr>
           ))}</tbody>
         </table>

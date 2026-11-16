@@ -23,7 +23,7 @@ import { IzinSakit, Riwayat } from "./SelfTabs";
 export const metadata = { title: "Absensi" };
 const TONE = { HADIR: "green", TERLAMBAT: "amber", IZIN: "blue", SAKIT: "purple", ALPA: "red", LIBUR: "gray" } as const;
 
-export default async function AbsensiPage({ searchParams }: { searchParams: Promise<{ tab?: string; date?: string; month?: string }> }) {
+export default async function AbsensiPage({ searchParams }: { searchParams: Promise<{ tab?: string; date?: string; month?: string; dari?: string; sampai?: string; status?: string; divisi?: string }> }) {
   const user = await requirePerm("attendance.view", "attendance.self");
   const sp = await searchParams;
   const today = todayStr();
@@ -56,8 +56,8 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
       {isSelf && tab === "riwayat" && <Riwayat employeeId={user.employeeId!} month={month} />}
       {tab === "izin" && <IzinSakit user={user} />}
       {canManage && tab === "harian" && <Daily date={date} divFilter={divFilter} shifts={shifts} />}
-      {canManage && tab === "jadwal" && <Schedule date={date} divFilter={divFilter} shifts={shifts} />}
-      {canManage && tab === "koreksi" && <Corrections divFilter={divFilter} canCorrect={user.role === "SUPERVISOR" || user.role === "OWNER"} shifts={shifts} />}
+      {canManage && tab === "jadwal" && <Schedule date={date} divFilter={divFilter} shifts={shifts} lockedId={user.role === "OWNER" ? null : user.employeeId} />}
+      {canManage && tab === "koreksi" && <Corrections divFilter={divFilter} canCorrect={user.role === "SUPERVISOR" || user.role === "OWNER"} shifts={shifts} f={{ dari: sp.dari, sampai: sp.sampai, status: sp.status, divisi: sp.divisi }} />}
       {canManage && tab === "telat" && <LateTab date={date} month={sp.month && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : date.slice(0, 7)} divisionId={user.role === "KAPTEN_DIVISI" ? user.divisionId : null} />}
       {canLocation && tab === "lokasi" && <WorkSites />}
     </div>
@@ -141,7 +141,7 @@ async function Daily({ date, divFilter, shifts }: { date: string; divFilter: obj
   );
 }
 
-async function Schedule({ date, divFilter }: { date: string; divFilter: object; shifts: Shift[] }) {
+async function Schedule({ date, divFilter, lockedId }: { date: string; divFilter: object; shifts: Shift[]; lockedId?: string | null }) {
   const dow = (dateOnly(date).getUTCDay() + 6) % 7;
   const start = addDays(date, -dow);
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
@@ -168,44 +168,88 @@ async function Schedule({ date, divFilter }: { date: string; divFilter: object; 
         groups={view}
         saved={saved}
         canEdit
+        locked={lockedId ? [lockedId] : []}
         save={saveScheduleCells}
       />
     </div>
   );
 }
 
+type CorrFilter = { dari?: string; sampai?: string; status?: string; divisi?: string };
+const CORR_STATUS: Record<string, { label: string; where: object }> = {
+  ALPA: { label: "Alpa", where: { status: "ALPA" } },
+  LIBUR: { label: "Libur", where: { status: "LIBUR" } },
+  PULANG: { label: "Belum absen pulang", where: { checkIn: { not: null }, checkOut: null } },
+  SHIFT: { label: "Shift disesuaikan", where: { note: { startsWith: SHIFT_NOTE_PREFIX } } },
+  KOREKSI: { label: "Sudah dikoreksi", where: { note: { startsWith: "Koreksi " } } },
+};
+
 /**
- * Riwayat status otomatis (read-only): Alpa, Libur sesuai jadwal, dan shift yang disesuaikan otomatis, 30 hari terakhir.
+ * Alpa & koreksi: daftar rapat, satu baris satu orang (Nama | Tanggal | Divisi·Shift | Status | Masuk/Pulang |
+ * Keterangan | Koreksi). Di HP dua baris teks ringkas. Filter tanggal, status, divisi (default 30 hari terakhir).
  * Supervisor/Owner bisa mengoreksi satu baris dengan alasan wajib (tercatat di audit log).
  */
-async function Corrections({ divFilter, canCorrect }: { divFilter: object; canCorrect: boolean; shifts: Shift[] }) {
+async function Corrections({ divFilter, canCorrect, f }: { divFilter: object; canCorrect: boolean; shifts: Shift[]; f: CorrFilter }) {
   const today = todayStr();
+  const okDate = (x?: string) => (x && /^\d{4}-\d{2}-\d{2}$/.test(x) ? x : null);
+  const from = okDate(f.dari) ?? addDays(today, -30);
+  const to = okDate(f.sampai) ?? addDays(today, -1);
+  const status = f.status && CORR_STATUS[f.status] ? f.status : "";
+  const divisions = await prisma.division.findMany({ where: { active: true, ...("divisionId" in divFilter ? { id: (divFilter as { divisionId: string }).divisionId } : {}) }, orderBy: { code: "asc" }, select: { id: true, name: true } });
+  const divisi = divisions.some((d) => d.id === f.divisi) ? f.divisi! : "";
   const rows = await prisma.attendance.findMany({
-    where: { employee: divFilter, date: { gte: dateOnly(addDays(today, -30)), lt: dateOnly(today) }, OR: [{ status: { in: ["ALPA", "LIBUR"] } }, { note: { startsWith: SHIFT_NOTE_PREFIX } }, { note: { startsWith: "Koreksi " } }, { checkIn: { not: null }, checkOut: null }] },
+    where: {
+      employee: { ...divFilter, ...(divisi ? { divisionId: divisi } : {}) },
+      date: { gte: dateOnly(from), lte: dateOnly(to) },
+      ...(status ? CORR_STATUS[status].where : { OR: Object.values(CORR_STATUS).map((x) => x.where) }),
+    },
     include: { employee: { include: { division: true } }, shift: true },
     orderBy: [{ date: "desc" }, { employee: { name: "asc" } }],
-    take: 300,
+    take: 500,
   });
-  if (!rows.length) return <Empty title="Tidak ada Alpa atau koreksi 30 hari terakhir" />;
+  const hm = (d: Date | null) => (d ? fmtDateTime(d).slice(-9).replace("WIB", "").trim() : "–");
+  const ket = (a: (typeof rows)[number]) => (a.checkIn && !a.checkOut ? "Belum absen pulang" : a.note === AUTO_NOTE ? "Tidak absen (otomatis)" : a.note ?? "");
+  const badge = (a: (typeof rows)[number]) => <Badge tone={TONE[a.status]}>{a.status === "TERLAMBAT" ? `Telat ${a.lateMinutes} mnt` : ATT_LABEL[a.status]}</Badge>;
   return (
     <div className="space-y-3">
-      <p className="text-sm text-slate-600">Status dihitung otomatis setiap pagi dari jadwal & absen: dijadwalkan masuk tanpa absen = <b>Alpa</b>, tidak dicentang di jadwal = <b>Libur</b>, absen di shift lain (Cetak/Oven) = shift disesuaikan. Tidak perlu divalidasi manual.{canCorrect ? " Bila keliru (mis. lupa absen), tekan Koreksi." : ""}</p>
-      <div className="card overflow-hidden">
-        <Paged>
-          <table className="tbl tbl-grid w-full">
-            <tbody>
-              {rows.map((a) => (
-                <tr key={a.id} className="align-top">
-                  <td className="!whitespace-normal">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="break-words font-medium text-slate-900">{a.employee.name}</span>
-                      <Badge tone={TONE[a.status]}>{a.status === "TERLAMBAT" ? `Telat ${a.lateMinutes} mnt` : ATT_LABEL[a.status]}</Badge>
-                    </div>
-                    <div className="mt-0.5 break-words text-xs text-slate-500">{fmtDay(a.date)} · {a.employee.division.name} · {a.shift.name}{a.checkIn ? ` · masuk ${fmtDateTime(a.checkIn).slice(-9)}` : ""}{a.checkOut ? ` · pulang ${fmtDateTime(a.checkOut).slice(-9)}` : ""}</div>
-                    {a.checkIn && !a.checkOut && <div className="mt-1"><Badge tone="amber">Belum absen pulang</Badge></div>}
-                    {a.note && <div className="mt-0.5 break-words text-xs text-slate-600">{a.note === AUTO_NOTE ? "Tidak absen (otomatis)" : a.note}</div>}
+      <FilterBar>
+        <input type="hidden" name="tab" value="koreksi" />
+        <Field label="Dari"><input type="date" name="dari" defaultValue={from} className="input" /></Field>
+        <Field label="Sampai"><input type="date" name="sampai" defaultValue={to} className="input" /></Field>
+        <Field label="Status"><select name="status" defaultValue={status} className="input"><option value="">Semua</option>{Object.entries(CORR_STATUS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select></Field>
+        <Field label="Divisi"><select name="divisi" defaultValue={divisi} className="input"><option value="">Semua divisi</option>{divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
+      </FilterBar>
+      <p className="text-xs text-slate-500">Status dihitung otomatis setiap pagi dari jadwal & absen: dijadwalkan masuk tanpa absen = <b>Alpa</b>, tidak dicentang di jadwal = <b>Libur</b>, absen di shift lain (Cetak/Oven) = shift disesuaikan.{canCorrect ? " Bila keliru (mis. lupa absen), tekan Koreksi." : ""}</p>
+      {!rows.length ? <Empty title="Tidak ada data untuk filter ini" /> : (
+        <div className="table-wrap">
+          <Paged>
+            <table className="tbl tbl-grid w-full">
+              <thead>
+                <tr>
+                  <th>Nama</th>
+                  <th className="hidden sm:table-cell">Tanggal</th>
+                  <th className="hidden md:table-cell">Divisi · Shift</th>
+                  <th className="hidden sm:table-cell">Status</th>
+                  <th className="hidden md:table-cell">Masuk / Pulang</th>
+                  <th className="hidden lg:table-cell">Keterangan</th>
+                  {canCorrect && <th className="w-px" />}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((a) => (
+                  <tr key={a.id}>
+                    <td className="!whitespace-normal">
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5"><span className="break-words font-medium text-slate-900">{a.employee.name}</span><span className="sm:hidden">{badge(a)}</span></div>
+                      {/* HP: detail kecil di baris kedua */}
+                      <div className="break-words text-xs text-slate-500 md:hidden"><span className="sm:hidden">{fmtDay(a.date)} · </span>{a.employee.division.name} · {a.shift.name}{a.checkIn ? ` · ${hm(a.checkIn)}–${hm(a.checkOut)}` : ""}{ket(a) ? <span className="lg:hidden"> · {ket(a)}</span> : null}</div>
+                    </td>
+                    <td className="hidden whitespace-nowrap sm:table-cell">{fmtDay(a.date)}</td>
+                    <td className="hidden !whitespace-normal md:table-cell">{a.employee.division.name} · {a.shift.name}</td>
+                    <td className="hidden sm:table-cell">{badge(a)}</td>
+                    <td className="hidden whitespace-nowrap tabular-nums md:table-cell">{a.checkIn ? `${hm(a.checkIn)} / ${hm(a.checkOut)}` : "–"}</td>
+                    <td className="hidden !whitespace-normal text-sm text-slate-600 lg:table-cell">{ket(a) || "–"}</td>
                     {canCorrect && (
-                      <div className="mt-2">
+                      <td className="text-right">
                         <Modal trigger="Koreksi" triggerClass="btn-secondary btn-sm" title={`Koreksi absensi ${a.employee.name}`} subtitle={fmtDay(a.date)}>
                           <ModalForm action={correctAttendance} className="space-y-3">
                             <input type="hidden" name="employeeId" value={a.employeeId} /><input type="hidden" name="date" value={dateStr(a.date)} />
@@ -224,15 +268,15 @@ async function Corrections({ divFilter, canCorrect }: { divFilter: object; canCo
                             <Submit>Simpan koreksi</Submit>
                           </ModalForm>
                         </Modal>
-                      </div>
+                      </td>
                     )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Paged>
-      </div>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Paged>
+        </div>
+      )}
     </div>
   );
 }
