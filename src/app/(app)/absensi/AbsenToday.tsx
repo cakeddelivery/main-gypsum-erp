@@ -1,8 +1,8 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { useFormStatus } from "react-dom";
-import { ActionForm } from "@/components/ActionForm";
+
+import { ActionForm, useFormPending } from "@/components/ActionForm";
 import { Avatar } from "@/components/Avatar";
 import { useGeo } from "@/components/GeoFields";
 import { checkGeofence, distanceMeters, MAX_GPS_ACCURACY } from "@/lib/attendance";
@@ -74,7 +74,7 @@ function useLocation(sites: Site[], enabled: boolean) {
 }
 
 function BigSubmit({ children, tone, disabled }: { children: React.ReactNode; tone: "emerald" | "brand"; disabled: boolean }) {
-  const { pending } = useFormStatus();
+  const { pending } = useFormPending();
   const cls = tone === "emerald" ? "bg-emerald-600 hover:bg-emerald-700" : "bg-brand-600 hover:bg-brand-700";
   return (
     <button type="submit" disabled={pending || disabled} className={`flex w-full items-center justify-center gap-2 rounded-2xl py-3.5 text-lg font-bold text-white shadow-lg transition active:scale-[0.99] disabled:opacity-60 ${cls}`}>

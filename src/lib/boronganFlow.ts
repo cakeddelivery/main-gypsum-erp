@@ -8,6 +8,7 @@ import { BoronganError, canTask, coordinatorFor, postResultTx, unpostResultTx, w
 import { taskGroupName } from "./boronganKirim";
 import { pointConfig, taskKits } from "./boronganSetup";
 import { sendPush, type PushPayload } from "./push";
+import { withField } from "./fieldError";
 
 /**
  * ALUR BORONGAN BARU (menggantikan serah terima KIRIM → konfirmasi titik → KEMBALI yang sering terlewat):
@@ -250,7 +251,7 @@ type TaskWithInputs = Prisma.PieceTaskGetPayload<{ include: { inputs: { include:
 function cleanTasks(list: { taskId: string; qty: number }[]) {
   const tasksIn = list.filter((t) => t.qty > 0);
   if (tasksIn.some((t) => !Number.isInteger(t.qty))) throw new BoronganError("Jumlah per jenis harus bilangan bulat");
-  if (!tasksIn.length) throw new BoronganError("Isi jumlah minimal satu jenis pekerjaan");
+  if (!tasksIn.length) throw withField(new BoronganError("Isi jumlah minimal satu jenis pekerjaan"), "t");
   return tasksIn;
 }
 
@@ -267,7 +268,7 @@ async function loadTasks(tx: Tx, tasksIn: { taskId: string }[]) {
  */
 async function dispatchTx(tx: Tx, number: string, day: string, input: Omit<ShipmentInput, "tasks" | "date">, tasks: TaskWithInputs[], tasksIn: { taskId: string; qty: number }[], actor: Actor) {
   const pointIds = [...new Set(input.pointIds.filter(Boolean))];
-  if (!pointIds.length) throw new BoronganError("Pilih titik tujuan");
+  if (!pointIds.length) throw withField(new BoronganError("Pilih titik tujuan"), "pointId");
   if (input.mode === "LANGSUNG" && pointIds.length !== 1) throw new BoronganError("Kiriman yang diantar langsung hanya ke satu titik");
   const points = await tx.boronganPoint.findMany({ where: { id: { in: pointIds }, active: true } });
   if (points.length !== pointIds.length) throw new BoronganError("Titik tujuan tidak aktif");
@@ -276,7 +277,7 @@ async function dispatchTx(tx: Tx, number: string, day: string, input: Omit<Shipm
   let driverId: string | null = null;
   if (input.mode === "DRIVER") {
     const drivers = await tx.boronganPerson.findMany({ where: { role: "DRIVER", active: true }, select: { id: true } });
-    if (drivers.length && !input.driverId) throw new BoronganError("Pilih driver");
+    if (drivers.length && !input.driverId) throw withField(new BoronganError("Pilih driver"), "driverId");
     if (input.driverId && !drivers.some((d) => d.id === input.driverId)) throw new BoronganError("Driver tidak aktif");
     driverId = input.driverId ?? null;
   }
@@ -566,7 +567,7 @@ export async function createPickup(shipmentId: string, rows: PickupInput[], acto
       if (r.qty > c.dibagi - c.diambil) throw new BoronganError(`Setoran ${c.worker} (${r.qty}) melebihi sisa yang dibagi (${c.dibagi - c.diambil})`);
       lines.push({ ...r, pointId: c.pointId, reject: c.reject });
     }
-    if (!lines.length) throw new BoronganError("Isi setoran minimal satu pekerja");
+    if (!lines.length) throw withField(new BoronganError("Isi setoran minimal satu pekerja"), "q");
     const number = await dailyNumber(tx, "AMB", day);
     const driverId = scope.driver ? scope.personId : s.mode === "DRIVER" ? s.driverId : null;
     const p = await tx.boronganPickup.create({
@@ -706,7 +707,7 @@ export async function receivePickup(pickupId: string, counts: { taskId: string; 
 export async function resolvePickup(pickupId: string, input: { reason: string; lines?: { id: string; qty: number }[] }, actor: Actor, scope: Scope) {
   if (!scope.all) throw new BoronganError("Pengambilan yang kurang dicek Supervisor / pengelola borongan");
   const reason = input.reason?.trim();
-  if (!reason) throw new BoronganError("Alasan wajib diisi");
+  if (!reason) throw withField(new BoronganError("Alasan wajib diisi"), "reason");
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "BoronganPickup" WHERE id = ${pickupId} FOR UPDATE`;
     const p = await tx.boronganPickup.findUniqueOrThrow({ where: { id: pickupId }, include: { lines: true, counts: true, results: true } });

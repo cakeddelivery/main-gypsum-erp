@@ -10,6 +10,7 @@ import { BoronganError, assertPoint, boronganScope, canWarehouse, isSetoranOnly,
 import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 import { pointConfig, saveTaskKit } from "@/lib/boronganSetup";
 import { allowedByPoint, kirimGroups, pointKits } from "@/lib/boronganKirim";
+import { withField } from "@/lib/fieldError";
 
 // /laporan: setoran juga dicatat dari popup di halaman Laporan Shift (ringkasan setoran ikut segar)
 const PATHS = ["/borongan", "/stok", "/laporan"];
@@ -161,7 +162,7 @@ export const saveCoordinatorLogin = action(
       await prisma.user.update({ where: { id: person.userId }, data: { username, name: person.name, role, active: person.active, ...(password ? passwordChangeData(await hashPassword(password)) : {}) } });
       if (password) await clearLoginBlocks(username);
     } else {
-      if (!password) throw new BoronganError("Isi password untuk akun baru");
+      if (!password) throw withField(new BoronganError("Isi password untuk akun baru"), "password");
       const u = await prisma.user.create({ data: { username, name: person.name, role, passwordHash: await hashPassword(password) } });
       await prisma.boronganPerson.update({ where: { id: person.id }, data: { userId: u.id } });
     }
@@ -179,7 +180,7 @@ export const saveTask = action(
     const total = split.workerRate + split.coordinatorRate + split.driverRate;
     checkSplit(total, split);
     const name = str(fd, "name");
-    if (!name) throw new BoronganError("Nama tugas wajib diisi");
+    if (!name) throw withField(new BoronganError("Nama tugas wajib diisi"), "name");
     const inputs = lines(fd).filter((l) => l.itemId && l.qty > 0);
     const data = { name, divisionId: optStr(fd, "divisionId"), ratePerPcs: BigInt(total), workerRate: BigInt(split.workerRate), coordinatorRate: BigInt(split.coordinatorRate), driverRate: BigInt(split.driverRate), outputItemId: optStr(fd, "outputItemId"), active: fd.get("active") !== "off" };
     const t = await prisma.$transaction(async (tx) => {

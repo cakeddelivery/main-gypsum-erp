@@ -8,6 +8,7 @@ import { saveProof } from "@/lib/storage";
 import { defaultStoreId } from "@/lib/accounting";
 import { addDays, todayStr } from "@/lib/time";
 import type { ReserveKind } from "@prisma/client";
+import { zField } from "@/lib/fieldError";
 
 const PATHS = ["/finance/sisihan", "/"];
 
@@ -76,13 +77,13 @@ export const saveFund = action(
   "finance.approve",
   async (fd, user) => {
     const id = optStr(fd, "id");
-    const kind = z.enum(["OWNER", "LOAN_SAVING", "LOAN_PAYMENT"]).parse(str(fd, "kind")) as ReserveKind;
+    const kind = zField(fd, "kind", z.enum(["OWNER", "LOAN_SAVING", "LOAN_PAYMENT"])) as ReserveKind;
     const data = {
-      name: z.string().min(3, "Nama dana wajib").parse(str(fd, "name")),
+      name: zField(fd, "name", z.string().min(3, "Nama dana wajib")),
       kind,
       dailyAmount: BigInt(int(fd, "dailyAmount")),
-      fromBankId: z.string().min(1, "Rekening asal wajib").parse(str(fd, "fromBankId")),
-      toBankId: kind === "LOAN_PAYMENT" ? null : z.string().min(1, "Rekening tujuan wajib").parse(str(fd, "toBankId")),
+      fromBankId: zField(fd, "fromBankId", z.string().min(1, "Rekening asal wajib")),
+      toBankId: kind === "LOAN_PAYMENT" ? null : zField(fd, "toBankId", z.string().min(1, "Rekening tujuan wajib")),
       payableId: kind === "OWNER" ? null : optStr(fd, "payableId"),
       storeId: optStr(fd, "storeId") ?? (id ? (await prisma.reserveFund.findUniqueOrThrow({ where: { id } })).storeId : await defaultStoreId()),
       active: fd.get("active") !== "off",

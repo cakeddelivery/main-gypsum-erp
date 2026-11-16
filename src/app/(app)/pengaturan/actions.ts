@@ -14,12 +14,13 @@ import { sendDailyRecap } from "@/lib/jobs";
 import { setBotCommands } from "@/lib/telegram";
 import { autoCode } from "@/lib/codes";
 import type { ItemType, Role, TxDirection } from "@prisma/client";
+import { withField, zField } from "@/lib/fieldError";
 
 const P = ["/pengaturan"];
 
 export const saveOrg = action("settings.manage", async (fd, user) => {
   const org = await prisma.organization.findFirstOrThrow();
-  await prisma.organization.update({ where: { id: org.id }, data: { name: z.string().min(2).parse(str(fd, "name")) } });
+  await prisma.organization.update({ where: { id: org.id }, data: { name: zField(fd, "name", z.string().min(2)) } });
   await audit(user, "ORGANISASI_DIUBAH", "Organization", org.id);
   return "Organisasi tersimpan";
 }, P);
@@ -27,7 +28,7 @@ export const saveOrg = action("settings.manage", async (fd, user) => {
 export const saveStore = action("settings.manage", async (fd, user) => {
   const id = optStr(fd, "id");
   const org = await prisma.organization.findFirstOrThrow();
-  const data = { name: z.string().min(2).parse(str(fd, "name")), active: id ? bool(fd, "active") : true };
+  const data = { name: zField(fd, "name", z.string().min(2)), active: id ? bool(fd, "active") : true };
   const s = id ? await prisma.store.update({ where: { id }, data }) : await prisma.store.create({ data: { ...data, code: await autoCode.store(prisma, data.name), organizationId: org.id } });
   await audit(user, "TOKO_DISIMPAN", "Store", s.id, data);
   return "Toko tersimpan";
@@ -35,7 +36,7 @@ export const saveStore = action("settings.manage", async (fd, user) => {
 
 export const saveDivision = action("settings.manage", async (fd, user) => {
   const id = optStr(fd, "id");
-  const data = { name: z.string().min(2).parse(str(fd, "name")), active: id ? bool(fd, "active") : true };
+  const data = { name: zField(fd, "name", z.string().min(2)), active: id ? bool(fd, "active") : true };
   const s = id ? await prisma.division.update({ where: { id }, data }) : await prisma.division.create({ data: { ...data, code: await autoCode.division(prisma, data.name) } });
   await audit(user, "DIVISI_DISIMPAN", "Division", s.id, data);
   return "Divisi tersimpan";
@@ -44,7 +45,7 @@ export const saveDivision = action("settings.manage", async (fd, user) => {
 const hhmm = z.string().regex(/^\d{2}:\d{2}$/, "Format jam HH:MM");
 export const saveShift = action("settings.manage", async (fd, user) => {
   const id = optStr(fd, "id");
-  const data = { name: z.string().min(2).parse(str(fd, "name")), startTime: hhmm.parse(str(fd, "startTime")), endTime: hhmm.parse(str(fd, "endTime")), toleranceMinutes: int(fd, "toleranceMinutes"), active: id ? bool(fd, "active") : true };
+  const data = { name: zField(fd, "name", z.string().min(2)), startTime: hhmm.parse(str(fd, "startTime")), endTime: hhmm.parse(str(fd, "endTime")), toleranceMinutes: int(fd, "toleranceMinutes"), active: id ? bool(fd, "active") : true };
   const s = id ? await prisma.shift.update({ where: { id }, data }) : await prisma.shift.create({ data: { ...data, code: await autoCode.shift(prisma) } });
   await audit(user, "SHIFT_DISIMPAN", "Shift", s.id, data);
   return "Shift tersimpan";
@@ -52,7 +53,7 @@ export const saveShift = action("settings.manage", async (fd, user) => {
 
 export const saveBank = action("settings.manage", async (fd, user) => {
   const id = optStr(fd, "id");
-  const data = { name: z.string().min(2).parse(str(fd, "name")), coaAccountId: str(fd, "coaAccountId"), aliases: str(fd, "aliases").toLowerCase(), active: id ? bool(fd, "active") : true, marketplace: bool(fd, "marketplace") };
+  const data = { name: zField(fd, "name", z.string().min(2)), coaAccountId: str(fd, "coaAccountId"), aliases: str(fd, "aliases").toLowerCase(), active: id ? bool(fd, "active") : true, marketplace: bool(fd, "marketplace") };
   const coa = await prisma.coaAccount.findUniqueOrThrow({ where: { id: data.coaAccountId } });
   if (!coa.isCash) throw new Error("Akun COA rekening harus akun kas/bank");
   // Satu rekening = satu akun COA. Bila dipakai bersama, saldo kedua rekening tercampur dan total saldo terhitung dobel.
@@ -70,7 +71,7 @@ export const saveBank = action("settings.manage", async (fd, user) => {
 /** Tipe produk jadi (Satuan, Paket 12, …): kode otomatis dari nama, nonaktif = tidak muncul di pilihan */
 export const saveProductType = action("settings.manage", async (fd, user) => {
   const code = optStr(fd, "code");
-  const name = z.string().trim().min(2, "Nama tipe minimal 2 huruf").max(40).parse(str(fd, "name"));
+  const name = zField(fd, "name", z.string().trim().min(2, "Nama tipe minimal 2 huruf").max(40));
   const packQty = int(fd, "packQty", 1);
   if (packQty < 1) throw new Error("Isi per kemasan minimal 1");
   const clash = await prisma.productTypeOption.findFirst({ where: { name: { equals: name, mode: "insensitive" }, ...(code ? { code: { not: code } } : {}) } });
@@ -88,8 +89,8 @@ export const saveProductType = action("settings.manage", async (fd, user) => {
 
 export const saveItemCategory = action("settings.manage", async (fd, user) => {
   const id = optStr(fd, "id");
-  const type = z.enum(["BAHAN_BAKU", "BARANG_DALAM_PROSES", "BARANG_JADI"]).parse(str(fd, "type")) as ItemType;
-  const name = z.string().trim().min(2, "Nama kategori minimal 2 huruf").max(60).parse(str(fd, "name"));
+  const type = zField(fd, "type", z.enum(["BAHAN_BAKU", "BARANG_DALAM_PROSES", "BARANG_JADI"])) as ItemType;
+  const name = zField(fd, "name", z.string().trim().min(2, "Nama kategori minimal 2 huruf").max(60));
   const prefix = z.string().regex(/^[A-Z]{2,4}$/, "Awalan kode 2–4 huruf, mis. MG").parse(str(fd, "prefix").toUpperCase().replace(/[^A-Z]/g, ""));
   // Urutan kosong = taruh paling bawah, supaya kategori utama tetap jadi pilihan pertama
   const last = await prisma.itemCategory.aggregate({ where: { type }, _max: { sortOrder: true } });
@@ -117,7 +118,7 @@ export const saveItemCategory = action("settings.manage", async (fd, user) => {
 
 export const saveCategory = action("settings.manage", async (fd, user) => {
   const id = optStr(fd, "id");
-  const data = { name: z.string().min(2).parse(str(fd, "name")), direction: str(fd, "direction") as TxDirection, coaAccountId: str(fd, "coaAccountId"), keywords: str(fd, "keywords").toLowerCase(), active: id ? bool(fd, "active") : true };
+  const data = { name: zField(fd, "name", z.string().min(2)), direction: str(fd, "direction") as TxDirection, coaAccountId: str(fd, "coaAccountId"), keywords: str(fd, "keywords").toLowerCase(), active: id ? bool(fd, "active") : true };
   if (data.direction === "TRANSFER") throw new Error("Transfer internal tidak memakai kategori");
   const s = id ? await prisma.txCategory.update({ where: { id }, data }) : await prisma.txCategory.create({ data });
   await audit(user, "KATEGORI_DISIMPAN", "TxCategory", s.id, data);
@@ -157,14 +158,14 @@ export const saveUser = action("users.manage", async (fd, user) => {
   const password = str(fd, "password");
   const data = {
     username: z.string().regex(/^[a-z0-9._-]{3,30}$/, "Username 3-30 huruf kecil/angka").parse(str(fd, "username").toLowerCase()),
-    name: z.string().min(2).parse(str(fd, "name")),
+    name: zField(fd, "name", z.string().min(2)),
     role,
     divisionId: optStr(fd, "divisionId"),
     active: id ? bool(fd, "active") : true,
     email: normEmail(str(fd, "email")),
   };
   if (data.email && (await prisma.user.findFirst({ where: { email: data.email, ...(id ? { id: { not: id } } : {}) } }))) throw new Error("Email sudah dipakai akun lain");
-  if (!id && !password) throw new Error("Password wajib untuk pengguna baru");
+  if (!id && !password) throw withField(new Error("Password wajib untuk pengguna baru"), "password");
   const hash = password ? await hashPassword(password) : null;
   const u = id
     ? await prisma.user.update({ where: { id }, data: { ...data, ...(hash ? passwordChangeData(hash) : {}) } })
@@ -207,7 +208,7 @@ function assertSensitiveConfirmed(fd: FormData, grants: [Role, Permission[]][]) 
 export const saveIdentity = action("telegram.manage", async (fd, user) => {
   const id = optStr(fd, "id");
   const data = {
-    telegramUserId: z.string().regex(/^\d{3,20}$/, "ID Telegram berupa angka").parse(str(fd, "telegramUserId")),
+    telegramUserId: zField(fd, "telegramUserId", z.string().regex(/^\d{3,20}$/, "ID Telegram berupa angka")),
     telegramName: optStr(fd, "telegramName"),
     userId: str(fd, "userId"),
     canSubmit: bool(fd, "canSubmit"),
@@ -225,7 +226,7 @@ export const createApiClient = action("telegram.manage", async (fd, user) => {
   const scopes = fd.getAll("scopes").map(String).filter((s) => s in API_SCOPES);
   if (!scopes.length) throw new Error("Pilih minimal satu scope");
   const k = generateApiKey();
-  const c = await prisma.apiClient.create({ data: { name: z.string().min(2).parse(str(fd, "name")), keyPrefix: k.prefix, keyHash: k.hash, scopes: scopes.join(",") } });
+  const c = await prisma.apiClient.create({ data: { name: zField(fd, "name", z.string().min(2)), keyPrefix: k.prefix, keyHash: k.hash, scopes: scopes.join(",") } });
   await audit(user, "API_KEY_DIBUAT", "ApiClient", c.id, { name: c.name, scopes });
   return `API key (simpan sekarang, hanya ditampilkan sekali): ${k.key}`;
 }, ["/pengaturan/telegram"]);

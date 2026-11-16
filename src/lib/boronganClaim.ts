@@ -6,6 +6,7 @@ import { taskGroupName } from "./boronganKirim";
 import { isCoordinatorOf } from "./boronganFlow";
 import { todayStr } from "./time";
 import { sendPush } from "./push";
+import { withField } from "./fieldError";
 
 /**
  * KLAIM UPAH BORONGAN PER TITIK (keputusan Owner):
@@ -161,7 +162,7 @@ export async function approveClaim(id: string, bankAccountId: string, actor: Act
 }
 
 export async function rejectClaim(id: string, reason: string, actor: Actor) {
-  if (!reason?.trim()) throw new BoronganError("Alasan penolakan wajib diisi");
+  if (!reason?.trim()) throw withField(new BoronganError("Alasan penolakan wajib diisi"), "reason");
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "BoronganClaim" WHERE id = ${id} FOR UPDATE`;
     const c = await tx.boronganClaim.findUniqueOrThrow({ where: { id } });

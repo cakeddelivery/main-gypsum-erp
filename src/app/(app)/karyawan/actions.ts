@@ -10,6 +10,7 @@ import { dateOnly, dateStr, todayStr } from "@/lib/time";
 import { autoCode } from "@/lib/codes";
 import { approveRegistration, createInvite, disableInvite, rejectRegistration } from "@/lib/registration";
 import type { EmployeeStatus, Role, WageType } from "@prisma/client";
+import { withField, zField } from "@/lib/fieldError";
 
 export const saveEmployee = action(
   "employee.manage",
@@ -17,8 +18,8 @@ export const saveEmployee = action(
     const id = optStr(fd, "id");
     const join = str(fd, "joinDate");
     const data = {
-      name: z.string().min(2, "Nama wajib").parse(str(fd, "name")),
-      divisionId: z.string().min(1, "Divisi wajib").parse(str(fd, "divisionId")),
+      name: zField(fd, "name", z.string().min(2, "Nama wajib")),
+      divisionId: zField(fd, "divisionId", z.string().min(1, "Divisi wajib")),
       // Jabatan tidak dipakai lagi (cukup divisi + role); kolom lama dibiarkan
       status: str(fd, "status") as EmployeeStatus,
       wageType: str(fd, "wageType") as WageType,
@@ -43,8 +44,8 @@ export const saveEmployee = action(
       // Rekening gaji: hanya Owner/Finance
       ...(fd.has("bankAccountNo") && (user.role === "OWNER" || user.role === "FINANCE") ? { bankName: optStr(fd, "bankName"), bankAccountNo: optStr(fd, "bankAccountNo")?.replace(/\D/g, "") || null, bankAccountName: optStr(fd, "bankAccountName") } : {}),
     };
-    if (data.wageType === "BULANAN" && !data.joinDate) throw new Error("Karyawan bulanan wajib punya tanggal masuk (dasar tanggal gajian)");
-    if (data.wageType === "BULANAN" && data.monthlySalary <= BigInt(0)) throw new Error("Isi gaji pokok");
+    if (data.wageType === "BULANAN" && !data.joinDate) throw withField(new Error("Karyawan bulanan wajib punya tanggal masuk (dasar tanggal gajian)"), "joinDate");
+    if (data.wageType === "BULANAN" && data.monthlySalary <= BigInt(0)) throw withField(new Error("Isi gaji pokok"), "monthlySalary");
     // Tunjangan ikut disimpan dari form (hanya pengelola penggajian)
     const allowances = fd.has("allowancesPresent") && user.can("payroll.manage") ? parseAllowances(fd) : null;
     // Kode karyawan otomatis per divisi (CTK-001); kode tetap walau pindah divisi
@@ -88,7 +89,7 @@ export const resignEmployee = action(
   "employee.manage",
   async (fd, user) => {
     const id = str(fd, "id");
-    const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Isi tanggal resign").parse(str(fd, "resignDate"));
+    const date = zField(fd, "resignDate", z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Isi tanggal resign"));
     if (str(fd, "confirm") !== "on") throw new Error("Centang konfirmasi resign dulu");
     const e = await prisma.employee.findUniqueOrThrow({ where: { id } });
     if (e.resignDate) throw new Error("Karyawan ini sudah tercatat resign");
@@ -141,7 +142,7 @@ export const saveAccount = action(
       await prisma.user.update({ where: { id: existing.id }, data: { username, role, divisionId: role === "KAPTEN_DIVISI" ? emp.divisionId : null, active: str(fd, "active") !== "off", ...(password ? passwordChangeData(await hashPassword(password)) : {}) } });
       if (password) await clearLoginBlocks(username);
     } else {
-      if (!password) throw new Error("Password wajib untuk akun baru");
+      if (!password) throw withField(new Error("Password wajib untuk akun baru"), "password");
       await prisma.user.create({ data: { username, name: emp.name, role, employeeId, divisionId: role === "KAPTEN_DIVISI" ? emp.divisionId : null, passwordHash: await hashPassword(password) } });
     }
     await audit(user, existing ? "AKUN_DIUBAH" : "AKUN_DIBUAT", "User", employeeId, { username, role });
@@ -180,7 +181,7 @@ export const approveRegistrationAction = action(
     const r = await approveRegistration(
       str(fd, "id"),
       {
-        divisionId: z.string().min(1, "Pilih divisi").parse(str(fd, "divisionId")),
+        divisionId: zField(fd, "divisionId", z.string().min(1, "Pilih divisi")),
         role,
         wageType: str(fd, "wageType") as WageType,
         monthlySalary: int(fd, "monthlySalary"),

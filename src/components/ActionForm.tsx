@@ -1,9 +1,9 @@
 "use client";
-import { createContext, useActionState, useContext, useEffect, useRef, useState } from "react";
+import { createContext, startTransition, useActionState, useContext, useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import type { ActionResult } from "@/lib/action";
 import { toast } from "./Toaster";
-import { revealField } from "./FormFeedback";
+import { revealField, showServerErrors } from "./FormFeedback";
 
 type Props = {
   action: (prev: ActionResult | null, fd: FormData) => Promise<ActionResult>;
@@ -25,10 +25,20 @@ export const DONE_MS = 1400;
 
 type State = (ActionResult & { n: number }) | null;
 
+/** Status kirim form (pengganti useFormStatus, karena ActionForm mengirim sendiri tanpa form action React) */
+const PendingCtx = createContext<{ pending: boolean; data: FormData | null } | null>(null);
+
+/** { pending, data } form terdekat: dari ActionForm, atau useFormStatus untuk form biasa */
+export function useFormPending() {
+  const native = useFormStatus();
+  const ctx = useContext(PendingCtx);
+  return ctx ?? { pending: native.pending, data: native.data };
+}
+
 /** Form dengan state loading / error / sukses untuk server action */
 export function ActionForm({ action, children, className, resetOnSuccess, onSuccess, onError, confirm, persist }: Props) {
   // Toast dipicu langsung setelah respons server, sebelum form bisa hilang karena data ter-render ulang
-  const [state, formAction] = useActionState(async (prev: State, fd: FormData): Promise<State> => {
+  const [state, formAction, pending] = useActionState(async (prev: State, fd: FormData): Promise<State> => {
     const r = await action(prev, fd);
     if (r?.ok && !persist) toast(r.message ?? "Tersimpan");
     // n berubah tiap kirim agar animasi pesan error diputar ulang walau pesannya sama
@@ -40,16 +50,18 @@ export function ActionForm({ action, children, className, resetOnSuccess, onSucc
   const [done, setDone] = useState(false);
   // Tombol kirim yang ditekan terakhir (name=value), agar centang hanya muncul di tombol itu
   const by = useRef<string | null>(null);
+  const [sent, setSent] = useState<FormData | null>(null);
   // Callback terbaru disimpan di ref: efek di bawah hanya berjalan sekali per respons server
   // (fungsi inline dari induk berubah tiap render dan tidak boleh memicu ulang onSuccess/onError)
   const cb = useRef({ onSuccess, onError, resetOnSuccess, persist });
   cb.current = { onSuccess, onError, resetOnSuccess, persist };
   useEffect(() => {
     if (!state) return;
-    const { onSuccess, onError, resetOnSuccess, persist } = cb.current;
+    const { onSuccess, onError, persist } = cb.current;
     setVisible(true);
     if (state.ok) {
-      if (resetOnSuccess) ref.current?.reset();
+      // Berhasil: kosongkan seperti bawaan form (nilai awal = data terbaru dari server)
+      ref.current?.reset();
       onSuccess?.();
       if (!persist) setVisible(false);
       setDone(true);
@@ -59,20 +71,35 @@ export function ActionForm({ action, children, className, resetOnSuccess, onSucc
     // Gagal: pesan error digulir ke tengah layar agar terlihat (form panjang / di popup)
     setDone(false);
     onError?.(state.error ?? "Gagal");
+    // Isian TIDAK dikosongkan. Kolom yang disebut server ditandai merah lalu difokus; bila tidak ada, gulir ke pesan.
+    if (ref.current && showServerErrors(ref.current, state.error ?? "Gagal", state.fields)) return;
     if (msgRef.current) revealField(msgRef.current, false);
   }, [state]);
   return (
     <form
       ref={ref}
-      action={formAction}
       className={className}
       onSubmit={(e) => {
-        if (confirm && !window.confirm(confirm)) return e.preventDefault();
+        // Dikirim manual (bukan <form action>): React 19 mengosongkan form setiap selesai kirim, termasuk saat gagal
+        e.preventDefault();
+        if (pending) return;
+        if (confirm && !window.confirm(confirm)) return;
         const b = (e.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null;
         by.current = b?.name ? `${b.name}=${b.value}` : null;
+        let fd: FormData;
+        try {
+          fd = new FormData(e.currentTarget, b ?? undefined);
+        } catch {
+          fd = new FormData(e.currentTarget);
+          if (b?.name && !fd.has(b.name)) fd.append(b.name, b.value);
+        }
+        setSent(fd);
+        startTransition(() => formAction(fd));
       }}
     >
-      <DoneCtx.Provider value={{ done, by: by.current }}>{children}</DoneCtx.Provider>
+      <PendingCtx.Provider value={{ pending, data: pending ? sent : null }}>
+        <DoneCtx.Provider value={{ done, by: by.current }}>{children}</DoneCtx.Provider>
+      </PendingCtx.Provider>
       {visible && state && (
         <div
           ref={msgRef}
@@ -115,7 +142,7 @@ export function useSubmitDone(name?: string, value?: string) {
 }
 
 export function Submit({ children, className = "btn-primary", pendingText = "Menyimpan…", name, value, confirm }: { children: React.ReactNode; className?: string; pendingText?: string; name?: string; value?: string; /** Konfirmasi khusus tombol ini (mis. "Kirim" di form yang juga punya "Simpan draf") */ confirm?: string }) {
-  const { pending, data } = useFormStatus();
+  const { pending, data } = useFormPending();
   const done = useSubmitDone(name, value);
   // Bila form punya beberapa tombol kirim (mis. Draft / Ajukan), hanya tombol yang ditekan yang berputar
   const mine = !name || !data || data.get(name) === value;

@@ -18,6 +18,7 @@ export const REFUND_CATEGORY = "Retur & Refund Penjualan";
 
 export { ISSUE_TYPES, issueLabel, SOLUTIONS, solutionLabel, COMPLAINT_STATUS, complaintStatusOf } from "./complaintShared";
 import { COMPLAINT_STATUS, ISSUE_TYPES, SOLUTIONS, issueLabel } from "./complaintShared";
+import { withField } from "./fieldError";
 
 /** Rekening refund pembeli hanya untuk pengaju, penyetuju/pembayar refund (Finance) dan Owner */
 export function canSeePayee(c: { createdById: string | null }, user: { id: string; role: string; can: (p: Permission) => boolean }) {
@@ -51,15 +52,15 @@ const clean = (s: string | null | undefined, max = 120) => s?.trim().replace(/\s
 
 /** Validasi isian komplain (murni, dipakai juga unit test) */
 export function validateComplaint(input: ComplaintInput) {
-  if (!ISSUE_TYPES.some((i) => i.key === input.issueType)) throw new StockError("Pilih jenis masalah");
-  if (!SOLUTIONS.some((s) => s.key === input.solution)) throw new StockError("Pilih solusi: refund atau kirim ganti");
-  if (!clean(input.trackingNo) && !clean(input.orderNo)) throw new StockError("Isi no. resi atau no. pesanan");
+  if (!ISSUE_TYPES.some((i) => i.key === input.issueType)) throw withField(new StockError("Pilih jenis masalah"), "issueType");
+  if (!SOLUTIONS.some((s) => s.key === input.solution)) throw withField(new StockError("Pilih solusi: refund atau kirim ganti"), "solution");
+  if (!clean(input.trackingNo) && !clean(input.orderNo)) throw withField(new StockError("Isi no. resi atau no. pesanan"), "trackingNo");
   const lines = input.lines.filter((l) => (l.itemId || l.labelSku?.trim() || l.labelName?.trim()) && l.qty > 0).map((l) => ({ ...l, qty: Math.round(l.qty), sendQty: Math.round(l.sendQty ?? 0) }));
   if (!lines.length) throw new StockError("Isi minimal satu barang yang bermasalah");
   if (input.solution === "REFUND") {
     const amount = Math.round(input.refundAmount ?? 0);
-    if (!(amount > 0)) throw new StockError("Isi nominal refund");
-    if (!clean(input.payeeBank) || !clean(input.payeeAccount) || !clean(input.payeeName)) throw new StockError("Isi rekening/e-wallet pembeli: nama bank/e-wallet, nomor, dan atas nama");
+    if (!(amount > 0)) throw withField(new StockError("Isi nominal refund"), "refundAmount");
+    if (!clean(input.payeeBank) || !clean(input.payeeAccount) || !clean(input.payeeName)) throw withField(new StockError("Isi rekening/e-wallet pembeli: nama bank/e-wallet, nomor, dan atas nama"), !clean(input.payeeBank) ? "payeeBank" : !clean(input.payeeAccount) ? "payeeAccount" : "payeeName");
     if (!/^[0-9 .-]{5,30}$/.test(input.payeeAccount!.trim())) throw new StockError("Nomor rekening/e-wallet hanya angka");
   } else {
     if (!lines.some((l) => l.itemId && l.sendQty > 0)) throw new StockError("Kirim ganti: pilih produk ERP dan jumlah pengganti");
@@ -114,7 +115,7 @@ export async function approveRefund(id: string, actor: Actor, now: Date = new Da
 }
 
 export async function rejectComplaint(id: string, reason: string, actor: Actor, now: Date = new Date()) {
-  if (!reason?.trim()) throw new StockError("Alasan penolakan wajib diisi");
+  if (!reason?.trim()) throw withField(new StockError("Alasan penolakan wajib diisi"), "reason");
   return prisma.$transaction(async (tx) => {
     const c = await lockOpen(tx, id);
     if (!["DIAJUKAN", "DISETUJUI"].includes(c.status)) throw new StockError(`${c.number} tidak bisa ditolak lagi`);
@@ -129,7 +130,7 @@ export async function rejectComplaint(id: string, reason: string, actor: Actor, 
  * sebagai baris tertaut (pengeluaran kategori Retur & Refund Penjualan, dengan bukti) di menu Transaksi.
  */
 export async function payRefund(id: string, p: { bankAccountId: string; date: Date; proofPath: string; proofMime: string }, actor: Actor) {
-  if (!p.bankAccountId) throw new StockError("Pilih rekening sumber");
+  if (!p.bankAccountId) throw withField(new StockError("Pilih rekening sumber"), "bankAccountId");
   if (!p.proofPath) throw new StockError("Unggah bukti transfer refund");
   return prisma.$transaction(async (tx) => {
     const c = await lockOpen(tx, id);
@@ -197,7 +198,7 @@ const reverseDate = (tx: Tx, date: Date, now: Date) => assertPeriodOpen(tx, date
 
 /** Batalkan komplain salah input: refund dibayar / pengganti dikirim dibalik (jurnal balik, stok kembali) */
 export async function cancelComplaint(id: string, reason: string, actor: Actor, now: Date = new Date()) {
-  if (!reason?.trim()) throw new StockError("Alasan pembatalan wajib diisi");
+  if (!reason?.trim()) throw withField(new StockError("Alasan pembatalan wajib diisi"), "reason");
   return prisma.$transaction(async (tx) => {
     const c = await lockOpen(tx, id);
     const why = `Batal komplain ${c.number} — ${reason.trim()}`.slice(0, 150);

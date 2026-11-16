@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { useFormStatus } from "react-dom";
+import { useFormPending } from "./ActionForm";
 
 type Fix = { lat: number; lng: number; accuracy: number };
 
@@ -41,7 +41,7 @@ export function useGeo(enabled = true) {
  */
 export function GeoSubmit({ required, children, className = "btn-primary", pendingText = "Mencatat…" }: { required: boolean; children: React.ReactNode; className?: string; pendingText?: string }) {
   const { fix, error, retry } = useGeo();
-  const { pending } = useFormStatus();
+  const { pending } = useFormPending();
   const waiting = required && !fix;
   return (
     <div className="flex flex-col gap-1.5">

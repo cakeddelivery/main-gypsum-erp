@@ -7,6 +7,7 @@ import { audit } from "@/lib/audit";
 import { isTemplate, type ChecklistTask } from "@/lib/shiftReport";
 import { autoCode } from "@/lib/codes";
 import { FLOW_SETTING } from "@/lib/shiftReportFlow";
+import { zField } from "@/lib/fieldError";
 
 const PATHS = ["/laporan", "/stok"];
 
@@ -17,7 +18,7 @@ export const saveMaterial = action(
     const id = optStr(fd, "id");
     const divisionId = str(fd, "divisionId");
     const division = await prisma.division.findUniqueOrThrow({ where: { id: divisionId } });
-    const name = z.string().min(2, "Nama bahan wajib").max(80).parse(str(fd, "name"));
+    const name = zField(fd, "name", z.string().min(2, "Nama bahan wajib").max(80));
     const limit = dec(fd, "limit");
     if (limit < 0) throw new Error("Limit tidak boleh negatif");
     const data = { name, unit: str(fd, "unit") || "pcs", minStock: limit, divisionId, sortOrder: int(fd, "sortOrder") };
@@ -78,7 +79,7 @@ export const saveDivision = action(
     const id = optStr(fd, "id");
     const tpl = str(fd, "reportTemplate");
     const data = {
-      name: z.string().min(2, "Nama divisi wajib").parse(str(fd, "name")),
+      name: zField(fd, "name", z.string().min(2, "Nama divisi wajib")),
       reportTemplate: isTemplate(tpl) ? tpl : null,
       shiftCount: Math.min(Math.max(int(fd, "shiftCount", 1), 1), 3),
       targetPerShift: str(fd, "targetPerShift") ? z.number().int().min(1, "Target minimal 1").max(1_000_000).parse(int(fd, "targetPerShift")) : null,

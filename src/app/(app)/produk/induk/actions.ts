@@ -6,6 +6,7 @@ import { audit } from "@/lib/audit";
 import { itemCosts, productCosting } from "@/lib/hpp";
 import { PRICE_CHANNELS, copyRecipe, generateMissingSkus, saveBulkPrices } from "@/lib/productFamily";
 import type { ProductVariant } from "@prisma/client";
+import { zField } from "@/lib/fieldError";
 
 const PATHS = ["/produk", "/produk/induk"];
 const VARIANTS = ["COWOK", "CEWEK", "HEWAN", "TRANSPORTASI", "MIX"];
@@ -15,7 +16,7 @@ export const saveVariantOption = action(
   "product.manage",
   async (fd, user) => {
     const id = optStr(fd, "id");
-    const name = z.string().trim().min(1, "Nama pilihan wajib").max(40).parse(str(fd, "name"));
+    const name = zField(fd, "name", z.string().trim().min(1, "Nama pilihan wajib").max(40));
     const patung = int(fd, "patungQty", 0);
     if (patung < 0) throw new Error("Jumlah patung tidak boleh minus");
     const variantRaw = optStr(fd, "variant");

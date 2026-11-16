@@ -15,11 +15,12 @@ import { openPayables } from "@/lib/payables";
 import { fmtDateTime, jakartaDateTime, txTime } from "@/lib/time";
 import { assertPerm } from "@/lib/auth";
 import type { TxDirection } from "@prisma/client";
+import { withField, zField } from "@/lib/fieldError";
 
 async function readForm(fd: FormData): Promise<TxInput> {
-  const direction = z.enum(["MASUK", "KELUAR", "TRANSFER"]).parse(str(fd, "direction")) as TxDirection;
+  const direction = zField(fd, "direction", z.enum(["MASUK", "KELUAR", "TRANSFER"])) as TxDirection;
   const date = str(fd, "date");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Tanggal wajib diisi");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw withField(new Error("Tanggal wajib diisi"), "date");
   const time = txTime(date, str(fd, "time"));
   let proofPath: string | null = null;
   let proofMime: string | null = null;
@@ -164,7 +165,7 @@ export const restoreTx = action("finance.approve", async (fd, user) => {
 
 /** Hapus semua transaksi berstatus tertentu (Dibatalkan/Ditolak) sekaligus */
 export const deleteAllClosedTx = action("finance.approve", async (fd, user) => {
-  const status = z.enum(["DIBATALKAN", "DITOLAK"]).parse(str(fd, "status"));
+  const status = zField(fd, "status", z.enum(["DIBATALKAN", "DITOLAK"]));
   const rows = await prisma.financeTransaction.findMany({ where: { status, deletedAt: null }, select: { id: true } });
   if (!rows.length) return "Tidak ada transaksi untuk dihapus";
   const n = await deleteClosedTransactions(rows.map((r) => r.id), { id: user.id, name: user.name });
