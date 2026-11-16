@@ -7,6 +7,7 @@ import { STAGE_LABEL } from "@/lib/stock";
 import { flowLines, isTemplate, plannedFlow, toEntries, type StockCountRow, type WorkData } from "@/lib/shiftReport";
 import { refreshDraftChecklists } from "@/lib/shiftReportChecklist";
 import { boronganLines } from "@/lib/shiftReportBorongan";
+import { withCurrentLimits } from "@/lib/shiftReportStock";
 import { flowEnabled } from "@/lib/shiftReportFlow";
 import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
 import { resultPlaces } from "@/lib/resultCountGroups";
@@ -55,7 +56,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   // Saat diisi: daftar bahan mengikuti master bahan baku divisi terkini (hitungan yang sudah ada dipertahankan)
   const items = await prisma.item.findMany({ where: { divisionId: r.divisionId, active: true, type: "BAHAN_BAKU" }, orderBy: [{ sortOrder: "asc" }, { name: "asc" }] });
   const editStock: StockCountRow[] = items.map((i) => ({ itemId: i.id, name: i.name, unit: i.unit, limit: Number(i.minStock), qty: saved.find((x) => x.itemId === i.id)?.qty ?? null }));
-  const stock = saved;
+  const stock = await withCurrentLimits(saved);
   const work = r.work as WorkData;
   // Anggota divisi tidak bisa mengubah laporan yang sudah terkirim (Supervisor/Admin/Owner tetap bisa)
   const locked = r.status !== "DRAFT" && reportDivision(user) !== null;

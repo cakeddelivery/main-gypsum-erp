@@ -25,7 +25,7 @@ export default async function OrderBahanPage() {
               <ul className="divide-y divide-slate-100">
                 {order.map((o) => (
                   <li key={o.itemId} className="flex flex-wrap items-baseline justify-between gap-x-3 py-1.5 text-sm">
-                    <span className="font-medium text-rose-700">⚠ {o.name}</span>
+                    <span className="font-medium text-rose-700">⚠ {o.name}{o.requested && <span className="ml-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">sudah diminta</span>}</span>
                     <span className="text-slate-600">stok {o.qty.toLocaleString("id-ID")} · limit {o.limit.toLocaleString("id-ID")} {o.unit}</span>
                     {o.url && <a href={o.url} target="_blank" rel="noopener noreferrer" className="btn-secondary btn-sm">🛒 Order online</a>}
                     <Link href={`/laporan/${o.reportId}`} className="w-full text-xs text-slate-400 hover:underline">dihitung {fmtDay(o.date)} · {o.shift}</Link>

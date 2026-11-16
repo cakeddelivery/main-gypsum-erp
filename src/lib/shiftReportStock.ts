@@ -112,7 +112,7 @@ export async function unsentReportCount(date: string, divisionId?: string | null
   return Math.max(0, expectedReportCount(divisions, shifts) - sent);
 }
 
-export type OrderRow = { itemId: string; name: string; unit: string; limit: number; qty: number; reportId: string; date: Date; shift: string; url?: string | null };
+export type OrderRow = { itemId: string; name: string; unit: string; limit: number; qty: number; reportId: string; date: Date; shift: string; url?: string | null; /** Sudah ada permintaan stok terbuka (Diajukan/Disetujui) */ requested?: boolean };
 
 /** Bahan baku per divisi yang perlu diorder: hitungan stok akhir shift terakhir tiap bahan ≤ limit */
 export async function materialOrderList(divisionId?: string | null) {
@@ -130,11 +130,13 @@ export async function materialOrderList(divisionId?: string | null) {
   });
   const last = new Map<string, { qty: number; reportId: string; date: Date; shift: string }>();
   for (const r of reports) for (const s of r.stockCount as StockCountRow[]) if (s.qty != null && !last.has(s.itemId)) last.set(s.itemId, { qty: s.qty, reportId: r.id, date: r.date, shift: r.shift.name });
+  // Bahan yang permintaan stoknya masih terbuka tetap tampil di daftar order, ditandai "sudah diminta"
+  const open = new Set((await prisma.stockRequest.findMany({ where: { status: { in: ["DIAJUKAN", "DISETUJUI"] }, itemId: { in: divisions.flatMap((d) => d.items.map((i) => i.id)) } }, select: { itemId: true } })).map((x) => x.itemId));
   return divisions.map((d) => {
     const rows = d.items.map((i) => ({ item: i, limit: Number(i.minStock), count: last.get(i.id) }));
     const order: OrderRow[] = rows
       .filter((r) => r.count && needsOrder({ qty: r.count.qty, limit: r.limit }))
-      .map((r) => ({ itemId: r.item.id, name: r.item.name, unit: r.item.unit, limit: r.limit, url: r.item.buyMode === "ONLINE" ? r.item.productUrl : null, ...r.count! }));
+      .map((r) => ({ itemId: r.item.id, name: r.item.name, unit: r.item.unit, limit: r.limit, url: r.item.buyMode === "ONLINE" ? r.item.productUrl : null, requested: open.has(r.item.id), ...r.count! }));
     return { division: d, order, uncounted: rows.filter((r) => !r.count).map((r) => r.item) };
   });
 }
@@ -148,7 +150,7 @@ export function materialOrderText(groups: { division: { name: string }; order: O
   return [
     `<b>⚠️ Order bahan baku (${total})</b>`,
     "Stok akhir shift terakhir ≤ limit:",
-    ...g.flatMap((x) => [``, `<b>${esc(x.division.name)}</b>`, ...x.order.map((o) => `• ${esc(o.name)}: stok ${fmt(o.qty)} · limit ${fmt(o.limit)} ${esc(o.unit)}${o.url ? `\n  🛒 <a href="${esc(o.url)}">Order online</a>` : ""}`)]),
+    ...g.flatMap((x) => [``, `<b>${esc(x.division.name)}</b>`, ...x.order.map((o) => `• ${esc(o.name)}: stok ${fmt(o.qty)} · limit ${fmt(o.limit)} ${esc(o.unit)}${o.requested ? " (sudah diminta)" : ""}${o.url ? `\n  🛒 <a href="${esc(o.url)}">Order online</a>` : ""}`)]),
   ].join("\n");
 }
 
@@ -165,4 +167,15 @@ export async function sendMaterialOrderReminder(now: Date = new Date()) {
   let sent = 0;
   for (const r of recipients) if ((await sendTelegram(r.chatId!, text, { type: "ORDER_BAHAN" })).ok) sent++;
   return { sent, failed: recipients.length - sent };
+}
+
+/**
+ * Pakai batas order (minStock) TERKINI untuk baris hitungan stok laporan: limit yang tersimpan di laporan
+ * hanyalah salinan saat disimpan, padahal batas bisa diubah belakangan (stok = limit tetap ikut order).
+ */
+export async function withCurrentLimits<T extends { itemId: string; limit: number }>(rows: T[]): Promise<T[]> {
+  if (!rows.length) return rows;
+  const items = await prisma.item.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.itemId))] } }, select: { id: true, minStock: true } });
+  const lim = new Map(items.map((i) => [i.id, Number(i.minStock)]));
+  return rows.map((r) => (lim.has(r.itemId) ? { ...r, limit: lim.get(r.itemId)! } : r));
 }

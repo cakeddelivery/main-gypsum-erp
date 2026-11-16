@@ -17,7 +17,8 @@ export function suggestedQty(stock: number, limit: number, orderQty: number) {
  */
 export async function autoRequestsFromReport(reportId: string, actor: Actor) {
   const r = await prisma.shiftReport.findUniqueOrThrow({ where: { id: reportId }, include: { division: true, shift: true } });
-  const low = (r.stockCount as StockCountRow[]).filter(needsOrder);
+  const { withCurrentLimits } = await import("./shiftReportStock");
+  const low = (await withCurrentLimits(r.stockCount as StockCountRow[])).filter(needsOrder);
   if (!low.length) return { created: 0 };
   const items = await prisma.item.findMany({ where: { id: { in: low.map((x) => x.itemId) }, active: true } });
   const open = new Set((await prisma.stockRequest.findMany({ where: { itemId: { in: items.map((i) => i.id) }, status: { in: ["DIAJUKAN", "DISETUJUI"] } }, select: { itemId: true } })).map((x) => x.itemId));

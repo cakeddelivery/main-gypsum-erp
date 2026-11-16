@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { ITEM_TYPE_LABEL, needsReorder, stockBalances, valuationByLocation } from "@/lib/stock";
+import { ITEM_TYPE_LABEL, needsReorder, nonWarehouseLocations, stockBalances, valuationByLocation } from "@/lib/stock";
 import { idr } from "@/lib/money";
 import { Badge, Empty, FilterBar, Field, PageHeader, Stat, Tabs } from "@/components/ui";
 import type { ItemType } from "@prisma/client";
@@ -18,11 +18,14 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
     prisma.location.findMany({ orderBy: { code: "asc" }, include: { division: true } }),
     stockBalances(),
   ]);
+  // Batas order dihitung dari stok GUDANG saja (tanpa titik borongan & mobil driver), sama dengan notifikasi stok menipis
+  const outside = await nonWarehouseLocations();
+  const gudang = (itemId: string) => balances.filter((b) => b.itemId === itemId && !outside.has(b.locationId)).reduce((s, b) => s + b.qty, 0);
   const shownLocs = sp.loc ? locations.filter((l) => l.id === sp.loc) : locations;
   const qty = (itemId: string, locId?: string) => balances.filter((b) => b.itemId === itemId && (!locId || b.locationId === locId)).reduce((s, b) => s + b.qty, 0);
-  // Tab: semua / per jenis / perlu reorder (stok ≤ batas minimum, dihitung dari total semua lokasi)
+  // Tab: semua / per jenis / perlu reorder (stok gudang ≤ batas minimum)
   const tab = sp.filter === "menipis" ? "reorder" : sp.filter === "minus" ? "minus" : sp.type ?? "semua";
-  const all = items.map((i) => ({ ...i, total: sp.loc ? qty(i.id, sp.loc) : qty(i.id), min: Number(i.minStock), reorder: needsReorder(qty(i.id), Number(i.minStock)) }));
+  const all = items.map((i) => ({ ...i, total: sp.loc ? qty(i.id, sp.loc) : qty(i.id), min: Number(i.minStock), gudang: gudang(i.id), reorder: needsReorder(gudang(i.id), Number(i.minStock)) }));
   const negative = all.filter((r) => balances.some((b) => b.itemId === r.id && b.qty < -0.0005));
   const rows = tab === "reorder" ? all.filter((r) => r.reorder) : tab === "minus" ? negative : tab === "semua" ? all : all.filter((r) => r.type === tab);
   const value = (t: ItemType) => items.filter((i) => i.type === t).reduce((s, i) => s + qty(i.id) * Number(i.avgCost), 0);
@@ -59,7 +62,7 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
           <Stat label="Nilai bahan baku" value={idr(value("BAHAN_BAKU"))} />
           <Stat label="Nilai barang setengah jadi" value={idr(value("BARANG_DALAM_PROSES"))} />
           <Stat label="Nilai produk jadi" value={idr(value("BARANG_JADI"))} tone="blue" />
-          <Stat label="Perlu reorder" value={low} tone={low ? "red" : "green"} href="/stok?filter=menipis" hint="stok ≤ batas minimum" />
+          <Stat label="Perlu reorder" value={low} tone={low ? "red" : "green"} href="/stok?filter=menipis" hint="stok gudang ≤ batas minimum" />
         </div>
       )}
       {byLoc && byLoc.rows.length > 0 && (
@@ -108,7 +111,7 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
                   <td><Badge tone={r.type === "BARANG_JADI" ? "blue" : r.type === "BAHAN_BAKU" ? "gray" : "purple"}>{ITEM_TYPE_LABEL[r.type]}</Badge></td>
                   {shownLocs.map((l) => <td key={l.id} className="num">{fmtQty(qty(r.id, l.id))}</td>)}
                   <td className="num font-semibold">{fmtQty(r.total)} <span className="text-xs font-normal text-slate-400">{r.unit}</span></td>
-                  <td className="num">{r.reorder ? <Badge tone="red">{fmtQty(r.min)} · reorder</Badge> : fmtQty(r.min)}</td>
+                  <td className="num">{r.reorder ? <Badge tone="red">{fmtQty(r.min)} · reorder</Badge> : fmtQty(r.min)}{r.min > 0 && Math.abs(r.gudang - r.total) > 0.0005 && <div className="text-xs text-slate-500">gudang {fmtQty(r.gudang)}</div>}</td>
                   {user.can("stock.view") && <td className="num">{idr(r.avgCost)}</td>}
                   <td>{user.can("stock.view") && <Link className="link text-xs" href={`/stok/kartu?item=${r.id}`}>Kartu</Link>}</td>
                 </tr>

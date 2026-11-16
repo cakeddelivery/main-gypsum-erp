@@ -404,9 +404,9 @@ export type ChecklistEntry = ChecklistTask & { done: boolean; photoPath?: string
 /** rcpt = id barang masuk yang sudah diperhitungkan saat hitungan ini diterapkan (hanya di snapshot stockAppliedCount) */
 export type StockCountRow = { itemId: string; name: string; unit: string; limit: number; qty: number | null; rcpt?: string[] };
 
-/** Bahan perlu diorder bila stok akhir ≤ limit */
+/** Bahan perlu diorder bila stok akhir menyentuh / di bawah limit (stok = limit ikut; toleransi pembulatan desimal) */
 export function needsOrder(r: { qty: number | null; limit: number }) {
-  return r.qty != null && r.qty <= r.limit;
+  return r.qty != null && Number(r.limit) > 0 && Number(r.qty) <= Number(r.limit) + 1e-9;
 }
 
 /** Tugas dianggap selesai bila dicentang; tugas wajib foto selesai bila fotonya ada */

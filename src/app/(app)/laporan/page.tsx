@@ -44,6 +44,9 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
       take: 300,
     }),
   ]);
+  // Batas order terkini per bahan (limit di laporan hanya salinan saat disimpan)
+  const limitIds = [...new Set(reports.flatMap((r) => (r.stockCount as StockCountRow[]).map((x) => x.itemId)))];
+  const limits = new Map((await prisma.item.findMany({ where: { id: { in: limitIds } }, select: { id: true, minStock: true } })).map((i) => [i.id, Number(i.minStock)]));
   // Tanggal terbaru di atas, lalu divisi, lalu shift (urutan query); satu laporan per divisi+shift+tanggal (unik di DB).
   // Draf cukup ditandai badge. Baris dikelompokkan per tanggal.
   const byDate: { key: string; date: Date; rows: typeof reports }[] = [];
@@ -126,7 +129,7 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
                     ...g.rows.map((r) => {
                       const st = STATUS[r.status] ?? STATUS.DRAFT;
                       const cl = toEntries(r.checklist);
-                      const low = (r.stockCount as StockCountRow[]).filter(needsOrder).length;
+                      const low = (r.stockCount as StockCountRow[]).filter((x) => needsOrder({ qty: x.qty, limit: limits.get(x.itemId) ?? x.limit })).length;
                       const draft = r.status === "DRAFT";
                       return (
                         <tr key={r.id}>
