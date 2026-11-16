@@ -4,7 +4,7 @@ import { action, str, optStr, int, bool } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { evaluateCheckIn, readGeo } from "@/lib/attendance";
 import { selfCheckIn, selfCheckOut } from "@/lib/attendanceSelf";
-import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
+import { addDays, dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
 import type { AttendanceStatus, LeaveKind } from "@prisma/client";
 import { cancelLeave, decideLeave, leaveError, submitLeave } from "@/lib/leave";
@@ -119,6 +119,7 @@ export const correctAttendance = action(
     const shiftId = prev?.shiftId ?? sched?.shiftId ?? (await prisma.shift.findFirstOrThrow({ where: { active: true }, orderBy: { code: "asc" } })).id;
     const shift = await prisma.shift.findUniqueOrThrow({ where: { id: shiftId } });
     let checkIn: Date | null = prev?.checkIn ?? null;
+    let checkOut: Date | null = prev?.checkOut ?? null;
     let lateMinutes = 0;
     if (status === "HADIR") {
       const time = optStr(fd, "checkIn");
@@ -127,11 +128,23 @@ export const correctAttendance = action(
       const ev = evaluateCheckIn(shift, checkIn);
       status = ev.status;
       lateMinutes = ev.lateMinutes;
-    } else checkIn = null;
-    const data = { shiftId, status, lateMinutes, checkIn, note: `Koreksi ${user.name}: ${reason}`.slice(0, 300), validated: true, validatedBy: user.name, validatedAt: new Date() };
+      // Jam pulang: tanggal kerja = tanggal mulai shift; jam pulang ≤ jam masuk berarti esok harinya (shift malam)
+      const out = optStr(fd, "checkOut");
+      if (out) {
+        if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(out)) throw new Error("Jam pulang tidak valid");
+        checkOut = jakartaDateTime(date, out);
+        if (checkOut <= checkIn) checkOut = jakartaDateTime(addDays(date, 1), out);
+        if (checkOut.getTime() - checkIn.getTime() > 20 * 3600_000) throw new Error("Jam pulang terlalu jauh dari jam masuk (lebih dari 20 jam)");
+      }
+      if (checkOut && checkOut <= checkIn) throw new Error("Jam pulang harus setelah jam masuk");
+    } else {
+      checkIn = null;
+      checkOut = null;
+    }
+    const data = { shiftId, status, lateMinutes, checkIn, checkOut, note: `Koreksi ${user.name}: ${reason}`.slice(0, 300), validated: true, validatedBy: user.name, validatedAt: new Date() };
     const a = await prisma.attendance.upsert({ where: { employeeId_date: { employeeId, date: dateOnly(date) } }, create: { employeeId, date: dateOnly(date), ...data }, update: data });
     if (status === "HADIR" || status === "TERLAMBAT") await prisma.shiftSchedule.upsert({ where: { employeeId_date: { employeeId, date: dateOnly(date) } }, create: { employeeId, date: dateOnly(date), shiftId }, update: {} });
-    await audit(user, "ABSENSI_DIKOREKSI", "Attendance", a.id, { tanggal: date, dari: prev?.status ?? null, ke: status, alasan: reason });
+    await audit(user, "ABSENSI_DIKOREKSI", "Attendance", a.id, { tanggal: date, dari: prev?.status ?? null, ke: status, alasan: reason, pulangDari: prev?.checkOut?.toISOString() ?? null, pulangKe: checkOut?.toISOString() ?? null });
     return "Koreksi tersimpan";
   },
   ["/absensi", "/"],

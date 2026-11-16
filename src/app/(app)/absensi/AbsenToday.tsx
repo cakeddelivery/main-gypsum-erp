@@ -19,6 +19,7 @@ const addMin = (hhmm: string, m: number) => {
   const t = (Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5)) + m) % 1440;
   return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
 };
+const crosses = (s: Shift) => s.endTime <= s.startTime;
 function duration(fromIso: string, to: Date) {
   const m = Math.max(0, Math.floor((to.getTime() - new Date(fromIso).getTime()) / 60000));
   return `${Math.floor(m / 60)} j ${m % 60} m`;
@@ -90,12 +91,14 @@ export type TodayProps = {
   sites: Site[];
   att: { status: string; checkIn: string | null; checkOut: string | null; lateMinutes: number; note: string | null } | null;
   report: { division: string; sent: boolean } | null;
+  /** Diisi saat absen masih milik tanggal kerja kemarin (shift malam lintas tengah malam) */
+  workdayLabel?: string | null;
   checkIn: Action;
   checkOut: Action;
 };
 
 /** Absen hari ini (varian A): jam berjalan, foto profil, shift, status GPS, tombol besar Masuk / Pulang */
-export function AbsenToday({ name, photoUrl, shift, sites, att, report, checkIn, checkOut }: TodayProps) {
+export function AbsenToday({ name, photoUrl, shift, sites, att, report, workdayLabel, checkIn, checkOut }: TodayProps) {
   const now = useNow();
   const done = !!att?.checkOut;
   const inside = !!att?.checkIn && !done;
@@ -117,6 +120,7 @@ export function AbsenToday({ name, photoUrl, shift, sites, att, report, checkIn,
           <div className="text-4xl font-extrabold tabular-nums leading-tight tracking-tight text-slate-900" suppressHydrationWarning>{now ? fmtClock(now) : "--:--:--"}</div>
           <div className="text-xs text-slate-500" suppressHydrationWarning>{now ? fmtLong(now) : "\u00a0"}</div>
           <div className="break-words text-xs font-medium text-slate-600">{name}</div>
+          {workdayLabel && <div className="mt-1 inline-block rounded-full bg-amber-50 px-2.5 py-0.5 text-xs font-semibold text-amber-700">{workdayLabel}</div>}
         </div>
       </div>
 
@@ -135,11 +139,11 @@ export function AbsenToday({ name, photoUrl, shift, sites, att, report, checkIn,
           <div className="card px-3 py-2.5">
             <div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{done ? "Pulang" : "Lama kerja"}</div>
             <div className="text-xl font-extrabold tabular-nums text-slate-900" suppressHydrationWarning>{done ? fmtHm(att.checkOut!) : now ? duration(att.checkIn, now) : "—"}</div>
-            <div className="text-xs text-slate-500">{done ? `Lama kerja ${duration(att.checkIn, new Date(att.checkOut!))}` : shift ? `shift s/d ${shift.endTime}` : ""}</div>
+            <div className="text-xs text-slate-500">{done ? `Lama kerja ${duration(att.checkIn, new Date(att.checkOut!))}` : shift ? `shift s/d ${shift.endTime}${crosses(shift) ? " (lewat tengah malam)" : ""}` : ""}</div>
           </div>
         </div>
       ) : shift ? (
-        <InfoCard icon={CLOCK} tone="brand" eyebrow="Shift hari ini" title={`${shift.name} · ${shift.startTime} – ${shift.endTime}`} sub={`Toleransi telat ${shift.toleranceMinutes} menit (sampai ${addMin(shift.startTime, shift.toleranceMinutes)})`} />
+        <InfoCard icon={CLOCK} tone="brand" eyebrow="Shift hari ini" title={`${shift.name} · ${shift.startTime} – ${shift.endTime}${crosses(shift) ? " (+1 hari)" : ""}`} sub={`Toleransi telat ${shift.toleranceMinutes} menit (sampai ${addMin(shift.startTime, shift.toleranceMinutes)})`} />
       ) : null}
 
       {inside && report && !report.sent && (

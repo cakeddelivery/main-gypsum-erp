@@ -39,7 +39,8 @@
     "restore": "bash scripts/restore.sh",
     "backup:buka": "bash scripts/decrypt-backup.sh",
     "test:hp": "node scripts/cek-tampilan-hp.cjs",
-    "validasi:otomatis": "tsx scripts/validasi-otomatis.ts"
+    "validasi:otomatis": "tsx scripts/validasi-otomatis.ts",
+    "perbaiki:shift-malam": "tsx scripts/perbaiki-shift-malam.ts"
   },
   "author": "",
   "license": "ISC",
