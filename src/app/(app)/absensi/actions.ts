@@ -160,14 +160,17 @@ export const saveScheduleCells = action(
     } catch {
       throw new Error("Data jadwal tidak valid");
     }
-    const changes = parseChanges(raw);
-    if (!changes.length) return "Tidak ada perubahan";
+    const all = parseChanges(raw);
+    // Jadwal sendiri diatur atasan lain (Owner); baris itu dilewati, perubahan karyawan lain tetap tersimpan
+    const self = user.role !== "OWNER" && user.employeeId ? all.filter((c) => c.employeeId === user.employeeId) : [];
+    const changes = all.filter((c) => !self.includes(c));
+    if (!changes.length) return self.length ? "Jadwal Anda sendiri diatur Owner, tidak ada perubahan lain" : "Tidak ada perubahan";
     for (const employeeId of new Set(changes.map((c) => c.employeeId))) await guardEmployee(employeeId, user);
     const r = await applyScheduleChanges(changes);
     // Jadwal hari yang sudah lewat diubah → status absensi otomatis hari itu ikut dihitung ulang
     await reconcileAfterSchedule(changes.map((c) => c.date), [...new Set(changes.map((c) => c.employeeId))]);
     await audit(user, "JADWAL_DIATUR", "ShiftSchedule", null, { perubahan: changes.length, masuk: r.saved, libur: r.removed });
-    return `Jadwal tersimpan (${changes.length} perubahan)`;
+    return `Jadwal tersimpan (${changes.length} perubahan)${self.length ? ". Jadwal Anda sendiri dilewati (diatur Owner)" : ""}`;
   },
   ["/absensi"],
 );

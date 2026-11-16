@@ -41,7 +41,7 @@
     "test:hp": "node scripts/cek-tampilan-hp.cjs",
     "validasi:otomatis": "tsx scripts/validasi-otomatis.ts",
     "perbaiki:shift-malam": "tsx scripts/perbaiki-shift-malam.ts",
-    "tarif:cat-plastik": "tsx scripts/tarif-cat-plastik.ts"
+    "setup:kit-tugas": "tsx scripts/kit-tugas-borongan.ts"
   },
   "author": "",
   "license": "ISC",

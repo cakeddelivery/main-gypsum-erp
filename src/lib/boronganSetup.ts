@@ -123,7 +123,7 @@ export async function setupBorongan(db: PrismaClient, apply: boolean): Promise<s
     cfg[brn.id] = { tasks: cpTasks, kit: cat3 };
     say(`= Paket titik: BMR ${bmr ? `${cfg[bmr.id].tasks.length} tugas, ${cfg[bmr.id].kit.length} bahan` : "(titik tidak ada)"} · Mastrip ${mst ? `${cfg[mst.id].tasks.length} tugas, ${cfg[mst.id].kit.length} bahan` : "(titik tidak ada)"} · Beringin ${cfg[brn.id].tasks.length} tugas, ${cfg[brn.id].kit.length} bahan`);
     await tx.setting.upsert({ where: { key: POINT_CONFIG_KEY }, create: { key: POINT_CONFIG_KEY, value: JSON.stringify(cfg) }, update: { value: JSON.stringify(cfg) } });
-    if (!(await tx.boronganPerson.findFirst({ where: { pointId: brn.id, role: "KOORDINATOR", active: true } }))) say("! Beringin belum punya koordinator: tambahkan di Borongan → Orang (wajib karena tarif Cat Plastik ada bagian koordinator)");
+    if (!(await tx.boronganPerson.findFirst({ where: { pointId: brn.id, role: "KOORDINATOR", active: true } }))) say("= Beringin tanpa koordinator: bagian koordinator Cat Plastik dibayarkan ke pekerja");
   };
   if (apply) await db.$transaction(run, { timeout: 60000 });
   else {
@@ -136,25 +136,68 @@ export async function setupBorongan(db: PrismaClient, apply: boolean): Promise<s
 class Rollback extends Error {}
 
 
+
+// ---------------- KIT BAHAN PER TUGAS ----------------
+
 /**
- * Keputusan Owner: Cat Plastik tanpa bagian koordinator (Beringin tidak punya koordinator).
- * Bagian koordinator dijadikan Rp0 dan budget per pcs turun sebesar itu (upah pekerja & driver tetap).
- * Setoran lama tidak berubah (tarif tersimpan per setoran). Pratinjau dulu, lalu `-- --jalankan`.
+ * Setting: bahan pendukung yang ikut dikirim per TUGAS (bukan per titik), mis. Assembling = kondimen; Cat Giftbox =
+ * cat 5 warna; Cat Plastik = cat merah/biru/kuning + plastik klip. { [taskId]: itemId[] }. Diatur di Tugas & Tarif.
+ * Bahan resep tugas (per pcs) selalu ikut otomatis, jadi tidak perlu dimasukkan ke kit.
  */
-export async function zeroCatPlastikCoordinator(db: PrismaClient, apply: boolean, only?: string[]): Promise<string[]> {
-  const tasks = await db.pieceTask.findMany({ where: { name: { startsWith: "Cat plastik", mode: "insensitive" }, ...(only ? { id: { in: only } } : {}) }, orderBy: { name: "asc" } });
+export const TASK_KIT_KEY = "borongan_kit_tugas";
+export type TaskKits = Record<string, string[]>;
+
+export async function taskKits(db: DB): Promise<TaskKits> {
+  const s = await db.setting.findUnique({ where: { key: TASK_KIT_KEY } });
+  if (!s) return {};
+  try {
+    const v = JSON.parse(s.value);
+    return v && typeof v === "object" ? (v as TaskKits) : {};
+  } catch {
+    return {};
+  }
+}
+
+export async function saveTaskKit(db: DB, taskId: string, itemIds: string[]) {
+  const all = await taskKits(db);
+  all[taskId] = [...new Set(itemIds.filter(Boolean))];
+  await db.setting.upsert({ where: { key: TASK_KIT_KEY }, create: { key: TASK_KIT_KEY, value: JSON.stringify(all) }, update: { value: JSON.stringify(all) } });
+}
+
+/**
+ * Isi awal kit per tugas (aman diulang; pratinjau dulu, lalu `-- --jalankan`):
+ *  - Assembling (semua jenis): plastik OPP, cotton bud, piring plastik, isi staples, background & klip per varian,
+ *    dan klip cat plastik merah/biru/kuning (hasil Beringin, bagian kit Single Pack);
+ *  - Cat Giftbox: cat merah/biru/kuning/putih/hitam (pot cat giftbox sudah bahan resep);
+ *  - Cat Plastik (semua warna): cat merah/biru/kuning + plastik klip 2x3.
+ * Tugas yang kit-nya sudah diatur tidak ditimpa. Barang yang tidak ditemukan dilaporkan, tidak dibuat.
+ */
+export async function setupTaskKits(db: PrismaClient, apply: boolean): Promise<string[]> {
   const log: string[] = [];
-  const todo = tasks.filter((t) => t.coordinatorRate > 0n);
+  const [tasks, cur] = await Promise.all([db.pieceTask.findMany({ where: { active: true }, orderBy: { name: "asc" } }), taskKits(db)]);
+  const find = async (names: string[]) => {
+    const ids: string[] = [];
+    for (const n of names) {
+      const it = await db.item.findFirst({ where: { name: { equals: n, mode: "insensitive" }, active: true }, orderBy: { sku: "asc" } });
+      if (it) ids.push(it.id);
+      else log.push(`! Barang "${n}" tidak ditemukan (tambahkan di Master data bila perlu)`);
+    }
+    return ids;
+  };
+  const assembling = await find(["Plastik OPP", "Cotton bud", "Piring plastik", "Isi staples", ...VARIANTS.map((v) => `Background ${v.toLowerCase()}`), ...VARIANTS.map((v) => `Klip ${v.toLowerCase()}`), ...COLORS.map((c) => `Cat plastik ${c}`)]);
+  const catGiftbox = await find(["Cat merah", "Cat biru", "Cat kuning", "Cat putih", "Cat hitam"]);
+  const catPlastik = await find(["Cat merah", "Cat biru", "Cat kuning", "Plastik klip 2x3"]);
+  const next: TaskKits = { ...cur };
   for (const t of tasks) {
-    if (t.coordinatorRate === 0n) log.push(`= ${t.name}: koordinator sudah Rp0`);
-    else log.push(`~ ${t.name}: koordinator Rp${t.coordinatorRate} → Rp0, budget Rp${t.ratePerPcs} → Rp${t.workerRate + t.driverRate} (pekerja tetap Rp${t.workerRate}, driver Rp${t.driverRate})`);
+    const kit = /^assembling\b/i.test(t.name) ? assembling : /cat giftbox/i.test(t.name) ? catGiftbox : /^cat plastik/i.test(t.name) ? catPlastik : null;
+    if (!kit) continue;
+    if (cur[t.id]?.length) {
+      log.push(`= ${t.name}: kit sudah diatur (${cur[t.id].length} bahan), tidak ditimpa`);
+      continue;
+    }
+    next[t.id] = kit;
+    log.push(`+ ${t.name}: ${kit.length} bahan pendukung`);
   }
-  if (!tasks.length) log.push("! Tidak ada tugas Cat plastik");
-  if (apply && todo.length) {
-    await db.$transaction(async (tx) => {
-      for (const t of todo) await tx.pieceTask.update({ where: { id: t.id }, data: { coordinatorRate: 0n, ratePerPcs: t.workerRate + t.driverRate } });
-      await tx.auditLog.create({ data: { actorName: "Skrip tarif Cat Plastik", action: "TARIF_CAT_PLASTIK_KOORDINATOR_0", entity: "PieceTask", entityId: todo.map((t) => t.code).join(","), data: { tugas: todo.map((t) => ({ nama: t.name, koordinatorLama: Number(t.coordinatorRate), budgetLama: Number(t.ratePerPcs) })) } } });
-    });
-  }
-  return log;
+  if (apply) await db.setting.upsert({ where: { key: TASK_KIT_KEY }, create: { key: TASK_KIT_KEY, value: JSON.stringify(next) }, update: { value: JSON.stringify(next) } });
+  return [...new Set(log)];
 }

@@ -46,10 +46,12 @@ export function Shell({ nav, bottomNav, user, env, children, alerts, quickReport
     window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
   }, [path]);
   // Slot terakhir diisi tombol "Menu" bila menu prioritas kurang dari 5
-  const showMenuSlot = bottomNav.length + (quickReport ? 1 : 0) < 5;
   const back = backTarget(path, nav);
   // Menu ☰ di HP hanya berisi menu yang belum ada di navigasi bawah; sidebar desktop tetap lengkap
   const inBottom = new Set(bottomNav.map((n) => n.href));
+  // Peran dengan menu sedikit (mis. Koordinator & Driver: hanya Borongan): tanpa ☰ dan tanpa tombol "Menu"
+  const moreMenu = nav.some((n) => !inBottom.has(n.href));
+  const showMenuSlot = moreMenu && bottomNav.length + (quickReport ? 1 : 0) < 5;
   const side = (items: Item[]) => (
     <nav className="flex flex-col gap-0.5 p-3">
       {items.map((n) => (
@@ -75,9 +77,11 @@ export function Shell({ nav, bottomNav, user, env, children, alerts, quickReport
         <div className="theme-light no-print bg-amber-400 px-4 py-1 text-center text-xs font-semibold text-amber-950">LINGKUNGAN {env.toUpperCase()} — data uji, bukan produksi</div>
       )}
       <header className="no-print sticky top-0 z-30 flex h-14 items-center gap-2 border-b border-slate-200 bg-white/95 px-3 backdrop-blur sm:gap-3 sm:px-4">
-        <button className="grid h-10 w-10 place-items-center rounded-lg text-slate-600 hover:bg-slate-100 lg:hidden" aria-label="Semua menu" onClick={() => setOpen(true)}>
-          <Icon name="menu" />
-        </button>
+        {moreMenu && (
+          <button className="grid h-10 w-10 place-items-center rounded-lg text-slate-600 hover:bg-slate-100 lg:hidden" aria-label="Semua menu" onClick={() => setOpen(true)}>
+            <Icon name="menu" />
+          </button>
+        )}
         <Link href="/" aria-label="Main Gypsum ERP — Beranda" className="flex min-w-0 items-center gap-2 font-semibold text-slate-900">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/brand/mark-96.png" alt="" width={32} height={32} className="h-8 w-8 shrink-0 rounded-lg" />

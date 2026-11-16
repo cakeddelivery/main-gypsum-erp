@@ -4,9 +4,9 @@ import { audit } from "./audit";
 import { addDays, dateOnly, dateStr, todayStr } from "./time";
 import { recordMovement, reverseMovementsByRef } from "./stock";
 import { bomStockQty } from "./unitcost";
-import { BoronganError, canTask, postResultTx, unpostResultTx, warehouseFor, type Scope } from "./borongan";
+import { BoronganError, canTask, coordinatorFor, postResultTx, unpostResultTx, warehouseFor, type Scope } from "./borongan";
 import { taskGroupName } from "./boronganKirim";
-import { pointConfig } from "./boronganSetup";
+import { pointConfig, taskKits } from "./boronganSetup";
 import { sendPush, type PushPayload } from "./push";
 
 /**
@@ -233,7 +233,7 @@ export async function createShipment(input: ShipmentInput, actor: Actor, scope: 
   const pointIds = [...new Set(input.pointIds.filter(Boolean))];
   if (!pointIds.length) throw new BoronganError("Pilih titik tujuan");
   if (input.mode === "LANGSUNG" && pointIds.length !== 1) throw new BoronganError("Kiriman yang diantar langsung hanya ke satu titik");
-  return prisma.$transaction(async (tx) => {
+  const s = await prisma.$transaction(async (tx) => {
     const tasks = await tx.pieceTask.findMany({ where: { id: { in: tasksIn.map((t) => t.taskId) } }, include: { inputs: { include: { item: true } } } });
     if (tasks.length !== tasksIn.length || tasks.some((t) => !t.active)) throw new BoronganError("Ada jenis pekerjaan yang tidak aktif. Muat ulang halaman.");
     if (new Set(tasks.map((t) => taskGroupName(t.name))).size > 1) throw new BoronganError("Satu kiriman untuk satu jenis pekerjaan (mis. Assembling saja)");
@@ -256,8 +256,11 @@ export async function createShipment(input: ShipmentInput, actor: Actor, scope: 
       qty.set(itemId, { qty: Math.round((cur.qty + q) * 1000) / 1000, support: cur.support && support });
     };
     for (const t of tasks) for (const inp of t.inputs) add(inp.itemId, bomStockQty(inp.qty, inp.item) * tasksIn.find((x) => x.taskId === t.id)!.qty, false);
+    // Bahan pendukung hanya dari kit tugas yang dikirim (mis. Assembling tidak membawa cat Cat Giftbox)
+    const kit = new Set(Object.entries(await taskKits(tx)).filter(([id]) => tasks.some((t) => t.id === id)).flatMap(([, ids]) => ids));
     for (const s of input.support ?? []) {
       if (s.qty < 0) throw new BoronganError("Jumlah bahan tidak boleh minus");
+      if (s.qty > 0 && !kit.has(s.itemId)) throw new BoronganError("Ada bahan pendukung yang bukan kit jenis pekerjaan ini. Muat ulang halaman.");
       add(s.itemId, s.qty, true);
     }
     const items = await tx.item.findMany({ where: { id: { in: [...qty.keys()] } } });
@@ -278,6 +281,11 @@ export async function createShipment(input: ShipmentInput, actor: Actor, scope: 
     await audit(actor, "KIRIMAN_BORONGAN", "BoronganShipment", s.id, { number, mode: input.mode, titik: points.map((p) => p.code), jenis: tasksIn }, tx);
     return s;
   }, { timeout: 30000 });
+  // Push ke HP koordinator titik tujuan (dan driver bila lewat driver)
+  const total = tasksIn.reduce((a, t) => a + t.qty, 0).toLocaleString("id-ID");
+  const driverUser = s.driverId ? (await prisma.boronganPerson.findUnique({ where: { id: s.driverId }, select: { userId: true } }))?.userId : null;
+  await notify([...(await coordinatorUsers(pointIds)), driverUser], { title: `Kiriman bahan ${s.number}`, body: `${total} pcs ${s.mode === "DRIVER" ? "dibawa driver" : "diantar langsung"}. Pembagian ke pekerja menyusul.`, url: "/borongan?tab=kiriman", tag: `krm-${s.number}` });
+  return s;
 }
 
 /** Batalkan kiriman yang belum pernah diambil setorannya: semua bahan kembali ke gudang */
@@ -340,7 +348,7 @@ export function allotStockPlan(
 }
 
 export async function saveAllots(shipmentId: string, rows: AllotInput[], actor: Actor, scope: Scope) {
-  return prisma.$transaction(async (tx) => {
+  const out = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "BoronganShipment" WHERE id = ${shipmentId} FOR UPDATE`;
     const s = await tx.boronganShipment.findUniqueOrThrow({ where: { id: shipmentId }, include: { tasks: { include: { task: { include: { inputs: { include: { item: true } } } } } }, lines: true, allots: true, pickups: { where: { status: { not: "DIBATALKAN" } }, include: { lines: true } } } });
     if (s.cancelledAt) throw new BoronganError(`${s.number} sudah dibatalkan`);
@@ -399,8 +407,15 @@ export async function saveAllots(shipmentId: string, rows: AllotInput[], actor: 
     }
     await audit(actor, "PEMBAGIAN_BORONGAN", "BoronganShipment", shipmentId, { number: s.number, baris: final.length, total: final.reduce((a, r) => a + r.qty, 0) }, tx);
     const left = s.tasks.reduce((a, t) => a + t.qty, 0) - final.reduce((a, r) => a + r.qty, 0);
-    return { number: s.number, left };
+    const perPoint = new Map<string, number>();
+    for (const r of final) perPoint.set(r.pointId, (perPoint.get(r.pointId) ?? 0) + r.qty);
+    return { number: s.number, left, perPoint };
   }, { timeout: 30000 });
+  // Push ke HP koordinator tiap titik yang mendapat pembagian
+  for (const [pointId, qty] of out.perPoint) {
+    await notify(await coordinatorUsers([pointId]), { title: `Bahan ${out.number} sudah dibagi`, body: `${qty.toLocaleString("id-ID")} pcs dibagikan ke pekerja di titik Anda. Lapor hasil lewat Borongan › Kiriman.`, url: "/borongan?tab=kiriman", tag: `bgi-${out.number}-${pointId}` });
+  }
+  return { number: out.number, left: out.left };
 }
 
 // ---------------- 3. LAPOR HASIL ----------------
@@ -507,7 +522,8 @@ async function postPickupResults(tx: Tx, pickupId: string, held: boolean, actor:
     seen.add(r.pointId);
     for (const l of r.lines) latest.set(`${l.workerId}:${l.taskId}`, l.reject);
   }
-  const coords = await tx.boronganPerson.findMany({ where: { role: "KOORDINATOR", active: true, pointId: { in: points.map((x) => x.id) } }, orderBy: { createdAt: "asc" } });
+  const coordOf = new Map<string, string | null>();
+  for (const w of await tx.boronganPerson.findMany({ where: { id: { in: workers.map((x) => x.id) } }, select: { id: true, coordinatorId: true, pointId: true, noCoordinator: true } })) coordOf.set(w.id, (await coordinatorFor(tx, w))?.id ?? null);
   for (const l of p.lines) {
     const k = `${l.workerId}:${l.taskId}`;
     const accounted = prior.find((x) => x.workerId === l.workerId && x.taskId === l.taskId)?._sum.reject ?? 0;
@@ -516,7 +532,7 @@ async function postPickupResults(tx: Tx, pickupId: string, held: boolean, actor:
     const point = points.find((x) => x.id === l.pointId)!;
     await postResultTx(tx, {
       point, worker: workers.find((w) => w.id === l.workerId)!, task: tasks.find((t) => t.id === l.taskId)!, date: p.date, qty: l.qty, reject,
-      coordinatorId: coords.find((c) => c.pointId === l.pointId)?.id ?? null, driverId: p.driverId, pickupId: p.id, held, allowNegative: true, note: `${p.number} (${p.shipment.number})`,
+      coordinatorId: coordOf.get(l.workerId) ?? null, driverId: p.driverId, pickupId: p.id, held, allowNegative: true, note: `${p.number} (${p.shipment.number})`,
     }, actor);
   }
 }

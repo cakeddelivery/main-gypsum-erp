@@ -291,9 +291,9 @@ async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: S
     const cfg = (await pointConfig(tx))[point.id];
     if (cfg?.tasks.length && !cfg.tasks.includes(task.id)) throw new BoronganError(`Tugas ${task.name} tidak dikerjakan di titik ${point.name}`);
     const split = { workerRate: Number(task.workerRate), coordinatorRate: Number(task.coordinatorRate), driverRate: Number(task.driverRate) };
-    const coordinator = await tx.boronganPerson.findFirst({ where: { role: "KOORDINATOR", pointId: point.id, active: true }, orderBy: { createdAt: "asc" } });
+    // Tanpa koordinator: bagian koordinator masuk ke pekerja (lihat postResultTx)
+    const coordinator = await coordinatorFor(tx, worker);
     const driver = await tx.boronganPerson.findFirst({ where: { role: "DRIVER", active: true }, orderBy: { createdAt: "asc" } });
-    if (split.coordinatorRate > 0 && !coordinator) throw new BoronganError(`Titik ${point.name} belum punya koordinator aktif`);
     if (split.driverRate > 0 && !driver) throw new BoronganError("Belum ada driver borongan aktif");
     // Hasil tidak boleh melebihi bahan yang sudah diterima titik (cegah upah dari hasil yang tidak didukung bahan)
     await tx.$queryRaw`SELECT id FROM "BoronganPoint" WHERE id = ${point.id} FOR UPDATE`;
@@ -308,6 +308,20 @@ async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: S
     }
     return postResultTx(tx, { point, worker, task, date: input.date, qty: input.qty, reject, coordinatorId: coordinator?.id ?? null, driverId: driver?.id ?? null, note: input.note ?? null }, actor);
   }
+}
+
+/**
+ * Koordinator yang menerima bagian koordinator dari setoran pekerja: koordinator pilihan pekerja (aktif), selain itu
+ * koordinator titiknya. null = tanpa koordinator → bagian koordinator dibayarkan ke pekerja (mis. Cat Plastik Rp15 utuh).
+ */
+export async function coordinatorFor(db: DB, worker: { coordinatorId?: string | null; pointId: string | null; noCoordinator?: boolean }) {
+  if (worker.noCoordinator) return null;
+  if (worker.coordinatorId) {
+    const c = await db.boronganPerson.findFirst({ where: { id: worker.coordinatorId, role: "KOORDINATOR", active: true } });
+    if (c) return c;
+  }
+  if (!worker.pointId) return null;
+  return db.boronganPerson.findFirst({ where: { role: "KOORDINATOR", pointId: worker.pointId, active: true }, orderBy: { createdAt: "asc" } });
 }
 
 type ResultTask = Prisma.PieceTaskGetPayload<{ include: { inputs: { include: { item: true } }; outputItem: true } }>;
@@ -340,7 +354,7 @@ export async function postResultTx(tx: Tx, p: PostResult, actor: Actor) {
   const r = await tx.boronganResult.create({
     data: {
       number, pointId: point.id, workerId: worker.id, coordinatorId: p.coordinatorId, driverId: p.driverId, taskId: task.id,
-      date: p.date, qty, reject, workerRate: task.workerRate, coordinatorRate: task.coordinatorRate, driverRate: task.driverRate,
+      date: p.date, qty, reject, ...ratesFor(task, p.coordinatorId),
       note: p.note ?? null, createdBy: actor.name, createdById: actor.id, pickupId: p.pickupId ?? null, held: p.held ?? false,
     },
   });
@@ -373,6 +387,13 @@ export async function postResultTx(tx: Tx, p: PostResult, actor: Actor) {
   }
   await audit(actor, "HASIL_BORONGAN", "BoronganResult", r.id, { number, point: point.code, worker: worker.name, task: task.code, qty, reject, pickupId: p.pickupId ?? undefined, ditahan: p.held || undefined }, tx);
   return r;
+}
+
+/** Tarif yang dicatat di setoran: tanpa koordinator, bagian koordinator ikut ke pekerja */
+export function ratesFor(task: { workerRate: bigint; coordinatorRate: bigint; driverRate: bigint }, coordinatorId: string | null) {
+  return coordinatorId
+    ? { workerRate: task.workerRate, coordinatorRate: task.coordinatorRate, driverRate: task.driverRate }
+    : { workerRate: task.workerRate + task.coordinatorRate, coordinatorRate: 0n, driverRate: task.driverRate };
 }
 
 /** Balik stok & jurnal satu setoran lalu hapus (setoran belum dibayar) */
@@ -504,7 +525,7 @@ export async function cancelSettlement(id: string, reason: string, actor: Actor,
 
 // ---------------- ORANG ----------------
 
-export type PersonInput = { id?: string | null; name: string; phone?: string | null; role: BoronganRole; pointId?: string | null; active?: boolean; note?: string | null; taskIds?: string[] };
+export type PersonInput = { id?: string | null; name: string; phone?: string | null; role: BoronganRole; pointId?: string | null; active?: boolean; note?: string | null; taskIds?: string[]; coordinatorId?: string | null };
 
 /** Koordinator hanya boleh menambah/mengubah pekerja di titiknya sendiri */
 export async function savePerson(input: PersonInput, actor: Actor, scope: Scope) {
@@ -523,7 +544,15 @@ export async function savePerson(input: PersonInput, actor: Actor, scope: Scope)
     const ok = await prisma.pieceTask.count({ where: { id: { in: taskIds } } });
     if (ok !== taskIds.length) throw new BoronganError("Jenis pekerjaan tidak dikenal");
   }
-  const data = { name, phone: input.phone || null, role: input.role, pointId, active: input.active ?? true, note: input.note || null, ...(input.taskIds ? { taskIds } : {}) };
+  // Koordinator pilihan (khusus pekerja): kosong = koordinator titik / tanpa koordinator
+  // "-" = tanpa koordinator (bagian koordinator ke pekerja)
+  let coordinatorId: string | null | undefined = undefined;
+  const noCoordinator = input.coordinatorId === undefined ? undefined : input.role === "PEKERJA" && input.coordinatorId === "-";
+  if (input.coordinatorId !== undefined) {
+    coordinatorId = input.role === "PEKERJA" && input.coordinatorId && input.coordinatorId !== "-" ? input.coordinatorId : null;
+    if (coordinatorId && !(await prisma.boronganPerson.count({ where: { id: coordinatorId, role: "KOORDINATOR", active: true } }))) throw new BoronganError("Koordinator tidak aktif");
+  }
+  const data = { name, phone: input.phone || null, role: input.role, pointId, active: input.active ?? true, note: input.note || null, ...(input.taskIds ? { taskIds } : {}), ...(coordinatorId !== undefined ? { coordinatorId, noCoordinator } : {}) };
   // Pekerja baru dari koordinator menunggu persetujuan pengelola (diaktifkan pengelola), agar upah tidak dibayar ke nama fiktif
   if (!scope.all && !input.id) data.active = false;
   if (input.id) {
