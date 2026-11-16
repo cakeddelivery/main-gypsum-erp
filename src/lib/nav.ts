@@ -41,6 +41,7 @@ export const PRIORITY_NAV: Record<Role, string[]> = {
   PIC_CONTENT: ["/", "/produk", "/absensi", "/gaji"],
   OPERATOR: ["/", "/produksi", "/absensi", "/laporan", "/gaji"],
   KOORDINATOR: ["/borongan"],
+  DRIVER: ["/borongan"],
 };
 
 export const BOTTOM_NAV_SIZE = 5;

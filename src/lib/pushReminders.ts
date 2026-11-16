@@ -59,7 +59,7 @@ export function planReminders(input: { slot: string; divisions: DivStatus[]; mem
     if (!ids.length) continue;
     plans.push({ userIds: ids, payload: { title: "Apakah ada barang masuk?", body: barangBody(d), url: "/laporan/buka?f=masuk", tag: "ingat-barang-masuk" } });
     if (d.receives) {
-      plans.push({ userIds: ids, payload: { title: "Apakah ada setoran borongan yang diterima?", body: `Hari ini: ${setoranLine(d)}. Ketuk untuk + Penerimaan borongan.`, url: "/laporan/buka?f=terima", tag: "ingat-penerimaan-borongan" } });
+      plans.push({ userIds: ids, payload: { title: "Apakah ada setoran borongan yang diterima?", body: `Hari ini: ${setoranLine(d)}. Ketuk untuk Terima setoran.`, url: "/borongan?tab=kiriman", tag: "ingat-penerimaan-borongan" } });
     }
   }
   if (input.managers.length && input.divisions.length) {
@@ -69,7 +69,7 @@ export function planReminders(input: { slot: string; divisions: DivStatus[]; mem
     });
     const recv = input.divisions.filter((d) => d.receives);
     if (recv.length) {
-      plans.push({ userIds: input.managers, payload: { title: `Setoran borongan hari ini (${input.slot})`, body: recv.map((d) => `${d.name}: ${setoranLine(d)}`).join(" · "), url: "/borongan?tab=terima", tag: "ingat-penerimaan-borongan" } });
+      plans.push({ userIds: input.managers, payload: { title: `Setoran borongan hari ini (${input.slot})`, body: recv.map((d) => `${d.name}: ${setoranLine(d)}`).join(" · "), url: "/borongan?tab=kiriman", tag: "ingat-penerimaan-borongan" } });
     }
   }
   return plans;

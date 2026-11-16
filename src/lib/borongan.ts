@@ -49,6 +49,8 @@ export type Scope = {
   warehouse?: boolean;
   taskIds?: string[] | null;
   division?: { id: string; captain: boolean } | null;
+  /** Akun driver borongan (role DRIVER): hanya pembagian & ambil setoran kiriman lewat driver */
+  driver?: boolean;
 };
 type ScopeUser = { id: string; can: (p: "borongan.manage") => boolean; role?: string; divisionId?: string | null };
 
@@ -71,6 +73,11 @@ export async function boronganScope(db: DB, user: ScopeUser): Promise<Scope> {
   if (user.can("borongan.manage")) return { all: true, pointIds: [], personId: null, taskIds: null };
   const coord = await db.boronganPerson.findFirst({ where: { userId: user.id, role: "KOORDINATOR", active: true } });
   if (coord) return { all: false, pointIds: coord.pointId ? [coord.pointId] : [], personId: coord.id, taskIds: null };
+  const drv = await db.boronganPerson.findFirst({ where: { userId: user.id, role: "DRIVER", active: true } });
+  if (drv) {
+    const points = await db.boronganPoint.findMany({ where: { active: true, viaDriver: true }, select: { id: true } });
+    return { all: false, pointIds: points.map((p) => p.id), personId: drv.id, taskIds: null, driver: true };
+  }
   if (isDivisionMemberRole(user.role) && user.divisionId) {
     const tasks = await db.pieceTask.findMany({ where: { divisionId: user.divisionId, active: true }, select: { id: true } });
     const captain = user.role === "KAPTEN_DIVISI";
@@ -288,18 +295,6 @@ async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: S
     const driver = await tx.boronganPerson.findFirst({ where: { role: "DRIVER", active: true }, orderBy: { createdAt: "asc" } });
     if (split.coordinatorRate > 0 && !coordinator) throw new BoronganError(`Titik ${point.name} belum punya koordinator aktif`);
     if (split.driverRate > 0 && !driver) throw new BoronganError("Belum ada driver borongan aktif");
-    const number = await nextNumber(tx, "HSB", input.date);
-    const r = await tx.boronganResult.create({
-      data: {
-        number, pointId: point.id, workerId: worker.id, coordinatorId: coordinator?.id ?? null, driverId: driver?.id ?? null, taskId: task.id,
-        date: input.date, qty: input.qty, reject, workerRate: BigInt(split.workerRate), coordinatorRate: BigInt(split.coordinatorRate), driverRate: BigInt(split.driverRate),
-        note: input.note ?? null, createdBy: actor.name, createdById: actor.id,
-      },
-    });
-    const when = new Date(`${input.date.toISOString().slice(0, 10)}T05:00:00.000Z`);
-    const outType: ItemType = task.outputItem?.type ?? "BARANG_DALAM_PROSES";
-    const byType = new Map<ItemType, number>();
-    let material = 0;
     // Hasil tidak boleh melebihi bahan yang sudah diterima titik (cegah upah dari hasil yang tidak didukung bahan)
     await tx.$queryRaw`SELECT id FROM "BoronganPoint" WHERE id = ${point.id} FOR UPDATE`;
     for (const inp of task.inputs) {
@@ -311,32 +306,81 @@ async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: S
         throw new BoronganError(`Bahan ${inp.item.name} di ${point.name} tinggal ${Number(avail.toFixed(3)).toLocaleString("id-ID")} ${inp.item.unit}, cukup untuk ${cukup} pcs (${worker.name} ${made} pcs termasuk reject). Kirim bahan dulu lewat serah terima.`);
       }
     }
-    const rejByType = new Map<ItemType, number>();
-    for (const inp of task.inputs) {
-      const q = bomStockQty(inp.qty, inp.item) * made;
-      if (q <= 0) continue;
-      await recordMovement(tx, { type: "KONSUMSI_PRODUKSI", itemId: inp.itemId, qty: q, fromLocationId: point.locationId, ref: `HSB:${r.id}`, note: `${task.name} ${worker.name}${reject ? ` (reject ${reject})` : ""}`, date: when }, actor);
-      const v = Math.round(q * Number(inp.item.avgCost));
-      // Bagian bahan untuk patung reject dibebankan, sisanya menjadi nilai barang hasil
-      const vRej = Math.round((v * reject) / made);
-      material += v - vRej;
-      byType.set(inp.item.type, (byType.get(inp.item.type) ?? 0) + v - vRej);
-      if (vRej > 0) rejByType.set(inp.item.type, (rejByType.get(inp.item.type) ?? 0) + vRej);
-    }
-    if (task.outputItemId && input.qty > 0) {
-      await recordMovement(tx, { type: "HASIL_PRODUKSI", itemId: task.outputItemId, qty: input.qty, toLocationId: point.locationId, unitCost: Math.round(material / input.qty), ref: `HSB:${r.id}`, note: `${task.name} ${worker.name}`, date: when }, actor);
-    }
-    // Nilai bahan pindah dari akun persediaan bahan ke akun persediaan barang hasil; bahan reject jadi beban
-    const lines = [
-      ...[...byType].filter(([t, v]) => t !== outType && v > 0).flatMap(([t, v]) => [{ accountCode: INVENTORY_COA[outType], debit: v }, { accountCode: INVENTORY_COA[t], credit: v }]),
-      ...[...rejByType].flatMap(([t, v]) => [{ accountCode: COA.BEBAN_SELISIH_PERSEDIAAN, debit: v, memo: `Reject borongan ${reject} pcs` }, { accountCode: INVENTORY_COA[t], credit: v }]),
-    ];
-    if (lines.length) {
-      await postJournal(tx, { date: when, storeId: await defaultStore(tx), description: `Borongan ${point.name}: ${task.name} × ${input.qty}${reject ? ` + reject ${reject}` : ""} (${worker.name})`, source: "BORONGAN", sourceId: r.id, actor, lines });
-    }
-    await audit(actor, "HASIL_BORONGAN", "BoronganResult", r.id, { number, point: point.code, worker: worker.name, task: task.code, qty: input.qty, reject }, tx);
-    return r;
+    return postResultTx(tx, { point, worker, task, date: input.date, qty: input.qty, reject, coordinatorId: coordinator?.id ?? null, driverId: driver?.id ?? null, note: input.note ?? null }, actor);
   }
+}
+
+type ResultTask = Prisma.PieceTaskGetPayload<{ include: { inputs: { include: { item: true } }; outputItem: true } }>;
+export type PostResult = {
+  point: { id: string; code: string; name: string; locationId: string };
+  worker: { id: string; name: string };
+  task: ResultTask;
+  date: Date;
+  qty: number;
+  reject: number;
+  coordinatorId: string | null;
+  driverId: string | null;
+  note?: string | null;
+  /** Alur kiriman: setoran dari pengambilan AMB; upah bisa ditahan */
+  pickupId?: string | null;
+  held?: boolean;
+  /** Stok boleh minus (alur kiriman: penerimaan di lapangan tidak boleh tertahan karena selisih pencatatan bahan) */
+  allowNegative?: boolean;
+};
+
+/**
+ * Posting satu setoran (dasar upah pekerja/koordinator/driver sesuai tarif tugas saat ini):
+ * - bahan per pcs (resep tugas) untuk bagus + reject terpakai dari stok titik
+ * - barang hasil bertambah di stok titik, nilai = bahan yang terpakai; bahan reject dibebankan
+ */
+export async function postResultTx(tx: Tx, p: PostResult, actor: Actor) {
+  const { point, worker, task, qty, reject } = p;
+  const made = qty + reject;
+  const number = await nextNumber(tx, "HSB", p.date);
+  const r = await tx.boronganResult.create({
+    data: {
+      number, pointId: point.id, workerId: worker.id, coordinatorId: p.coordinatorId, driverId: p.driverId, taskId: task.id,
+      date: p.date, qty, reject, workerRate: task.workerRate, coordinatorRate: task.coordinatorRate, driverRate: task.driverRate,
+      note: p.note ?? null, createdBy: actor.name, createdById: actor.id, pickupId: p.pickupId ?? null, held: p.held ?? false,
+    },
+  });
+  const when = new Date(`${p.date.toISOString().slice(0, 10)}T05:00:00.000Z`);
+  const outType: ItemType = task.outputItem?.type ?? "BARANG_DALAM_PROSES";
+  const byType = new Map<ItemType, number>();
+  let material = 0;
+  const rejByType = new Map<ItemType, number>();
+  for (const inp of task.inputs) {
+    const q = bomStockQty(inp.qty, inp.item) * made;
+    if (q <= 0) continue;
+    await recordMovement(tx, { type: "KONSUMSI_PRODUKSI", itemId: inp.itemId, qty: q, fromLocationId: point.locationId, ref: `HSB:${r.id}`, note: `${task.name} ${worker.name}${reject ? ` (reject ${reject})` : ""}`, date: when, allowNegative: p.allowNegative }, actor);
+    const v = Math.round(q * Number(inp.item.avgCost));
+    // Bagian bahan untuk patung reject dibebankan, sisanya menjadi nilai barang hasil
+    const vRej = Math.round((v * reject) / made);
+    material += v - vRej;
+    byType.set(inp.item.type, (byType.get(inp.item.type) ?? 0) + v - vRej);
+    if (vRej > 0) rejByType.set(inp.item.type, (rejByType.get(inp.item.type) ?? 0) + vRej);
+  }
+  if (task.outputItemId && qty > 0) {
+    await recordMovement(tx, { type: "HASIL_PRODUKSI", itemId: task.outputItemId, qty, toLocationId: point.locationId, unitCost: Math.round(material / qty), ref: `HSB:${r.id}`, note: `${task.name} ${worker.name}`, date: when }, actor);
+  }
+  // Nilai bahan pindah dari akun persediaan bahan ke akun persediaan barang hasil; bahan reject jadi beban
+  const lines = [
+    ...[...byType].filter(([t, v]) => t !== outType && v > 0).flatMap(([t, v]) => [{ accountCode: INVENTORY_COA[outType], debit: v }, { accountCode: INVENTORY_COA[t], credit: v }]),
+    ...[...rejByType].flatMap(([t, v]) => [{ accountCode: COA.BEBAN_SELISIH_PERSEDIAAN, debit: v, memo: `Reject borongan ${reject} pcs` }, { accountCode: INVENTORY_COA[t], credit: v }]),
+  ];
+  if (lines.length) {
+    await postJournal(tx, { date: when, storeId: await defaultStore(tx), description: `Borongan ${point.name}: ${task.name} × ${qty}${reject ? ` + reject ${reject}` : ""} (${worker.name})`, source: "BORONGAN", sourceId: r.id, actor, lines });
+  }
+  await audit(actor, "HASIL_BORONGAN", "BoronganResult", r.id, { number, point: point.code, worker: worker.name, task: task.code, qty, reject, pickupId: p.pickupId ?? undefined, ditahan: p.held || undefined }, tx);
+  return r;
+}
+
+/** Balik stok & jurnal satu setoran lalu hapus (setoran belum dibayar) */
+export async function unpostResultTx(tx: Tx, id: string, actor: Actor, note: string) {
+  await reverseMovementsByRef(tx, `HSB:${id}`, `BATAL-HSB:${id}`, note, actor);
+  const journals = await tx.journal.findMany({ where: { source: "BORONGAN", sourceId: id, reversalOfId: null } });
+  for (const j of journals) await reverseJournal(tx, j.id, new Date(), actor, note);
+  await tx.boronganResult.delete({ where: { id } });
 }
 
 /** Hapus setoran yang belum dibayar: stok & jurnal dibalik */
@@ -351,10 +395,8 @@ export async function deleteResult(id: string, actor: Actor, scope: Scope) {
     // Anggota divisi hanya membatalkan setoran yang ia catat sendiri; kapten semua setoran divisinya
     if (scope.division && !scope.division.captain && !scope.warehouse && r.createdById !== actor.id) throw new BoronganError("Anda hanya bisa membatalkan setoran yang Anda catat sendiri. Minta kapten divisi.");
     if (r.settlementId) throw new BoronganError("Upah setoran ini sudah dibayar, tidak bisa dihapus");
-    await reverseMovementsByRef(tx, `HSB:${id}`, `BATAL-HSB:${id}`, "Setoran borongan dihapus", actor);
-    const journals = await tx.journal.findMany({ where: { source: "BORONGAN", sourceId: id, reversalOfId: null } });
-    for (const j of journals) await reverseJournal(tx, j.id, new Date(), actor, "Setoran borongan dihapus");
-    await tx.boronganResult.delete({ where: { id } });
+    if (r.pickupId) throw new BoronganError("Setoran ini dari pengambilan (AMB). Koreksi lewat penerimaan setoran.");
+    await unpostResultTx(tx, id, actor, "Setoran borongan dihapus");
     await audit(actor, "HASIL_BORONGAN_DIHAPUS", "BoronganResult", id, { number: r.number, task: r.task.name, qty: r.qty, reject: r.reject, pencatat: r.createdBy }, tx);
   });
 }
@@ -387,7 +429,8 @@ export function payLines(results: { qty: number; workerRate: bigint; coordinator
 const resultPeople = { worker: true, coordinator: true, driver: true } as const;
 
 export async function unpaidResults(db: DB, pointId: string, upTo?: Date) {
-  return db.boronganResult.findMany({ where: { pointId, settlementId: null, ...(upTo ? { date: { lte: upTo } } : {}) }, include: { ...resultPeople, task: true }, orderBy: { date: "asc" } });
+  // Upah yang ditahan (hitungan divisi kurang) tidak ikut dibayar sampai dicek
+  return db.boronganResult.findMany({ where: { pointId, settlementId: null, held: false, ...(upTo ? { date: { lte: upTo } } : {}) }, include: { ...resultPeople, task: true }, orderBy: { date: "asc" } });
 }
 
 /**
@@ -473,7 +516,8 @@ export async function savePerson(input: PersonInput, actor: Actor, scope: Scope)
     if (!scope.all && (cur.role !== "PEKERJA" || !canPoint(scope, cur.pointId ?? ""))) throw new BoronganError("Anda hanya bisa mengubah pekerja di titik Anda");
     if (!scope.all && !cur.active) data.active = false;
     const p = await prisma.boronganPerson.update({ where: { id: input.id }, data });
-    if (cur.userId && (!data.active || data.role !== "KOORDINATOR")) await prisma.user.update({ where: { id: cur.userId }, data: { active: false } });
+    // Akun login ikut nonaktif bila orangnya nonaktif atau perannya berubah (koordinator ↔ driver ↔ pekerja)
+    if (cur.userId && (!data.active || data.role !== cur.role)) await prisma.user.update({ where: { id: cur.userId }, data: { active: false } });
     await audit(actor, "ORANG_BORONGAN_DIUBAH", "BoronganPerson", p.id, data);
     return p;
   }

@@ -50,7 +50,7 @@ describe("Penerima pengingat push", () => {
     expect(gbBarang.payload.url).toBe("/laporan/buka?f=masuk");
     const gbTerima = by("ingat-penerimaan-borongan", ["g1"])!;
     expect(gbTerima.payload.body).toContain("setoran koordinator 3 catatan (120 pcs), penerimaan divisi 0 → cek selisih");
-    expect(gbTerima.payload.url).toBe("/laporan/buka?f=terima");
+    expect(gbTerima.payload.url).toBe("/borongan?tab=kiriman");
     expect(by("ingat-barang-masuk", ["p1"])!.payload.body).toContain("Sudah 2 barang masuk");
     expect(by("ingat-penerimaan-borongan", ["p1"])).toBeUndefined();
     const mgr = plans.filter((p) => p.userIds.join() === "spv,own");

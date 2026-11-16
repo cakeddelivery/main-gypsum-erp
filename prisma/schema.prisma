@@ -20,6 +20,7 @@ enum Role {
   PIC_CONTENT
   OPERATOR
   KOORDINATOR
+  DRIVER
 }
 
 model Organization {
@@ -456,24 +457,29 @@ model CashAdvance {
 /// Jenis tugas borongan (dibayar per piece), tarif bisa diubah.
 /// ratePerPcs = budget total per pcs, dibagi ke pekerja, koordinator, dan driver.
 model PieceTask {
-  id              String           @id @default(cuid())
-  code            String           @unique
+  id              String                   @id @default(cuid())
+  code            String                   @unique
   name            String
   ratePerPcs      BigInt
-  workerRate      BigInt           @default(0)
-  coordinatorRate BigInt           @default(0)
-  driverRate      BigInt           @default(0)
+  workerRate      BigInt                   @default(0)
+  coordinatorRate BigInt                   @default(0)
+  driverRate      BigInt                   @default(0)
   /// Barang hasil kerja (mis. Giftbox Sudah Dicat) yang bertambah di stok titik
   outputItemId    String?
-  outputItem      Item?            @relation(fields: [outputItemId], references: [id])
+  outputItem      Item?                    @relation(fields: [outputItemId], references: [id])
   /// Divisi yang mencatat setoran tugas ini (anggotanya boleh mencatat/membatalkan setoran); null = hanya pengelola & koordinator
   divisionId      String?
-  division        Division?        @relation(fields: [divisionId], references: [id])
-  active          Boolean          @default(true)
+  division        Division?                @relation(fields: [divisionId], references: [id])
+  active          Boolean                  @default(true)
   works           PieceWork[]
   inputs          PieceTaskInput[]
   results         BoronganResult[]
   recipeLabor     RecipeLabor[]
+  shipmentTasks   BoronganShipmentTask[]
+  allots          BoronganAllot[]
+  reportLines     BoronganWorkReportLine[]
+  pickupLines     BoronganPickupLine[]
+  pickupCounts    BoronganPickupCount[]
 }
 
 /// Bahan yang terpakai per 1 pcs hasil tugas borongan (satuan resep/HPP bila ada, seperti BOM)
@@ -521,29 +527,37 @@ model BoronganPoint {
   results      BoronganResult[]
   settlements  BoronganSettlement[]
   receiptLines BoronganReceiptLine[]
+  allots       BoronganAllot[]
+  reports      BoronganWorkReport[]
+  pickupLines  BoronganPickupLine[]
 }
 
 /// Tetangga yang bekerja borongan (bukan karyawan): pekerja & koordinator per titik, driver tanpa titik
 model BoronganPerson {
-  id            String             @id @default(cuid())
+  id            String                   @id @default(cuid())
   name          String
   phone         String?
   role          BoronganRole
   pointId       String?
-  point         BoronganPoint?     @relation(fields: [pointId], references: [id])
+  point         BoronganPoint?           @relation(fields: [pointId], references: [id])
   /// Akun login koordinator (role KOORDINATOR)
-  userId        String?            @unique
-  user          User?              @relation(fields: [userId], references: [id])
-  active        Boolean            @default(true)
+  userId        String?                  @unique
+  user          User?                    @relation(fields: [userId], references: [id])
+  active        Boolean                  @default(true)
   note          String?
   /// Jenis pekerjaan (PieceTask.id) yang dikerjakan pekerja ini; divisinya mengikuti divisi tugas.
   /// Kosong = belum diatur (boleh semua tugas di titiknya, seperti sebelumnya)
-  taskIds       String[]           @default([])
-  createdAt     DateTime           @default(now())
-  works         BoronganResult[]   @relation("ResultWorker")
-  coordinated   BoronganResult[]   @relation("ResultCoordinator")
-  drivenResults BoronganResult[]   @relation("ResultDriver")
+  taskIds       String[]                 @default([])
+  createdAt     DateTime                 @default(now())
+  works         BoronganResult[]         @relation("ResultWorker")
+  coordinated   BoronganResult[]         @relation("ResultCoordinator")
+  drivenResults BoronganResult[]         @relation("ResultDriver")
   drives        BoronganHandover[]
+  shipments     BoronganShipment[]
+  allots        BoronganAllot[]
+  reportLines   BoronganWorkReportLine[]
+  pickups       BoronganPickup[]
+  pickupLines   BoronganPickupLine[]
 }
 
 /// Serah terima lewat driver: KIRIM = bahan gudang → titik, KEMBALI = hasil titik → gudang.
@@ -604,12 +618,18 @@ model BoronganResult {
   note            String?
   settlementId    String?
   settlement      BoronganSettlement? @relation(fields: [settlementId], references: [id])
+  /// Alur baru: setoran ini berasal dari pengambilan (AMB) yang diterima divisi
+  pickupId        String?
+  pickup          BoronganPickup?     @relation(fields: [pickupId], references: [id])
+  /// Upah ditahan (hitungan divisi kurang dari setoran driver) sampai dicek/dikoreksi; tidak ikut dibayar
+  held            Boolean             @default(false)
   /// Akun yang mencatat (pencatat boleh membatalkan setorannya sendiri selama belum dibayar)
   createdById     String?
   createdBy       String
   createdAt       DateTime            @default(now())
 
   @@index([pointId, settlementId])
+  @@index([pickupId])
 }
 
 /// Pembayaran upah borongan satu titik (pekerja + koordinator + driver), dibayar bersamaan
@@ -714,38 +734,38 @@ model PayrollPeriod {
 }
 
 model Payslip {
-  id               String        @id @default(cuid())
-  periodId         String
-  period           PayrollPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
-  employeeId       String
-  employee         Employee      @relation(fields: [employeeId], references: [id])
-  daysPresent      Int
+  id                String        @id @default(cuid())
+  periodId          String
+  period            PayrollPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  employeeId        String
+  employee          Employee      @relation(fields: [employeeId], references: [id])
+  daysPresent       Int
   /// Gaji bulanan: gaji pokok, hari tidak masuk dalam jatah libur, dan hari bolos
-  baseSalary       BigInt        @default(0)
-  offDays          Int           @default(0)
-  absentDays       Int           @default(0)
-  note             String?
-  dailyWage        BigInt
-  pieceWage        BigInt
-  pieceDetail      Json
-  transport        BigInt
-  bonus            BigInt        @default(0)
-  deduction        BigInt        @default(0)
+  baseSalary        BigInt        @default(0)
+  offDays           Int           @default(0)
+  absentDays        Int           @default(0)
+  note              String?
+  dailyWage         BigInt
+  pieceWage         BigInt
+  pieceDetail       Json
+  transport         BigInt
+  bonus             BigInt        @default(0)
+  deduction         BigInt        @default(0)
   /// Potongan kasbon pada slip ini; rincian [{id, number, amount}]
-  advanceDeduction BigInt        @default(0)
-  advanceDetail    Json          @default("[]")
+  advanceDeduction  BigInt        @default(0)
+  advanceDetail     Json          @default("[]")
   /// Tunjangan (periode TUNJANGAN, dibayar tiap tanggal 15); rincian [{name, amount}]
-  allowance        BigInt        @default(0)
-  allowanceDetail  Json          @default("[]")
+  allowance         BigInt        @default(0)
+  allowanceDetail   Json          @default("[]")
   /// Rekap telat periode ini (hanya rekap, tidak memotong gaji): berapa kali & total menit di atas toleransi
-  lateCount        Int           @default(0)
-  lateMinutes      Int           @default(0)
+  lateCount         Int           @default(0)
+  lateMinutes       Int           @default(0)
   /// BPJS Ketenagakerjaan per bulan yang ditanggung perusahaan (info saja, tidak masuk total)
-  bpjsCompany      BigInt        @default(0)
-  total            BigInt
+  bpjsCompany       BigInt        @default(0)
+  total             BigInt
   /// Potongan Alpa (gaji pokok ÷ 30 × hari Alpa) dan tanggal-tanggal Alpanya ["YYYY-MM-DD", …]
-  alpaDeduction    BigInt        @default(0)
-  alpaDetail       Json          @default("[]")
+  alpaDeduction     BigInt        @default(0)
+  alpaDetail        Json          @default("[]")
   /// Dibayar per slip (mis. dari bot Telegram); bila semua slip periode lunas, periode berstatus Dibayar
   paidAt            DateTime?
   paidJournalId     String?
@@ -2217,4 +2237,174 @@ model ComplaintMedia {
   createdAt   DateTime  @default(now())
 
   @@index([complaintId])
+}
+
+// ============ BORONGAN: ALUR KIRIMAN (KRM → bagi → lapor → AMB → terima) ============
+
+/// Cara kirim bahan: lewat driver (ikut mobil) atau diantar langsung (mis. Beringin, Cat Giftbox)
+enum ShipmentMode {
+  DRIVER
+  LANGSUNG
+}
+
+/// DIBAWA = dicatat driver, menunggu dihitung divisi; DITERIMA = cocok/selesai; KURANG = hitungan divisi kurang, upah ditahan
+enum PickupStatus {
+  DIBAWA
+  DITERIMA
+  KURANG
+  DIBATALKAN
+}
+
+/// Kiriman bahan borongan bernomor KRM-DDMMYY-NN. Lewat driver: bahan gudang → lokasi driver, lalu ke titik saat dibagi.
+/// Diantar langsung: bahan gudang → lokasi titik (satu titik).
+model BoronganShipment {
+  id          String                 @id @default(cuid())
+  number      String                 @unique
+  date        DateTime               @db.Date
+  mode        ShipmentMode
+  /// Titik tujuan (BoronganPoint.id)
+  pointIds    String[]
+  driverId    String?
+  driver      BoronganPerson?        @relation(fields: [driverId], references: [id])
+  note        String?
+  createdBy   String
+  createdById String?
+  createdAt   DateTime               @default(now())
+  cancelledAt DateTime?
+  cancelledBy String?
+  tasks       BoronganShipmentTask[]
+  lines       BoronganShipmentLine[]
+  allots      BoronganAllot[]
+  reports     BoronganWorkReport[]
+  pickups     BoronganPickup[]
+
+  @@index([date])
+}
+
+/// Jumlah pekerjaan (pcs) yang dikirim per jenis, mis. Assembling Cowok 1.000
+model BoronganShipmentTask {
+  id         String           @id @default(cuid())
+  shipmentId String
+  shipment   BoronganShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  taskId     String
+  task       PieceTask        @relation(fields: [taskId], references: [id])
+  qty        Int
+}
+
+/// Barang yang keluar gudang untuk kiriman ini (bahan resep otomatis + bahan pendukung)
+model BoronganShipmentLine {
+  id          String           @id @default(cuid())
+  shipmentId  String
+  shipment    BoronganShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  itemId      String
+  warehouseId String
+  qty         Decimal          @db.Decimal(14, 3)
+  /// true = bahan pendukung (tidak dari resep tugas)
+  support     Boolean          @default(false)
+}
+
+/// Pembagian ke pekerja: jumlah per pekerja per jenis pekerjaan (diganti utuh setiap disimpan)
+model BoronganAllot {
+  id         String           @id @default(cuid())
+  shipmentId String
+  shipment   BoronganShipment @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  pointId    String
+  point      BoronganPoint    @relation(fields: [pointId], references: [id])
+  workerId   String
+  worker     BoronganPerson   @relation(fields: [workerId], references: [id])
+  taskId     String
+  task       PieceTask        @relation(fields: [taskId], references: [id])
+  qty        Int
+  updatedBy  String
+  updatedAt  DateTime         @updatedAt
+
+  @@unique([shipmentId, workerId, taskId])
+}
+
+/// Laporan hasil koordinator per titik (boleh berkali-kali; laporan terakhir = angka terbaru, kumulatif)
+model BoronganWorkReport {
+  id          String                   @id @default(cuid())
+  shipmentId  String
+  shipment    BoronganShipment         @relation(fields: [shipmentId], references: [id], onDelete: Cascade)
+  pointId     String
+  point       BoronganPoint            @relation(fields: [pointId], references: [id])
+  /// Reject sudah dicek koordinator
+  checked     Boolean                  @default(false)
+  createdBy   String
+  createdById String?
+  createdAt   DateTime                 @default(now())
+  lines       BoronganWorkReportLine[]
+
+  @@index([shipmentId, pointId, createdAt])
+}
+
+model BoronganWorkReportLine {
+  id       String             @id @default(cuid())
+  reportId String
+  report   BoronganWorkReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  workerId String
+  worker   BoronganPerson     @relation(fields: [workerId], references: [id])
+  taskId   String
+  task     PieceTask          @relation(fields: [taskId], references: [id])
+  /// Selesai bagus (kumulatif)
+  good     Int
+  /// Reject dihitung pekerja (kumulatif)
+  reject   Int
+}
+
+/// Pengambilan setoran bernomor AMB-DDMMYY-NN (satu kiriman bisa diambil berkali-kali)
+model BoronganPickup {
+  id           String                @id @default(cuid())
+  number       String                @unique
+  shipmentId   String
+  shipment     BoronganShipment      @relation(fields: [shipmentId], references: [id])
+  date         DateTime              @db.Date
+  status       PickupStatus          @default(DIBAWA)
+  driverId     String?
+  driver       BoronganPerson?       @relation(fields: [driverId], references: [id])
+  note         String?
+  createdBy    String
+  createdById  String?
+  createdAt    DateTime              @default(now())
+  receivedAt   DateTime?
+  receivedBy   String?
+  receivedById String?
+  /// Alasan upah ditahan / catatan koreksi
+  holdNote     String?
+  releasedAt   DateTime?
+  releasedBy   String?
+  lines        BoronganPickupLine[]
+  counts       BoronganPickupCount[]
+  results      BoronganResult[]
+
+  @@index([shipmentId])
+  @@index([status])
+}
+
+/// Setoran bagus yang diambil driver dari satu pekerja untuk satu jenis (driver tidak menghitung reject)
+model BoronganPickupLine {
+  id       String         @id @default(cuid())
+  pickupId String
+  pickup   BoronganPickup @relation(fields: [pickupId], references: [id], onDelete: Cascade)
+  pointId  String
+  point    BoronganPoint  @relation(fields: [pointId], references: [id])
+  workerId String
+  worker   BoronganPerson @relation(fields: [workerId], references: [id])
+  taskId   String
+  task     PieceTask      @relation(fields: [taskId], references: [id])
+  qty      Int
+  /// Reject menurut laporan koordinator saat diambil (hanya ditampilkan)
+  reject   Int            @default(0)
+  /// "Selesai semua": sisa setelah pengambilan ini dianggap selisih
+  done     Boolean        @default(false)
+}
+
+/// Hitungan divisi penerima: total per jenis untuk satu pengambilan
+model BoronganPickupCount {
+  id       String         @id @default(cuid())
+  pickupId String
+  pickup   BoronganPickup @relation(fields: [pickupId], references: [id], onDelete: Cascade)
+  taskId   String
+  task     PieceTask      @relation(fields: [taskId], references: [id])
+  qty      Int
 }

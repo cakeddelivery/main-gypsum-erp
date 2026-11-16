@@ -152,19 +152,20 @@ export const saveCoordinatorLogin = action(
   "borongan.manage",
   async (fd, user) => {
     const person = await prisma.boronganPerson.findUniqueOrThrow({ where: { id: str(fd, "personId") } });
-    if (person.role !== "KOORDINATOR") throw new BoronganError("Login hanya untuk koordinator");
+    if (person.role !== "KOORDINATOR" && person.role !== "DRIVER") throw new BoronganError("Login hanya untuk koordinator atau driver");
+    const role = person.role === "DRIVER" ? "DRIVER" : "KOORDINATOR";
     const username = str(fd, "username").toLowerCase();
     const password = str(fd, "password");
     if (!/^[a-z0-9._-]{3,30}$/.test(username)) throw new BoronganError("Username 3–30 huruf kecil/angka tanpa spasi");
     if (person.userId) {
-      await prisma.user.update({ where: { id: person.userId }, data: { username, name: person.name, active: person.active, ...(password ? passwordChangeData(await hashPassword(password)) : {}) } });
+      await prisma.user.update({ where: { id: person.userId }, data: { username, name: person.name, role, active: person.active, ...(password ? passwordChangeData(await hashPassword(password)) : {}) } });
       if (password) await clearLoginBlocks(username);
     } else {
       if (!password) throw new BoronganError("Isi password untuk akun baru");
-      const u = await prisma.user.create({ data: { username, name: person.name, role: "KOORDINATOR", passwordHash: await hashPassword(password) } });
+      const u = await prisma.user.create({ data: { username, name: person.name, role, passwordHash: await hashPassword(password) } });
       await prisma.boronganPerson.update({ where: { id: person.id }, data: { userId: u.id } });
     }
-    await audit(user, "AKUN_KOORDINATOR", "BoronganPerson", person.id, { username });
+    await audit(user, role === "DRIVER" ? "AKUN_DRIVER" : "AKUN_KOORDINATOR", "BoronganPerson", person.id, { username });
     return `Login ${username} untuk ${person.name} tersimpan`;
   },
   PATHS,

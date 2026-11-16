@@ -5,28 +5,27 @@ import { idr } from "@/lib/money";
 import { fmtDay, todayStr } from "@/lib/time";
 import { stockBalances } from "@/lib/stock";
 import { recipeUnit } from "@/lib/unitcost";
-import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, canTask, canWarehouse, isSetoranOnly, payLines, pointCapacity, resultShares } from "@/lib/borongan";
+import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, canWarehouse, isSetoranOnly, payLines, resultShares } from "@/lib/borongan";
 import { Badge, Card, Empty, Field, PageHeader, Tabs } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Paged } from "@/components/Paged";
 import { ItemLines } from "@/components/ItemLines";
-import { KirimBahan, ResultRows } from "./BoronganForms";
-import { kirimGroups, pointKits } from "@/lib/boronganKirim";
 import { ReceiveForm } from "./ReceiveForm";
+import { KirimanTab } from "./KirimanTab";
 import { diffLines, receiptDiff } from "@/lib/boronganReceipt";
 import { dateOnly } from "@/lib/time";
-import { pointConfig } from "@/lib/boronganSetup";
-import { addResults, cancelPayPoint, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, saveTask, sendHandover, sendMaterials, voidDivisionReceipt, voidHandover } from "./actions";
+import { cancelPayPoint, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, saveTask, sendHandover, voidDivisionReceipt, voidHandover } from "./actions";
 
 export const metadata = { title: "Borongan" };
 
 const TABS = [
+  { key: "kiriman", label: "Kiriman" },
   { key: "ringkasan", label: "Ringkasan" },
-  { key: "serah", label: "Serah Terima" },
+  { key: "serah", label: "Serah Terima (lama)" },
   { key: "hasil", label: "Setoran Hasil" },
-  { key: "terima", label: "Penerimaan & Selisih" },
+  { key: "terima", label: "Penerimaan (lama)" },
   { key: "upah", label: "Upah" },
   { key: "orang", label: "Orang" },
   { key: "tugas", label: "Tugas & Tarif" },
@@ -44,8 +43,18 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
   const taskFilter = scope.taskIds ? { taskId: { in: scope.taskIds } } : {};
   const tabs = TABS.filter((t) => manage || !["tugas"].includes(t.key))
     .filter((t) => t.key !== "upah" || manage || user.can("borongan.pay"))
-    .filter((t) => !setoranOnly || ["ringkasan", "hasil", "terima"].includes(t.key));
-  const tab = tabs.some((t) => t.key === sp.tab) ? sp.tab! : "ringkasan";
+    .filter((t) => !setoranOnly || ["kiriman", "ringkasan", "hasil", "terima"].includes(t.key))
+    // Driver: hanya Pembagian & Ambil Setoran (tab Kiriman)
+    .filter((t) => !scope.driver || t.key === "kiriman");
+  const tab = tabs.some((t) => t.key === sp.tab) ? sp.tab! : "kiriman";
+  if (scope.driver) {
+    return (
+      <div className="space-y-4">
+        <PageHeader title="Borongan" subtitle="Pembagian ke pekerja & ambil setoran" />
+        <KirimanTab scope={scope} userId={user.id} />
+      </div>
+    );
+  }
 
   const [points, people, tasks, items, banks, pending, balances] = await Promise.all([
     prisma.boronganPoint.findMany({ where: { active: true, ...pointFilter }, include: { location: true }, orderBy: { code: "asc" } }),
@@ -65,36 +74,15 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
     );
   }
   const itemById = new Map(items.map((i) => [i.id, i]));
-  const cfg = await pointConfig(prisma);
   const stockAt = (locationId: string) => balances.filter((b) => b.locationId === locationId && Math.abs(b.qty) > 0.0005).map((b) => ({ ...b, item: itemById.get(b.itemId) })).filter((b) => b.item);
-  const warehouseStock = new Map<string, number>();
-  for (const b of balances) if (!points.some((p) => p.locationId === b.locationId)) warehouseStock.set(b.itemId, (warehouseStock.get(b.itemId) ?? 0) + b.qty);
-  const activeTasks = tasks.filter((t) => t.active && canTask(scope, t.id));
   const divisions = manage ? await prisma.division.findMany({ where: { active: true }, orderBy: { code: "asc" }, select: { id: true, name: true } }) : [];
   const divisionName = new Map((await prisma.division.findMany({ select: { id: true, name: true } })).map((d) => [d.id, d.name]));
-  const workers = people.filter((p) => p.role === "PEKERJA" && p.active && p.pointId);
   const drivers = people.filter((p) => p.role === "DRIVER" && p.active);
   const t = todayStr();
   const driverField = drivers.length > 0 && (
     <Field label="Driver"><select name="driverId" className="input" defaultValue={drivers[0].id}>{drivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
   );
 
-  // Kirim bahan: per jenis pekerjaan borongan aktif → titik sesuai pengaturan → bahan resep (satu kali ke beberapa titik)
-  const kirim = kirimGroups(tasks, points, cfg, warehouseStock);
-  const kits = pointKits(points, cfg, items, warehouseStock);
-  const sendMaterial = canWarehouse(scope) && (
-    <Modal trigger="+ Kirim Bahan" title="Kirim bahan ke titik" wide>
-      <ModalForm action={sendMaterials} className="space-y-3">
-        <KirimBahan groups={kirim} kits={kits} drivers={drivers.map((d) => ({ id: d.id, name: d.name }))} />
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Tanggal"><input type="date" name="date" defaultValue={t} className="input" /></Field>
-          <Field label="Catatan"><input name="note" className="input" /></Field>
-        </div>
-        <p className="text-xs text-slate-500">Bahan keluar dari gudang saat diserahkan, lalu masuk stok titik setelah koordinator menekan Terima.</p>
-        <Submit>Serahkan</Submit>
-      </ModalForm>
-    </Modal>
-  );
   const sendBack = (
     <Modal trigger="+ Kirim Hasil Ke Gudang" triggerClass="btn-secondary" title="Kirim hasil ke gudang lewat driver" wide>
       <ModalForm action={sendHandover} className="space-y-3">
@@ -110,29 +98,16 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
       </ModalForm>
     </Modal>
   );
-  const resultForm = (
-    <Modal trigger="+ Setoran Hasil" title="Catat setoran hasil kerja" wide>
-      <ModalForm action={addResults} className="space-y-3">
-        <ResultRows pointTasks={Object.fromEntries(Object.entries(cfg).map(([k, v]) => [k, v.tasks]))} points={points.map((p) => ({ id: p.id, name: p.name }))} workers={workers.map((w) => ({ id: w.id, name: w.name, pointId: w.pointId!, taskIds: w.taskIds }))} capacity={await pointCapacity(points, activeTasks.map((x) => x.id))} tasks={activeTasks.map((x) => ({ id: x.id, name: x.name, workerRate: Number(x.workerRate), coordinatorRate: Number(x.coordinatorRate), driverRate: Number(x.driverRate) }))} />
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Tanggal"><input type="date" name="date" defaultValue={t} className="input" /></Field>
-          <Field label="Catatan"><input name="note" className="input" /></Field>
-        </div>
-        <p className="text-xs text-slate-500">Bahan sesuai resep tugas otomatis terpakai dari stok titik, dan barang hasil bertambah di stok titik.</p>
-        <Submit>Simpan Setoran</Submit>
-      </ModalForm>
-    </Modal>
-  );
-
   return (
     <div className="space-y-5">
       <PageHeader
         title="Borongan"
-        subtitle={canWarehouse(scope) ? "Bahan dikirim lewat driver ke titik borongan, hasil disetor per pekerja, upah dibagi pekerja, koordinator, dan driver" : `Titik ${points.map((p) => p.name).join(", ")}`}
-        actions={<div className="flex flex-wrap gap-2">{sendMaterial}{!scope.division && resultForm}{!setoranOnly && sendBack}</div>}
+        subtitle={canWarehouse(scope) ? "Kiriman bernomor: kirim bahan → bagi ke pekerja → lapor hasil → ambil setoran → diterima divisi" : `Titik ${points.map((p) => p.name).join(", ")}`}
+        actions={tab === "serah" && !setoranOnly ? <div className="flex flex-wrap gap-2">{sendBack}</div> : undefined}
       />
       <Tabs current={tab} tabs={tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: x.key === "serah" ? pending.length || undefined : undefined }))} />
 
+      {tab === "kiriman" && <KirimanTab scope={scope} userId={user.id} />}
       {tab === "ringkasan" && (
         <>
           {pending.length > 0 && !setoranOnly && <PendingList pending={pending} scope={scope} />}
@@ -408,13 +383,13 @@ function PeopleTab({ people, points, manage, canLogin, tasks }: { people: Person
                       </span>
                       {editable && (
                         <span className="flex gap-2">
-                          {canLogin && p.role === "KOORDINATOR" && (
-                            <Modal trigger={p.user ? "Login" : "Buat Login"} triggerClass="btn-secondary btn-sm" title={`Login koordinator ${p.name}`}>
+                          {canLogin && (p.role === "KOORDINATOR" || p.role === "DRIVER") && (
+                            <Modal trigger={p.user ? "Login" : "Buat Login"} triggerClass="btn-secondary btn-sm" title={`Login ${p.role === "DRIVER" ? "driver" : "koordinator"} ${p.name}`}>
                               <ModalForm action={saveCoordinatorLogin} className="space-y-3">
                                 <input type="hidden" name="personId" value={p.id} />
                                 <Field label="Username"><input name="username" defaultValue={p.user?.username ?? ""} className="input" autoComplete="off" required /></Field>
                                 <Field label={p.user ? "Password baru (kosongkan bila tetap)" : "Password"}><PasswordInput name="password" className="input" autoComplete="new-password" minLength={8} /></Field>
-                                <p className="text-xs text-slate-500">Koordinator hanya melihat titiknya: menerima bahan, mencatat setoran hasil, mengirim hasil, dan mengelola pekerja.</p>
+                                <p className="text-xs text-slate-500">{p.role === "DRIVER" ? "Driver hanya melihat Borongan › Kiriman: pembagian ke pekerja dan ambil setoran." : "Koordinator hanya melihat titiknya: lapor hasil kerja per pekerja, klaim upah, dan mengelola pekerja."}</p>
                                 <Submit>Simpan</Submit>
                               </ModalForm>
                             </Modal>

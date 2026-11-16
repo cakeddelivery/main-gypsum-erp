@@ -1,6 +1,6 @@
 import type { Role } from "@prisma/client";
 
-export const ROLES: Role[] = ["OWNER", "FINANCE", "ADMIN", "ADMIN_PRODUKSI", "ADMIN_MARKETPLACE", "KAPTEN_DIVISI", "SUPERVISOR", "PIC_CONTENT", "OPERATOR", "KOORDINATOR"];
+export const ROLES: Role[] = ["OWNER", "FINANCE", "ADMIN", "ADMIN_PRODUKSI", "ADMIN_MARKETPLACE", "KAPTEN_DIVISI", "SUPERVISOR", "PIC_CONTENT", "OPERATOR", "KOORDINATOR", "DRIVER"];
 
 export const ROLE_LABEL: Record<Role, string> = {
   OWNER: "Owner",
@@ -13,6 +13,7 @@ export const ROLE_LABEL: Record<Role, string> = {
   PIC_CONTENT: "PIC Content Creator",
   OPERATOR: "Operator",
   KOORDINATOR: "Koordinator Borongan",
+  DRIVER: "Driver Borongan",
 };
 
 /** Izin per menu (".view") dan tindakan. */
@@ -44,6 +45,7 @@ export const PERMISSIONS = {
   "borongan.point": "Koordinator titik: terima bahan, catat hasil, kelola pekerja titiknya",
   "borongan.manage": "Kelola borongan: titik, orang, tugas & tarif, kirim bahan, terima hasil",
   "borongan.pay": "Bayar upah borongan",
+  "borongan.driver": "Driver borongan: pembagian ke pekerja & ambil setoran",
   "employee.view": "Lihat karyawan",
   "employee.manage": "Kelola karyawan & akun",
   "payroll.view": "Lihat penggajian",
@@ -107,6 +109,8 @@ export const DEFAULT_MATRIX: Record<Role, Permission[]> = {
   PIC_CONTENT: ["dashboard.view", "product.view", "attendance.self", "payroll.self"],
   OPERATOR: [...OPERATOR_BASE, "report.create"],
   KOORDINATOR: ["borongan.view", "borongan.point"],
+  // Driver hanya melihat menu Pembagian & Ambil Setoran di Borongan
+  DRIVER: ["borongan.view", "borongan.driver"],
 };
 
 // Lihat gaji seluruh karyawan: Owner, Finance, Admin. Supervisor & Admin Produksi cukup slip sendiri (audit 8 Nov 2026)
@@ -129,7 +133,7 @@ export const SENSITIVE: Permission[] = [
 export const isSensitive = (p: string) => (SENSITIVE as string[]).includes(p);
 
 /** Role lapangan: tidak semestinya melihat keuangan/gaji/pengaturan */
-export const FIELD_ROLES_SENSITIVE: Role[] = ["OPERATOR", "KAPTEN_DIVISI", "SUPERVISOR", "KOORDINATOR", "PIC_CONTENT"];
+export const FIELD_ROLES_SENSITIVE: Role[] = ["OPERATOR", "KAPTEN_DIVISI", "SUPERVISOR", "KOORDINATOR", "DRIVER", "PIC_CONTENT"];
 
 /** Izin sensitif yang BARU diberikan ke role lapangan (before → after); kosong = aman disimpan tanpa konfirmasi */
 export function sensitiveGrants(role: Role, before: Set<Permission>, after: Set<Permission>): Permission[] {
@@ -169,7 +173,7 @@ export const MENU_GROUPS: { key: string; label: string; perms: Permission[]; on:
   { key: "sales", label: "Penjualan", perms: ["sales.view", "sales.manage"], on: ["sales.view"] },
   { key: "retur", label: "Retur & Komplain", perms: ["retur.manage", "refund.request", "refund.approve", "refund.pay"], on: ["retur.manage"] },
   { key: "partner", label: "Supplier & Pelanggan", perms: ["partner.view", "partner.manage"], on: ["partner.view"] },
-  { key: "borongan", label: "Borongan", perms: ["borongan.view", "borongan.point", "borongan.manage", "borongan.pay"], on: ["borongan.view"] },
+  { key: "borongan", label: "Borongan", perms: ["borongan.view", "borongan.point", "borongan.driver", "borongan.manage", "borongan.pay"], on: ["borongan.view"] },
   { key: "employee", label: "Karyawan", perms: ["employee.view", "employee.manage"], on: ["employee.view"] },
   { key: "payroll", label: "Penggajian", perms: ["payroll.view", "payroll.manage", "payroll.approve", "payroll.self"], on: ["payroll.self"] },
   { key: "finance", label: "Transaksi", perms: ["finance.view", "finance.create", "finance.review", "finance.approve"], on: ["finance.view"] },
