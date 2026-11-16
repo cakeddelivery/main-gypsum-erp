@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { NAV, bottomNavFor, bottomNavWithReport } from "@/lib/nav";
+import { COORDINATOR_NAV, NAV, bottomNavFor, bottomNavWithReport } from "@/lib/nav";
 import { reportDivision } from "@/lib/reportScope";
 import { todayStr } from "@/lib/time";
 import { ROLE_LABEL } from "@/lib/rbac";
@@ -19,7 +19,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const nav = [...NAV.filter((n) => n.perms.some((p) => user.can(p))).map(({ href, label, icon }) => ({ href, label, icon })), ...(guides.allowed.length ? [{ href: "/panduan", label: "Panduan", icon: "book" }] : [])];
   // Tombol "+ Laporan shift" di tengah navigasi bawah (khusus yang boleh membuat laporan)
   const canReport = user.can("report.create");
-  const bottom = canReport ? bottomNavWithReport(user.role, user.can) : bottomNavFor(user.role, user.can);
+  const bottom = user.role === "KOORDINATOR" && !canReport ? COORDINATOR_NAV : canReport ? bottomNavWithReport(user.role, user.can) : bottomNavFor(user.role, user.can);
   const scope = canReport ? reportDivision(user) : null;
   const quickReport = canReport
     ? await Promise.all([

@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { Fragment, Suspense, useEffect, useState } from "react";
 import { Icon } from "./Icon";
 import { NotificationBell, ProfileMenu, type HeaderAlert } from "./HeaderMenus";
@@ -18,7 +18,10 @@ import { ReportStartForm, type ReportStartData } from "./ReportStartForm";
 
 type Item = { href: string; label: string; icon: string };
 
-function isActive(path: string, href: string) {
+function isActive(path: string, href: string, tab?: string | null) {
+  // Menu dengan ?tab= (portal koordinator): aktif bila halaman & tab sama (tanpa tab = tab pertama "kiriman")
+  const [base, query] = href.split("?");
+  if (query) return path === base && (new URLSearchParams(query).get("tab") ?? "") === (tab || "kiriman");
   return href === "/" ? path === "/" : path === href || path.startsWith(href + "/");
 }
 
@@ -39,6 +42,7 @@ function backTarget(path: string, nav: Item[]) {
 
 export function Shell({ nav, bottomNav, user, env, children, alerts, quickReport }: { nav: Item[]; bottomNav: Item[]; user: { name: string; username: string; role: string; division?: string | null; photoUrl?: string | null }; env: string; children: React.ReactNode; alerts: HeaderAlert[]; quickReport?: ReportStartData | null }) {
   const path = usePathname();
+  const tab = useSearchParams().get("tab");
   const [open, setOpen] = useState(false);
   useEffect(() => setOpen(false), [path]);
   // Halaman baru selalu dibuka dari paling atas (judul & tombol kembali terlihat)
@@ -48,7 +52,7 @@ export function Shell({ nav, bottomNav, user, env, children, alerts, quickReport
   // Slot terakhir diisi tombol "Menu" bila menu prioritas kurang dari 5
   const back = backTarget(path, nav);
   // Menu ☰ di HP hanya berisi menu yang belum ada di navigasi bawah; sidebar desktop tetap lengkap
-  const inBottom = new Set(bottomNav.map((n) => n.href));
+  const inBottom = new Set(bottomNav.map((n) => n.href.split("?")[0]));
   // Peran dengan menu sedikit (mis. Koordinator & Driver: hanya Borongan): tanpa ☰ dan tanpa tombol "Menu"
   const moreMenu = nav.some((n) => !inBottom.has(n.href));
   const showMenuSlot = moreMenu && bottomNav.length + (quickReport ? 1 : 0) < 5;
@@ -143,7 +147,7 @@ export function Shell({ nav, bottomNav, user, env, children, alerts, quickReport
         className="no-print fixed inset-x-0 bottom-0 z-30 grid border-t border-slate-200 bg-white/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
       >
         {bottomNav.map((n, i) => {
-          const active = isActive(path, n.href);
+          const active = isActive(path, n.href, tab);
           const link = (
             <Link href={n.href} aria-current={active ? "page" : undefined} className={`flex min-w-0 flex-col items-center gap-0.5 px-1 pb-1.5 pt-2 text-[11px] font-medium transition-colors active:text-brand-600 ${active ? "text-brand-600" : "text-slate-500"}`}>
               <span className={`relative grid h-7 w-12 place-items-center rounded-full transition ${active ? "bg-brand-50" : ""}`}>

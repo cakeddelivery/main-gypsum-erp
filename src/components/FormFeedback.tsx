@@ -71,6 +71,82 @@ function clear(el: Field) {
 
 let seq = 0;
 
+/**
+ * Tampilkan kolom yang tersembunyi agar bisa difokus: buka <details> yang menutupinya dan kabari
+ * stepper/popup bertahap (event "field-reveal") supaya membuka langkah yang berisi kolom itu.
+ * Mengembalikan true bila tampilan berubah (perlu jeda sebelum menggulir).
+ */
+function unhide(el: HTMLElement): boolean {
+  let changed = false;
+  for (let d = el.closest("details"); d; d = d.parentElement?.closest("details") ?? null) {
+    if (!d.open) {
+      d.open = true;
+      changed = true;
+    }
+  }
+  const before = el.getClientRects().length;
+  el.dispatchEvent(new CustomEvent("field-reveal", { bubbles: true }));
+  return changed || before === 0;
+}
+
+/** Tandai satu kolom salah: garis merah + getar + pesan di bawahnya; opsional gulir & fokus ke sana */
+export function markInvalid(el: Field, text: string, reveal = true) {
+  const target = visibleTarget(el);
+  el.setAttribute("aria-invalid", "true");
+  target.classList.add("field-invalid");
+  shake(target);
+  let msg = el.getAttribute("data-err-id") ? document.getElementById(el.getAttribute("data-err-id")!) : null;
+  if (!msg) {
+    msg = document.createElement("span");
+    msg.id = `fe-${++seq}`;
+    msg.className = "field-error";
+    msg.setAttribute("role", "alert");
+    messageAnchor(el).after(msg);
+    el.setAttribute("data-err-id", msg.id);
+    el.setAttribute("aria-describedby", [el.getAttribute("aria-describedby"), msg.id].filter(Boolean).join(" "));
+  }
+  msg.textContent = text;
+  if (!reveal) return;
+  if (unhide(el)) window.setTimeout(() => revealField(focusTarget(el)), 80);
+  else revealField(focusTarget(el));
+}
+
+/** Label yang terlihat untuk sebuah kolom (untuk mencocokkan pesan error server dengan kolomnya) */
+function labelOf(el: Field): string {
+  const t = el.labels?.[0]?.textContent || el.getAttribute("aria-label") || el.closest("label")?.textContent || el.getAttribute("placeholder") || "";
+  return t.replace(/[*:()]/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+const fieldList = (form: HTMLFormElement) =>
+  Array.from(form.elements).filter((x): x is Field => (x instanceof HTMLInputElement || x instanceof HTMLSelectElement || x instanceof HTMLTextAreaElement) && !!x.name && !(x instanceof HTMLInputElement && x.type === "hidden"));
+
+/**
+ * Server menolak simpan: tandai kolom yang disebut server (name → pesan). Bila server tidak menyebut kolom,
+ * cari kolom yang labelnya disebut dalam pesan error. Kolom pertama digulir & difokus.
+ * Mengembalikan true bila ada kolom yang ditandai.
+ */
+export function showServerErrors(form: HTMLFormElement, error: string, fields?: Record<string, string>): boolean {
+  const all = fieldList(form);
+  const hits: [Field, string][] = [];
+  if (fields) {
+    for (const [name, text] of Object.entries(fields)) {
+      const el = all.find((x) => x.name === name) ?? all.find((x) => x.name.startsWith(`${name}.`) || x.name.startsWith(`${name}:`));
+      if (el) hits.push([el, text]);
+    }
+  }
+  if (!hits.length) {
+    const msg = error.toLowerCase();
+    const el = all.find((x) => {
+      const l = labelOf(x);
+      return l.length >= 3 && l.length <= 40 && msg.includes(l);
+    });
+    if (el) hits.push([el, error]);
+  }
+  hits.sort(([a], [b]) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+  hits.forEach(([el, text], i) => markInvalid(el, text, i === 0));
+  return hits.length > 0;
+}
+
 export function FormFeedback() {
   useEffect(() => {
     // Satu kali kirim memicu banyak event "invalid"; hanya yang pertama digulir & difokus
@@ -81,28 +157,8 @@ export function FormFeedback() {
       const el = e.target as Field;
       if (!el?.form) return;
       e.preventDefault(); // ganti gelembung bawaan browser dengan pesan di bawah kolom
-      const target = visibleTarget(el);
-      el.setAttribute("aria-invalid", "true");
-      target.classList.add("field-invalid");
-      shake(target);
-
-      const text = messageFor(el);
-      let msg = el.getAttribute("data-err-id") ? document.getElementById(el.getAttribute("data-err-id")!) : null;
-      if (!msg) {
-        msg = document.createElement("span");
-        msg.id = `fe-${++seq}`;
-        msg.className = "field-error";
-        msg.setAttribute("role", "alert");
-        messageAnchor(el).after(msg);
-        el.setAttribute("data-err-id", msg.id);
-        el.setAttribute("aria-describedby", [el.getAttribute("aria-describedby"), msg.id].filter(Boolean).join(" "));
-      }
-      msg.textContent = text;
-
-      if (!firstDone) {
-        firstDone = true;
-        revealField(focusTarget(el));
-      }
+      markInvalid(el, messageFor(el), !firstDone);
+      firstDone = true;
       window.clearTimeout(reset);
       reset = window.setTimeout(() => (firstDone = false), 0);
     };

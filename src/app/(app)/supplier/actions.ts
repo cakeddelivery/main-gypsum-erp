@@ -5,9 +5,10 @@ import { action, bool, optStr, str } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { autoCode } from "@/lib/codes";
 import { findSupplierByName, mergeSuppliers } from "@/lib/suppliers";
+import { zField } from "@/lib/fieldError";
 
 const data = (fd: FormData) => ({
-  name: z.string().min(2, "Nama minimal 2 huruf").parse(str(fd, "name")),
+  name: zField(fd, "name", z.string().min(2, "Nama minimal 2 huruf")),
   phone: optStr(fd, "phone"),
   address: optStr(fd, "address"),
   note: optStr(fd, "note"),

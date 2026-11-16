@@ -5,12 +5,14 @@ const rp = (n: number) => `Rp${n.toLocaleString("id-ID")}`;
 const f = (n: number) => n.toLocaleString("id-ID");
 export const CLAIM_STATUS_LABEL = { MENUNGGU: "menunggu Finance / Owner", DIBAYAR: "dibayar", DITOLAK: "ditolak" } as const;
 export const CLAIM_TONE = { MENUNGGU: "amber", DIBAYAR: "green", DITOLAK: "red" } as const;
+/** Status di kepala dokumen pengajuan klaim */
+export const CLAIM_DOC_STATUS = { DRAF: "Draf (belum diajukan)", MENUNGGU: "Diajukan ke Finance", DIBAYAR: "Disetujui & dibayar", DITOLAK: "Ditolak" } as const;
 
 /**
  * Rincian klaim upah: Pekerja (per orang per pekerjaan), Koordinator, Fee driver (selalu ada), Total.
  * `doc` = gaya dokumen ber-kop (JPG/PDF, selalu terang); selain itu tabel HP dengan geser di dalam kartu.
  */
-export function ClaimTable({ b, doc }: { b: ClaimBreakdown; doc?: boolean }) {
+export function ClaimTable({ b, doc, workerOnly }: { b: ClaimBreakdown; doc?: boolean; /** Dokumen per pekerja: hanya fee pekerja itu */ workerOnly?: boolean }) {
   const label = (person: ClaimPerson, l: ClaimPerson["lines"][number], showName: boolean) => (showName ? `${person.name} · ${niceTask(l.label)}` : l.label);
   const group = (title: string, people: ClaimPerson[], total: number, totalLabel: string, showName: boolean, empty?: string) => [
     <tr key={`g-${title}`} className={doc ? "claim-grp" : "bg-slate-100"}><td colSpan={4} className={doc ? "" : "px-2 py-1.5 text-xs font-bold uppercase tracking-wide text-slate-600"}>{title}</td></tr>,
@@ -39,10 +41,10 @@ export function ClaimTable({ b, doc }: { b: ClaimBreakdown; doc?: boolean }) {
         </tr>
       </thead>
       <tbody>
-        {group("Pekerja", b.workers, b.totals.workers, "Total pekerja", true)}
-        {group("Koordinator", b.coordinators, b.totals.coordinators, "Total koordinator", b.coordinators.length > 1, "Tanpa koordinator (Rp0)")}
-        {group(driverTitle, b.drivers, b.totals.drivers, "Total fee driver", b.drivers.length > 1, "Tidak ada fee driver (Rp0)")}
-        <tr className={doc ? "claim-grand" : "bg-brand-50 text-base font-bold text-brand-800"}><td className={doc ? "" : "px-2 py-2"}>Total klaim</td><td /><td /><td className={doc ? "num" : "whitespace-nowrap px-2 py-2 text-right tabular-nums"}>{rp(b.totals.all)}</td></tr>
+        {workerOnly ? group("Pekerja", b.workers, b.totals.workers, "", false, "Belum ada setoran").slice(0, -1) : group("Pekerja", b.workers, b.totals.workers, "Total pekerja", true)}
+        {!workerOnly && group("Koordinator", b.coordinators, b.totals.coordinators, "Total koordinator", b.coordinators.length > 1, "Tanpa koordinator (Rp0)")}
+        {!workerOnly && group(driverTitle, b.drivers, b.totals.drivers, "Total fee driver", b.drivers.length > 1, "Tidak ada fee driver (Rp0)")}
+        <tr className={doc ? "claim-grand" : "bg-brand-50 text-base font-bold text-brand-800"}><td className={doc ? "" : "px-2 py-2"}>{workerOnly ? `Total fee ${b.workers[0]?.name ?? "pekerja"}` : "Total klaim"}</td><td /><td /><td className={doc ? "num" : "whitespace-nowrap px-2 py-2 text-right tabular-nums"}>{rp(b.totals.all)}</td></tr>
       </tbody>
     </>
   );

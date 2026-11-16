@@ -5,6 +5,7 @@ import { assertPeriodOpen, postJournal, reverseJournal, COA } from "./accounting
 import { nextNumber } from "./numbering";
 import { audit } from "./audit";
 import { addDays, dateOnly, dateStr, jakartaDateTime, todayStr } from "./time";
+import { withField } from "./fieldError";
 
 type Tx = Prisma.TransactionClient;
 type Actor = { id: string; name: string };
@@ -689,7 +690,7 @@ export async function paySlip(slipId: string, bankAccountId: string, storeId: st
  * Tanggal pembalik = tanggal bayar bila periodenya masih terbuka, selain itu hari ini.
  */
 export async function cancelPayment(periodId: string, reason: string, actor: Actor, now: Date = new Date()) {
-  if (!reason?.trim()) throw new PayrollError("Alasan pembatalan wajib diisi");
+  if (!reason?.trim()) throw withField(new PayrollError("Alasan pembatalan wajib diisi"), "reason");
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
     const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId }, include: { payslips: true } });
@@ -709,7 +710,7 @@ export async function cancelPayment(periodId: string, reason: string, actor: Act
 
 /** Batalkan persetujuan (sebelum dibayar): jurnal hutang gaji dibalik, periode kembali Draft agar bisa dihitung ulang */
 export async function unapprovePeriod(periodId: string, reason: string, actor: Actor, now: Date = new Date()) {
-  if (!reason?.trim()) throw new PayrollError("Alasan pembatalan wajib diisi");
+  if (!reason?.trim()) throw withField(new PayrollError("Alasan pembatalan wajib diisi"), "reason");
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
     const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId } });
@@ -727,7 +728,7 @@ export async function unapprovePeriod(periodId: string, reason: string, actor: A
 
 /** Batalkan kasbon yang belum dicicil/dipotong: jurnal dibalik, kasbon tidak lagi dipotong dari gaji */
 export async function cancelAdvance(advanceId: string, reason: string, actor: Actor, now: Date = new Date()) {
-  if (!reason?.trim()) throw new PayrollError("Alasan pembatalan wajib diisi");
+  if (!reason?.trim()) throw withField(new PayrollError("Alasan pembatalan wajib diisi"), "reason");
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "CashAdvance" WHERE id = ${advanceId} FOR UPDATE`;
     const a = await tx.cashAdvance.findUniqueOrThrow({ where: { id: advanceId } });

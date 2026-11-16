@@ -7,6 +7,7 @@ import { EntryForbidden, deleteProductionEntry, recordProductionEntry } from "@/
 import { REJECT_REASONS } from "@/lib/reject";
 import { audit } from "@/lib/audit";
 import { ForbiddenError } from "@/lib/auth";
+import { zField } from "@/lib/fieldError";
 
 export const createEntry = action(
   "production.create",
@@ -53,7 +54,7 @@ export const saveTarget = action(
     const data = {
       divisionId: str(fd, "divisionId"),
       employeeId: optStr(fd, "employeeId"),
-      stage: z.enum(STAGES as [string, ...string[]]).parse(str(fd, "stage")) as (typeof STAGES)[number],
+      stage: zField(fd, "stage", z.enum(STAGES as [string, ...string[]])) as (typeof STAGES)[number],
       dailyQty: z.number().int().min(1, "Target minimal 1").parse(int(fd, "dailyQty")),
       active: id ? bool(fd, "active") : true,
     };

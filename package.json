@@ -15,6 +15,7 @@
     "katalog:produk": "tsx scripts/katalog-produk.ts",
     "cek:password": "tsx scripts/cek-password.ts",
     "test": "bash tests/global-reset.sh && vitest run",
+    "e2e:form": "node tests/e2e/form-gagal.e2e.cjs",
     "typecheck": "tsc --noEmit",
     "kosongkan": "tsx scripts/kosongkan-data.ts",
     "audit:saldo": "tsx scripts/audit-saldo.ts",

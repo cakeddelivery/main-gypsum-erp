@@ -8,6 +8,7 @@ import { audit } from "@/lib/audit";
 import { approvePeriod, cancelAdvance, cancelPayment, unapprovePeriod, giveAdvance, repayAdvance, cancelPieceClaim, computePeriod, createPieceClaim, generateAllowancePayroll, generateMonthlyPayroll, payPeriod } from "@/lib/payroll";
 import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 import type { ProductionStage } from "@prisma/client";
+import { zField } from "@/lib/fieldError";
 
 export const createPeriod = action(
   "payroll.manage",
@@ -92,7 +93,7 @@ export const savePieceTask = action(
     const id = optStr(fd, "id");
     const rate = int(fd, "ratePerPcs");
     if (rate <= 0) throw new Error("Tarif harus > 0");
-    const name = z.string().min(2, "Nama tugas wajib").parse(str(fd, "name"));
+    const name = zField(fd, "name", z.string().min(2, "Nama tugas wajib"));
     const t = id
       ? await prisma.pieceTask.update({ where: { id }, data: { name, ratePerPcs: BigInt(rate), active: fd.get("active") !== "off" } })
       : await prisma.pieceTask.create({ data: { name, ratePerPcs: BigInt(rate), code: await autoCode.pieceTask(prisma) } });
@@ -168,7 +169,7 @@ export const saveAllowance = action(
   "payroll.manage",
   async (fd, user) => {
     const id = optStr(fd, "id");
-    const name = z.string().trim().min(2, "Nama tunjangan minimal 2 huruf").parse(str(fd, "name"));
+    const name = zField(fd, "name", z.string().trim().min(2, "Nama tunjangan minimal 2 huruf"));
     const amount = int(fd, "amount");
     if (amount <= 0) throw new Error("Nominal tunjangan harus lebih dari 0");
     const payDay = int(fd, "payDay", 15);

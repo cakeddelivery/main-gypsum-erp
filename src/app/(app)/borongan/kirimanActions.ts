@@ -5,6 +5,7 @@ import { BoronganError, boronganScope } from "@/lib/borongan";
 import { cancelPickup, cancelShipment, createPickup, createShipment, receivePickup, resolvePickup, saveAllots, saveWorkReport } from "@/lib/boronganFlow";
 import { todayStr } from "@/lib/time";
 import { autoClaims } from "@/lib/boronganClaim";
+import { FieldError } from "@/lib/fieldError";
 
 /** Alur kiriman borongan (KRM → bagi → lapor → AMB → terima). Driver punya izin borongan.driver. */
 const PERMS = ["borongan.manage", "borongan.point", "borongan.driver"] as const;
@@ -106,7 +107,8 @@ export const terimaSetoran = action(
   [...PERMS],
   async (fd, user) => {
     const counts = [...fd.entries()].filter(([k]) => k.startsWith("c:")).map(([k, v]) => ({ taskId: k.slice(2), qty: String(v).trim() === "" ? -1 : int(v) }));
-    if (counts.some((c) => c.qty < 0)) throw new BoronganError("Isi hitungan setiap jenis (0 bila tidak ada)");
+    const empty = counts.find((c) => c.qty < 0);
+    if (empty) throw new FieldError(`c:${empty.taskId}`, "Isi hitungan jenis ini (0 bila tidak ada)");
     const r = await receivePickup(str(fd, "pickupId"), counts, user, await boronganScope(prisma, user));
     // Setiap 7× setoran Assembling per titik, klaim upah dibuat otomatis
     if (!r.short) await autoClaims(r.pointIds);

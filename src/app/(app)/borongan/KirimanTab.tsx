@@ -1,11 +1,13 @@
+import Link from "next/link";
 import { prisma } from "@/lib/db";
-import { fmtDay, dateOnly, todayStr } from "@/lib/time";
+import { addDays, fmtDay, dateOnly, todayStr } from "@/lib/time";
+import { Paged } from "@/components/Paged";
 import { bomStockQty } from "@/lib/unitcost";
 import { stockBalances } from "@/lib/stock";
 import { canTask, type Scope } from "@/lib/borongan";
 import { taskGroupName } from "@/lib/boronganKirim";
 import { pointConfig, taskKits } from "@/lib/boronganSetup";
-import { STATE_LABEL, byColumn, canCompleteAssembling, canDistribute, canInputKering, canPickup, canReceive, canReport, canShip, canShipGroup, isAssemblingName, openShipments, shortTaskName, type ShipmentView } from "@/lib/boronganFlow";
+import { STATE_LABEL, byColumn, canCompleteAssembling, canDistribute, canInputKering, canPickup, canReceive, canReport, canShip, canShipGroup, isAssemblingName, isCoordinatorScope, openShipments, scopeShipments, shipmentViews, shortTaskName, type ShipmentView } from "@/lib/boronganFlow";
 import { Badge, Empty } from "@/components/ui";
 import { ActionForm } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
@@ -65,7 +67,8 @@ async function kirimGroups(): Promise<KirimGroupOpt[]> {
 }
 
 export async function KirimanTab({ scope, userId }: { scope: Scope; userId: string }) {
-  const all = (await openShipments()).filter((s) => visible(scope, s));
+  // Koordinator: hanya bagian titiknya, dan baru tampil setelah bahan dibagi ke pekerja di titik itu (disaring di server)
+  const all = scopeShipments(scope, (await openShipments()).filter((s) => visible(scope, s)));
   const complete = canCompleteAssembling(scope);
   const kering = canInputKering(scope);
   const ship = canShip(scope) || complete || kering;
@@ -82,6 +85,11 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
   const toReceive = all.flatMap((s) => s.pickups.filter((p) => p.status === "DIBAWA" && canReceive(scope, s.tasks.filter((t) => p.lines.some((l) => l.taskId === t.id)))).map((p) => ({ s, p })));
   const held = scope.all ? all.flatMap((s) => s.pickups.filter((p) => p.status === "KURANG").map((p) => ({ s, p }))) : [];
   const running = all.filter((s) => !s.waitingSupport && (s.state !== "SELESAI" || s.pickups.some((p) => p.status === "DIBAWA")));
+  // Koordinator: riwayat kiriman yang sudah selesai (bagian titiknya saja)
+  const coordinator = isCoordinatorScope(scope);
+  const done = coordinator
+    ? scopeShipments(scope, await shipmentViews({ cancelledAt: null, pointIds: { hasSome: scope.pointIds }, date: { gte: dateOnly(addDays(todayStr(), -180)) } }, 200)).filter((s) => !running.some((r) => r.id === s.id))
+    : [];
   const draftCreators = new Map((await prisma.boronganShipment.findMany({ where: { id: { in: waiting.map((w) => w.id) } }, select: { id: true, createdById: true } })).map((x) => [x.id, x.createdById]));
 
   return (
@@ -171,7 +179,7 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
           return (
             <article key={s.id} className="card space-y-2 p-3">
               <div className="flex flex-wrap items-center gap-2">
-                <Chip>{s.number}</Chip>
+                {coordinator ? <Link href={`/borongan/riwayat/${s.id}`} className="underline decoration-brand-300"><Chip>{s.number}</Chip></Link> : <Chip>{s.number}</Chip>}
                 <span className="text-sm font-semibold text-slate-800">{fmtDay(dateOnly(s.date))}</span>
                 <span className="ml-auto"><Badge tone={STATE_TONE[s.state]}>{STATE_LABEL[s.state]}</Badge></span>
               </div>
@@ -220,6 +228,31 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
           );
         })}
       </section>
+
+      {coordinator && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Riwayat kiriman</h2>
+          {!done.length ? <p className="text-sm text-slate-500">Belum ada kiriman yang selesai.</p> : (
+            <div className="table-wrap">
+              <Paged>
+                <table className="tbl">
+                  <thead><tr><th>Kiriman</th><th className="num">Dibagi</th><th className="num">Setor</th><th className="num">Reject</th></tr></thead>
+                  <tbody>
+                    {done.map((s) => (
+                      <tr key={s.id}>
+                        <td><Link href={`/borongan/riwayat/${s.id}`} className="font-mono text-xs font-semibold text-brand-700 underline">{s.number}</Link><div className="text-xs text-slate-500">{fmtDay(dateOnly(s.date))} · {s.tasks.map((t) => t.short).join(", ")}</div></td>
+                        <td className="num">{f(s.totals.sent)}</td>
+                        <td className="num">{f(s.totals.received)}</td>
+                        <td className="num">{f(s.totals.reject)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </Paged>
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

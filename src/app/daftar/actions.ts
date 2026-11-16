@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { clientIp } from "@/lib/auth";
 import { friendly, type ActionResult } from "@/lib/action";
 import { submitRegistration } from "@/lib/registration";
+import { fieldsOf, withField } from "@/lib/fieldError";
 
 const f = (fd: FormData, k: string) => String(fd.get(k) ?? "");
 
@@ -12,7 +13,7 @@ export async function registerAction(_p: ActionResult | null, fd: FormData): Pro
   if (f(fd, "website")) redirect("/daftar/selesai");
   let number: string;
   try {
-    if (f(fd, "password") !== f(fd, "confirm")) throw new Error("Konfirmasi password tidak sama");
+    if (f(fd, "password") !== f(fd, "confirm")) throw withField(new Error("Konfirmasi password tidak sama"), "confirm");
     const r = await submitRegistration(
       f(fd, "kode"),
       {
@@ -24,7 +25,7 @@ export async function registerAction(_p: ActionResult | null, fd: FormData): Pro
     );
     number = r.number;
   } catch (e) {
-    return { ok: false, error: friendly(e), ts: Date.now() };
+    return { ok: false, error: friendly(e), fields: fieldsOf(e), ts: Date.now() };
   }
   redirect(`/daftar/selesai?no=${encodeURIComponent(number)}`);
 }

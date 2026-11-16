@@ -87,6 +87,7 @@ export async function KlaimTab({ scope, canPay }: { scope: Scope; canPay: boolea
               <div className="mt-1 flex justify-between gap-2 border-t border-slate-200 pt-1"><b>Total</b><b className="tabular-nums">{rp(b.totals.all)}</b></div>
               {s.held > 0 && <p className="mt-1 text-xs text-rose-700">{s.held} setoran ditahan (hitungan divisi kurang), belum ikut klaim.</p>}
             </div>
+            {b.totals.all > 0 && <Link href={`/borongan/klaim/pratinjau?titik=${p.id}`} className="btn-secondary w-full">📄 Pratinjau pengajuan klaim (semua / per pekerja)</Link>}
             {can && b.totals.all > 0 && (
               <ActionForm action={klaimSekarang} confirm={`Ajukan klaim upah ${p.name} ${rp(b.totals.all)}?`}>
                 <input type="hidden" name="pointId" value={p.id} />

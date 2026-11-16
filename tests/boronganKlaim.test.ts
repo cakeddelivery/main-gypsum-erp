@@ -172,12 +172,12 @@ describe("Klaim upah di database", () => {
   });
 
 
-  it("koordinator dapat push saat kiriman bahan disimpan dan saat pembagian disimpan", async () => {
+  it("koordinator dapat push saat pembagian disimpan (bukan saat kiriman lewat driver dibuat)", async () => {
     const u = await prisma.user.create({ data: { username: `koor${tag.toLowerCase()}`, name: `Koor ${tag}`, role: "KOORDINATOR", passwordHash: "x" } });
     await prisma.boronganPerson.update({ where: { id: ctx.coord.id }, data: { userId: u.id } });
     vi.mocked(sendPush).mockClear();
     const s = await kirim(ctx.asm.id, 3, "2027-06-13");
-    expect(vi.mocked(sendPush).mock.calls.some(([ids, p]) => ids.includes(u.id) && p.title.includes(s.number))).toBe(true);
+    expect(vi.mocked(sendPush).mock.calls.some(([ids]) => ids.includes(u.id))).toBe(false);
     vi.mocked(sendPush).mockClear();
     await saveAllots(s.id, [{ pointId: ctx.point.id, workerId: ctx.w.id, taskId: ctx.asm.id, qty: 3 }], actor, all);
     expect(vi.mocked(sendPush).mock.calls.some(([ids, p]) => ids.includes(u.id) && p.title.includes("sudah dibagi"))).toBe(true);

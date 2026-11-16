@@ -2,8 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ActionForm, Submit } from "@/components/ActionForm";
+import { markInvalid } from "@/components/FormFeedback";
 import { useCloseGuard, useCloseModal } from "@/components/Modal";
-import { revealField } from "@/components/FormFeedback";
 import { celebrate } from "@/components/Celebrate";
 import { toast } from "@/components/Toaster";
 import { ProofPreview } from "@/components/ProofPreview";
@@ -189,16 +189,15 @@ export function ReportForm(p: Props) {
   useEffect(() => {
     const el = formRef.current;
     if (!el) return;
-    const onInvalid = (e: Event) => {
+    // FormFeedback/ActionForm mengirim "field-reveal" dari kolom yang salah (validasi HP maupun penolakan server)
+    const onReveal = (e: Event) => {
       const box = (e.target as HTMLElement).closest<HTMLElement>("[data-step]");
       const i = steps.findIndex((x) => x.key === box?.dataset.step);
       if (i < 0 || steps[i].key === cur) return;
       go(i);
-      const target = e.target as HTMLElement;
-      window.setTimeout(() => revealField(target), 60);
     };
-    el.addEventListener("invalid", onInvalid, true);
-    return () => el.removeEventListener("invalid", onInvalid, true);
+    el.addEventListener("field-reveal", onReveal);
+    return () => el.removeEventListener("field-reveal", onReveal);
   });
   const show = (key: string) => (key === cur ? "" : "hidden");
 
@@ -673,9 +672,17 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
   const filled = rows.filter((r) => r.itemId || r.qty);
   const save = () =>
     run(async () => {
-      if (!filled.length) throw new Error("Pilih barang dan isi jumlahnya");
-      if (filled.some((r) => !r.itemId)) throw new Error("Pilih barang di setiap baris");
-      if (filled.some((r) => !(Number(r.qty.replace(/\./g, "").replace(",", ".")) > 0))) throw new Error("Isi jumlah di setiap baris");
+      // Baris yang belum lengkap: kolomnya ditandai merah & difokus (isian lain tetap)
+      const mark = (label: string, text: string) => {
+        const el = box.current?.querySelector<HTMLInputElement | HTMLSelectElement>(`[aria-label^="${label}"]`);
+        if (el) markInvalid(el, text);
+        return new Error(text);
+      };
+      if (!filled.length) throw mark("Barang 1", "Pilih barang dan isi jumlahnya");
+      const noItem = rows.findIndex((r) => (r.itemId || r.qty) && !r.itemId);
+      if (noItem >= 0) throw mark(`Barang ${noItem + 1}`, "Pilih barang di baris ini");
+      const noQty = rows.findIndex((r) => r.itemId && !(Number(r.qty.replace(/\./g, "").replace(",", ".")) > 0));
+      if (noQty >= 0) throw mark(`Jumlah barang ${noQty + 1}`, "Isi jumlahnya");
       const fd = new FormData();
       fd.set("id", id);
       fd.set("lines", JSON.stringify(filled.map((r) => ({ itemId: r.itemId, qty: r.qty, purchaseLineId: r.orderLine || null, supplierName: r.orderLine ? r.shop : null }))));

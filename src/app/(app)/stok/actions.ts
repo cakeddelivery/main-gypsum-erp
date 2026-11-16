@@ -9,13 +9,14 @@ import { saveItemRecord } from "@/lib/items";
 import { ForbiddenError } from "@/lib/auth";
 import { jakartaDateTime, todayStr } from "@/lib/time";
 import type { ItemType, MovementType } from "@prisma/client";
+import { zField } from "@/lib/fieldError";
 
 const TYPES = ["PENERIMAAN", "PENGELUARAN", "TRANSFER", "PENYESUAIAN"] as const;
 
 export const createMovement = action(
   "stock.move",
   async (fd, user) => {
-    const type = z.enum(TYPES).parse(str(fd, "type")) as MovementType;
+    const type = zField(fd, "type", z.enum(TYPES)) as MovementType;
     if (type === "PENYESUAIAN" && !user.can("stock.approve")) throw new ForbiddenError();
     const reason = optStr(fd, "note");
     // Mutasi manual dibatasi agar tidak dobel dengan alur lain (lihat manualMovementGuard)
@@ -82,7 +83,7 @@ export const saveItem = action(
         id,
         sku: optStr(fd, "sku"),
         name: str(fd, "name"),
-        type: z.enum(["BAHAN_BAKU", "BARANG_DALAM_PROSES", "BARANG_JADI"]).parse(str(fd, "type")) as ItemType,
+        type: zField(fd, "type", z.enum(["BAHAN_BAKU", "BARANG_DALAM_PROSES", "BARANG_JADI"])) as ItemType,
         category: optStr(fd, "category"),
         unit: str(fd, "unit"),
         hppUnit: optStr(fd, "hppUnit"),
@@ -113,7 +114,7 @@ export const saveLocation = action(
   "master.manage",
   async (fd, user) => {
     const id = optStr(fd, "id");
-    const data = { name: z.string().min(2).parse(str(fd, "name")), divisionId: optStr(fd, "divisionId") };
+    const data = { name: zField(fd, "name", z.string().min(2)), divisionId: optStr(fd, "divisionId") };
     const s = id ? await prisma.location.update({ where: { id }, data }) : await prisma.location.create({ data: { ...data, code: await autoCode.location(prisma, data.name) } });
     await audit(user, "LOKASI_DISIMPAN", "Location", s.id, data);
     return "Lokasi tersimpan";

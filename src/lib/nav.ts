@@ -66,3 +66,11 @@ export function bottomNavFor(role: Role, can: (p: Permission) => boolean, opts: 
   for (const n of allowed) if (picked.length < size && !picked.includes(n)) picked.push(n);
   return picked.slice(0, size).map((n) => ({ href: n.href, label: SHORT_LABEL[n.href] ?? n.label, icon: n.icon }));
 }
+
+/** Portal koordinator titik: tab Borongan langsung di navigasi bawah */
+export const COORDINATOR_NAV = [
+  { href: "/borongan?tab=kiriman", label: "Kiriman", icon: "truck" },
+  { href: "/borongan?tab=stok", label: "Stok", icon: "box" },
+  { href: "/borongan?tab=klaim", label: "Klaim Upah", icon: "wallet" },
+  { href: "/borongan?tab=orang", label: "Orang", icon: "users" },
+];

@@ -9,6 +9,7 @@ import { stockBalances } from "@/lib/stock";
 import { recipeUnit } from "@/lib/unitcost";
 import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, canWarehouse, isSetoranOnly, payLines, resultShares } from "@/lib/borongan";
 import { Badge, Card, Empty, Field, PageHeader, Tabs } from "@/components/ui";
+import { StokTitikTab } from "./StokTitikTab";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
@@ -17,6 +18,9 @@ import { ItemLines } from "@/components/ItemLines";
 import { ReceiveForm } from "./ReceiveForm";
 import { KirimanTab } from "./KirimanTab";
 import { taskKits } from "@/lib/boronganSetup";
+import { initials } from "@/lib/initials";
+import { taskGroupName } from "@/lib/boronganKirim";
+import { shortTaskName } from "@/lib/boronganFlow";
 import { KlaimTab } from "./KlaimTab";
 import { diffLines, receiptDiff } from "@/lib/boronganReceipt";
 import { dateOnly } from "@/lib/time";
@@ -26,6 +30,7 @@ export const metadata = { title: "Borongan" };
 
 const TABS = [
   { key: "kiriman", label: "Kiriman" },
+  { key: "stok", label: "Stok" },
   { key: "klaim", label: "Klaim Upah" },
   { key: "ringkasan", label: "Ringkasan" },
   { key: "serah", label: "Serah Terima (lama)" },
@@ -53,7 +58,9 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
     // Driver: hanya Pembagian & Ambil Setoran (tab Kiriman)
     .filter((t) => !scope.driver || t.key === "kiriman")
     // Koordinator titik: lapor hasil (Kiriman), Klaim Upah, dan pekerja titiknya (Orang)
-    .filter((t) => !isCoordinatorOnly || ["kiriman", "klaim", "orang"].includes(t.key))
+    .filter((t) => !isCoordinatorOnly || ["kiriman", "stok", "klaim", "orang"].includes(t.key))
+    // Stok bahan titik: koordinator & pengelola
+    .filter((t) => t.key !== "stok" || isCoordinatorOnly || manage)
     // Tim Cetak/Oven (isi patung kering) & Packing (terima setoran Assembling): hanya Kiriman
     .filter((t) => !(scope.kering || scope.packing) || t.key === "kiriman");
   // Finance (hanya bayar upah): langsung ke Klaim Upah
@@ -120,9 +127,11 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
         subtitle={canWarehouse(scope) ? "Kiriman bernomor: kirim bahan → bagi ke pekerja → lapor hasil → ambil setoran → diterima divisi" : `Titik ${points.map((p) => p.name).join(", ")}`}
         actions={tab === "serah" && !setoranOnly ? <div className="flex flex-wrap gap-2">{sendBack}</div> : undefined}
       />
-      <Tabs current={tab} tabs={[...tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: x.key === "serah" ? pending.length || undefined : undefined })), ...(history ? [{ key: "riwayat", label: "Riwayat", href: "/borongan/riwayat" }] : [])]} />
+      {/* Koordinator: menu tab pindah ke navigasi bawah */}
+      {!isCoordinatorOnly && <Tabs current={tab} tabs={[...tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: x.key === "serah" ? pending.length || undefined : undefined })), ...(history ? [{ key: "riwayat", label: "Riwayat", href: "/borongan/riwayat" }] : [])]} />}
 
       {tab === "kiriman" && <KirimanTab scope={scope} userId={user.id} />}
+      {tab === "stok" && <StokTitikTab scope={scope} />}
       {tab === "klaim" && <KlaimTab scope={scope} canPay={user.can("borongan.pay")} />}
       {tab === "ringkasan" && (
         <>
@@ -384,49 +393,75 @@ function PersonForm({ p, points, manage, tasks, coordinators = [] }: { p?: Perso
   );
 }
 
+/** Ringkas jenis pekerjaan jadi chip per kelompok: "Assembling: Cowok · Cewek", "Cat Giftbox" */
+function taskChips(ids: string[], taskName: Map<string, TaskOpt>) {
+  const groups = new Map<string, string[]>();
+  for (const id of ids) {
+    const t = taskName.get(id);
+    if (!t) continue;
+    const g = taskGroupName(t.name);
+    const short = shortTaskName(t.name);
+    const list = groups.get(g) ?? [];
+    if (short.toLowerCase() !== g.toLowerCase() && !list.includes(short)) list.push(short);
+    groups.set(g, list);
+  }
+  return [...groups].map(([g, xs]) => (xs.length ? `${g}: ${xs.join(" · ")}` : g));
+}
+
+const ROLE_ORDER = { KOORDINATOR: 0, PEKERJA: 1, DRIVER: 2 } as const;
+
 function PeopleTab({ people, points, manage, canLogin, tasks }: { people: PersonRow[]; points: { id: string; name: string }[]; manage: boolean; canLogin: boolean; tasks: TaskOpt[] }) {
   const taskName = new Map(tasks.map((t) => [t.id, t]));
-  const groups = [...points.map((p) => ({ key: p.id, title: `Titik ${p.name}`, rows: people.filter((x) => x.pointId === p.id) })), ...(manage ? [{ key: "drv", title: "Driver", rows: people.filter((x) => x.role === "DRIVER") }] : [])];
+  const coordinators = people.filter((x) => x.role === "KOORDINATOR" && x.active).map((x) => ({ id: x.id, name: x.name, point: x.point?.name ?? "" }));
+  const sorted = (rows: PersonRow[]) => [...rows].sort((a, b) => Number(b.active) - Number(a.active) || ROLE_ORDER[a.role] - ROLE_ORDER[b.role] || a.name.localeCompare(b.name, "id"));
+  const groups = [...points.map((p) => ({ key: p.id, title: `Titik ${p.name}`, rows: sorted(people.filter((x) => x.pointId === p.id)) })), ...(manage ? [{ key: "drv", title: "Driver", rows: sorted(people.filter((x) => x.role === "DRIVER")) }] : [])];
   return (
-    <div className="space-y-5">
-      <div className="flex justify-end">
-        <Modal trigger={manage ? "+ Orang" : "+ Pekerja"} title={manage ? "Tambah orang borongan" : "Tambah pekerja"}><PersonForm points={points} manage={manage} tasks={tasks} coordinators={people.filter((x) => x.role === "KOORDINATOR" && x.active).map((x) => ({ id: x.id, name: x.name, point: x.point?.name ?? "" }))} /></Modal>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between gap-2">
+        <p className="min-w-0 truncate text-xs text-slate-500" title="Pekerja borongan adalah tetangga, bukan karyawan: tidak masuk absensi, gaji bulanan, atau kasbon.">Pekerja borongan = tetangga, bukan karyawan (tanpa absensi/gaji/kasbon).</p>
+        <Modal trigger={manage ? "+ Orang" : "+ Pekerja"} triggerClass="btn-primary btn-sm shrink-0" title={manage ? "Tambah orang borongan" : "Tambah pekerja"}><PersonForm points={points} manage={manage} tasks={tasks} coordinators={coordinators} /></Modal>
       </div>
-      <p className="text-sm text-slate-500">Pekerja borongan adalah tetangga, bukan karyawan: tidak masuk absensi, gaji bulanan, atau kasbon.</p>
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 [&>*]:min-w-0">
         {groups.map((g) => (
-          <Card key={g.key} title={g.title}>
+          <Card key={g.key} title={`${g.title} · ${g.rows.filter((r) => r.active).length} orang`}>
             {g.rows.length === 0 ? <p className="text-sm text-slate-400">Belum ada</p> : (
-              <ul className="divide-y divide-slate-100 text-sm">
+              <ul className="divide-y divide-slate-100">
                 {g.rows.map((p) => {
                   const editable = manage || p.role === "PEKERJA";
+                  const chips = p.role === "PEKERJA" ? taskChips(p.taskIds, taskName) : [];
                   return (
-                    <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
-                      <span className={p.active ? "" : "text-slate-400 line-through"}>
-                        {p.name} <Badge tone={p.role === "KOORDINATOR" ? "blue" : p.role === "DRIVER" ? "amber" : "gray"}>{BORONGAN_ROLE_LABEL[p.role]}</Badge>
-                        {p.user && <span className="ml-1 text-xs text-slate-500">login: {p.user.username}</span>}
-                        {p.role === "PEKERJA" && (
-                          <span className="block text-xs text-slate-500">
-                            {p.taskIds.length ? p.taskIds.map((id) => taskName.get(id)).filter(Boolean).map((t) => `${t!.name}${t!.division ? ` (${t!.division})` : ""}`).join(", ") : "Jenis pekerjaan belum diatur"}
-                          </span>
-                        )}
-                      </span>
+                    <li key={p.id} className={`flex items-center gap-3 py-2.5 ${p.active ? "" : "opacity-50"}`}>
+                      <span aria-hidden className={`grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-bold ${p.role === "KOORDINATOR" ? "bg-brand-600 text-white" : p.role === "DRIVER" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"}`}>{initials(p.name)}</span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <span className={`min-w-0 truncate text-sm font-semibold text-slate-900 ${p.active ? "" : "line-through"}`}>{p.name}</span>
+                          <span className="shrink-0"><Badge tone={p.role === "KOORDINATOR" ? "blue" : p.role === "DRIVER" ? "amber" : "gray"}>{BORONGAN_ROLE_LABEL[p.role]}</Badge></span>
+                        </div>
+                        {p.role === "PEKERJA" ? (
+                          chips.length ? (
+                            <div className="mt-1 flex flex-wrap gap-1">{chips.map((c) => <span key={c} className="max-w-full rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700 [overflow-wrap:anywhere]">{c}</span>)}</div>
+                          ) : <div className="text-xs text-amber-700">Jenis pekerjaan belum diatur</div>
+                        ) : p.user ? <div className="truncate text-xs text-slate-500">login: {p.user.username}</div> : null}
+                      </div>
                       {editable && (
-                        <span className="flex gap-2">
-                          {canLogin && (p.role === "KOORDINATOR" || p.role === "DRIVER") && (
-                            <Modal trigger={p.user ? "Login" : "Buat Login"} triggerClass="btn-secondary btn-sm" title={`Login ${p.role === "DRIVER" ? "driver" : "koordinator"} ${p.name}`}>
-                              <ModalForm action={saveCoordinatorLogin} className="space-y-3">
-                                <input type="hidden" name="personId" value={p.id} />
-                                <Field label="Username"><input name="username" defaultValue={p.user?.username ?? ""} className="input" autoComplete="off" required /></Field>
-                                <Field label={p.user ? "Password baru (kosongkan bila tetap)" : "Password"}><PasswordInput name="password" className="input" autoComplete="new-password" minLength={8} /></Field>
-                                <p className="text-xs text-slate-500">{p.role === "DRIVER" ? "Driver hanya melihat Borongan › Kiriman: pembagian ke pekerja dan ambil setoran." : "Koordinator hanya melihat titiknya: lapor hasil kerja per pekerja, klaim upah, dan mengelola pekerja."}</p>
-                                <Submit>Simpan</Submit>
-                              </ModalForm>
-                            </Modal>
-                          )}
-                          <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm" title={`Ubah ${p.name}`}><PersonForm p={p} points={points} manage={manage} tasks={tasks} coordinators={people.filter((x) => x.role === "KOORDINATOR" && x.active).map((x) => ({ id: x.id, name: x.name, point: x.point?.name ?? "" }))} /></Modal>
-                          {p.active && <ActionForm action={removePersonAction} confirm={`Hapus ${p.name}? Yang sudah punya riwayat setoran hanya dinonaktifkan.`}><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary btn-sm" pendingText="…">Hapus</Submit></ActionForm>}
-                        </span>
+                        <details className="relative shrink-0">
+                          <summary className="grid h-9 w-9 cursor-pointer list-none place-items-center rounded-full text-lg text-slate-500 hover:bg-slate-100 [&::-webkit-details-marker]:hidden" aria-label={`Menu ${p.name}`}>⋯</summary>
+                          <div className="absolute right-0 z-20 mt-1 flex w-40 flex-col gap-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
+                            <Modal trigger="Ubah" triggerClass="btn-secondary btn-sm w-full justify-start" title={`Ubah ${p.name}`}><PersonForm p={p} points={points} manage={manage} tasks={tasks} coordinators={coordinators} /></Modal>
+                            {canLogin && (p.role === "KOORDINATOR" || p.role === "DRIVER") && (
+                              <Modal trigger={p.user ? "Login" : "Buat login"} triggerClass="btn-secondary btn-sm w-full justify-start" title={`Login ${p.role === "DRIVER" ? "driver" : "koordinator"} ${p.name}`}>
+                                <ModalForm action={saveCoordinatorLogin} className="space-y-3">
+                                  <input type="hidden" name="personId" value={p.id} />
+                                  <Field label="Username"><input name="username" defaultValue={p.user?.username ?? ""} className="input" autoComplete="off" required /></Field>
+                                  <Field label={p.user ? "Password baru (kosongkan bila tetap)" : "Password"}><PasswordInput name="password" className="input" autoComplete="new-password" minLength={8} /></Field>
+                                  <p className="text-xs text-slate-500">{p.role === "DRIVER" ? "Driver hanya melihat Borongan › Kiriman: pembagian ke pekerja dan ambil setoran." : "Koordinator hanya melihat titiknya: lapor hasil kerja per pekerja, stok titik, klaim upah, dan mengelola pekerja."}</p>
+                                  <Submit>Simpan</Submit>
+                                </ModalForm>
+                              </Modal>
+                            )}
+                            {p.active && <ActionForm action={removePersonAction} confirm={`Hapus ${p.name}? Yang sudah punya riwayat setoran hanya dinonaktifkan.`}><input type="hidden" name="id" value={p.id} /><Submit className="btn-secondary btn-sm w-full justify-start text-rose-700" pendingText="…">Hapus</Submit></ActionForm>}
+                          </div>
+                        </details>
                       )}
                     </li>
                   );

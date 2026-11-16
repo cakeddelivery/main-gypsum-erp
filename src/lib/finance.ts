@@ -8,6 +8,7 @@ import { audit } from "./audit";
 import { addDays, jakartaDateTime, todayStr } from "./time";
 import { liabilityAccountId, payableLines, splitPayment } from "./payables";
 import { applyReserveLink, parseLink, reserveAccrualLines, reserveOptions, validateLink, type ReserveLink, type ReservePart } from "./reserveSync";
+import { withField } from "./fieldError";
 
 type Tx = Prisma.TransactionClient;
 export type Actor = { id: string | null; name: string; telegramId?: string };
@@ -284,7 +285,7 @@ export async function submitForConfirmation(id: string, actor: Actor, note?: str
 }
 
 export async function rejectTransaction(id: string, actor: Actor, reason: string) {
-  if (!reason?.trim()) throw new FinanceError("Alasan penolakan wajib diisi");
+  if (!reason?.trim()) throw withField(new FinanceError("Alasan penolakan wajib diisi"), "reason");
   return prisma.$transaction(async (tx) => {
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
     if (cur.status === "DALAM_PROSES") throw new FinanceError("Withdraw Dalam Proses sudah berjurnal (penjualan diakui): gunakan Batalkan agar jurnalnya dibalik");
@@ -502,7 +503,7 @@ export async function postWdReceived(tx: Tx, cur: TxRow, toAccountId: string, da
  * bila periodenya masih terbuka (laporan harian bersih), atau hari ini bila periodenya sudah ditutup.
  */
 export async function cancelBookedTransaction(id: string, actor: Actor & { id: string }, reason: string, now: Date = new Date()) {
-  if (!reason?.trim()) throw new FinanceError("Alasan pembatalan wajib diisi");
+  if (!reason?.trim()) throw withField(new FinanceError("Alasan pembatalan wajib diisi"), "reason");
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "FinanceTransaction" WHERE id = ${id} FOR UPDATE`;
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });

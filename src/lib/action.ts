@@ -11,8 +11,17 @@ import { ZodError } from "zod";
 import { EmailError } from "./email";
 import { RegistrationError } from "./registration";
 import { Prisma } from "@prisma/client";
+import { FieldError, fieldsOf } from "./fieldError";
+export { FieldError };
 
-export type ActionResult = { ok: boolean; message?: string; error?: string; ts?: number };
+export type ActionResult = {
+  ok: boolean;
+  message?: string;
+  error?: string;
+  ts?: number;
+  /** Kolom yang salah (name → pesan): ditandai merah di form dan difokus */
+  fields?: Record<string, string>;
+};
 
 type User = Awaited<ReturnType<typeof assertPerm>>;
 
@@ -31,13 +40,13 @@ export function action(perms: Permission | Permission[], fn: (fd: FormData, user
       return { ok: true, message: message || "Tersimpan", ts: Date.now() };
     } catch (e) {
       unstable_rethrow(e); // biarkan redirect()/notFound() Next.js lewat
-      return { ok: false, error: friendly(e), ts: Date.now() };
+      return { ok: false, error: friendly(e), fields: fieldsOf(e), ts: Date.now() };
     }
   };
 }
 
 export function friendly(e: unknown): string {
-  if (e instanceof ForbiddenError || e instanceof AccountingError || e instanceof FinanceError || e instanceof StockError || e instanceof PayrollError || e instanceof EmailError || e instanceof RegistrationError) return e.message;
+  if (e instanceof ForbiddenError || e instanceof AccountingError || e instanceof FinanceError || e instanceof StockError || e instanceof PayrollError || e instanceof EmailError || e instanceof RegistrationError || e instanceof FieldError) return e.message;
   if (e instanceof ZodError) return e.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ");
   if (e instanceof Prisma.PrismaClientKnownRequestError) {
     if (e.code === "P2002") return "Data sudah ada (duplikat). Periksa kode/nama yang unik.";

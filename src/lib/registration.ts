@@ -8,6 +8,7 @@ import { nextNumber } from "./numbering";
 import { hashPassword } from "./auth";
 import { dateOnly, todayStr } from "./time";
 import { appUrl } from "./botDup";
+import { withField } from "./fieldError";
 
 type Actor = { id: string; name: string };
 
@@ -49,7 +50,7 @@ export const recordBadCode = (ip: string, now = new Date()) => prisma.registrati
 export function normalizePhone(raw: string) {
   const d = raw.replace(/[^\d+]/g, "").replace(/^\+/, "");
   const n = d.startsWith("0") ? `62${d.slice(1)}` : d.startsWith("8") ? `62${d}` : d;
-  if (!/^628\d{7,12}$/.test(n)) throw new RegistrationError("No. WhatsApp tidak valid (contoh: 081234567890)");
+  if (!/^628\d{7,12}$/.test(n)) throw withField(new RegistrationError("No. WhatsApp tidak valid (contoh: 081234567890)"), "phone");
   return n;
 }
 
@@ -79,8 +80,8 @@ async function assertUnique(username: string, email: string, excludeId?: string)
     prisma.user.findUnique({ where: { username } }).then(async (x) => x ?? prisma.employeeRegistration.findFirst({ where: { username, status: "MENUNGGU", ...(excludeId ? { id: { not: excludeId } } : {}) } })),
     prisma.user.findUnique({ where: { email } }).then(async (x) => x ?? prisma.employeeRegistration.findFirst({ where: { email, status: "MENUNGGU", ...(excludeId ? { id: { not: excludeId } } : {}) } })),
   ]);
-  if (u) throw new RegistrationError("Username sudah dipakai, pilih yang lain");
-  if (e) throw new RegistrationError("Email sudah terdaftar");
+  if (u) throw withField(new RegistrationError("Username sudah dipakai, pilih yang lain"), "username");
+  if (e) throw withField(new RegistrationError("Email sudah terdaftar"), "email");
 }
 
 /** Kirim pendaftaran dari halaman publik /daftar */
@@ -95,7 +96,7 @@ export async function submitRegistration(code: string, raw: RegistrationInput, i
   const d = registrationSchema.parse(raw);
   const phone = normalizePhone(d.phone);
   const today = todayStr(now);
-  if (d.birthDate >= today || d.birthDate < "1940-01-01") throw new RegistrationError("Tanggal lahir tidak valid");
+  if (d.birthDate >= today || d.birthDate < "1940-01-01") throw withField(new RegistrationError("Tanggal lahir tidak valid"), "birthDate");
   await assertUnique(d.username, d.email);
   const passwordHash = await hashPassword(d.password);
   const r = await prisma.$transaction(async (tx) =>
@@ -134,9 +135,9 @@ export type ApproveInput = {
 
 /** Setujui pendaftaran: buat data Karyawan (kode otomatis) + akun login aktif dengan password yang dibuat pendaftar */
 export async function approveRegistration(id: string, input: ApproveInput, actor: Actor) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.joinDate)) throw new RegistrationError("Isi tanggal masuk");
-  if (input.wageType === "BULANAN" && !(input.monthlySalary > 0)) throw new RegistrationError("Isi gaji bulanan");
-  if ((input.wageType === "HARIAN" || input.wageType === "CAMPURAN") && !(input.dailyRate > 0)) throw new RegistrationError("Isi upah harian");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.joinDate)) throw withField(new RegistrationError("Isi tanggal masuk"), "joinDate");
+  if (input.wageType === "BULANAN" && !(input.monthlySalary > 0)) throw withField(new RegistrationError("Isi gaji bulanan"), "monthlySalary");
+  if ((input.wageType === "HARIAN" || input.wageType === "CAMPURAN") && !(input.dailyRate > 0)) throw withField(new RegistrationError("Isi upah harian"), "dailyRate");
   if (input.role === "OWNER") throw new RegistrationError("Role Owner tidak bisa diberikan lewat pendaftaran");
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "EmployeeRegistration" WHERE id = ${id} FOR UPDATE`;
@@ -162,7 +163,7 @@ export async function approveRegistration(id: string, input: ApproveInput, actor
 
 /** Tolak pendaftaran (alasan wajib). Data tetap tersimpan untuk riwayat. */
 export async function rejectRegistration(id: string, reason: string, actor: Actor) {
-  if (!reason?.trim()) throw new RegistrationError("Alasan penolakan wajib diisi");
+  if (!reason?.trim()) throw withField(new RegistrationError("Alasan penolakan wajib diisi"), "reason");
   const r = await prisma.employeeRegistration.findUniqueOrThrow({ where: { id } });
   if (r.status !== "MENUNGGU") throw new RegistrationError(`${r.number} sudah diproses`);
   // Bersyarat status MENUNGGU: Tolak & Setujui yang ditekan bersamaan tidak bisa sama-sama berhasil (akun aktif tapi tercatat Ditolak)

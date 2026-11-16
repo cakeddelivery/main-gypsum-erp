@@ -13,6 +13,7 @@ import { applyScheduleChanges } from "@/lib/scheduleSave";
 import { reconcileAfterSchedule } from "@/lib/attendanceAuto";
 import { MAX_PROOF_BYTES, MAX_PROOF_TEXT, saveProof } from "@/lib/storage";
 import { sniffMime } from "@/lib/imageCompress";
+import { withField } from "@/lib/fieldError";
 
 export const checkIn = action(
   "attendance.self",
@@ -40,7 +41,7 @@ export const saveWorkSite = action(
   async (fd, user) => {
     const id = optStr(fd, "id");
     const name = str(fd, "name");
-    if (!name) throw new Error("Nama lokasi wajib diisi");
+    if (!name) throw withField(new Error("Nama lokasi wajib diisi"), "name");
     const latitude = Number(str(fd, "latitude").replace(",", "."));
     const longitude = Number(str(fd, "longitude").replace(",", "."));
     if (!str(fd, "latitude") || !Number.isFinite(latitude) || Math.abs(latitude) > 90) throw new Error("Latitude tidak valid");
@@ -111,7 +112,7 @@ export const correctAttendance = action(
     const date = str(fd, "date");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Tanggal tidak valid");
     const reason = str(fd, "reason");
-    if (reason.length < 3) throw new Error("Alasan koreksi wajib diisi");
+    if (reason.length < 3) throw withField(new Error("Alasan koreksi wajib diisi"), "reason");
     let status = str(fd, "status") as AttendanceStatus;
     if (!["HADIR", "IZIN", "SAKIT", "LIBUR", "ALPA"].includes(status)) throw new Error("Status tidak valid");
     const prev = await prisma.attendance.findUnique({ where: { employeeId_date: { employeeId, date: dateOnly(date) } } });

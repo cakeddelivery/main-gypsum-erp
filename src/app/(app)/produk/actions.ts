@@ -11,6 +11,7 @@ import { recipeUnit } from "@/lib/unitcost";
 import { monthlyOutputFromReports, salaryBreakdown } from "@/lib/salaryOverhead";
 import { OVERHEAD_CATEGORIES, monthlyDepreciation, parseFees, type FeeConfig } from "@/lib/pricing";
 import type { Prisma, ProductVariant } from "@prisma/client";
+import { withField, zField } from "@/lib/fieldError";
 
 /** Persen 0–95 */
 const pct = (fd: FormData, k: string, def: number) => {
@@ -31,7 +32,7 @@ export const saveProduct = action(
     const type = str(fd, "type");
     const opt = await prisma.productTypeOption.findUnique({ where: { code: type } });
     if (!opt) throw new Error("Tipe produk tidak dikenal");
-    const name = z.string().min(2, "Nama wajib").parse(str(fd, "name"));
+    const name = zField(fd, "name", z.string().min(2, "Nama wajib"));
     const category = optStr(fd, "category") ?? (await itemCategories()).BARANG_JADI[0].name;
     const minStock = dec(fd, "minStock", 0);
     const data = {
@@ -178,7 +179,7 @@ export const saveOverhead = action(
   async (fd, user) => {
     const id = optStr(fd, "id");
     const category = str(fd, "category");
-    if (!OVERHEAD_CATEGORIES.includes(category as (typeof OVERHEAD_CATEGORIES)[number])) throw new Error("Pilih kategori overhead");
+    if (!OVERHEAD_CATEGORIES.includes(category as (typeof OVERHEAD_CATEGORIES)[number])) throw withField(new Error("Pilih kategori overhead"), "category");
     // Otomatis dari gaji karyawan: biaya per bulan dihitung ulang setiap data gaji berubah
     const autoSalary = fd.get("autoSalary") === "on";
     const salaryDivisionIds = autoSalary ? fd.getAll("salaryDivisionIds").map(String).filter(Boolean) : [];

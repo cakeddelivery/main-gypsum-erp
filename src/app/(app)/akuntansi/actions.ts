@@ -23,6 +23,7 @@ async function proofOf(fd: FormData): Promise<{ path: string; mime: string } | n
   return { path: await saveProof(Buffer.from(await file.arrayBuffer()), file.type), mime: file.type };
 }
 import type { AccountType } from "@prisma/client";
+import { withField, zField } from "@/lib/fieldError";
 
 const d = (fd: FormData, k = "date") => jakartaDateTime(str(fd, k) || todayStr(), "12:00");
 
@@ -35,7 +36,7 @@ export const manualJournal = action(
     const memo = fd.getAll("memo").map(String);
     const lines: LineInput[] = acc.map((a, i) => ({ accountId: a, debit: deb[i] || 0, credit: cre[i] || 0, memo: memo[i] || undefined })).filter((l) => l.accountId && (l.debit || l.credit));
     const j = await prisma.$transaction((tx) =>
-      postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: z.string().min(3, "Keterangan wajib").parse(str(fd, "description")), source: str(fd, "source") === "PENYESUAIAN" ? "PENYESUAIAN" : "MANUAL", actor: user, lines }),
+      postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: zField(fd, "description", z.string().min(3, "Keterangan wajib")), source: str(fd, "source") === "PENYESUAIAN" ? "PENYESUAIAN" : "MANUAL", actor: user, lines }),
     );
     return `Jurnal ${j.number} dibukukan`;
   },
@@ -55,7 +56,7 @@ export const saveCoa = action(
   "accounting.post",
   async (fd, user) => {
     const id = optStr(fd, "id");
-    const data = { name: z.string().min(3).parse(str(fd, "name")), type: str(fd, "type") as AccountType, isCash: fd.get("isCash") === "on", active: id ? fd.get("active") === "on" : true };
+    const data = { name: zField(fd, "name", z.string().min(3)), type: str(fd, "type") as AccountType, isCash: fd.get("isCash") === "on", active: id ? fd.get("active") === "on" : true };
     // Kode akun otomatis: digit tipe + kelompok berikutnya (6-2000); kode lama tidak diubah karena dipakai jurnal sistem
     if (id) {
       // Tipe & akun kas menentukan saldo normal, letak di laporan, dan arus kas seluruh riwayat: dikunci bila sudah dipakai jurnal
@@ -105,7 +106,7 @@ export const createReceivable = action(
     await prisma.$transaction(async (tx) => {
       const number = await nextNumber(tx, "PIU");
       const j = await postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: `Piutang ${number} ${str(fd, "customer")}`, source: "PIUTANG", sourceId: number, actor: user, lines: [{ accountCode: COA.PIUTANG, debit: amount }, { accountId: str(fd, "revenueAccountId"), credit: amount }] });
-      await tx.receivable.create({ data: { number, customer: z.string().min(2, "Pelanggan wajib").parse(str(fd, "customer")), storeId: j.storeId, date: d(fd), dueDate: optStr(fd, "dueDate") ? d(fd, "dueDate") : null, amount: BigInt(amount), note: optStr(fd, "note"), journalId: j.id } });
+      await tx.receivable.create({ data: { number, customer: zField(fd, "customer", z.string().min(2, "Pelanggan wajib")), storeId: j.storeId, date: d(fd), dueDate: optStr(fd, "dueDate") ? d(fd, "dueDate") : null, amount: BigInt(amount), note: optStr(fd, "note"), journalId: j.id } });
     });
     return "Piutang dicatat";
   },
@@ -143,7 +144,7 @@ export const createLoan = action(
     const old = str(fd, "bankAccountId") === "LAMA";
     const p = await createLoanRecord(
       {
-        lender: z.string().min(2, "Pemberi pinjaman wajib").parse(str(fd, "vendor")),
+        lender: zField(fd, "vendor", z.string().min(2, "Pemberi pinjaman wajib")),
         amount: int(fd, "amount"),
         date: d(fd),
         dueDate: optStr(fd, "dueDate") ? d(fd, "dueDate") : null,
@@ -221,7 +222,7 @@ export const createAsset = action(
     const dueDate = funding === "UTANG" ? str(fd, "dueDate") : "";
     if (funding === "UTANG") {
       if (!str(fd, "supplierId") && !str(fd, "vendor")) throw new AccountingError("Isi nama pemasok (penjual aset) untuk hutangnya");
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) throw new AccountingError("Isi tanggal jatuh tempo hutang");
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) throw withField(new AccountingError("Isi tanggal jatuh tempo hutang"), "dueDate");
       if (dueDate < dateStr) throw new AccountingError("Jatuh tempo tidak boleh sebelum tanggal perolehan");
     }
     await prisma.$transaction(async (tx) => {
@@ -229,7 +230,7 @@ export const createAsset = action(
       if (funding === "SALDO_AWAL") credit = { accountCode: COA.EKUITAS_SALDO_AWAL, credit: cost };
       else if (funding === "UTANG") credit = { accountCode: COA.UTANG_USAHA, credit: cost };
       else credit = { accountId: (await tx.bankAccount.findUniqueOrThrow({ where: { id: funding } })).coaAccountId, credit: cost };
-      const name = z.string().min(2, "Nama aset wajib").parse(str(fd, "name"));
+      const name = zField(fd, "name", z.string().min(2, "Nama aset wajib"));
       const supplier = funding === "UTANG" ? await resolveSupplier(tx, { supplierId: optStr(fd, "supplierId"), name: str(fd, "vendor") }, user, "hutang aset") : null;
       if (funding === "UTANG" && !supplier) throw new AccountingError("Pemasok wajib diisi");
       const j = await postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: `Perolehan aset ${name}${supplier ? ` (hutang ke ${supplier.name})` : ""}`, source: "ASET", actor: user, lines: [{ accountId: str(fd, "assetAccountId"), debit: cost }, credit] });
@@ -260,7 +261,7 @@ export const reopen = action(
   async (fd, user) => {
     if (user.role !== "OWNER") throw new ForbiddenError(); // membuka kembali periode hanya oleh Owner
     const reason = str(fd, "reason");
-    if (reason.length < 5) throw new Error("Alasan wajib diisi");
+    if (reason.length < 5) throw withField(new Error("Alasan wajib diisi"), "reason");
     const y = int(fd, "year");
     const m = int(fd, "month");
     await prisma.accountingPeriod.update({ where: { year_month: { year: y, month: m } }, data: { status: "OPEN" } });
