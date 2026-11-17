@@ -195,7 +195,7 @@ async function run(tx: Tx, plan: ProdukHppPlan, konversi: KonversiOpts = {}) {
    * Ubah satuan stok / satuan resep. `scale` > 1 = satuan stok lama dikonversi (mis. 1 gendel = 200 pcs):
    * stok tiap lokasi dikali `scale` lewat penyesuaian TANPA jurnal, harga per unit dibagi `scale` → nilai persediaan tetap.
    */
-  const setUnit = async (it: Item | null, label: string, want: { unit: string; hppUnit: string | null; factor: number; scale?: number }) => {
+  const setUnit = async (it: Item | null, label: string, want: { unit: string; hppUnit: string | null; factor: number; scale?: number; /** Owner: angka stok tetap, hanya nama satuan berganti */ keepStock?: boolean }) => {
     if (!it) {
       plan.menunggu.push(`Bahan "${label}" belum ada di Master data`);
       return null;
@@ -218,7 +218,9 @@ async function run(tx: Tx, plan: ProdukHppPlan, konversi: KonversiOpts = {}) {
       Object.assign(data, r.data);
     } else if (data.unit) {
       const total = Number((await tx.$queryRaw<{ q: Prisma.Decimal | null }[]>`SELECT SUM(CASE WHEN "toLocationId" IS NOT NULL THEN qty ELSE 0 END) - SUM(CASE WHEN "fromLocationId" IS NOT NULL THEN qty ELSE 0 END) AS q FROM "StockMovement" WHERE "itemId" = ${it.id}`)[0]?.q ?? 0);
-      if (Math.abs(total) > 0.0005) plan.bentrok.push(`${it.sku} ${it.name}: stok sekarang ${total.toLocaleString("id-ID")} ${it.unit} akan dibaca ${total.toLocaleString("id-ID")} ${want.unit} — benar, atau perlu dikonversi?`);
+      if (want.keepStock) {
+        if (Math.abs(total) > 0.0005) changes.push(`angka stok tetap ${total.toLocaleString("id-ID")} (sekarang dibaca dalam ${want.unit})`);
+      } else if (Math.abs(total) > 0.0005) plan.bentrok.push(`${it.sku} ${it.name}: stok sekarang ${total.toLocaleString("id-ID")} ${it.unit} akan dibaca ${total.toLocaleString("id-ID")} ${want.unit} — benar, atau perlu dikonversi?`);
     }
     if (!changes.length) return it;
     plan.diubah.push(`~ ${it.sku} ${it.name}: ${changes.join("; ")}`);
@@ -226,11 +228,11 @@ async function run(tx: Tx, plan: ProdukHppPlan, konversi: KonversiOpts = {}) {
   };
   // Isi kemasan (Owner)
   // Stok lama boks → satuan beli baru: hanya bila faktornya diberikan (--konversi-klip / --konversi-cottonbud / --konversi-piring)
-  const klip2x3 = await setUnit(one("Plastik klip 2x3"), "Plastik klip 2x3", { unit: "slop", hppUnit: "pcs", factor: 1000, scale: konversi.klip });
+  const klip2x3 = await setUnit(one("Plastik klip 2x3"), "Plastik klip 2x3", { unit: "slop", hppUnit: "pcs", factor: 1000, scale: konversi.klip, keepStock: true });
   const oppItem = await setUnit(one("Plastik OPP"), "Plastik OPP", { unit: "pack", hppUnit: "pcs", factor: 250 });
-  const cottonItem = await setUnit(one("Cotton bud"), "Cotton bud", { unit: "ball", hppUnit: "pcs", factor: 5000, scale: konversi.cottonbud });
-  // Piring plastik: beli per kg; 1.000 pcs = 850 g → 1 kg ≈ 1.176,4706 pcs
-  const piringItem = await setUnit(one("Piring plastik"), "Piring plastik", { unit: "kg", hppUnit: "pcs", factor: 1176.4706, scale: konversi.piring });
+  const cottonItem = await setUnit(one("Cotton bud"), "Cotton bud", { unit: "bungkus", hppUnit: "pcs", factor: 5000, scale: konversi.cottonbud, keepStock: true });
+  // Piring plastik: stok dalam BUNGKUS; 1 bungkus = 1 kg, 1.000 pcs = 850 g → 1 bungkus ≈ 1.176,4706 pcs
+  const piringItem = await setUnit(one("Piring plastik"), "Piring plastik", { unit: "bungkus", hppUnit: "pcs", factor: 1176.4706, scale: konversi.piring, keepStock: true });
   // Background & Klip per varian: satuan stok gendel → pcs (1 gendel = 200 pcs)
   const perVariant = new Map<string, Item | null>();
   const used = new Set<string>();
