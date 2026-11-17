@@ -1,12 +1,13 @@
 import { Prisma, type Item, type PrismaClient, type ProductVariant } from "@prisma/client";
 import { autoCode } from "./codes";
-import { locationSettings, qtyAt, recordMovement } from "./stock";
+import { itemQty, locationSettings, qtyAt, recordMovement } from "./stock";
 import { recipeUnit } from "./unitcost";
+import { skuKey } from "./returnLabel";
 
 type Tx = Prisma.TransactionClient;
 
 /** Hasil pratinjau / penerapan data master produk & HPP */
-export type ProdukHppPlan = { dibuat: string[]; diubah: string[]; resep: string[]; bentrok: string[]; menunggu: string[] };
+export type ProdukHppPlan = { dibuat: string[]; diubah: string[]; resep: string[]; bentrok: string[]; menunggu: string[]; /** Informasi: satuan & stok terkini, pemakaian kode lama */ info: string[] };
 
 const VARIANTS = ["Hewan", "Cowok", "Cewek", "Transportasi"] as const;
 const VARIANT_ENUM: Record<(typeof VARIANTS)[number], ProductVariant> = { Hewan: "HEWAN", Cowok: "COWOK", Cewek: "CEWEK", Transportasi: "TRANSPORTASI" };
@@ -78,7 +79,7 @@ export function similarNames(a: string, b: string) {
 export type KonversiOpts = { klip?: number; cottonbud?: number; piring?: number };
 
 export async function setupProdukHpp(db: PrismaClient, apply: boolean, konversi: KonversiOpts = {}): Promise<ProdukHppPlan> {
-  const plan: ProdukHppPlan = { dibuat: [], diubah: [], resep: [], bentrok: [], menunggu: [] };
+  const plan: ProdukHppPlan = { dibuat: [], diubah: [], resep: [], bentrok: [], menunggu: [], info: [] };
   try {
     await db.$transaction(async (tx) => {
       await run(tx, plan, konversi);
@@ -140,6 +141,42 @@ export function variantMaterial<T extends Pick<Item, "id" | "name" | "unit">>(ki
   const k = kind === "Background" ? /\b(background|bg)\b/i : /\bklip\b/i;
   const xs = items.filter((i) => k.test(i.name) && w.test(i.name) && !/plastik|2\s*x\s*3/i.test(i.name));
   return xs.sort((a, b) => Number(/^gendel$/i.test(b.unit.trim())) - Number(/^gendel$/i.test(a.unit.trim())));
+}
+
+/** Nomor MG berikutnya yang BELUM terpakai (di barang maupun produk), dimulai setelah `base` */
+export function nextMgSku(taken: Set<string>, base: number) {
+  let n = base;
+  do n++;
+  while (taken.has(`MG-${String(n).padStart(3, "0")}`));
+  return `MG-${String(n).padStart(3, "0")}`;
+}
+
+/**
+ * Ganti kode barang ke `next` dengan aman: cek dulu pemakaian kode lama (peta SKU marketplace, label retur/komplain,
+ * produk terkait, resep/BOM); kode lama disimpan sebagai ALIAS peta SKU marketplace agar pencocokan label tidak putus.
+ * Hanya dijalankan bila barang terhubung ke produk (pencarian barang lewat produk tetap jalan); selain itu dilewati & dilaporkan.
+ */
+export async function renumberItemSku(tx: Tx, old: Pick<Item, "id" | "sku" | "name">, next: string, plan: ProdukHppPlan): Promise<boolean> {
+  const oldKey = skuKey(old.sku, "");
+  const [maps, retur, komplain, produk, bom, resep] = await Promise.all([
+    tx.marketplaceSkuMap.count({ where: { key: { startsWith: oldKey } } }),
+    tx.returnLine.count({ where: { labelSku: { equals: old.sku, mode: "insensitive" } } }),
+    tx.complaintLine.count({ where: { labelSku: { equals: old.sku, mode: "insensitive" } } }),
+    tx.product.findMany({ where: { finishedItemId: old.id }, select: { sku: true, name: true } }),
+    tx.bomLine.count({ where: { itemId: old.id } }),
+    tx.itemRecipeLine.count({ where: { componentId: old.id } }),
+  ]);
+  const pakai = `dipakai: peta SKU marketplace ${maps}, label retur ${retur}, label komplain ${komplain}, resep/BOM ${bom + resep}, produk terkait ${produk.length ? produk.map((x) => `${x.sku} (tetap)`).join(", ") : "tidak ada"}`;
+  if (!produk.length) {
+    plan.bentrok.push(`Kode ${old.sku} TIDAK diganti ke ${next}: barang belum terhubung ke produk (pencarian lewat kode lama bisa membuat barang dobel). ${pakai}`);
+    return false;
+  }
+  await tx.item.update({ where: { id: old.id }, data: { sku: next } });
+  const alias = await tx.marketplaceSkuMap.findUnique({ where: { key: oldKey } });
+  if (!alias) await tx.marketplaceSkuMap.create({ data: { key: oldKey, itemId: old.id, updatedBy: SYSTEM_ACTOR.name } });
+  plan.diubah.push(`~ ${old.sku} ${old.name}: kode → ${next} (pola MG-0xx); kode lama disimpan sebagai alias peta SKU marketplace${alias ? " (alias sudah ada)" : ""}`);
+  plan.info.push(`Kode ${old.sku} → ${next}: ${pakai}. Alias "${old.sku}" → barang ini ${alias ? "sudah ada" : "dibuat"}; kode ${old.sku} tidak lagi dipakai pencarian barang lama, pencocokan lewat produk terkait tetap jalan.`);
+  return true;
 }
 
 async function run(tx: Tx, plan: ProdukHppPlan, konversi: KonversiOpts = {}) {
@@ -242,9 +279,19 @@ async function run(tx: Tx, plan: ProdukHppPlan, konversi: KonversiOpts = {}) {
       const cands = exact ? [exact] : variantMaterial(kind, v, allItems);
       if (cands.length > 1 && !exact) plan.bentrok.push(`${kind} ${v}: lebih dari satu barang cocok (${cands.map((c) => `${c.sku} "${c.name}" ${c.unit}`).join(", ")}) — dipakai ${cands[0].sku}`);
       const it = cands[0] ?? null;
-      if (!it) plan.bentrok.push(`TIDAK DITEMUKAN: ${kind.toLowerCase()} ${v.toLowerCase()} (cari nama "${kind}/${kind === "Background" ? "BG" : "Klip"} + ${v}")`);
-      else used.add(it.id);
-      perVariant.set(`${kind} ${v}`, await setUnit(it, `${kind} ${v.toLowerCase()}`, it && /^gendel$/i.test(it.unit.trim()) ? { unit: "pcs", hppUnit: null, factor: 1, scale: 200 } : { unit: "pcs", hppUnit: null, factor: 1 }));
+      const gendel = !!it && /gendel/i.test(it.unit);
+      if (!it) {
+        const inactive = variantMaterial(kind, v, everyItem.filter((x) => !x.active));
+        plan.bentrok.push(`TIDAK DITEMUKAN: ${kind.toLowerCase()} ${v.toLowerCase()} (cari nama "${kind}/${kind === "Background" ? "BG" : "Klip"} + ${v}")${inactive.length ? ` — ada tapi nonaktif: ${inactive.map((x) => `${x.sku} "${x.name}"`).join(", ")}` : ""}`);
+        plan.info.push(`${kind} ${v}: TIDAK DITEMUKAN`);
+      } else {
+        used.add(it.id);
+        // Selalu tampilkan satuan & stok terkini (jangan diam bila tidak berubah)
+        const stok = Math.round((await itemQty(tx, it.id)) * 1000) / 1000;
+        const f = (n: number) => n.toLocaleString("id-ID");
+        plan.info.push(`${it.sku} ${it.name}: satuan "${it.unit}", stok ${f(stok)} — ${gendel ? `gendel → pcs: stok ${f(stok)} gendel → ${f(stok * 200)} pcs (×200), harga ÷200` : /^pcs$/i.test(it.unit.trim()) ? "sudah pcs, tidak dikonversi" : `satuan bukan gendel/pcs, TIDAK dikonversi (cek Master data)`}`);
+      }
+      perVariant.set(`${kind} ${v}`, await setUnit(it, `${kind} ${v.toLowerCase()}`, gendel ? { unit: "pcs", hppUnit: null, factor: 1, scale: 200 } : { unit: "pcs", hppUnit: null, factor: 1 }));
     }
   }
 
@@ -273,6 +320,10 @@ async function run(tx: Tx, plan: ProdukHppPlan, konversi: KonversiOpts = {}) {
     if (rename && it.name !== rename) {
       data.name = rename;
       changes.push(`ganti nama → "${rename}" (stok & riwayat tetap)`);
+    }
+    if (!it.active) {
+      data.active = true;
+      changes.push("diaktifkan");
     }
     if (it.type !== "BARANG_DALAM_PROSES") {
       data.type = "BARANG_DALAM_PROSES";
@@ -367,7 +418,6 @@ async function run(tx: Tx, plan: ProdukHppPlan, konversi: KonversiOpts = {}) {
       it = old
         ? await semi(old.name, old.sku, qcp.id, "Packing", old, `Single Pack ${v}`)
         : await semi(`Single Pack ${v}`, `SJ-SP-${v.toUpperCase()}`, qcp.id, "Packing");
-      if (old && !old.active) plan.bentrok.push(`Single Pack ${v}: barang lama ${old.sku} nonaktif — aktifkan di Master data bila dipakai`);
     } else it = await semi(it.name, it.sku, qcp.id, "Packing", it);
     sp.set(v, it);
     await recipe(it, common.opp, 1, "pcs", "Plastik OPP");
@@ -378,6 +428,19 @@ async function run(tx: Tx, plan: ProdukHppPlan, konversi: KonversiOpts = {}) {
     await recipe(it, common.piring, 1, "pcs", "Piring plastik");
     for (const c of CP_COLORS) await recipe(it, cp.get(c)!, 1, "pcs", `Cat plastik ${c.toLowerCase()}`);
     await labor(it, new RegExp(`^assembling ${v}$`, "i"), `Assembling ${v}`);
+  }
+
+  // Seragamkan kode Single Pack: BJ-SAT-* → pola MG-0xx (nomor berikutnya yang belum terpakai di barang & produk)
+  const spItems = [...sp.values()];
+  const lama = spItems.filter((i) => /^BJ-SAT-/i.test(i.sku));
+  if (lama.length) {
+    const taken = new Set([...everyItem.map((i) => i.sku.toUpperCase()), ...(await tx.product.findMany({ select: { sku: true } })).map((x) => x.sku.toUpperCase())]);
+    const base = Math.max(0, ...spItems.map((i) => Number(/^MG-(\d+)$/i.exec(i.sku)?.[1] ?? 0)));
+    for (const old of lama) {
+      const next = nextMgSku(taken, base);
+      taken.add(next);
+      await renumberItemSku(tx, old, next, plan);
+    }
   }
 
   // ---------- 3. Produk jadi ----------
