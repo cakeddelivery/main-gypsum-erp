@@ -187,3 +187,42 @@ describe("Pencocokan longgar barang lama (production)", () => {
     expect(q * Number(after.avgCost)).toBe(4 * Number(before.avgCost));
   });
 });
+
+import { nextMgSku, renumberItemSku, type ProdukHppPlan } from "@/lib/produkHppSetup";
+describe("Seragamkan kode Single Pack ke pola MG-0xx", () => {
+  const plan = (): ProdukHppPlan => ({ dibuat: [], diubah: [], resep: [], bentrok: [], menunggu: [], info: [] });
+  it("nomor MG berikutnya yang belum terpakai (barang & produk)", () => {
+    expect(nextMgSku(new Set(["MG-001", "MG-002", "MG-003", "MG-004"]), 3)).toBe("MG-005");
+    expect(nextMgSku(new Set(["MG-004", "MG-005"]), 3)).toBe("MG-006");
+    expect(nextMgSku(new Set(), 0)).toBe("MG-001");
+  });
+  it("kode diganti, alias peta SKU marketplace dibuat, produk terkait tetap", async () => {
+    const item = await mk("Single Pack kode uji", { unit: "pcs", type: "BARANG_DALAM_PROSES" });
+    const store = await prisma.store.findFirstOrThrow();
+    const prod = await prisma.product.create({ data: { sku: `${tag}-SAT`, name: `Satuan ${tag}`, type: "SATUAN", variant: "HEWAN", storeId: store.id, finishedItemId: item.id } });
+    const p = plan();
+    const next = `MG-9${tag.slice(-2).replace(/\D/g, "0")}${Date.now() % 100}`;
+    await prisma.$transaction((tx) => renumberItemSku(tx, item, next, p));
+    expect((await prisma.item.findUniqueOrThrow({ where: { id: item.id } })).sku).toBe(next);
+    expect((await prisma.product.findUniqueOrThrow({ where: { id: prod.id } })).sku).toBe(`${tag}-SAT`);
+    const alias = await prisma.marketplaceSkuMap.findUniqueOrThrow({ where: { key: `${item.sku.toUpperCase()}|` } });
+    expect(alias.itemId).toBe(item.id);
+    expect(p.info[0]).toMatch(/Alias .* dibuat/);
+    // Dijalankan lagi (alias sudah ada): tidak error, tidak dobel
+    const p2 = plan();
+    await prisma.$transaction((tx) => renumberItemSku(tx, { ...item, sku: item.sku }, `${next}X`, p2));
+    expect(await prisma.marketplaceSkuMap.count({ where: { itemId: item.id } })).toBe(1);
+    // bersihkan
+    await prisma.marketplaceSkuMap.deleteMany({ where: { itemId: item.id } });
+    await prisma.product.delete({ where: { id: prod.id } });
+  });
+  it("barang belum terhubung ke produk: kode TIDAK diganti, dilaporkan", async () => {
+    const item = await mk("Single Pack tanpa produk", { unit: "pcs", type: "BARANG_DALAM_PROSES" });
+    const p = plan();
+    const ok = await prisma.$transaction((tx) => renumberItemSku(tx, item, "MG-999", p));
+    expect(ok).toBe(false);
+    expect((await prisma.item.findUniqueOrThrow({ where: { id: item.id } })).sku).toBe(item.sku);
+    expect(p.bentrok[0]).toMatch(/TIDAK diganti/);
+    expect(await prisma.marketplaceSkuMap.count({ where: { itemId: item.id } })).toBe(0);
+  });
+});

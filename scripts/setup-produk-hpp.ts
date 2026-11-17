@@ -19,7 +19,7 @@ const factor = (name: string) => {
   return n;
 };
 const konversi = { klip: factor("klip"), cottonbud: factor("cottonbud"), piring: factor("piring") };
-const TITLE = { dibuat: "BARANG DIBUAT", diubah: "BARANG DIUBAH (tipe / divisi / satuan / stok)", resep: "RESEP & UPAH BORONGAN DIPASANG", bentrok: "BENTROK / DOBEL (perlu konfirmasi Owner)", menunggu: "MENUNGGU KONFIRMASI / DATA BELUM ADA" } as const;
+const TITLE = { dibuat: "BARANG DIBUAT", diubah: "BARANG DIUBAH (tipe / divisi / satuan / stok)", resep: "RESEP & UPAH BORONGAN DIPASANG", bentrok: "BENTROK / DOBEL (perlu konfirmasi Owner)", menunggu: "MENUNGGU KONFIRMASI / DATA BELUM ADA", info: "INFORMASI (satuan & stok terkini, pemakaian kode)" } as const;
 setupProdukHpp(prisma, apply, konversi)
   .then((plan) => {
     console.log(apply ? "DISIMPAN" : "PRATINJAU (belum disimpan)");
