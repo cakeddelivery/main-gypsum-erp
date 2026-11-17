@@ -135,3 +135,55 @@ describe("Divisi dicari dari jenis laporan / nama, bukan kode", () => {
     await expect(setupDivisions(fake)).rejects.toThrow(/Assembling \/ Giftbox \/ Packing tidak ditemukan.*CTK "Divisi Cetak"/);
   });
 });
+
+import { singlePackCandidates, variantMaterial, variantWord } from "@/lib/produkHppSetup";
+describe("Pencocokan longgar barang lama (production)", () => {
+  const mkItem = (id: string, sku: string, name: string, unit = "pcs") => ({ id, sku, name, unit });
+  it("Single Pack lama: SKU BJ-SAT, nama satuan/figur/single pack, hasil tugas; paket tidak ikut", () => {
+    const items = [
+      mkItem("a", "BJ-SAT-HEWAN", "Figur Satuan Hewan (jadi)"),
+      mkItem("b", "XX-1", "Satuan Single Pack Transportasi"),
+      mkItem("c", "MG-041", "Paket Single Pack 12 pcs · Hewan"),
+      mkItem("d", "ZZ-9", "Lukis Gypsum Satuan Cewek"),
+      mkItem("e", "BB-1", "Cat merah"),
+    ];
+    expect(singlePackCandidates("Hewan", items).map((x) => x.id)).toEqual(["a"]);
+    expect(singlePackCandidates("Transportasi", items).map((x) => x.id)).toEqual(["b"]);
+    expect(singlePackCandidates("Cewek", items).map((x) => x.id)).toEqual(["d"]);
+    // hasil tugas Assembling (id dari PieceTask.outputItemId) ikut walau namanya tidak mirip
+    expect(singlePackCandidates("Cowok", items, ["e"]).map((x) => x.id)).toEqual(["e"]);
+    expect(variantWord("Transportasi").test("Klip Transport")).toBe(true);
+  });
+  it("Background & Klip: nama BG/Background/Klip, satuan gendel didahulukan, plastik klip tidak ikut", () => {
+    const items = [
+      mkItem("1", "A1", "BG Hewan", "gendel"),
+      mkItem("2", "A2", "Klip Transport", "gendel"),
+      mkItem("3", "A3", "Plastik klip 2x3", "boks"),
+      mkItem("4", "A4", "Background cowok", "pcs"),
+      mkItem("5", "A5", "Background cowok lama", "gendel"),
+    ];
+    expect(variantMaterial("Background", "Hewan", items).map((x) => x.id)).toEqual(["1"]);
+    expect(variantMaterial("Klip", "Transportasi", items).map((x) => x.id)).toEqual(["2"]);
+    expect(variantMaterial("Background", "Cowok", items).map((x) => x.id)).toEqual(["5", "4"]); // gendel dulu
+    expect(variantMaterial("Klip", "Hewan", items)).toEqual([]);
+  });
+  it("konversi stok boks → slop: ×faktor, harga ÷faktor, nilai persediaan tetap", async () => {
+    const loc = await prisma.location.create({ data: { code: `${tag}K`, name: `Lok K ${tag}` } });
+    const item = await mk("Klip uji", { unit: "boks", lastCost: 50000 });
+    await prisma.$transaction(async (tx) => {
+      const { recordMovement } = await import("@/lib/stock");
+      await recordMovement(tx, { type: "PENERIMAAN", itemId: item.id, qty: 4, toLocationId: loc.id, unitCost: 50000, ref: `TES:${tag}` }, { id: "system", name: "Tes" });
+    });
+    const before = await prisma.item.findUniqueOrThrow({ where: { id: item.id } });
+    await prisma.$transaction(async (tx) => {
+      const x = await scaleStockUnit(tx, before, 0.5, "slop");
+      await tx.item.update({ where: { id: item.id }, data: { ...x.data, unit: "slop" } });
+    });
+    const { qtyAt } = await import("@/lib/stock");
+    const q = await qtyAt(prisma, item.id, loc.id);
+    const after = await prisma.item.findUniqueOrThrow({ where: { id: item.id } });
+    expect(q).toBe(2); // 4 boks × 0,5
+    expect(Number(after.avgCost)).toBe(100000); // harga ÷ 0,5
+    expect(q * Number(after.avgCost)).toBe(4 * Number(before.avgCost));
+  });
+});

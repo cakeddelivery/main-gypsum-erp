@@ -31,8 +31,10 @@ export async function scaleStockUnit(tx: Tx, it: Item, k: number, unit: string) 
   for (const b of bal) {
     const q = Number(b.qty);
     if (Math.abs(q) < 0.0005) continue;
-    const extra = Math.round(Math.abs(q) * (k - 1) * 1000) / 1000;
-    await recordMovement(tx, { type: "PENYESUAIAN", itemId: it.id, qty: extra, fromLocationId: b.loc, increase: q > 0, allowNegative: true, noJournal: true, ref: "SETUP:PRODUK-HPP", note: `Konversi satuan ${it.unit} → ${unit} (1 ${it.unit} = ${k} ${unit}); nilai persediaan tetap` }, SYSTEM_ACTOR);
+    // Selisih stok = q × (k − 1): faktor > 1 menambah, faktor < 1 (mis. boks → slop 0,5) mengurangi
+    const delta = Math.round(q * (k - 1) * 1000) / 1000;
+    if (delta === 0) continue;
+    await recordMovement(tx, { type: "PENYESUAIAN", itemId: it.id, qty: Math.abs(delta), fromLocationId: b.loc, increase: delta > 0, allowNegative: true, noJournal: true, ref: "SETUP:PRODUK-HPP", note: `Konversi satuan ${it.unit} → ${unit} (1 ${it.unit} = ${k} ${unit}); nilai persediaan tetap` }, SYSTEM_ACTOR);
     notes.push(`stok ${q.toLocaleString("id-ID")} ${it.unit} → ${(q * k).toLocaleString("id-ID")} ${unit}`);
   }
   const div = (x: bigint) => BigInt(Math.round(Number(x) / k));
@@ -72,11 +74,14 @@ export function similarNames(a: string, b: string) {
  * Tidak menghapus / menggabung apa pun: yang bentrok atau belum jelas hanya dilaporkan.
  * apply=false → semua perubahan dibatalkan di akhir (pratinjau).
  */
-export async function setupProdukHpp(db: PrismaClient, apply: boolean): Promise<ProdukHppPlan> {
+/** Faktor konversi stok lama (satuan lama → satuan beli baru), mis. 1 boks lama = 0,5 slop */
+export type KonversiOpts = { klip?: number; cottonbud?: number; piring?: number };
+
+export async function setupProdukHpp(db: PrismaClient, apply: boolean, konversi: KonversiOpts = {}): Promise<ProdukHppPlan> {
   const plan: ProdukHppPlan = { dibuat: [], diubah: [], resep: [], bentrok: [], menunggu: [] };
   try {
     await db.$transaction(async (tx) => {
-      await run(tx, plan);
+      await run(tx, plan, konversi);
       if (!apply) throw new Rollback();
     }, { timeout: 120000, maxWait: 20000 });
   } catch (e) {
@@ -114,13 +119,37 @@ export async function setupDivisions(db: Tx | PrismaClient) {
   return out as Record<keyof typeof DIVISION_RULES, DivisionRow>;
 }
 
-async function run(tx: Tx, plan: ProdukHppPlan) {
+/** Kata varian di nama barang (Transportasi juga "Transport") */
+export const variantWord = (v: string) => (v === "Transportasi" ? /\btransport(asi)?\b/i : new RegExp(`\\b${v}\\b`, "i"));
+
+/** Kandidat barang lama "Single Pack <varian>": SKU BJ-SAT-*, nama satuan/single pack/figur + varian, hasil tugas Assembling, produk isi 1 */
+export function singlePackCandidates<T extends Pick<Item, "id" | "sku" | "name">>(v: string, items: T[], extraIds: string[] = []): T[] {
+  const w = variantWord(v);
+  const hit = items.filter((i) => {
+    if (/\bpaket\b/i.test(i.name)) return false;
+    if (i.sku.toUpperCase().startsWith("BJ-SAT-") && (w.test(i.sku.replace(/-/g, " ")) || w.test(i.name))) return true;
+    return /(satuan|single\s*pack|figur)/i.test(i.name) && w.test(i.name);
+  });
+  const ids = new Set([...hit.map((i) => i.id), ...extraIds]);
+  return items.filter((i) => ids.has(i.id));
+}
+
+/** Kandidat Background / Klip per varian (nama longgar: "Background", "BG", "Klip"; bukan plastik klip) */
+export function variantMaterial<T extends Pick<Item, "id" | "name" | "unit">>(kind: "Background" | "Klip", v: string, items: T[]): T[] {
+  const w = variantWord(v);
+  const k = kind === "Background" ? /\b(background|bg)\b/i : /\bklip\b/i;
+  const xs = items.filter((i) => k.test(i.name) && w.test(i.name) && !/plastik|2\s*x\s*3/i.test(i.name));
+  return xs.sort((a, b) => Number(/^gendel$/i.test(b.unit.trim())) - Number(/^gendel$/i.test(a.unit.trim())));
+}
+
+async function run(tx: Tx, plan: ProdukHppPlan, konversi: KonversiOpts = {}) {
   // Resep diringkas: satu baris per barang / produk
   const rec = new Map<string, string[]>();
   const note = (target: string, text: string) => rec.set(target, [...(rec.get(target) ?? []), text]);
   const { asm, gft, qcp } = await setupDivisions(tx);
   const locs = await locationSettings(tx);
   const allItems = await tx.item.findMany({ where: { active: true } });
+  const everyItem = await tx.item.findMany();
   const find = (name: string) => allItems.filter((i) => i.name.trim().toLowerCase() === name.toLowerCase()).sort((a, b) => a.sku.localeCompare(b.sku));
   const one = (name: string) => {
     const xs = find(name);
@@ -166,7 +195,7 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
    * Ubah satuan stok / satuan resep. `scale` > 1 = satuan stok lama dikonversi (mis. 1 gendel = 200 pcs):
    * stok tiap lokasi dikali `scale` lewat penyesuaian TANPA jurnal, harga per unit dibagi `scale` → nilai persediaan tetap.
    */
-  const setUnit = async (it: Item | null, label: string, want: { unit: string; hppUnit: string | null; factor: number; scale?: number }) => {
+  const setUnit = async (it: Item | null, label: string, want: { unit: string; hppUnit: string | null; factor: number; scale?: number; /** Owner: angka stok tetap, hanya nama satuan berganti */ keepStock?: boolean }) => {
     if (!it) {
       plan.menunggu.push(`Bahan "${label}" belum ada di Master data`);
       return null;
@@ -189,23 +218,32 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
       Object.assign(data, r.data);
     } else if (data.unit) {
       const total = Number((await tx.$queryRaw<{ q: Prisma.Decimal | null }[]>`SELECT SUM(CASE WHEN "toLocationId" IS NOT NULL THEN qty ELSE 0 END) - SUM(CASE WHEN "fromLocationId" IS NOT NULL THEN qty ELSE 0 END) AS q FROM "StockMovement" WHERE "itemId" = ${it.id}`)[0]?.q ?? 0);
-      if (Math.abs(total) > 0.0005) plan.bentrok.push(`${it.sku} ${it.name}: stok sekarang ${total.toLocaleString("id-ID")} ${it.unit} akan dibaca ${total.toLocaleString("id-ID")} ${want.unit} — benar, atau perlu dikonversi?`);
+      if (want.keepStock) {
+        if (Math.abs(total) > 0.0005) changes.push(`angka stok tetap ${total.toLocaleString("id-ID")} (sekarang dibaca dalam ${want.unit})`);
+      } else if (Math.abs(total) > 0.0005) plan.bentrok.push(`${it.sku} ${it.name}: stok sekarang ${total.toLocaleString("id-ID")} ${it.unit} akan dibaca ${total.toLocaleString("id-ID")} ${want.unit} — benar, atau perlu dikonversi?`);
     }
     if (!changes.length) return it;
     plan.diubah.push(`~ ${it.sku} ${it.name}: ${changes.join("; ")}`);
     return tx.item.update({ where: { id: it.id }, data });
   };
   // Isi kemasan (Owner)
-  const klip2x3 = await setUnit(one("Plastik klip 2x3"), "Plastik klip 2x3", { unit: "slop", hppUnit: "pcs", factor: 1000 });
+  // Stok lama boks → satuan beli baru: hanya bila faktornya diberikan (--konversi-klip / --konversi-cottonbud / --konversi-piring)
+  const klip2x3 = await setUnit(one("Plastik klip 2x3"), "Plastik klip 2x3", { unit: "slop", hppUnit: "pcs", factor: 1000, scale: konversi.klip, keepStock: true });
   const oppItem = await setUnit(one("Plastik OPP"), "Plastik OPP", { unit: "pack", hppUnit: "pcs", factor: 250 });
-  const cottonItem = await setUnit(one("Cotton bud"), "Cotton bud", { unit: "ball", hppUnit: "pcs", factor: 5000 });
-  // Piring plastik: beli per kg; 1.000 pcs = 850 g → 1 kg ≈ 1.176,4706 pcs
-  const piringItem = await setUnit(one("Piring plastik"), "Piring plastik", { unit: "kg", hppUnit: "pcs", factor: 1176.4706 });
+  const cottonItem = await setUnit(one("Cotton bud"), "Cotton bud", { unit: "bungkus", hppUnit: "pcs", factor: 5000, scale: konversi.cottonbud, keepStock: true });
+  // Piring plastik: stok dalam BUNGKUS; 1 bungkus = 1 kg, 1.000 pcs = 850 g → 1 bungkus ≈ 1.176,4706 pcs
+  const piringItem = await setUnit(one("Piring plastik"), "Piring plastik", { unit: "bungkus", hppUnit: "pcs", factor: 1176.4706, scale: konversi.piring, keepStock: true });
   // Background & Klip per varian: satuan stok gendel → pcs (1 gendel = 200 pcs)
   const perVariant = new Map<string, Item | null>();
+  const used = new Set<string>();
   for (const v of VARIANTS) {
     for (const kind of ["Background", "Klip"] as const) {
-      const it = one(`${kind} ${v.toLowerCase()}`);
+      const exact = one(`${kind} ${v.toLowerCase()}`);
+      const cands = exact ? [exact] : variantMaterial(kind, v, allItems);
+      if (cands.length > 1 && !exact) plan.bentrok.push(`${kind} ${v}: lebih dari satu barang cocok (${cands.map((c) => `${c.sku} "${c.name}" ${c.unit}`).join(", ")}) — dipakai ${cands[0].sku}`);
+      const it = cands[0] ?? null;
+      if (!it) plan.bentrok.push(`TIDAK DITEMUKAN: ${kind.toLowerCase()} ${v.toLowerCase()} (cari nama "${kind}/${kind === "Background" ? "BG" : "Klip"} + ${v}")`);
+      else used.add(it.id);
       perVariant.set(`${kind} ${v}`, await setUnit(it, `${kind} ${v.toLowerCase()}`, it && /^gendel$/i.test(it.unit.trim()) ? { unit: "pcs", hppUnit: null, factor: 1, scale: 200 } : { unit: "pcs", hppUnit: null, factor: 1 }));
     }
   }
@@ -306,18 +344,30 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
   }
   await labor(cg, /^cat giftbox$/i, "Cat giftbox");
 
+  // Barang lain bersatuan gendel yang belum terkonversi: tampilkan agar bisa dicek
+  for (const i of allItems.filter((x) => /^gendel$/i.test(x.unit.trim()) && !used.has(x.id))) plan.bentrok.push(`Satuan gendel tidak terkonversi: ${i.sku} "${i.name}" — Background/Klip? (1 gendel = 200 pcs)`);
+
   // C. Single Pack (Packing): bahan per varian + 3 Cat Plastik
   const common = { opp: pcsOnly(oppItem, "Plastik OPP"), cotton: pcsOnly(cottonItem, "Cotton bud"), piring: pcsOnly(piringItem, "Piring plastik") };
   const sp = new Map<string, Item>();
   for (const v of VARIANTS) {
     let it = one(`Single Pack ${v}`);
     if (!it) {
-      // Barang lama yang sama arti (disetujui Owner): hasil tugas Assembling <varian> / produk Satuan → diganti nama
+      // Barang lama yang sama arti (disetujui Owner) diganti nama — JANGAN membuat baru bila ada kandidat lama:
+      // SKU BJ-SAT-*, nama satuan/single pack/figur + varian, hasil tugas Assembling <varian>, barang jadi produk isi 1
       const task = taskOf(new RegExp(`^assembling ${v}$`, "i"));
-      const old = (task?.outputItemId && allItems.find((i) => i.id === task.outputItemId)) || allItems.find((i) => i.sku === `BJ-SAT-${v.toUpperCase()}`);
+      const prods = await tx.product.findMany({ where: { variant: VARIANT_ENUM[v], packQty: 1, finishedItemId: { not: null }, type: { notIn: ["GIFTBOX"] } }, select: { finishedItemId: true } });
+      const extra = [task?.outputItemId, ...prods.map((p) => p.finishedItemId)].filter((x): x is string => !!x);
+      const cands = singlePackCandidates(v, everyItem, extra).filter((c) => !/\bpaket\b/i.test(c.name));
+      if (cands.length > 1) {
+        plan.bentrok.push(`Single Pack ${v}: ${cands.length} kandidat barang lama (${cands.map((c) => `${c.sku} "${c.name}"${c.active ? "" : " nonaktif"}`).join(", ")}) — pilih satu; Single Pack ${v} TIDAK dibuat / dipasang dulu`);
+        continue;
+      }
+      const old = cands[0];
       it = old
         ? await semi(old.name, old.sku, qcp.id, "Packing", old, `Single Pack ${v}`)
         : await semi(`Single Pack ${v}`, `SJ-SP-${v.toUpperCase()}`, qcp.id, "Packing");
+      if (old && !old.active) plan.bentrok.push(`Single Pack ${v}: barang lama ${old.sku} nonaktif — aktifkan di Master data bila dipakai`);
     } else it = await semi(it.name, it.sku, qcp.id, "Packing", it);
     sp.set(v, it);
     await recipe(it, common.opp, 1, "pcs", "Plastik OPP");
@@ -420,10 +470,10 @@ async function run(tx: Tx, plan: ProdukHppPlan) {
       if (list.length > 1) plan.bentrok.push(`DOBEL produk Paket ${n} · ${pv.label}: ${list.map((p) => `${p.sku} "${p.name}"`).join(", ")} (resep dipasang di semuanya)`);
       for (const p of list) {
         await finishedDivision(p, qcp.id, "Packing");
-        if (pv.key === "MIX") for (const v of VARIANTS) await bom(p.id, p.name, sp.get(v)!, n / 4, `Single Pack ${v}`);
+        if (pv.key === "MIX") for (const v of VARIANTS) await bom(p.id, p.name, sp.get(v) ?? null, n / 4, `Single Pack ${v}`);
         else {
           const v = VARIANTS.find((x) => VARIANT_ENUM[x] === pv.key)!;
-          await bom(p.id, p.name, sp.get(v)!, n, `Single Pack ${v}`);
+          await bom(p.id, p.name, sp.get(v) ?? null, n, `Single Pack ${v}`);
         }
         for (const [k, q] of KEMAS[n]) await bom(p.id, p.name, kemas[k], q, kemas[k]?.name ?? k);
         const known = new Set([...sp.values(), ...Object.values(kemas)].filter(Boolean).map((x) => x!.id));
