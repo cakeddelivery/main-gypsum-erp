@@ -53,7 +53,11 @@ export const DEFAULT_CLAUSES: Clause[] = [
     title: "Pasal 5 · Pengunduran Diri",
     body: "1. Pihak Kedua yang mengundurkan diri wajib memberi tahu secara tertulis paling lambat {resign_hari} hari sebelumnya.\n2. Pihak Kedua yang mengundurkan diri sebelum masa kontrak berakhir atau sebelum tanggal gajian wajib membayar ganti rugi kepada Pihak Pertama sebesar gaji pokok yang seharusnya diterima pada periode berjalan; ganti rugi ini diperhitungkan (dikompensasi) dengan upah yang masih harus dibayarkan kepada Pihak Kedua.\n3. Pengecualian atau keputusan lain hanya dapat ditetapkan oleh HRD secara tertulis dan tercatat.",
   },
-  { title: "Pasal 6 · Penutup", body: "Perjanjian ini dibuat dan ditandatangani secara elektronik, dan mempunyai kekuatan yang sama dengan perjanjian bertanda tangan basah." },
+  {
+    title: "Pasal 6 · Pelanggaran Berat dan Pemutusan Hubungan Kerja",
+    body: "1. Pelanggaran berat yang dapat mengakibatkan pemutusan hubungan kerja seketika: (a) mencuri, menggelapkan, atau menyalahgunakan bahan, produk, uang, atau data perusahaan; (b) memalsukan absensi, laporan shift, atau data stok; (c) merusak alat, bahan, atau produk dengan sengaja; (d) mabuk, memakai narkotika, atau berjudi di tempat kerja; (e) kekerasan, ancaman, atau pelecehan terhadap sesama pekerja; (f) membocorkan resep, harga pokok, atau rahasia perusahaan.\n2. Pelanggaran dibuktikan dengan catatan absensi, laporan shift, catatan stok, rekaman, keterangan saksi, atau bukti lain, dan Pihak Kedua diberi kesempatan menjelaskan sebelum HRD memutuskan.\n3. Keputusan pemutusan hubungan kerja dibuat tertulis oleh HRD dan tercatat. Upah atas hari kerja yang sudah dijalani tetap dibayarkan; kerugian perusahaan yang terbukti dapat diperhitungkan dengan upah paling banyak 50% dari upah yang akan dibayarkan, dan sisanya diselesaikan secara musyawarah.",
+  },
+  { title: "Pasal 7 · Penutup", body: "Perjanjian ini dibuat dan ditandatangani secara elektronik, dan mempunyai kekuatan yang sama dengan perjanjian bertanda tangan basah." },
 ];
 
 export function fillPlaceholders(text: string, vars: Record<string, string>) {
