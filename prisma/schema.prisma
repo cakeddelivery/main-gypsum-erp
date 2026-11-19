@@ -309,6 +309,7 @@ model Employee {
   advances        CashAdvance[]
   allowances      EmployeeAllowance[]
   contracts       Contract[]
+  terminations    Termination[]
 }
 
 model ShiftSchedule {
@@ -2740,4 +2741,44 @@ model Contract {
 
   @@index([employeeId, status])
   @@index([parentId])
+}
+
+enum TerminationReason {
+  RESIGN
+  PELANGGARAN_BERAT
+  KONTRAK_HABIS
+  DIPUTUS_PERUSAHAAN
+}
+
+enum TerminationStatus {
+  DRAFT
+  DITERBITKAN
+  BATAL
+}
+
+/// Pengakhiran kontrak: alasan, bukti, slip akhir (hitungan dibekukan), dan Surat Pengakhiran bernomor (…/MG-HRD/PHK/…) dengan QR HRD
+model Termination {
+  id            String            @id @default(cuid())
+  number        String            @unique
+  seq           Int
+  year          Int
+  contractId    String?
+  employeeId    String
+  employee      Employee          @relation(fields: [employeeId], references: [id])
+  reason        TerminationReason
+  effectiveDate DateTime          @db.Date
+  note          String?
+  evidencePath  String?
+  /// Hasil hitungan slip akhir (baris + total) dan data dasarnya
+  calc          Json
+  status        TerminationStatus @default(DRAFT)
+  contentHash   String?
+  verifyCode    String            @unique
+  createdBy     String
+  createdAt     DateTime          @default(now())
+  issuedAt      DateTime?
+  issuedBy      String?
+  issuedById    String?
+
+  @@index([employeeId, status])
 }

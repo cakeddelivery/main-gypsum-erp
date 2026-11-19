@@ -8,7 +8,7 @@ export type Clause = { title: string; body: string };
 export const ROMAN = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
 
 /** {urut 3 digit}/MG-HRD/{PKWT|ADD}/{bulan romawi}/{tahun}; urut ≥ 1000 tetap utuh */
-export function contractNumber(seq: number, kind: "PKWT" | "ADD", date: string) {
+export function contractNumber(seq: number, kind: "PKWT" | "ADD" | "PHK", date: string) {
   const y = Number(date.slice(0, 4));
   const m = Number(date.slice(5, 7));
   return `${String(seq).padStart(3, "0")}/MG-HRD/${kind}/${ROMAN[m]}/${y}`;
