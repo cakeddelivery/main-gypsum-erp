@@ -88,7 +88,7 @@ export function ReportStartForm({ data, go = "isi" }: { data: ReportStartData; g
             <input type="hidden" name="shiftId" value={guess} />
             <div className="flex items-center gap-3 py-2 text-sm text-slate-600">
               <span className="btn-spinner text-brand-600" aria-hidden />
-              Membuka laporan {divisions[0].name}{shiftName ? ` · ${shiftName}` : ""} {date === today ? "hari ini" : "shift malam kemarin"}…
+              {divisions[0].shiftCount > 1 ? `Membuka laporan ${divisions[0].name} sesuai shift absen Anda…` : `Membuka laporan ${divisions[0].name}${shiftName ? ` · ${shiftName}` : ""} ${date === today ? "hari ini" : "shift malam kemarin"}…`}
             </div>
             <div className="hidden"><Submit>Buka</Submit></div>
           </>

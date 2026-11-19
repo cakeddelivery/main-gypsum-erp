@@ -20,7 +20,8 @@ export async function memberReportSlot(employeeId: string, divisionId: string, n
   if (!att?.checkIn) {
     const y = addDays(todayStr(now), -1);
     const prev = await prisma.attendance.findUnique({ where: { employeeId_date: { employeeId, date: dateOnly(y) } }, include: { shift: true } });
-    if (prev?.checkIn && crossesMidnight(prev.shift) && now < new Date(shiftWindow(y, prev.shift).end.getTime() + NIGHT_GRACE_HOURS * 3600_000)) att = prev;
+    // Laporan shift kemarin yang belum terkirim tetap bisa dikirim sampai absen masuk berikutnya (tidak terkunci setelah jam shift selesai)
+    if (prev?.checkIn && ((crossesMidnight(prev.shift) && now < new Date(shiftWindow(y, prev.shift).end.getTime() + NIGHT_GRACE_HOURS * 3600_000)) || !(await prisma.shiftReport.findFirst({ where: { date: prev.date, shiftId: prev.shiftId, divisionId, status: { not: "DRAFT" } }, select: { id: true } })))) att = prev;
   }
   if (!att?.checkIn) throw new Error("Anda belum absen masuk. Absen masuk dulu di menu Absensi: shift laporan mengikuti shift absen Anda.");
   return { date: dateStr(att.date), shiftId: att.shiftId };

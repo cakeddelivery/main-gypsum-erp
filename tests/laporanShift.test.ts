@@ -43,6 +43,21 @@ describe("Shift laporan mengikuti absen", () => {
     expect(await memberReportSlot(e.id, divId)).toEqual({ date: D, shiftId: s1 });
   });
 
+  it("shift laporan TIDAK dari jam sekarang: absen S1 08:25 → 16:30 / 17:30 / 18:30 selalu Shift 1 (S1 & S2 tumpang tindih 16:00–17:30)", async () => {
+    const rico = await emp();
+    await absen(rico.id, D, s1, "08:25");
+    for (const h of ["16:30", "17:30", "18:30", "23:50"]) {
+      setNow(at(D, h));
+      expect(await memberReportSlot(rico.id, divId)).toEqual({ date: D, shiftId: s1 });
+    }
+    // Laporan S1 yang belum terkirim masih bisa dikirim besok pagi sebelum absen masuk berikutnya
+    setNow(at(N, "07:30"));
+    expect(await memberReportSlot(rico.id, divId)).toEqual({ date: D, shiftId: s1 });
+    // Setelah laporannya terkirim, tidak lagi dibuka kembali
+    await prisma.shiftReport.create({ data: { date: dateOnly(D), shiftId: s1, divisionId: divId, picName: "rico", status: "TERKIRIM", createdBy: "rico" } });
+    await expect(memberReportSlot(rico.id, divId)).rejects.toThrow(/belum absen masuk/);
+  });
+
   it("B: karyawan Shift 1 tidak bisa mengisi laporan Shift 2; Shift 2 bisa; belum absen ditolak", async () => {
     const rico = await emp(), bagus = await emp(), belum = await emp();
     await absen(rico.id, D, s1, "08:25");
@@ -62,8 +77,8 @@ describe("Shift laporan mengikuti absen", () => {
     await prisma.attendance.update({ where: { employeeId_date: { employeeId: e.id, date: dateOnly(D) } }, data: { checkOut: at(N, "01:05") } });
     setNow(at(N, "01:10"));
     expect(await memberReportSlot(e.id, divId)).toEqual({ date: D, shiftId: s2 });
-    setNow(at(N, "07:30")); // lewat batas wajar
-    await expect(memberReportSlot(e.id, divId)).rejects.toThrow(/belum absen masuk/);
+    setNow(at(N, "07:30")); // laporan belum terkirim tetap bisa dikirim sampai absen masuk berikutnya
+    expect(await memberReportSlot(e.id, divId)).toEqual({ date: D, shiftId: s2 });
   });
 
   it("C: pindah laporan salah shift; bentrok ditolak; tukar saling menukar", async () => {
