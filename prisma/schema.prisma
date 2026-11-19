@@ -882,6 +882,22 @@ model ShiftReport {
   @@unique([date, shiftId, divisionId])
 }
 
+/// Standar pemakaian proses (mis. gram gypsum per patung basah, rendemen basah→kering): AUTO = median 30 hari dari laporan shift,
+/// MANUAL = ditetapkan Owner (menimpa AUTO). Standar bahan pendukung dihitung langsung dari resep BOM × hasil shift (tidak disimpan).
+model UsageStandard {
+  key         String    @id
+  label       String
+  unit        String
+  /// AUTO / MANUAL
+  mode        String    @default("AUTO")
+  autoValue   Decimal?  @db.Decimal(14, 4)
+  manualValue Decimal?  @db.Decimal(14, 4)
+  sampleCount Int       @default(0)
+  computedAt  DateTime?
+  pinnedBy    String?
+  updatedAt   DateTime  @updatedAt
+}
+
 /// Barang masuk dari supplier/toko yang dilaporkan divisi di laporan shift (sebelum stok akhir dihitung).
 /// Belum ditautkan = sudah ada fisik di gudang tapi belum dicatat di Pembelian: stock opname menganggapnya sudah ada
 /// (tidak jadi pemakaian/HPP). Saat ditautkan ke Pembelian, stok masuk bertanggal waktu barang masuk (tidak dobel).

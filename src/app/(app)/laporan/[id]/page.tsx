@@ -9,6 +9,7 @@ import { refreshDraftChecklists } from "@/lib/shiftReportChecklist";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { withCurrentLimits } from "@/lib/shiftReportStock";
 import { flowEnabled } from "@/lib/shiftReportFlow";
+import { usageCheck } from "@/lib/usageStandard";
 import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
 import { resultPlaces } from "@/lib/resultCountGroups";
 import { divisionPendingReturns } from "@/lib/borongan";
@@ -103,6 +104,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const materials = items.map((i) => ({ id: i.id, name: i.name, unit: i.unit }));
   // Giftbox Mix: bawaan patung ke-5 = karakter patung kering dengan stok terbanyak
   const moveShifts = reportDivision(user) === null && r.division.shiftCount > 1 ? (await prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, take: r.division.shiftCount })) : [];
+  const usageRows = r.status === "DRAFT" ? [] : await usageCheck(r.id).catch(() => []);
   const mixDefault = template === "GIFTBOX" ? await mostStockedVariant() : null;
 
   return (
@@ -285,6 +287,26 @@ export default async function ReportDetail({ params, searchParams }: { params: P
             </details>
           )}
         </div>
+      )}
+      {usageRows.length > 0 && (
+        <Card title="Pemakaian vs standar">
+          <p className="mb-2 text-xs text-slate-500">Standar = resep × hasil shift; aktual = awal + masuk − sisa hitung di stock opname laporan. Merah = lebih dari 15% di atas standar.</p>
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead><tr><th>Bahan</th><th className="num">Standar</th><th className="num">Aktual</th><th className="num">Selisih</th></tr></thead>
+              <tbody>
+                {usageRows.map((x) => (
+                  <tr key={x.itemId}>
+                    <td className="!whitespace-normal">{x.name}{x.over && <> <Badge tone="red">lebih</Badge></>}</td>
+                    <td className="num">{Number(x.standard.toFixed(2)).toLocaleString("id-ID")} {x.unit}</td>
+                    <td className="num">{Number(x.actual.toFixed(2)).toLocaleString("id-ID")}</td>
+                    <td className={`num font-semibold ${x.over ? "text-rose-700" : "text-slate-500"}`}>{x.overPct == null ? "-" : `${x.overPct > 0 ? "+" : ""}${x.overPct}%`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       )}
     </div>
   );
