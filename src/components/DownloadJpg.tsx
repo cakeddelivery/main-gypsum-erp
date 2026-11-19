@@ -10,7 +10,7 @@ import { isIosStandalone } from "./Pwa";
  * Dokumen disalin ke wadah tersembunyi selebar data-export-width (default 1000px) agar hasilnya selalu tata letak lebar,
  * versi terang, dan memuat semua baris tabel, juga saat dibuka dari HP.
  */
-export function DownloadJpg({ targetId, filename, autoOpen, label = "⬇ Unduh JPG", className = "btn-secondary" }: { targetId: string; filename: string; /** Langsung buat & tampilkan pratinjau saat halaman dibuka (mis. setelah laporan terkirim) */ autoOpen?: boolean; label?: string; className?: string }) {
+export function DownloadJpg({ targetId, filename, autoOpen, label = "👁 Lihat & unduh", className = "btn-secondary", pdfHref }: { targetId: string; filename: string; /** Tautan halaman cetak PDF (…?print=1): tampil sebagai tombol "Unduh PDF" di popup pratinjau */ pdfHref?: string; /** Langsung buat & tampilkan pratinjau saat halaman dibuka (mis. setelah laporan terkirim) */ autoOpen?: boolean; label?: string; className?: string }) {
   const [busy, setBusy] = useState(false);
   const [url, setUrl] = useState<string | null>(null);
   const [canShare, setCanShare] = useState(false);
@@ -100,7 +100,7 @@ export function DownloadJpg({ targetId, filename, autoOpen, label = "⬇ Unduh J
   return (
     <>
       <button type="button" className={className} disabled={busy} onClick={render}>
-        {busy ? "Membuat JPG…" : label}
+        {busy ? "Menyiapkan…" : label}
       </button>
       <dialog
         ref={ref}
@@ -129,7 +129,8 @@ export function DownloadJpg({ targetId, filename, autoOpen, label = "⬇ Unduh J
               <div className="flex gap-2">
                 <button type="button" className="btn-secondary" onClick={close}>Tutup</button>
                 {canShare && <button type="button" className="btn-secondary" onClick={share}>Bagikan</button>}
-                <button type="button" className="btn-primary" onClick={save}>⬇ Unduh</button>
+                {pdfHref && <a href={pdfHref} target="_blank" rel="noopener" className="btn-secondary">📄 Unduh PDF</a>}
+                <button type="button" className="btn-primary" onClick={save}>⬇ Unduh JPG</button>
               </div>
             </div>
           </div>

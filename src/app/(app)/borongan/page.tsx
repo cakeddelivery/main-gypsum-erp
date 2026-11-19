@@ -43,7 +43,7 @@ const TABS = [
   { key: "tugas", label: "Tugas & Tarif" },
 ];
 
-export default async function BoronganPage({ searchParams }: { searchParams: Promise<{ tab?: string; dari?: string; sampai?: string }> }) {
+export default async function BoronganPage({ searchParams }: { searchParams: Promise<{ tab?: string; f?: string; dari?: string; sampai?: string }> }) {
   const user = await requirePerm("borongan.view", "borongan.point", "borongan.manage", "borongan.driver");
   const sp = await searchParams;
   const scope = await boronganScope(prisma, user);
@@ -72,7 +72,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
       <div className="space-y-4">
         <PageHeader title="Borongan" subtitle="Pembagian ke pekerja & ambil setoran" />
         <PortalSetup publicKey={pushPublicKey()} />
-        <KirimanTab scope={scope} userId={user.id} />
+        <KirimanTab scope={scope} userId={user.id} filter={sp.f} />
       </div>
     );
   }
@@ -134,7 +134,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
       {!isCoordinatorOnly && <Tabs current={tab} tabs={[...tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: x.key === "serah" ? pending.length || undefined : undefined })), ...(history ? [{ key: "riwayat", label: "Riwayat", href: "/borongan/riwayat" }] : [])]} />}
 
       {isCoordinatorOnly && tab === "kiriman" && <PortalSetup publicKey={pushPublicKey()} />}
-      {tab === "kiriman" && <KirimanTab scope={scope} userId={user.id} />}
+      {tab === "kiriman" && <KirimanTab scope={scope} userId={user.id} filter={sp.f} />}
       {tab === "stok" && <StokTitikTab scope={scope} />}
       {tab === "klaim" && <KlaimTab scope={scope} canPay={user.can("borongan.pay")} />}
       {tab === "ringkasan" && (

@@ -9,6 +9,7 @@ import { prisma } from "@/lib/db";
 import { guidesFor } from "@/lib/panduanAccess";
 import { pushPublicKey } from "@/lib/push";
 import { AccountSetup } from "@/components/PushNotif";
+import { ReminderPopup } from "@/components/ReminderPopup";
 
 export const dynamic = "force-dynamic";
 
@@ -34,6 +35,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <Shell nav={nav} bottomNav={bottom} user={{ name: user.name, username: user.username, role: ROLE_LABEL[user.role], division, photoUrl: user.photoUrl }} env={process.env.APP_ENV || "development"} alerts={items} quickReport={quickReport}>
       <AccountSetup publicKey={pushPublicKey()} hasEmail={!!user.email} hasPhoto={!!user.photoUrl} />
+      <ReminderPopup enabled={!!user.employeeId} />
       {children}
     </Shell>
   );
