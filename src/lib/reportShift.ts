@@ -98,3 +98,54 @@ export async function applyReportShiftFixes(fixes: ShiftMismatch[]) {
   }
   return n;
 }
+
+// ---------------- Draf ganda shift tanpa karyawan ----------------
+
+const hasData = (v: unknown): boolean => {
+  if (v == null || v === false) return false;
+  if (typeof v === "number") return v !== 0;
+  if (typeof v === "string") return v.trim() !== "" && v.trim() !== "0";
+  if (Array.isArray(v)) return v.some(hasData);
+  if (typeof v === "object") return Object.values(v as Record<string, unknown>).some(hasData);
+  return true;
+};
+
+export type ExtraDraft = { id: string; label: string; empty: boolean };
+
+/**
+ * Draf laporan di divisi 2 shift untuk shift yang TIDAK ada karyawannya hari itu (mis. Oven 1 orang). Draf KOSONG (checklist belum
+ * ada yang dicentang, hasil/stok/barang masuk/kendala belum diisi) boleh dihapus; yang berisi data hanya dilaporkan.
+ */
+export async function findExtraDrafts(days = 30, now: Date = new Date()): Promise<ExtraDraft[]> {
+  const { expectedSlots } = await import("./reportExpected");
+  const since = dateOnly(addDays(todayStr(now), -days));
+  const drafts = await prisma.shiftReport.findMany({
+    where: { date: { gte: since }, status: "DRAFT", division: { shiftCount: { gte: 2 } } },
+    include: { shift: true, division: true, _count: { select: { receipts: true } } },
+    orderBy: { date: "asc" },
+  });
+  const out: ExtraDraft[] = [];
+  const cache = new Map<string, Awaited<ReturnType<typeof expectedSlots>>>();
+  for (const r of drafts) {
+    const day = dateStr(r.date);
+    if (!cache.has(day)) cache.set(day, await expectedSlots(day));
+    if (cache.get(day)!.some((x) => x.divisionId === r.divisionId && x.shiftId === r.shiftId)) continue;
+    const checklist = (r.checklist as { done?: boolean }[] | null) ?? [];
+    const filled = checklist.some((c) => c.done) || hasData(r.work) || (r.stockCount as { qty: number | null }[]).some((x) => x.qty != null) || r._count.receipts > 0
+      || !!r.complaints?.trim() || !!r.followUp?.trim() || r.workPostedVersion > 0 || r.stockApplied || r.resultApplied != null;
+    out.push({ id: r.id, empty: !filled, label: `${r.division.name} · ${fmtDay(r.date)} · ${r.shift.name} (PIC ${r.picName ?? "-"}) — checklist ${checklist.filter((c) => c.done).length}/${checklist.length} — ${filled ? "BERISI DATA (tidak dihapus)" : "kosong"}` });
+  }
+  return out;
+}
+
+export async function deleteEmptyExtraDrafts(items: ExtraDraft[], actor: Actor) {
+  let n = 0;
+  for (const x of items.filter((i) => i.empty)) {
+    await prisma.$transaction(async (tx) => {
+      await tx.shiftReport.delete({ where: { id: x.id } });
+      await audit(actor, "LAPORAN_DRAF_KOSONG_DIHAPUS", "ShiftReport", x.id, { label: x.label }, tx);
+    });
+    n++;
+  }
+  return n;
+}

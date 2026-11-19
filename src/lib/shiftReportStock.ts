@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { dateOnly, fmtDay, todayStr } from "./time";
 import { locationSettings, qtyAt, recordMovement } from "./stock";
-import { expectedReportCount, needsOrder, shiftEndAt, type StockCountRow } from "./shiftReport";
+import { needsOrder, shiftEndAt, type StockCountRow } from "./shiftReport";
 import { pendingReceipts, receiptsUntil } from "./shiftReceipt";
 
 type Actor = { id: string; name: string };
@@ -101,15 +101,10 @@ export async function applyShiftStockCount(reportId: string, actor: Actor, now: 
   return { adjusted: n };
 }
 
-/** Laporan shift tanggal `date` yang belum terkirim (termasuk yang belum dibuat sama sekali) */
+/** Laporan shift tanggal `date` yang belum terkirim: hanya shift yang ada karyawannya (lihat lib/reportExpected) */
 export async function unsentReportCount(date: string, divisionId?: string | null): Promise<number> {
-  const [shifts, divisions] = await Promise.all([
-    prisma.shift.count({ where: { active: true } }),
-    prisma.division.findMany({ where: { active: true, reportTemplate: { not: null }, ...(divisionId ? { id: divisionId } : {}) }, select: { id: true, shiftCount: true } }),
-  ]);
-  if (!divisions.length) return 0;
-  const sent = await prisma.shiftReport.count({ where: { date: dateOnly(date), status: { in: ["TERKIRIM", "DIREVISI"] }, divisionId: { in: divisions.map((d) => d.id) } } });
-  return Math.max(0, expectedReportCount(divisions, shifts) - sent);
+  const { expectedSlots } = await import("./reportExpected");
+  return (await expectedSlots(date, divisionId)).filter((x) => !x.sent).length;
 }
 
 export type OrderRow = { itemId: string; name: string; unit: string; limit: number; qty: number; reportId: string; date: Date; shift: string; url?: string | null; /** Sudah ada permintaan stok terbuka (Diajukan/Disetujui) */ requested?: boolean };

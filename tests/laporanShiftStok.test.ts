@@ -68,10 +68,16 @@ describe("Stock opname laporan shift", () => {
     expect(materialOrderText([{ division: { name: "X" }, order: [] }], (s) => s)).toBeNull();
   });
 
-  it("laporan belum dikirim dihitung per jumlah shift divisi (yang belum dibuat ikut)", async () => {
-    // Produksi 2 shift: belum ada yang terkirim tanggal ini
+  it("laporan belum dikirim dihitung per shift yang ada karyawannya (tanpa orang = tidak diharapkan)", async () => {
+    // Produksi 2 shift tanpa karyawan hari itu: tidak ada laporan yang diharapkan
+    expect(await unsentReportCount("2027-09-05", divisionId)).toBe(0);
+    const day = dateOnly("2027-09-05");
+    for (const [i, shiftId] of [s1, s2].entries()) {
+      const e = await prisma.employee.create({ data: { code: `UL-${Date.now().toString(36)}${i}`, name: `Uji lap ${i}`, divisionId, joinDate: dateOnly("2027-01-01") } });
+      await prisma.attendance.create({ data: { employeeId: e.id, date: day, shiftId, checkIn: new Date("2027-09-05T01:00:00Z"), status: "HADIR" } });
+    }
     expect(await unsentReportCount("2027-09-05", divisionId)).toBe(2);
-    await prisma.shiftReport.create({ data: { date: dateOnly("2027-09-05"), shiftId: s1, divisionId, createdBy: "uji", status: "TERKIRIM" } });
+    await prisma.shiftReport.create({ data: { date: day, shiftId: s1, divisionId, createdBy: "uji", status: "TERKIRIM" } });
     expect(await unsentReportCount("2027-09-05", divisionId)).toBe(1);
   });
 });

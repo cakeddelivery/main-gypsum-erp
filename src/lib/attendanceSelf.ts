@@ -2,7 +2,7 @@ import { prisma } from "./db";
 import { audit } from "./audit";
 import { checkGeofence, evaluateCheckIn, type GeoPoint } from "./attendance";
 import { SHIFT_NOTE_PREFIX, SYSTEM_VALIDATOR, actualShift, divisionShifts, isAutoNote, isShiftDivision } from "./attendanceRules";
-import { addDays, dateOnly, fmtDay, todayStr } from "./time";
+import { addDays, dateOnly, dateStr, fmtDay, todayStr } from "./time";
 import { checkoutDiff, crossesMidnight, workdayFor } from "./workday";
 
 type Actor = { id: string; name: string; employeeId: string | null };
@@ -75,7 +75,13 @@ export async function divisionReportSent(employeeId: string, date: Date, shiftId
   const e = await prisma.employee.findUnique({ where: { id: employeeId }, include: { division: true } });
   if (!e?.division?.reportTemplate || !e.division.active) return null;
   const reports = await prisma.shiftReport.findMany({ where: { date, divisionId: e.divisionId, status: { in: ["TERKIRIM", "DIREVISI"] } }, select: { shiftId: true } });
-  const sent = e.division.shiftCount > 1 ? reports.some((r) => r.shiftId === shiftId) || reports.length >= e.division.shiftCount : reports.length > 0;
+  // Divisi 2 shift: laporan shift absennya, atau semua laporan yang diharapkan hari itu (hanya shift yang ada karyawannya) sudah terkirim
+  let sent = reports.length > 0;
+  if (e.division.shiftCount > 1) {
+    const { expectedSlots } = await import("./reportExpected");
+    const slots = (await expectedSlots(dateStr(date), e.divisionId)).filter((x) => x.divisionId === e.divisionId);
+    sent = reports.some((r) => r.shiftId === shiftId) || (slots.length > 0 && slots.every((x) => x.sent));
+  }
   return { sent, division: e.division.name };
 }
 

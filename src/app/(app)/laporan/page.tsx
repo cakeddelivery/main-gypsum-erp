@@ -6,6 +6,7 @@ import { addDays, dateOnly, fmtDay, todayStr } from "@/lib/time";
 import { Badge, Empty, PageHeader } from "@/components/ui";
 import { isDone, needsOrder, toEntries, type StockCountRow } from "@/lib/shiftReport";
 import { Modal } from "@/components/Modal";
+import { expectedSlots } from "@/lib/reportExpected";
 import { ReportStartForm } from "@/components/ReportStartForm";
 import { ReportFilters } from "@/components/ReportFilters";
 import { Suspense } from "react";
@@ -59,9 +60,10 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
   const rows = reports;
   const drafts = reports.filter((r) => r.status === "DRAFT").length;
   // Ringkasan hari ini: berapa slot divisi × shift yang sudah terkirim
-  const todayReports = await prisma.shiftReport.findMany({ where: { date: dateOnly(today), ...(fixedDivision ? { divisionId: fixedDivision } : {}) }, select: { status: true } });
-  const slots = divisions.reduce((n, d) => n + Math.min(Math.max(1, d.shiftCount), shifts.length), 0);
-  const sentToday = todayReports.filter((r) => r.status !== "DRAFT").length;
+  // Hanya shift yang ada karyawannya (divisi 2 shift berisi 1 orang = 1 laporan), lihat lib/reportExpected
+  const expected = (await expectedSlots(today, fixedDivision)).filter((x) => divisions.some((d) => d.id === x.divisionId));
+  const slots = expected.length;
+  const sentToday = expected.filter((x) => x.sent).length;
   const canCreate = user.can("report.create") && divisions.length > 0;
 
   const startData = { auto: fixedDivision !== null, today, divisions: divisions.map((d) => ({ id: d.id, name: d.name, shiftCount: d.shiftCount })), shifts: shifts.map((s) => ({ id: s.id, name: s.name, startTime: s.startTime, endTime: s.endTime })) };
