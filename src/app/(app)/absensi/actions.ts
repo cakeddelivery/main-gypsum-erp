@@ -8,6 +8,7 @@ import { addDays, dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 import { ForbiddenError } from "@/lib/auth";
 import type { AttendanceStatus, LeaveKind } from "@prisma/client";
 import { cancelLeave, decideLeave, leaveError, submitLeave } from "@/lib/leave";
+import { cancelDayOff, decideDayOff, submitDayOff } from "@/lib/dayOff";
 import { parseChanges } from "@/lib/scheduleEdit";
 import { applyScheduleChanges } from "@/lib/scheduleSave";
 import { reconcileAfterSchedule } from "@/lib/attendanceAuto";
@@ -218,6 +219,37 @@ export const cancelLeaveRequest = action(
   "attendance.self",
   async (fd, user) => {
     await cancelLeave(user, str(fd, "id"));
+    return "Pengajuan dibatalkan";
+  },
+  ["/absensi"],
+);
+
+/** Karyawan mengajukan libur minggu depan (batas Jumat 23.59 WIB) atau menyatakan tidak libur */
+export const submitDayOffRequest = action(
+  "attendance.self",
+  async (fd, user) => {
+    const none = str(fd, "none") === "1";
+    const dates = fd.getAll("date").map(String);
+    await submitDayOff(user, { dates, none, reason: optStr(fd, "reason") });
+    return none ? "Tercatat: tidak ada libur minggu depan" : "Pengajuan libur terkirim. Menunggu persetujuan Supervisor/Owner.";
+  },
+  ["/absensi"],
+);
+
+export const decideDayOffRequest = action(
+  "attendance.view",
+  async (fd, user) => {
+    const approve = str(fd, "decision") === "setuju";
+    const r = await decideDayOff(user, str(fd, "id"), approve, optStr(fd, "rejectReason"));
+    return approve ? `Disetujui — ${r.removed} jadwal dihapus (libur)` : "Pengajuan libur ditolak";
+  },
+  ["/absensi", "/"],
+);
+
+export const cancelDayOffRequest = action(
+  "attendance.self",
+  async (fd, user) => {
+    await cancelDayOff(user, str(fd, "id"));
     return "Pengajuan dibatalkan";
   },
   ["/absensi"],
