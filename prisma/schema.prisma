@@ -882,6 +882,32 @@ model ShiftReport {
   @@unique([date, shiftId, divisionId])
 }
 
+/// Sample produk untuk affiliator (program marketplace TikTok/Shopee atau offline) yang dikirim dari Packing/Giftbox.
+/// Bukan resi penjualan; stok keluar dan nilainya jadi Beban Promosi & Sample (6-1840), bukan HPP penjualan.
+model AffiliateSample {
+  id         String   @id @default(cuid())
+  reportId   String
+  divisionId String
+  date       DateTime @db.Date
+  itemId     String
+  qty        Decimal  @db.Decimal(14, 3)
+  /// TIKTOK / SHOPEE / OFFLINE
+  source     String
+  /// Nama/username affiliator
+  affiliator String
+  trackingNo String?
+  note       String?
+  /// Stok sudah keluar & dibebankan (sakelar hasil kerja → stok menyala saat laporan dikirim)
+  posted     Boolean  @default(false)
+  ref        String?
+  unitCost   BigInt   @default(0)
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  @@index([reportId])
+  @@index([affiliator, date])
+}
+
 /// Barang masuk dari supplier/toko yang dilaporkan divisi di laporan shift (sebelum stok akhir dihitung).
 /// Belum ditautkan = sudah ada fisik di gudang tapi belum dicatat di Pembelian: stock opname menganggapnya sudah ada
 /// (tidak jadi pemakaian/HPP). Saat ditautkan ke Pembelian, stok masuk bertanggal waktu barang masuk (tidak dobel).
