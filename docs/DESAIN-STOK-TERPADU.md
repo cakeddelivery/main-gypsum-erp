@@ -1,6 +1,6 @@
 # Desain teknis: stok terpadu lewat Laporan Shift (draf untuk Owner)
 
-Status: DESAIN, belum ada kode. Dasar: `docs/AUDIT-ALUR-STOK.md`, `src/lib/shiftReport*.ts`, `shiftReportFlow.ts`, `shiftResultCount.ts`, `stock.ts`, `boronganFlow.ts`, `hpp.ts`.
+Status: DESAIN (rev. 2 setelah jawaban Owner 19 Nov), belum ada kode. Dasar: `docs/AUDIT-ALUR-STOK.md`, `src/lib/shiftReport*.ts`, `shiftReportFlow.ts`, `shiftResultCount.ts`, `stock.ts`, `boronganFlow.ts`, `hpp.ts`.
 Semua perubahan data bersifat **aditif** (tabel/kolom baru), tidak mengubah data lama.
 
 ## 0. Prinsip
@@ -14,8 +14,8 @@ Semua angka masuk lewat `postShiftWork` (ref `LPH:<laporan>:<versi>`), bertangga
 
 | Divisi | Dipakai (keluar) | Dihasilkan (masuk) | Reject (per jenis + jumlah + alasan) | Hitung fisik akhir |
 |---|---|---|---|---|
-| **Cetak** | bubuk gypsum (sak), bahan lain (pewarna/pelicin bila ada) | patung cetak/basah per varian (Hewan, Cowok, Cewek, Transportasi) | patung basah retak/pecah/cetakan rusak per varian | gypsum (sak), patung basah per varian |
-| **Oven** | patung basah masuk oven per varian, **LPG (kg atau tabung)** | patung kering per varian | patung gosong/retak/pecah per varian | patung kering per varian, tabung LPG |
+| **Cetak** | bubuk gypsum (sak) — hanya gypsum + air; **air tidak dilacak** (biaya PDAM tetap/overhead) | patung cetak/basah per varian (Hewan, Cowok, Cewek, Transportasi) | patung basah retak/pecah/cetakan rusak per varian | gypsum (sak), patung basah per varian |
+| **Oven** | patung basah masuk oven per varian, **LPG per tabung 5 kg** (tabung habis/diganti shift ini) | patung kering per varian | patung gosong/retak/pecah per varian | patung kering per varian, tabung LPG penuh & terpasang |
 | **Assembling** | patung kering, bahan (background, klip, cat, plastik…) | Single Pack / produk setengah jadi per varian; **baris otomatis "Keluar ke borongan / Masuk dari borongan"** dari KRM/AMB | rusak saat assembling per varian | Single Pack per varian, bahan |
 | **Giftbox** | patung kering (5/box), dus, bahan kemas | Giftbox per SKU | rusak per SKU | giftbox, bahan kemas |
 | **Packing** | Single Pack/produk jadi per varian, dus, bubblewrap, label, dll. | paket terkemas / resi terkirim | rusak/salah kirim per jenis | produk jadi, dus |
@@ -26,9 +26,10 @@ Resi: dari stok jadi (Packing: keluar produk jadi per resi) atau dari nol (bahan
 
 ## 2. Form laporan shift yang berubah (field baru)
 - **Semua divisi**: blok "Reject" — baris dinamis (jenis barang · jumlah · alasan dari daftar: retak, pecah, gosong, cacat cat, salah cetak, lainnya + catatan). Wajib bila selisih stok akhir > 0 yang tidak terjelaskan (peringatan, bukan penghalang kirim).
-- **Cetak**: gypsum terpakai dihitung dari stok awal + barang masuk − stok akhir fisik (sak), bukan diketik; patung cetak per varian (sudah ada) + reject per varian.
-- **Oven**: "patung basah masuk oven" (otomatis dari stok basah dipilih), kering per varian (ada), **LPG**: stok tabung awal/akhir (kg/tabung) → terpakai otomatis.
+- **Cetak**: gypsum terpakai dihitung dari stok awal + barang masuk − stok akhir fisik (sak), bukan diketik; patung cetak per varian (sudah ada) + reject per varian. Air tidak diisi.
+- **Oven**: "patung basah masuk oven" (dipilih dari stok basah), kering per varian (ada), **LPG per tabung**: isian "tabung kosong diganti (isi ulang) shift ini" + stok tabung penuh & terpasang (hitung fisik). Pemakaian = tabung habis × 5 kg.
 - **Assembling/Packing/Giftbox**: konsumsi kering/Single Pack/bahan kemas tampil sebagai **hasil perhitungan resep** (bisa diedit dengan alasan bila berbeda).
+- **Semua divisi — wajib hitung sisa SEMUA bahan pendukungnya** (lihat §4B): bahan yang tidak dihitung tidak bisa dialert, jadi ditandai "belum dihitung" di halaman Kebocoran.
 - **Neraca** (read-only di laporan): per barang: awal + masuk − keluar − reject = sistem; hitung fisik; selisih. Selisih besar diberi tanda.
 - PIC otomatis dari akun (sudah) dan **shift dari absen** (#126).
 
@@ -38,6 +39,7 @@ Resi: dari stok jadi (Packing: keluar produk jadi per resi) atau dari nol (bahan
 - `ShiftBalance` (reportId, itemId, opening, inQty, outQty, rejectQty, systemClosing, countedClosing, diff, diffValue, picName, computedAt): snapshot neraca saat laporan dikirim/direvisi; sumber halaman Kebocoran & alert.
 - `UsageStandard` (id, outputItemId, inputItemId, basis ∈ {PER_OUTPUT, PER_PAKET, RENDEMEN, BIAYA_PER_UNIT}, mode ∈ {AUTO, MANUAL}, value, sampleDays, sampleCount, toleranceAuto?, updatedAt, pinnedBy): standar pemakaian.
 - `StockAnomaly` (id, type, severity, divisionId?, itemId?, reportId?, shiftId?, date, expected, actual, pct, status ∈ {BARU, DILIHAT, DIJELASKAN}, note, noteBy, pushedAt): dedupe alert + riwayat penjelasan.
+- Barang **"LPG tabung 5 kg"** (satuan tabung, bahan baku divisi Oven): pembelian = isi ulang per tabung di toko (harga isi ulang masuk harga rata-rata); stok = tabung penuh (+ 1 terpasang); `UsageStandard` memakai tabung habis × 5 kg.
 - Setting: `stok_terpadu_mulai` (tanggal cut-over), `laporan_shift_ke_stok` (sudah), `anomali_ambang_persen` (bawaan 15), `loc_reject`.
 - Migrasi: hanya CREATE TABLE/ADD COLUMN; tidak ada backfill wajib (neraca historis dihitung ulang on-demand dari `StockMovement`).
 
@@ -50,19 +52,24 @@ Resi: dari stok jadi (Packing: keluar produk jadi per resi) atau dari nol (bahan
 - `sistemAkhir = awal + masuk − keluar − reject`; `selisih = fisikAkhir − sistemAkhir` (negatif = kebocoran/hilang, positif = salah catat/belum dicatat); `nilaiSelisih = selisih × HPP`.
 - Hitung fisik diterapkan sebagai PENYESUAIAN (`LPS:` — sudah ada) sehingga stok aplikasi = stok akhir laporan.
 
-**Standar pemakaian (AUTO, bergulir 30 hari)**, dihitung dari neraca shift yang selisihnya kecil (agar kebocoran tidak meracuni standar):
-- gram gypsum / patung cetak = Σ(sak terpakai × gram per sak) / Σ(patung cetak bagus + reject), per varian bila datanya cukup;
-- rendemen = Σ kering / Σ basah masuk oven;
-- LPG (kg & Rp) / patung kering = Σ LPG terpakai / Σ kering; Rp memakai harga rata-rata LPG;
-- bahan kemas / paket = Σ pakai / Σ paket per jenis (dus 12/24 dst.);
-- biaya per unit: Rp gypsum per patung cetak, Rp LPG per patung kering, Rp bahan per Single Pack (menyatu dengan HPP bertingkat `hpp.ts`).
-Pemilihan nilai: **median** sampel (tahan pencilan) dengan minimal 10 shift; di bawah itu "belum cukup data" (tidak ada alert). Owner bisa **menetapkan manual** (mode MANUAL menimpa AUTO, ada tombol "kembali otomatis").
+**Standar pemakaian** — dua sumber, dipakai bersama:
+- **A. Standar proses (historis, AUTO bergulir 30 hari)** dari neraca shift yang selisihnya kecil (agar kebocoran tidak meracuni standar):
+  - gram gypsum / patung basah (Cetak; air tidak dilacak) = Σ(sak terpakai × gram per sak) / Σ(patung cetak bagus + reject), per varian bila datanya cukup (berat per sak: isian Master barang, `hppFactor`, menunggu konfirmasi Owner);
+  - rendemen = Σ kering / Σ basah masuk oven;
+  - LPG per patung kering: tabung habis × 5 kg / Σ kering; **Rp per patung kering = (tabung habis × harga isi ulang rata-rata) ÷ patung kering**;
+  - biaya per unit: Rp gypsum per patung basah, Rp LPG per patung kering (menyatu dengan HPP bertingkat `hpp.ts`).
+  Nilai = **median** sampel (tahan pencilan), minimal 10 shift; kurang dari itu "belum cukup data". Owner bisa **menetapkan manual** (MANUAL menimpa AUTO; ada "kembali otomatis").
+- **B. Standar BOM untuk SEMUA bahan pendukung** (keputusan Owner): standar = **resep BOM (#122) × output** shift itu (`bomStockQty` × jumlah produk/Single Pack/paket yang dihasilkan), dibandingkan **pemakaian aktual dari neraca** = awal + masuk − sisa hitung. Cakupan: plastik OPP, cotton bud, piring, background, klip, cat plastik, klip 2x3, cat 5 warna, pot cat, dus 12/24, dus giftbox, solasi, bubble wrap, plastik wrap, label thermal, stiker, color guide, kuas, sabuk label, magnet, pallet, dst. di setiap divisi dan produk. Berlaku juga di **titik borongan**: pemakaian titik (HSB) vs stok koordinator (neraca stok titik: awal + kiriman − sisa hitung/Koreksi stok).
+  - Syarat: tiap bahan pendukung harus punya **hitungan sisa di laporan divisi pemiliknya** (`Item.divisionId`, tersedia di blok stok akhir bahan). Bahan aktif yang **tidak dihitung** pada shift berproduksi ditandai **"belum dihitung"** di halaman Kebocoran (tidak bisa dialert) dan di laporan (peringatan, bukan penghalang kirim).
+  - Rasio aktual/standar per bahan per shift = `pemakaian aktual ÷ (BOM × output)`; > 1,15 → alert (§5). Output nol tetapi pemakaian > 0 → alert "pemakaian tanpa hasil".
 
 ## 5. Alert anomali (push + lonceng + rekap harian) dan ambang
 Penerima: Owner, Supervisor, Finance. Dedupe per (jenis, divisi, barang, tanggal). Ambang bawaan bisa diubah Owner.
 | Alert | Syarat (bawaan) | Tingkat |
 |---|---|---|
-| Pemakaian > standar | aktual > standar ±15% pada satu shift, atau rata-rata 3 shift berturut-turut > 10% | Sedang/Tinggi |
+| Pemakaian > standar (proses: gypsum/patung, rendemen, LPG) | aktual > standar +15% pada satu shift, atau rata-rata 3 shift berturut-turut > 10% | Sedang/Tinggi |
+| **Pemakaian bahan pendukung > BOM × output** (semua bahan pendukung, semua divisi & titik borongan) | aktual > BOM × output +15% (disetujui Owner); nilai Rp selisih ditampilkan | Sedang (Tinggi bila nilai besar) |
+| Bahan pendukung belum dihitung | bahan aktif divisi tidak punya hitungan sisa pada shift berproduksi | Rendah (tampil di halaman Kebocoran) |
 | Selisih neraca | \|selisih\| ≥ 10 unit dan ≥ 10% stok sistem (sama `bigDiff`), atau nilai ≥ Rp ambang | Tinggi |
 | Reject di atas normal | reject% shift > rata-rata 30 hari + 50% (min 5 unit) | Sedang |
 | Reject tanpa alasan | ada reject dengan alasan kosong | Rendah |
@@ -70,7 +77,7 @@ Penerima: Owner, Supervisor, Finance. Dedupe per (jenis, divisi, barang, tanggal
 | Barang masuk tanpa pembelian | BMK belum ditautkan > 3 hari (sudah ada di Cek Konsistensi) | Sedang |
 | Pembelian tanpa barang masuk | pesanan Dikirim > 7 hari belum diterima | Sedang |
 | Hasil tidak terposting | laporan terkirim tetapi sakelar mati / `workPostedVersion = 0` | Tinggi |
-| LPG anomali | LPG/patung kering > standar +15% atau tabung habis tanpa hasil | Tinggi |
+| LPG anomali | tabung habis per patung kering > standar +15%, atau tabung habis tanpa hasil | Tinggi |
 | Laporan ganda/hilang | shift berorang tanpa laporan (aturan #128) | Rendah |
 
 **Halaman "Kebocoran & Efisiensi"** (asisten Owner, bahasa awam): ringkasan minggu ini ("Gypsum terpakai 8% lebih banyak dari biasanya = sekitar Rp X"), tren 30 hari per divisi/varian, daftar kebocoran terbesar (barang · shift · PIC · nilai), reject per tahap + alasan teratas, kartu "standar sekarang" dengan tombol tetapkan manual, dan penjelasan 1 kalimat tiap alert. Hanya baca + tombol "Sudah dijelaskan" dengan catatan.
@@ -95,4 +102,6 @@ Tiap PR kecil, tes, `npm test` 2×, staging dicoba Owner sebelum merge.
 
 ## 8. Risiko & pertanyaan untuk Owner
 Risiko: (1) beban ketik karyawan naik — mitigasi: angka diturunkan otomatis, input hanya stok akhir fisik + reject; (2) standar AUTO dari data buruk — mitigasi: median, filter pencilan, mode MANUAL; (3) posting ganda saat cut-over — guard tanggal T + ref unik per versi; (4) laporan lama diedit setelah T — revisi tetap aman lewat versi; (5) alert terlalu banyak — dedupe + ambang bisa diubah + hanya Tinggi yang push.
-Pertanyaan: (a) arti persis "resi dibuat dari nol"; (b) satu gudang Reject atau per tahap; (c) apakah reject dihapusbukukan jadi beban otomatis atau menunggu Owner; (d) tanggal cut-over T; (e) ambang 15% sudah sesuai; (f) LPG dihitung per tabung atau kg; (g) siapa penerima alert selain Owner/Supervisor/Finance.
+**Keputusan Owner 19 Nov:** bahan Cetak = gypsum saja (air tidak dilacak); LPG per tabung 5 kg; ambang 15% disetujui; alert bahan pendukung berlaku untuk semua divisi/produk/titik borongan.
+**Bawaan sementara (menunggu Owner):** satu gudang Reject; nilai reject langsung masuk beban otomatis (Owner dapat mengoreksi); penerima alert Owner/Supervisor/Finance.
+**Masih terbuka:** (a) arti persis "resi dibuat dari nol"; (b) berat per sak gypsum (gram) untuk standar gram/patung; (c) tanggal cut-over T; (d) harga isi ulang LPG diambil dari pembelian per tabung (rata-rata) — konfirmasi.
