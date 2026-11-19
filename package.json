@@ -45,6 +45,7 @@
     "setup:kit-tugas": "tsx scripts/kit-tugas-borongan.ts",
     "setup:produk-hpp": "tsx scripts/setup-produk-hpp.ts",
     "setup:shift-oven": "tsx scripts/setup-shift-oven.ts",
+    "cek:resep-hpp": "tsx scripts/cek-resep-hpp.ts",
     "cek:absen": "tsx scripts/cek-absen.ts",
     "perbaiki:draf-ganda": "tsx scripts/perbaiki-draf-ganda.ts",
     "cek:selisih-stok": "tsx scripts/cek-selisih-stok.ts",

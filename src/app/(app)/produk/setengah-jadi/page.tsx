@@ -19,7 +19,7 @@ export const metadata = { title: "Barang Setengah Jadi" };
 
 type Opts = Awaited<ReturnType<typeof recipeOptions>>;
 
-function SemiForm({ item, opts, initial }: { item?: Item; opts: Opts; initial?: RecipeInitial }) {
+function SemiForm({ item, opts, initial, isOwner }: { item?: Item; opts: Opts; initial?: RecipeInitial; isOwner: boolean }) {
   return (
     <ModalForm action={saveSemi} className="space-y-3">
       {item && <input type="hidden" name="id" value={item.id} />}
@@ -27,7 +27,7 @@ function SemiForm({ item, opts, initial }: { item?: Item; opts: Opts; initial?: 
       <Field label="Nama Barang Setengah Jadi"><input name="name" defaultValue={item?.name} placeholder="Cth: Adonan Gypsum Super / Patung Mentah Unpainted" className="input" required /></Field>
       <Field label="Satuan"><select name="unit" defaultValue={item?.unit ?? "pcs"} className="input">{unitOptions(BASE_UNITS, item?.unit).map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}</select></Field>
       <Field label="Kategori Barang"><input value="Barang Setengah Jadi" className="input bg-slate-100 dark:bg-slate-800" readOnly /></Field>
-      <RecipeEditor components={opts.components.filter((c) => c.id !== item?.id)} tasks={opts.tasks} overheads={opts.overheads} initial={initial} />
+      <RecipeEditor components={opts.components.filter((c) => c.id !== item?.id)} tasks={opts.tasks} overheads={opts.overheads} coverage={opts.coverage} isOwner={isOwner} initial={initial} />
       <div className="grid grid-cols-2 gap-3">
         {!item && <Field label="Stok Awal" hint="Nilainya = HPP modal di atas"><input name="openingQty" inputMode="decimal" placeholder="0" className="input" /></Field>}
         <Field label="Catatan Keterangan" className={item ? "col-span-2" : ""}><input name="note" defaultValue={item?.note ?? ""} placeholder="Opsional (cth: Waktu kering 2 hari)" className="input" /></Field>
@@ -48,7 +48,7 @@ export default async function SetengahJadiPage() {
   return (
     <div className="space-y-5">
       <PageHeader title="Produk & HPP" subtitle="HPP modal barang setengah jadi = komponen (bahan baku / setengah jadi lain) + tenaga kerja borongan + overhead" actions={manage && (
-        <Modal trigger="+ Barang Setengah Jadi" title="Tambah Barang Setengah Jadi" wide><SemiForm opts={opts} /></Modal>
+        <Modal trigger="+ Barang Setengah Jadi" title="Tambah Barang Setengah Jadi" wide><SemiForm opts={opts} isOwner={user.role === "OWNER"} /></Modal>
       )} />
       <ProdukTabs current="bsj" />
       {rows.length === 0 ? <Empty title="Belum ada barang setengah jadi" hint="Klik + Barang Setengah Jadi untuk menyusun resepnya." /> : (
@@ -62,7 +62,7 @@ export default async function SetengahJadiPage() {
             );
             return (
               <Card key={r.item.id} title={`${r.item.name} · ${r.item.sku}`} actions={manage && (
-                <Modal trigger={hasRecipe ? "Ubah" : "Atur Resep"} triggerClass="btn-secondary btn-sm" title={`Ubah ${r.item.name}`} wide><SemiForm item={r.item} opts={opts} initial={initial} /></Modal>
+                <Modal trigger={hasRecipe ? "Ubah" : "Atur Resep"} triggerClass="btn-secondary btn-sm" title={`Ubah ${r.item.name}`} wide><SemiForm item={r.item} opts={opts} initial={initial} isOwner={user.role === "OWNER"} /></Modal>
               )}>
                 {!hasRecipe ? <p className="text-sm text-slate-500">Belum ada resep. HPP memakai harga beli/rata-rata: {idr(costs.get(r.item.id)?.cur ?? 0)}</p> : (
                   <>

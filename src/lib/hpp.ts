@@ -18,7 +18,7 @@ export function margin(price: number, hpp: number) {
 }
 
 /** `mat` = nilai BAHAN saja (harga beli terbaru), tanpa tenaga kerja & overhead di resep mana pun (untuk nilai buku persediaan) */
-export type UnitCost = { cur: number; prev: number; fromRecipe: boolean; mat: number };
+export type UnitCost = { cur: number; prev: number; fromRecipe: boolean; mat: number; /** Bagian upah borongan & overhead (termasuk dari setengah jadi di dalamnya) di harga `cur` */ labor?: number; overhead?: number };
 
 export const PACKAGING_CATEGORY = "Kemasan & Packaging";
 
@@ -31,7 +31,9 @@ async function capacity(db: DB) {
   return Number((await db.setting.findUnique({ where: { key: "overhead_capacity_pcs" } }))?.value ?? 0) || 0;
 }
 
-const laborOf = (rows: { rate: bigint }[]) => rows.reduce((s, r) => s + Number(r.rate), 0);
+/** Upah borongan satu baris resep: otomatis dari Tugas & Tarif (selalu tarif terbaru) kecuali override Owner / tanpa tugas */
+export const laborRate = (r: { rate: bigint; override?: boolean; task?: { ratePerPcs: bigint } | null }) => (r.task && !r.override ? Number(r.task.ratePerPcs) : Number(r.rate));
+const laborOf = (rows: { rate: bigint; override?: boolean; task?: { ratePerPcs: bigint } | null }[]) => rows.reduce((s, r) => s + laborRate(r), 0);
 const overheadOf = (rows: { factor: unknown; overhead: { monthlyAmount: bigint; outputPerMonth: number } }[], cap: number) =>
   Math.round(rows.reduce((s, r) => s + overheadUnitCost(r.overhead, cap) * Number(r.factor), 0));
 
@@ -41,7 +43,7 @@ const overheadOf = (rows: { factor: unknown; overhead: { monthlyAmount: bigint; 
  */
 export async function itemCosts(db: DB = prisma) {
   const [items, cap] = await Promise.all([
-    db.item.findMany({ include: { recipe: true, recipeLabor: true, recipeOverhead: { include: { overhead: true } } } }),
+    db.item.findMany({ include: { recipe: true, recipeLabor: { include: { task: { select: { ratePerPcs: true } } } }, recipeOverhead: { include: { overhead: true } } } }),
     capacity(db),
   ]);
   const byId = new Map(items.map((i) => [i.id, i]));
@@ -57,9 +59,13 @@ export async function itemCosts(db: DB = prisma) {
       return r;
     }
     stack.add(id);
-    let cur = laborOf(it.recipeLabor) + overheadOf(it.recipeOverhead, cap);
+    const ownLabor = laborOf(it.recipeLabor);
+    const ownOh = overheadOf(it.recipeOverhead, cap);
+    let cur = ownLabor + ownOh;
     let prev = cur;
     let mat = 0;
+    let labor = ownLabor;
+    let overhead = ownOh;
     for (const l of it.recipe) {
       const comp = byId.get(l.componentId);
       if (!comp) continue;
@@ -67,9 +73,11 @@ export async function itemCosts(db: DB = prisma) {
       cur += bomLineCost(l.qty, comp, c.cur);
       prev += bomLineCost(l.qty, comp, c.prev);
       mat += bomLineCost(l.qty, comp, c.mat);
+      labor += bomLineCost(l.qty, comp, c.labor ?? 0);
+      overhead += bomLineCost(l.qty, comp, c.overhead ?? 0);
     }
     stack.delete(id);
-    const r = { cur: Math.round(cur), prev: Math.round(prev), fromRecipe: true, mat };
+    const r = { cur: Math.round(cur), prev: Math.round(prev), fromRecipe: true, mat, labor: Math.round(labor), overhead: Math.round(overhead) };
     memo.set(id, r);
     return r;
   };
@@ -99,7 +107,7 @@ export async function createsCycle(db: DB, itemId: string, componentId: string) 
 export async function recipeCosting(itemId: string, costs?: Map<string, UnitCost>) {
   const map = costs ?? (await itemCosts());
   const cap = await capacity(prisma);
-  const it = await prisma.item.findUniqueOrThrow({ where: { id: itemId }, include: { recipe: { include: { component: true } }, recipeLabor: true, recipeOverhead: { include: { overhead: true } } } });
+  const it = await prisma.item.findUniqueOrThrow({ where: { id: itemId }, include: { recipe: { include: { component: true } }, recipeLabor: { include: { task: { select: { ratePerPcs: true } } } }, recipeOverhead: { include: { overhead: true } } } });
   const lines = it.recipe.map((l) => {
     const c = map.get(l.componentId) ?? { cur: 0, prev: 0, fromRecipe: false, mat: 0 };
     return { id: l.id, component: l.component, qty: Number(l.qty), useUnit: l.useUnit, unit: recipeUnit(l.component), unitPrice: costPerRecipeUnit(c.cur, l.component), cost: bomLineCost(l.qty, l.component, c.cur), fromRecipe: c.fromRecipe, noPrice: c.cur <= 0 };
@@ -133,7 +141,7 @@ export async function feeConfig(db: DB = prisma): Promise<FeeConfig> {
 export async function productCosting(productId: string, costs?: Map<string, UnitCost>) {
   const map = costs ?? (await itemCosts());
   const cap = await capacity(prisma);
-  const p = await prisma.product.findUniqueOrThrow({ where: { id: productId }, include: { bom: { include: { item: true } }, recipeLabor: true, recipeOverhead: { include: { overhead: true } } } });
+  const p = await prisma.product.findUniqueOrThrow({ where: { id: productId }, include: { bom: { include: { item: true } }, recipeLabor: { include: { task: { select: { ratePerPcs: true } } } }, recipeOverhead: { include: { overhead: true } } } });
   const unit = (i: Item) => map.get(i.id) ?? { cur: latestCost(i), prev: previousCost(i), fromRecipe: false, mat: latestCost(i) };
   const lines = p.bom.map((b) => {
     const c = unit(b.item);
@@ -147,10 +155,19 @@ export async function productCosting(productId: string, costs?: Map<string, Unit
   const labor = laborOf(p.recipeLabor) + Number(p.laborCost);
   const overhead = overheadOf(p.recipeOverhead, cap) + Number(p.overheadCost);
   const bookMaterial = await bomMaterialCost(prisma, productId);
+  // Rincian bertingkat: bagian bahan, upah borongan & overhead yang SUDAH ada di dalam setengah jadi (tidak diisi lagi di resep ini)
+  const embedded = p.bom.reduce((a, b) => {
+    const c = unit(b.item);
+    if (!c.fromRecipe) return a;
+    a.material += bomLineCost(b.qty, b.item, c.mat);
+    a.labor += bomLineCost(b.qty, b.item, c.labor ?? 0);
+    a.overhead += bomLineCost(b.qty, b.item, c.overhead ?? 0);
+    return a;
+  }, { material: 0, labor: 0, overhead: 0 });
   const hpp = calcHpp(material + packaging, labor, overhead);
   const prevHpp = prevMaterial + labor + overhead;
   const overheadRows = new Map(p.recipeOverhead.map((o) => [o.id, overheadUnitCost(o.overhead, cap) * Number(o.factor)]));
-  return { material, packaging, labor, overhead, hpp, prevHpp, trend: trendOf(hpp, prevHpp), lines, bookMaterial, recipeLabor: p.recipeLabor, recipeOverhead: p.recipeOverhead, overheadRows, legacy: Number(p.laborCost) + Number(p.overheadCost), product: p };
+  return { material, packaging, labor, overhead, embedded: { material: Math.round(embedded.material), labor: Math.round(embedded.labor), overhead: Math.round(embedded.overhead) }, hpp, prevHpp, trend: trendOf(hpp, prevHpp), lines, bookMaterial, recipeLabor: p.recipeLabor, recipeOverhead: p.recipeOverhead, overheadRows, legacy: Number(p.laborCost) + Number(p.overheadCost), product: p };
 }
 
 /** Saran harga per kanal sesuai target margin, plus laba bersih harga yang berlaku sekarang */
@@ -179,7 +196,7 @@ export async function latestPrices(productId: string) {
 
 export type RecipeInput = {
   comp: { componentId: string; qty: number; useUnit: string | null }[];
-  labor: { taskId: string | null; name: string; rate: number }[];
+  labor: { taskId: string | null; name: string; rate: number; override?: boolean }[];
   oh: { overheadId: string; factor: number }[];
 };
 

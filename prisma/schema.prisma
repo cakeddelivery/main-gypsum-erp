@@ -1424,6 +1424,8 @@ model RecipeLabor {
   task      PieceTask? @relation(fields: [taskId], references: [id])
   name      String
   rate      BigInt
+  /// true = tarif diketik manual (override Owner / pekerjaan tanpa Tugas & Tarif); false = otomatis dari Tugas & Tarif (taskId) dan selalu mengikuti tarif terbaru
+  override  Boolean    @default(false)
 }
 
 /// Overhead dalam resep: beban per pcs overhead master × faktor
