@@ -141,13 +141,13 @@ export function useSubmitDone(name?: string, value?: string) {
   return done && (!by || !name || by === `${name}=${value}`);
 }
 
-export function Submit({ children, className = "btn-primary", pendingText = "Menyimpan…", name, value, confirm }: { children: React.ReactNode; className?: string; pendingText?: string; name?: string; value?: string; /** Konfirmasi khusus tombol ini (mis. "Kirim" di form yang juga punya "Simpan draf") */ confirm?: string }) {
+export function Submit({ children, className = "btn-primary", pendingText = "Menyimpan…", name, value, confirm, disabled }: { children: React.ReactNode; /** Nonaktifkan tombol (mis. sampai isian lengkap) */ disabled?: boolean; className?: string; pendingText?: string; name?: string; value?: string; /** Konfirmasi khusus tombol ini (mis. "Kirim" di form yang juga punya "Simpan draf") */ confirm?: string }) {
   const { pending, data } = useFormPending();
   const done = useSubmitDone(name, value);
   // Bila form punya beberapa tombol kirim (mis. Draft / Ajukan), hanya tombol yang ditekan yang berputar
   const mine = !name || !data || data.get(name) === value;
   return (
-    <button type="submit" className={`${className} ${pending && mine ? "is-pending" : ""} ${done ? "is-done" : ""}`} disabled={pending} aria-busy={pending && mine} name={name} value={value} onClick={(e) => {
+    <button type="submit" className={`${className} ${pending && mine ? "is-pending" : ""} ${done ? "is-done" : ""}`} disabled={pending || disabled} aria-busy={pending && mine} name={name} value={value} onClick={(e) => {
         if (confirm && !window.confirm(confirm)) return e.preventDefault();
         // name/value tombol tidak selalu ikut terkirim lewat form action React → simpan di kolom tersembunyi
         const form = e.currentTarget.form;

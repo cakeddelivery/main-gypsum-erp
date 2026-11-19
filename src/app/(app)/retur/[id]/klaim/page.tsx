@@ -5,6 +5,7 @@ import { prisma } from "@/lib/db";
 import { letterhead } from "@/lib/letterhead";
 import { PageHeader } from "@/components/ui";
 import { DownloadJpg } from "@/components/DownloadJpg";
+import { DocExport } from "@/components/DocSheet";
 import { ReturnClaimSheet, returnClaimInclude } from "./ReturnClaimSheet";
 
 export const metadata = { title: "Laporan Klaim Retur" };
@@ -20,11 +21,11 @@ export default async function ReturKlaim({ params }: { params: Promise<{ id: str
     <div className="mx-auto max-w-3xl space-y-4">
       <PageHeader title={`Laporan klaim ${r.number}`} subtitle={r.trackingNo} />
       <div className="flex flex-wrap gap-2">
-        <DownloadJpg targetId="klaim-retur" filename={file} label="🖼️ Unduh JPG" />
-        <a href={`/cetak/retur/${r.id}?print=1`} target="_blank" rel="noopener" className="btn-secondary">📄 Unduh PDF</a>
+        <DownloadJpg targetId="klaim-retur" filename={file} label="👁 Lihat dokumen" className="btn-primary" pdfHref={`/cetak/retur/${r.id}?print=1`} />
         <Link href={`/retur/${r.id}`} className="btn-secondary">Kembali</Link>
       </div>
-      <div className="overflow-x-auto rounded-xl border border-slate-200"><ReturnClaimSheet r={r} lh={await letterhead()} id="klaim-retur" /></div>
+      <p className="rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">Dokumen klaim siap. Ketuk <b>Lihat dokumen</b> untuk pratinjau, lalu unduh sebagai JPG atau PDF.</p>
+      <DocExport><ReturnClaimSheet r={r} lh={await letterhead()} id="klaim-retur" /></DocExport>
     </div>
   );
 }

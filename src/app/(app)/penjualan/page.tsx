@@ -68,6 +68,7 @@ export default async function PenjualanPage({ searchParams }: { searchParams: Pr
         title="Penjualan"
         subtitle="Penjualan offline (pelanggan langsung / WhatsApp). Pendapatan, stok barang jadi, HPP, dan piutang tercatat sekaligus."
         actions={<>
+          <Link href="/penjualan/invoice" className="btn-secondary">Invoice</Link>
           <DownloadCsv filename={`penjualan-${from}-${to}`} rows={[["No.", "Tanggal", "Toko", "Pelanggan", "Barang", "Subtotal", "Diskon", "Ongkir", "Tagihan", "Dibayar", "Sisa", "HPP", "Status"], ...list.map((s) => [s.number, fmtDate(s.date), stores.find((x) => x.id === s.storeId)?.code ?? "", s.customerName, s.lines.map((l) => `${l.item.name} × ${Number(l.qty)}`).join("; "), Number(s.subtotal), Number(s.discount), Number(s.shipping), Number(s.total), Number(s.paid), Number(s.total - s.paid), Number(s.hpp), saleStatus(s).label])]} />
           {canManage && (
             <Modal trigger="+ Penjualan" title="Penjualan baru" wide>
