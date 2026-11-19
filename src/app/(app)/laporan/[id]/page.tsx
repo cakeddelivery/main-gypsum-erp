@@ -13,6 +13,7 @@ import { REJECT_STAGE_LABEL, stageOfTemplate } from "@/lib/rejectShared";
 import { storedRejects } from "@/lib/productionReject";
 import { computeShiftBalance } from "@/lib/shiftBalance";
 import { lpgTotalAset, previousLpg, storedLpg } from "@/lib/lpg";
+import { usageCheck } from "@/lib/usageStandard";
 import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
 import { resultPlaces } from "@/lib/resultCountGroups";
 import { divisionPendingReturns } from "@/lib/borongan";
@@ -114,6 +115,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const lpgProps = template === "PRODUKSI"
     ? await (async () => { const pv = await previousLpg(r.id, r.date); return { cur: storedLpg(work), prev: pv ? { penuh: pv.penuh, aktif: pv.aktif, kosong: pv.kosong } : null, total: await lpgTotalAset() }; })()
     : null;
+  const usageRows = r.status === "DRAFT" ? [] : await usageCheck(r.id).catch(() => []);
   const mixDefault = template === "GIFTBOX" ? await mostStockedVariant() : null;
 
   return (
@@ -315,6 +317,26 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                     <td className="num">{f3(x.pakai + x.jual + x.outLain)}</td><td className="num">{f3(x.outBorongan)}</td><td className="num">{f3(x.reject)}</td>
                     <td className="num font-semibold">{f3(x.systemClosing)}</td><td className="num">{x.counted == null ? "-" : f3(x.counted)}</td>
                     <td className={`num font-semibold ${x.diff == null || x.diff === 0 ? "text-slate-400" : x.diff < 0 ? "text-rose-700" : "text-emerald-700"}`}>{x.diff == null ? "-" : `${x.diff > 0 ? "+" : ""}${f3(x.diff)}`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+      {usageRows.length > 0 && (
+        <Card title="Pemakaian vs standar">
+          <p className="mb-2 text-xs text-slate-500">Standar = resep × hasil shift; aktual = awal + masuk − sisa hitung di stock opname laporan. Merah = lebih dari 15% di atas standar.</p>
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead><tr><th>Bahan</th><th className="num">Standar</th><th className="num">Aktual</th><th className="num">Selisih</th></tr></thead>
+              <tbody>
+                {usageRows.map((x) => (
+                  <tr key={x.itemId}>
+                    <td className="!whitespace-normal">{x.name}{x.over && <> <Badge tone="red">lebih</Badge></>}</td>
+                    <td className="num">{Number(x.standard.toFixed(2)).toLocaleString("id-ID")} {x.unit}</td>
+                    <td className="num">{Number(x.actual.toFixed(2)).toLocaleString("id-ID")}</td>
+                    <td className={`num font-semibold ${x.over ? "text-rose-700" : "text-slate-500"}`}>{x.overPct == null ? "-" : `${x.overPct > 0 ? "+" : ""}${x.overPct}%`}</td>
                   </tr>
                 ))}
               </tbody>
