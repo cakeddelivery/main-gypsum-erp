@@ -1,4 +1,5 @@
 import { verifyContract } from "@/lib/contract";
+import { verifyTermination } from "@/lib/termination";
 import { fmtDateTime, fmtDay } from "@/lib/time";
 
 export const dynamic = "force-dynamic";
@@ -7,11 +8,27 @@ export const metadata = { title: "Verifikasi dokumen", robots: { index: false } 
 /** Halaman publik hasil pindai QR: membuktikan dokumen asli (tanpa NIK, alamat, atau gaji) */
 export default async function Verifikasi({ params }: { params: Promise<{ kode: string }> }) {
   const { kode } = await params;
-  const v = /^MG-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(kode) ? await verifyContract(kode) : null;
+  const valid = /^MG-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(kode);
+  const v = valid ? await verifyContract(kode) : null;
+  const phk = valid && !v ? await verifyTermination(kode) : null;
   return (
     <main className="theme-light mx-auto min-h-screen max-w-lg bg-white p-5 text-slate-900">
       <h1 className="mb-1 text-xl font-extrabold">Verifikasi dokumen</h1>
-      {!v ? (
+      {phk ? (
+        <div className="mt-4 space-y-3">
+          <div className={`rounded-xl border p-4 ${phk.intact && phk.status !== "BATAL" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-300 bg-amber-50 text-amber-900"}`}>
+            <b>{phk.status === "BATAL" ? "Surat ini telah DIBATALKAN" : phk.intact ? "Surat asli dan tidak berubah" : "Isi surat tidak cocok dengan hash"}</b>
+          </div>
+          <dl className="grid grid-cols-[130px_1fr] gap-y-1.5 text-sm">
+            <dt className="text-slate-500">Nomor</dt><dd className="font-mono">{phk.number}</dd>
+            <dt className="text-slate-500">Jenis</dt><dd>Surat Pengakhiran Hubungan Kerja</dd>
+            <dt className="text-slate-500">Karyawan</dt><dd>{phk.employee} · {phk.division}</dd>
+            <dt className="text-slate-500">Berlaku efektif</dt><dd>{fmtDay(phk.effective)}</dd>
+            <dt className="text-slate-500">Diterbitkan HRD</dt><dd>{phk.issuedBy} · {fmtDateTime(phk.issuedAt)}</dd>
+          </dl>
+          <p className="break-all rounded-lg bg-slate-50 p-2 font-mono text-[11px] text-slate-500">SHA-256 isi: {phk.contentHash}</p>
+        </div>
+      ) : !v ? (
         <div role="alert" className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-rose-800">
           <b>Dokumen tidak ditemukan.</b>
           <p className="mt-1 text-sm">Kode verifikasi tidak dikenal atau dokumen belum ditandatangani. Pastikan kode di surat sama dengan yang dipindai.</p>

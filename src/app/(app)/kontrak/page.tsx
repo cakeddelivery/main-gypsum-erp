@@ -21,7 +21,7 @@ export default async function KontrakPage({ searchParams }: { searchParams: Prom
   const sp = await searchParams;
   const hrd = canManageContracts(user);
   const tab = hrd && sp.tab === "pengaturan" ? "pengaturan" : "kontrak";
-  const tabs = hrd ? [{ key: "kontrak", label: "Kontrak", href: "/kontrak" }, { key: "pengaturan", label: "Pengaturan kontrak", href: "/kontrak?tab=pengaturan" }] : [];
+  const tabs = hrd ? [{ key: "kontrak", label: "Kontrak", href: "/kontrak" }, { key: "pengaturan", label: "Pengaturan kontrak", href: "/kontrak?tab=pengaturan" }, { key: "pengakhiran", label: "Pengakhiran kontrak", href: "/kontrak/pengakhiran" }] : [];
   const statusFilter = sp.status && sp.status in STATUS ? (sp.status as keyof typeof STATUS) : null;
   const rows = await prisma.contract.findMany({
     where: hrd ? (statusFilter ? { status: statusFilter } : {}) : { employeeId: user.employeeId ?? "-", status: { in: ["HRD_TTD", "AKTIF"] } },
