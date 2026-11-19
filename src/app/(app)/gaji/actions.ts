@@ -104,12 +104,13 @@ export const savePieceTask = action(
 );
 
 /** Alur klaim borongan per karyawan (PieceWork) ditutup: hasil & klaim baru lewat Borongan › Klaim Upah */
-const OLD_PIECE_FLOW = "Alur lama ini sudah read-only. Catat hasil dan klaim upah borongan lewat menu Borongan › Klaim Upah.";
+const OLD_PIECE_FLOW = "Alur lama ini sudah read-only (tidak ada karyawan aktif bersistem upah Borongan/Campuran). Catat hasil dan klaim upah borongan lewat menu Borongan › Klaim Upah.";
+const pieceFlowOpen = async () => (await prisma.employee.count({ where: { status: { not: "NONAKTIF" }, wageType: { in: ["BORONGAN", "CAMPURAN"] } } })) > 0;
 
 export const addPieceWork = action(
   "payroll.manage",
   async (fd, user) => {
-    if (fd) throw new Error(OLD_PIECE_FLOW);
+    if (!(await pieceFlowOpen())) throw new Error(OLD_PIECE_FLOW);
     const qty = int(fd, "qty");
     if (qty <= 0) throw new Error("Jumlah harus > 0");
     const task = await prisma.pieceTask.findUniqueOrThrow({ where: { id: str(fd, "taskId") } });
@@ -136,7 +137,7 @@ export const deletePieceWork = action(
 export const claimPieces = action(
   "payroll.manage",
   async (fd, user) => {
-    if (fd) throw new Error(OLD_PIECE_FLOW);
+    if (!(await pieceFlowOpen())) throw new Error(OLD_PIECE_FLOW);
     const p = await createPieceClaim(str(fd, "employeeId"), str(fd, "upTo") || todayStr(), user);
     return `Klaim ${p.code} dibuat, lanjutkan setujui & bayar`;
   },

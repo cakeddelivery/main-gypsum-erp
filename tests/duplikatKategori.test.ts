@@ -32,7 +32,18 @@ const say = (text: string) => handleTelegramUpdate({ update_id: n, message: { me
 const tap = (data: string) => handleTelegramUpdate({ update_id: n, callback_query: { id: String(n++), from, data, message: { message_id: 1, chat } } } as never);
 const session = () => prisma.botSession.findUnique({ where: { chatId: String(TG) } });
 const btns = () => sent.at(-1)?.buttons?.flat().map((b) => b.callback_data) ?? [];
-const rnd = (base: number) => base + Math.floor(Math.random() * 900) * 100;
+/**
+ * Nominal acak yang TIDAK bulat (berakhiran 7) dan tidak dipakai dua kali di file ini. Cek transaksi mirip menganggap arah + nominal + hari yang sama
+ * sebagai duplikat, dan tes lain di rangkaian ini memakai nominal bulat (50.000, 100.000, ...): nominal acak kelipatan 100 bisa bertabrakan dengan
+ * transaksi hari itu → bot menanyakan "mirip" alih-alih membuat draft (sumber flaky yang sesekali muncul).
+ */
+const usedAmounts = new Set<number>();
+const rnd = (base: number) => {
+  for (;;) {
+    const v = base + Math.floor(Math.random() * 9000) * 10 + 7;
+    if (!usedAmounts.has(v)) return usedAmounts.add(v), v;
+  }
+};
 
 let owner: { id: string; name: string };
 let seabank: string;

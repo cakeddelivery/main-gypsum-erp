@@ -7,7 +7,7 @@ import { Badge, Card, Empty, Field, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { deletePieceWork } from "../actions";
+import { addPieceWork, claimPieces, deletePieceWork } from "../actions";
 import { Paged } from "@/components/Paged";
 
 export const metadata = { title: "Borongan & Klaim" };
@@ -21,17 +21,34 @@ export default async function BoronganPage() {
     prisma.pieceWork.findMany({ include: { employee: true, task: true }, orderBy: [{ date: "desc" }, { createdAt: "desc" }], take: 50 }),
     prisma.payrollPeriod.findMany({ where: { kind: "BORONGAN" }, include: { payslips: { include: { employee: true } } }, orderBy: { createdAt: "desc" }, take: 20 }),
   ]);
-  const openClaims = claims.filter((c) => c.status !== "DIBAYAR").length;
   const emp = await prisma.employee.findMany({ where: { id: { in: unclaimed.map((u) => u.employeeId) } } });
+  // Alur lama (per karyawan) ditutup otomatis bila tidak ada karyawan aktif bersistem upah Borongan/Campuran
+  const readOnly = workers.length === 0;
+  const openClaims = claims.filter((c) => c.status !== "DIBAYAR").length;
   const t = todayStr();
   const activeTasks = tasks.filter((x) => x.active);
   return (
     <div className="space-y-5">
-      <PageHeader title="Borongan & klaim (alur lama, read-only)" subtitle="Hanya untuk melihat riwayat dan menyelesaikan klaim yang sudah ada" actions={<Link href="/borongan?tab=klaim" className="btn-primary">Buka Borongan › Klaim Upah</Link>} />
-      <div role="note" className="space-y-1 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        <b>Gunakan Borongan › Klaim Upah.</b> Halaman ini tidak lagi menerima hasil atau klaim baru (alur lama per karyawan).
-        <div className="text-xs">Masih terbuka: <b>{unclaimed.length}</b> pekerja dengan hasil belum diklaim (Rp {Number(unclaimed.reduce((a, u) => a + Number(u._sum.amount ?? 0), 0)).toLocaleString("id-ID")}) · <b>{openClaims}</b> klaim belum dibayar · <b>{workers.length}</b> karyawan bersistem upah Borongan/Campuran.</div>
-      </div>
+      <PageHeader title="Borongan & klaim" subtitle="Pekerja borongan dibayar per piece; gajian kapan saja sesuai klaim pekerja" actions={readOnly ? <Link href="/borongan?tab=klaim" className="btn-primary">Buka Borongan › Klaim Upah</Link> :
+        <Modal trigger="+ Hasil borongan" title="Catat hasil borongan">
+          {workers.length === 0 ? <p className="text-sm text-slate-500">Belum ada karyawan dengan sistem upah Borongan. Ubah di menu Karyawan.</p> : (
+            <ModalForm action={addPieceWork} className="grid grid-cols-2 gap-3">
+              <Field label="Pekerja" className="col-span-2"><select name="employeeId" className="input">{workers.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></Field>
+              <Field label="Tugas"><select name="taskId" className="input">{activeTasks.map((x) => <option key={x.id} value={x.id}>{x.name} ({idr(x.ratePerPcs)}/pcs)</option>)}</select></Field>
+              <Field label="Jumlah (pcs)"><input name="qty" inputMode="numeric" className="input" required /></Field>
+              <Field label="Tanggal"><input type="date" name="date" defaultValue={t} className="input" /></Field>
+              <Field label="Catatan"><input name="note" className="input" /></Field>
+              <div className="col-span-2"><Submit>Simpan</Submit></div>
+            </ModalForm>
+          )}
+        </Modal>
+      } />
+      {readOnly && (
+        <div role="note" className="space-y-1 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <b>Gunakan Borongan › Klaim Upah.</b> Tidak ada karyawan aktif bersistem upah Borongan/Campuran, jadi halaman ini read-only (hanya riwayat dan penyelesaian klaim lama).
+          <div className="text-xs">Masih terbuka: <b>{unclaimed.length}</b> pekerja dengan hasil belum diklaim (Rp {Number(unclaimed.reduce((a, u) => a + Number(u._sum.amount ?? 0), 0)).toLocaleString("id-ID")}) · <b>{openClaims}</b> klaim belum dibayar.</div>
+        </div>
+      )}
       <div className="grid gap-5 lg:grid-cols-2">
         <Card title="Tarif tugas borongan" actions={<Link href="/borongan?tab=tugas" className="btn-secondary btn-sm">Atur Di Menu Borongan</Link>}>
           <ul className="divide-y divide-slate-100 text-sm">
@@ -57,7 +74,17 @@ export default async function BoronganPage() {
                   return (
                     <tr key={u.employeeId}>
                       <td>{e.name}</td><td>{fmtDay(u._min.date)}</td><td className="num">{(u._sum.qty ?? 0).toLocaleString("id-ID")}</td><td className="num font-semibold">{idr(u._sum.amount ?? 0)}</td>
-                      <td className="text-xs text-slate-400">klaim via Borongan</td>
+                      <td>
+                        {readOnly ? <span className="text-xs text-slate-400">klaim via Borongan</span> : (
+                        <Modal trigger="Klaim" triggerClass="btn-primary btn-sm" title={`Klaim borongan ${e.name}`}>
+                          <ModalForm action={claimPieces} className="space-y-3">
+                            <input type="hidden" name="employeeId" value={e.id} />
+                            <Field label="Klaim hasil sampai tanggal"><input type="date" name="upTo" defaultValue={t} className="input" /></Field>
+                            <p className="text-sm text-slate-500">Slip klaim dibuat sebagai draft, lalu disetujui & dibayar dari halaman penggajian.</p>
+                            <Submit>Buat klaim</Submit>
+                          </ModalForm>
+                        </Modal>)}
+                      </td>
                     </tr>
                   );
                 })}
