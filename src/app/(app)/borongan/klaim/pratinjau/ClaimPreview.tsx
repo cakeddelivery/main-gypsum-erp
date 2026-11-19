@@ -30,8 +30,7 @@ export function ClaimPreview({ d, lh, base, printHref, actions }: { d: ClaimDoc;
       </form>
       <ClaimTable b={d.b} workerOnly={!!d.worker} />
       <div className="flex flex-wrap gap-2">
-        <DownloadJpg targetId="klaim-doc" filename={`${file}.jpg`} label="🖼️ Unduh JPG" />
-        <a href={printHref} target="_blank" rel="noopener" className="btn-secondary">📄 Unduh PDF</a>
+        <DownloadJpg targetId="klaim-doc" filename={`${file}.jpg`} label="👁 Lihat dokumen" className="btn-primary" pdfHref={printHref} />
         <Link href="/borongan?tab=klaim" className="btn-secondary">Kembali</Link>
       </div>
       {actions}

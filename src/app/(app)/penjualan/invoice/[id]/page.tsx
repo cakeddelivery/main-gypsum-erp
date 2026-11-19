@@ -3,11 +3,13 @@ import { notFound } from "next/navigation";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { letterhead } from "@/lib/letterhead";
+import { idr } from "@/lib/money";
 import { PageHeader, Field } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
 import { DownloadJpg } from "@/components/DownloadJpg";
+import { DocExport } from "@/components/DocSheet";
 import { InvoiceDoc } from "../InvoiceDoc";
 import { voidInvoiceAction } from "../actions";
 
@@ -30,8 +32,7 @@ export default async function InvoiceDetail({ params }: { params: Promise<{ id: 
         subtitle={sale ? <>Dari penjualan <Link href={`/penjualan/${sale.id}`} className="link">{sale.number}</Link></> : "Dicatat manual"}
         actions={<>
           <Link href="/penjualan/invoice" className="btn-secondary">Kembali</Link>
-          <DownloadJpg targetId="invoice" filename={`invoice-${inv.number.replace(/\//g, "-")}`} />
-          <a href={`/cetak/invoice/${inv.id}?print=1`} target="_blank" className="btn-secondary">📄 Unduh PDF</a>
+          <DownloadJpg targetId="invoice" filename={`invoice-${inv.number.replace(/\//g, "-")}`} label="👁 Lihat invoice" className="btn-primary" pdfHref={`/cetak/invoice/${inv.id}?print=1`} />
           {user.can("sales.manage") && !inv.cancelledAt && (
             <Modal trigger="Batalkan" triggerClass="btn-secondary text-rose-700" title="Batalkan invoice">
               <ModalForm action={voidInvoiceAction} className="space-y-3">
@@ -43,7 +44,12 @@ export default async function InvoiceDetail({ params }: { params: Promise<{ id: 
           )}
         </>}
       />
-      <InvoiceDoc inv={inv} lh={lh} salePaid={sale?.paid} storeName={store?.name ?? inv.storeCode} />
+      <div className="card space-y-1 p-4 text-sm">
+        <div className="flex justify-between"><span className="text-slate-500">Pembeli</span><b>{inv.customerName}</b></div>
+        <div className="flex justify-between"><span className="text-slate-500">Total</span><b className="tabular-nums">{idr(inv.total)}</b></div>
+        <p className="pt-1 text-xs text-slate-500">Ketuk <b>Lihat invoice</b> untuk pratinjau, lalu unduh sebagai JPG atau PDF.</p>
+      </div>
+      <DocExport><InvoiceDoc inv={inv} lh={lh} salePaid={sale?.paid} storeName={store?.name ?? inv.storeCode} /></DocExport>
     </div>
   );
 }
