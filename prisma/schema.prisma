@@ -1008,6 +1008,33 @@ model BoronganMaterialReject {
   @@index([itemId])
 }
 
+/// Anomali stok/produksi yang terdeteksi (dedupe per jenis + ruang lingkup + tanggal). Dasar lonceng, push, rekap harian, dan halaman Kebocoran & Efisiensi.
+model StockAnomaly {
+  id         String    @id @default(cuid())
+  /// Kunci dedupe: jenis|ruang lingkup|tanggal
+  key        String    @unique
+  type       String
+  /// RENDAH / SEDANG / TINGGI
+  severity   String
+  title      String
+  detail     String?
+  /// Nilai rupiah yang terlibat (perkiraan kebocoran/tertahan)
+  value      BigInt    @default(0)
+  divisionId String?
+  itemId     String?
+  reportId   String?
+  date       DateTime  @db.Date
+  /// BARU / DILIHAT / DIJELASKAN
+  status     String    @default("BARU")
+  note       String?
+  noteBy     String?
+  pushedAt   DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([status, date])
+  @@index([type, date])
+}
+
 /// Barang masuk dari supplier/toko yang dilaporkan divisi di laporan shift (sebelum stok akhir dihitung).
 /// Belum ditautkan = sudah ada fisik di gudang tapi belum dicatat di Pembelian: stock opname menganggapnya sudah ada
 /// (tidak jadi pemakaian/HPP). Saat ditautkan ke Pembelian, stok masuk bertanggal waktu barang masuk (tidak dobel).
