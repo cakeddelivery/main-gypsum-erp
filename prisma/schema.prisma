@@ -2809,6 +2809,7 @@ model Termination {
   issuedById    String?
 
   @@index([employeeId, status])
+}
 
 // ============ INVOICE ============
 
