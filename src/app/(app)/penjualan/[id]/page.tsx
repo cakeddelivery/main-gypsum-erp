@@ -14,6 +14,8 @@ import { ModalForm } from "@/components/ModalForm";
 import { ProofPreview } from "@/components/ProofPreview";
 import { DownloadJpg } from "@/components/DownloadJpg";
 import { DocBar, DocExport, DocSection, DocSheet, DocSummary, DocTable, fmtLong } from "@/components/DocSheet";
+import { invoiceFromSaleAction } from "../invoice/actions";
+import { ActionForm } from "@/components/ActionForm";
 import { cancelSaleAction, cancelSalePaymentAction, receiveSalePayment } from "../actions";
 
 export const metadata = { title: "Detail Penjualan" };
@@ -47,6 +49,12 @@ export default async function PenjualanDetail({ params }: { params: Promise<{ id
         actions={<>
           <Link href="/penjualan" className="btn-secondary">Kembali</Link>
           {!s.cancelledAt && <DownloadJpg targetId="nota" filename={`nota-${s.number}`} label="👁 Lihat nota" />}
+          {canManage && !s.cancelledAt && (
+            <ActionForm action={invoiceFromSaleAction}>
+              <input type="hidden" name="saleId" value={s.id} />
+              <Submit className="btn-secondary" pendingText="…">Buat invoice</Submit>
+            </ActionForm>
+          )}
           {canManage && !s.cancelledAt && rest > 0 && (
             <Modal trigger="Terima pembayaran" title={`Pembayaran ${s.number}`}>
               <ModalForm action={receiveSalePayment} className="space-y-3">

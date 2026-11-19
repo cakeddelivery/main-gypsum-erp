@@ -2809,4 +2809,37 @@ model Termination {
   issuedById    String?
 
   @@index([employeeId, status])
+
+// ============ INVOICE ============
+
+/// Invoice bernomor resmi (INV/{MG|DL}/{TTS|SHP|OFF}/{YYMM}/{urut 4 digit}); isi dibekukan saat dibuat. Dari penjualan offline (saleId) atau dicatat manual untuk marketplace.
+model Invoice {
+  id              String    @id @default(cuid())
+  number          String    @unique
+  seq             Int
+  /// MG / DL
+  storeCode       String
+  /// TTS / SHP / OFF
+  channel         String
+  yymm            String
+  date            DateTime  @db.Date
+  storeId         String
+  saleId          String?   @unique
+  customerName    String
+  /// [{name, unit, qty, price, amount}]
+  lines           Json
+  subtotal        BigInt
+  discount        BigInt    @default(0)
+  shipping        BigInt    @default(0)
+  total           BigInt
+  /// Sudah dibayar (invoice dari penjualan memakai pembayaran penjualan yang berjalan)
+  paid            BigInt    @default(0)
+  note            String?
+  createdBy       String
+  createdAt       DateTime  @default(now())
+  cancelledAt     DateTime?
+  cancelReason    String?
+
+  @@index([date])
+  @@index([storeCode, channel, yymm])
 }
