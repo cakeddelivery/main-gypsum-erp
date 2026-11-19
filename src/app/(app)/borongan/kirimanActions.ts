@@ -61,7 +61,7 @@ export const simpanPembagian = action(
       return { pointId, workerId, taskId, qty: int(v) };
     });
     const scope = await boronganScope(prisma, user);
-    const r = await saveAllots(str(fd, "shipmentId"), rows, user, scope);
+    const r = await saveAllots(str(fd, "shipmentId"), rows, user, scope, { reason: optStr(fd, "reason") ?? "" });
     await backupAudit(scope, user, "pembagian ke pekerja", str(fd, "shipmentId"), "Driver / tim divisi");
     return r.left > 0 ? `Pembagian ${r.number} tersimpan. Masih sisa ${fmt(r.left)} pcs belum dibagi.` : `Pembagian ${r.number} tersimpan, semua sudah dibagi`;
   },
@@ -83,7 +83,7 @@ export const laporHasil = action(
     }
     const rows = [...m.values()];
     const scope = await boronganScope(prisma, user);
-    await saveWorkReport(str(fd, "shipmentId"), str(fd, "pointId"), rows, fd.get("checked") === "on", user, scope);
+    await saveWorkReport(str(fd, "shipmentId"), str(fd, "pointId"), rows, fd.get("checked") === "on", user, scope, { reason: optStr(fd, "reason") ?? "" });
     await backupAudit(scope, user, "lapor hasil titik", str(fd, "shipmentId"), "Koordinator titik");
     return `Laporan terkirim: setoran ${fmt(rows.reduce((a, r) => a + r.good, 0))}, reject ${fmt(rows.reduce((a, r) => a + r.reject, 0))}`;
   },
@@ -111,7 +111,7 @@ export const batalAmbil = action(
   [...PERMS],
   async (fd, user) => {
     const scope = await boronganScope(prisma, user);
-    await cancelPickup(str(fd, "id"), user, scope);
+    await cancelPickup(str(fd, "id"), user, scope, optStr(fd, "reason") ?? "");
     await backupAudit(scope, user, "batal pengambilan", str(fd, "id"), "pencatat pengambilan");
     return "Pengambilan dibatalkan";
   },

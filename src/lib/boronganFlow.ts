@@ -496,7 +496,7 @@ export function allotStockPlan(
   return plan;
 }
 
-export async function saveAllots(shipmentId: string, rows: AllotInput[], actor: Actor, scope: Scope) {
+export async function saveAllots(shipmentId: string, rows: AllotInput[], actor: Actor, scope: Scope, opts: { reason?: string } = {}) {
   const out = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "BoronganShipment" WHERE id = ${shipmentId} FOR UPDATE`;
     const s = await tx.boronganShipment.findUniqueOrThrow({ where: { id: shipmentId }, include: { tasks: { include: { task: { include: { inputs: { include: { item: true } } } } } }, lines: true, allots: true, pickups: { where: { status: { not: "DIBATALKAN" } }, include: { lines: true } } } });
@@ -504,6 +504,12 @@ export async function saveAllots(shipmentId: string, rows: AllotInput[], actor: 
     if (s.waitingSupport) throw new BoronganError(`${s.number} masih menunggu bahan pendukung dari tim Assembling`);
     const taskIds = s.tasks.map((t) => t.taskId);
     if (!canDistribute(scope, { mode: s.mode, taskIds })) throw new BoronganError(s.mode === "DRIVER" ? "Pembagian kiriman lewat driver dicatat driver" : "Pembagian kiriman ini dicatat tim divisi / Supervisor");
+    // Setelah ada pengambilan (AMB) pertama, pembagian dikunci: driver/tim divisi tidak bisa mengubah; hanya Supervisor/Owner (backup) dengan alasan
+    const reason = opts.reason?.trim() ?? "";
+    if (s.pickups.length > 0) {
+      if (!fullAccess(scope)) throw new BoronganError("Pembagian tidak bisa diubah setelah ada pengambilan setoran (AMB). Minta Supervisor/Owner.");
+      if (reason.length < 3) throw withField(new BoronganError("Pembagian sudah dikunci oleh pengambilan (AMB): tulis alasan perubahan"), "reason");
+    }
     const clean = new Map<string, AllotInput>();
     for (const r of rows) {
       if (!Number.isInteger(r.qty) || r.qty < 0) throw new BoronganError("Jumlah harus bilangan bulat, tidak minus");
@@ -555,7 +561,12 @@ export async function saveAllots(shipmentId: string, rows: AllotInput[], actor: 
         }
       }
     }
-    await audit(actor, "PEMBAGIAN_BORONGAN", "BoronganShipment", shipmentId, { number: s.number, baris: final.length, total: final.reduce((a, r) => a + r.qty, 0) }, tx);
+    // Audit nilai sebelum → sesudah per pekerja & jenis (nama dibaca untuk keterbacaan)
+    const names = new Map((await tx.boronganPerson.findMany({ where: { id: { in: [...new Set([...s.allots.map((a) => a.workerId), ...final.map((r) => r.workerId)])] } }, select: { id: true, name: true } })).map((x) => [x.id, x.name]));
+    const label = (a: { workerId: string; taskId: string }) => `${names.get(a.workerId) ?? a.workerId} · ${shortTaskName(s.tasks.find((t) => t.taskId === a.taskId)?.task.name ?? a.taskId)}`;
+    const sebelum = Object.fromEntries(s.allots.map((a) => [label(a), a.qty]));
+    const sesudah = Object.fromEntries(final.map((a) => [label(a), a.qty]));
+    await audit(actor, "PEMBAGIAN_BORONGAN", "BoronganShipment", shipmentId, { number: s.number, baris: final.length, total: final.reduce((a, r) => a + r.qty, 0), sebelum, sesudah, ...(reason ? { alasan: reason } : {}), ...(s.pickups.length ? { setelahPengambilan: true } : {}) }, tx);
     const left = s.tasks.reduce((a, t) => a + t.qty, 0) - final.reduce((a, r) => a + r.qty, 0);
     const perPoint = new Map<string, number>();
     for (const r of final) perPoint.set(r.pointId, (perPoint.get(r.pointId) ?? 0) + r.qty);
@@ -572,8 +583,8 @@ export async function saveAllots(shipmentId: string, rows: AllotInput[], actor: 
 
 export type ReportInput = { workerId: string; taskId: string; good: number; reject: number };
 
-export async function saveWorkReport(shipmentId: string, pointId: string, rows: ReportInput[], checked: boolean, actor: Actor, scope: Scope) {
-  const rep = await saveWorkReportTx(shipmentId, pointId, rows, checked, actor, scope);
+export async function saveWorkReport(shipmentId: string, pointId: string, rows: ReportInput[], checked: boolean, actor: Actor, scope: Scope, opts: { reason?: string } = {}) {
+  const rep = await saveWorkReportTx(shipmentId, pointId, rows, checked, actor, scope, opts);
   // Driver: setoran titik ini siap diambil
   const s = await prisma.boronganShipment.findUnique({ where: { id: shipmentId }, select: { number: true, mode: true, driver: { select: { userId: true } } } });
   const point = await prisma.boronganPoint.findUnique({ where: { id: pointId }, select: { name: true } });
@@ -584,7 +595,7 @@ export async function saveWorkReport(shipmentId: string, pointId: string, rows: 
   return rep;
 }
 
-async function saveWorkReportTx(shipmentId: string, pointId: string, rows: ReportInput[], checked: boolean, actor: Actor, scope: Scope) {
+async function saveWorkReportTx(shipmentId: string, pointId: string, rows: ReportInput[], checked: boolean, actor: Actor, scope: Scope, opts: { reason?: string } = {}) {
   return prisma.$transaction(async (tx) => {
     const s = await tx.boronganShipment.findUniqueOrThrow({ where: { id: shipmentId }, include: { tasks: true, allots: { where: { pointId } } } });
     if (s.cancelledAt) throw new BoronganError(`${s.number} sudah dibatalkan`);
@@ -600,8 +611,24 @@ async function saveWorkReportTx(shipmentId: string, pointId: string, rows: Repor
       lines.push(r);
     }
     if (lines.some((l) => l.reject > 0) && !checked) throw new BoronganError("Centang \"Reject sudah dicek koordinator\" dulu");
+    // Laporan pekerja yang pengambilannya (AMB) sudah dihitung divisi dikunci: koreksi hanya Supervisor/Owner dengan alasan
+    const counted = await tx.boronganPickupLine.findMany({ where: { pointId, pickup: { shipmentId, status: { in: ["DITERIMA", "KURANG"] } } }, select: { workerId: true, taskId: true } });
+    const lockedKeys = new Set(counted.map((l) => `${l.workerId}:${l.taskId}`));
+    const prevRep = await tx.boronganWorkReport.findFirst({ where: { shipmentId, pointId }, include: { lines: true }, orderBy: { createdAt: "desc" } });
+    const prevMap = new Map((prevRep?.lines ?? []).map((l) => [`${l.workerId}:${l.taskId}`, l]));
+    const key = (l: { workerId: string; taskId: string }) => `${l.workerId}:${l.taskId}`;
+    const changedLocked = lines.filter((l) => lockedKeys.has(key(l)) && ((prevMap.get(key(l))?.good ?? 0) !== l.good || (prevMap.get(key(l))?.reject ?? 0) !== l.reject));
+    const reason = opts.reason?.trim() ?? "";
+    if (changedLocked.length) {
+      if (!fullAccess(scope)) throw new BoronganError("Laporan pekerja yang setorannya sudah dihitung divisi tidak bisa diubah. Koreksi lewat Supervisor/Owner.");
+      if (reason.length < 3) throw withField(new BoronganError("Laporan ini sudah dihitung divisi: tulis alasan koreksi"), "reason");
+    }
     const rep = await tx.boronganWorkReport.create({ data: { shipmentId, pointId, checked, createdBy: actor.name, createdById: actor.id, lines: { create: lines } } });
-    await audit(actor, "LAPORAN_HASIL_BORONGAN", "BoronganShipment", shipmentId, { number: s.number, titik: pointId, setoran: lines.reduce((a, l) => a + l.good, 0), reject: lines.reduce((a, l) => a + l.reject, 0) }, tx);
+    const names = new Map((await tx.boronganPerson.findMany({ where: { id: { in: lines.map((l) => l.workerId) } }, select: { id: true, name: true } })).map((x) => [x.id, x.name]));
+    const label = (l: { workerId: string; taskId: string }) => `${names.get(l.workerId) ?? l.workerId}:${l.taskId}`;
+    const sebelum = Object.fromEntries(lines.map((l) => [label(l), `${prevMap.get(key(l))?.good ?? 0}/${prevMap.get(key(l))?.reject ?? 0}`]));
+    const sesudah = Object.fromEntries(lines.map((l) => [label(l), `${l.good}/${l.reject}`]));
+    await audit(actor, "LAPORAN_HASIL_BORONGAN", "BoronganShipment", shipmentId, { number: s.number, titik: pointId, setoran: lines.reduce((a, l) => a + l.good, 0), reject: lines.reduce((a, l) => a + l.reject, 0), sebelum, sesudah, formatNilai: "setoran/reject", ...(reason ? { alasan: reason } : {}) }, tx);
     return rep;
   });
 }
@@ -652,15 +679,36 @@ export async function createPickup(shipmentId: string, rows: PickupInput[], acto
   return out.pickup;
 }
 
-/** Batalkan pengambilan yang belum diterima divisi */
-export async function cancelPickup(id: string, actor: Actor, scope: Scope) {
+/**
+ * Batalkan pengambilan (AMB). Wajib alasan (konfirmasi di layar).
+ *  - "Menunggu dihitung": pencatatnya (driver/tim) hanya untuk AMB MILIKNYA dan dibuat HARI INI (zona Asia/Jakarta); setelah itu hanya Supervisor/Owner.
+ *  - Sudah dihitung/diterima divisi (Diterima/Kurang): hanya Owner, dengan pembalik (setoran, stok & jurnal dibalik; upah yang sudah dibayar menolak).
+ *  - Koordinator tidak pernah boleh membatalkan.
+ */
+export async function cancelPickup(id: string, actor: Actor, scope: Scope, reason = "") {
+  const why = reason.trim();
+  if (why.length < 3) throw withField(new BoronganError("Tulis alasan pembatalan"), "reason");
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "BoronganPickup" WHERE id = ${id} FOR UPDATE`;
-    const p = await tx.boronganPickup.findUniqueOrThrow({ where: { id }, include: { shipment: { include: { tasks: true } } } });
-    if (p.status !== "DIBAWA") throw new BoronganError("Pengambilan yang sudah diterima divisi tidak bisa dibatalkan");
-    if (!fullAccess(scope) && p.createdById !== actor.id) throw new BoronganError("Hanya pencatat, Supervisor, atau Owner yang bisa membatalkan");
+    const p = await tx.boronganPickup.findUniqueOrThrow({ where: { id }, include: { shipment: { include: { tasks: true } }, results: true, lines: true } });
+    if (p.status === "DIBATALKAN") throw new BoronganError(`${p.number} sudah dibatalkan`);
+    if (isCoordinatorScope(scope)) throw new BoronganError("Koordinator tidak bisa membatalkan pengambilan");
+    const before = { status: p.status, setoran: p.lines.reduce((a, l) => a + l.qty, 0) };
+    if (p.status !== "DIBAWA") {
+      if (!scope.owner) throw new BoronganError("Pengambilan yang sudah dihitung/diterima divisi hanya bisa dibatalkan Owner");
+      if (p.results.some((r) => r.settlementId)) throw new BoronganError("Upah pengambilan ini sudah dibayar, tidak bisa dibatalkan");
+      for (const r of p.results) await unpostResultTx(tx, r.id, actor, `Pembatalan ${p.number}: ${why}`);
+      await reverseMovementsByRef(tx, `AMB:${p.number}`, `BATAL-AMB:${p.number}`, `Pembatalan ${p.number}: ${why}`, actor);
+      await tx.boronganPickup.update({ where: { id }, data: { status: "DIBATALKAN" } });
+      await audit(actor, "AMBIL_SETORAN_DIBALIK_OWNER", "BoronganPickup", id, { number: p.number, alasan: why, sebelum: before, sesudah: { status: "DIBATALKAN" } }, tx);
+      return;
+    }
+    if (!fullAccess(scope)) {
+      if (p.createdById !== actor.id) throw new BoronganError("Hanya pencatatnya, Supervisor, atau Owner yang bisa membatalkan pengambilan ini");
+      if (todayStr(p.createdAt) !== todayStr()) throw new BoronganError("Pengambilan hanya bisa dibatalkan pencatatnya pada hari yang sama. Minta Supervisor/Owner.");
+    }
     await tx.boronganPickup.update({ where: { id }, data: { status: "DIBATALKAN" } });
-    await audit(actor, "AMBIL_SETORAN_DIBATALKAN", "BoronganPickup", id, { number: p.number }, tx);
+    await audit(actor, "AMBIL_SETORAN_DIBATALKAN", "BoronganPickup", id, { number: p.number, alasan: why, sebelum: before, sesudah: { status: "DIBATALKAN" } }, tx);
   });
 }
 
