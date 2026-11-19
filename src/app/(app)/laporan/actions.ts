@@ -14,7 +14,7 @@ import { STAGE_LABEL } from "@/lib/stock";
 import { applyShiftStockCount } from "@/lib/shiftReportStock";
 import { postShiftWork } from "@/lib/shiftReportFlow";
 import { assertMemberOwnsReport, memberReportSlot, moveReportShift } from "@/lib/reportShift";
-import { SAMPLE_KEY, SAMPLE_SOURCES, applyReportSamples, isSampleTemplate, parseSamples, storedSamples } from "@/lib/affiliateSample";
+import { SAMPLE_KEY, SAMPLE_PLATFORMS, applyReportSamples, isSampleTemplate, parseSamples, storedSamples } from "@/lib/affiliateSample";
 import { sendShiftReportJpg } from "@/lib/shiftReportJpg";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { receiptReportLines } from "@/lib/boronganReceipt";
@@ -217,6 +217,7 @@ async function sendReportData(id: string, user: User): Promise<string> {
     // Sample affiliator: dicatat terpisah dari resi penjualan; stok keluar + Beban Promosi & Sample bila sakelar menyala
     const sampleRes = await applyReportSamples(id, user);
     const sampleItems = new Map((await prisma.item.findMany({ where: { id: { in: storedSamples(r.work).map((x) => x.itemId) } }, select: { id: true, name: true } })).map((i) => [i.id, i.name]));
+    const sampleStoreNames = new Map((await prisma.store.findMany({ select: { id: true, name: true } })).map((x) => [x.id, x.name]));
     const receipts = await prisma.shiftReceipt.findMany({ where: { reportId: id }, include: { item: true }, orderBy: { number: "asc" } });
     const template = r.division.reportTemplate;
     const checklist = toEntries(r.checklist) as ChecklistEntry[];
@@ -231,7 +232,7 @@ async function sendReportData(id: string, user: User): Promise<string> {
         ...(tgt ? [tgt.reached ? targetLine(tgt) : `<b>${targetLine(tgt)}</b>`] : []),
         "",
         ...workLines(template, work).map(esc),
-        ...sampleLines(r.work, sampleItems).map(esc),
+        ...sampleLines(r.work, sampleItems, sampleStoreNames).map(esc),
         ...(await boronganLines(template, r.date, r.divisionId)).map(esc),
         ...(await receiptReportLines(r.divisionId, r.date)).map((l) => (l.includes("⚠") ? `<b>${esc(l)}</b>` : esc(l))),
         ...(resultStatus ? resultLines(resultStatus).map((l) => (l.includes("⚠") ? `<b>${esc(l)}</b>` : esc(l))) : []),
@@ -286,10 +287,10 @@ async function sendReportData(id: string, user: User): Promise<string> {
 }
 
 /** Baris sample affiliator untuk pesan Telegram (bukan resi penjualan) */
-function sampleLines(work: unknown, names: Map<string, string>): string[] {
+function sampleLines(work: unknown, names: Map<string, string>, stores: Map<string, string>): string[] {
   const list = storedSamples(work);
   if (!list.length) return [];
-  return [`SAMPLE AFFILIATOR (${list.length} resi/kiriman sample, tidak dihitung resi penjualan)`, ...list.map((x) => `• ${names.get(x.itemId) ?? "Produk"} × ${x.qty} → ${x.affiliator} (${SAMPLE_SOURCES[x.source]?.split(" ")[0] ?? x.source}${x.trackingNo ? `, resi ${x.trackingNo}` : ""})`)];
+  return [`SAMPLE AFFILIATOR (${list.reduce((a, x) => a + x.qty, 0)} pcs, tidak dihitung resi penjualan)`, ...list.map((x) => `• ${names.get(x.itemId) ?? "Produk"} × ${x.qty} — ${SAMPLE_PLATFORMS[x.platform] ?? x.platform} · ${stores.get(x.storeId) ?? "toko"}`)];
 }
 
 /** Barang masuk hari ini (dari supplier/toko), dicatat sebelum stok akhir; foto nota opsional */

@@ -9,7 +9,7 @@ import { refreshDraftChecklists } from "@/lib/shiftReportChecklist";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { withCurrentLimits } from "@/lib/shiftReportStock";
 import { flowEnabled } from "@/lib/shiftReportFlow";
-import { isSampleTemplate, storedSamples } from "@/lib/affiliateSample";
+import { isSampleTemplate, storedSamples, SAMPLE_PLATFORMS } from "@/lib/affiliateSample";
 import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
 import { resultPlaces } from "@/lib/resultCountGroups";
 import { divisionPendingReturns } from "@/lib/borongan";
@@ -89,7 +89,8 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   }));
   const banks = [...bankRows].sort((a, b) => (a.code === "KAS" ? -1 : b.code === "KAS" ? 1 : 0)).map((b) => ({ id: b.id, name: b.name }));
   const sampleNames = new Map((await prisma.item.findMany({ where: { id: { in: storedSamples(work).map((x) => x.itemId) } }, select: { id: true, name: true } })).map((i) => [i.id, i.name]));
-  const sampleLines = storedSamples(work).length ? ["SAMPLE AFFILIATOR (tidak dihitung resi penjualan)", ...storedSamples(work).map((x) => `${sampleNames.get(x.itemId) ?? "Produk"} × ${x.qty} → ${x.affiliator} (${x.source}${x.trackingNo ? `, resi ${x.trackingNo}` : ""})`)] : [];
+  const sampleStores = isSampleTemplate(template) || storedSamples(work).length ? await prisma.store.findMany({ where: { active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [];
+  const sampleLines = storedSamples(work).length ? ["SAMPLE AFFILIATOR (tidak dihitung resi penjualan)", ...storedSamples(work).map((x) => `${sampleNames.get(x.itemId) ?? "Produk"} × ${x.qty} → ${SAMPLE_PLATFORMS[x.platform] ?? x.platform} · ${sampleStores.find((t) => t.id === x.storeId)?.name ?? "toko"}`)] : [];
   const extraLines = [...bLines, ...(await receiptReportLines(r.divisionId, r.date)), ...sampleLines, ...(resultStatus ? resultLines(resultStatus) : [])];
   const [rItems, rv] = await Promise.all([resultItems(r.divisionId), resultValues(work, r.division.reportTemplate)]);
   // Tahap "Stok jadi": hanya barang milik divisi ini, dikelompokkan produk induk → paket → series
@@ -171,6 +172,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   flow={flowOn && template ? flow : null}
                   sent={r.workPostedVersion > 0 || r.status !== "DRAFT"}
                   sampleItems={sampleItems}
+                  sampleStores={sampleStores}
                   samples={storedSamples(work)}
                 />
               </Modal>

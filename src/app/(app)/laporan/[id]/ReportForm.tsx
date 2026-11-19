@@ -35,7 +35,7 @@ import { FormDraft, clearFormDraft } from "@/components/FormDraft";
 import { CameraCapture } from "@/components/CameraCapture";
 import { readReopen, reportReopenKey, writeReopen } from "@/lib/reopen";
 import { setUploading } from "@/lib/appVersion";
-import { SAMPLE_SOURCES } from "@/lib/sampleShared";
+import { SAMPLE_PLATFORMS } from "@/lib/sampleShared";
 
 /** Baris pesanan yang sedang dikirim (Stok → Pembelian) untuk barang divisi ini */
 export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean; vendor: string; itemName: string; unit: string };
@@ -75,7 +75,8 @@ type Props = {
   sent: boolean;
   /** Sample affiliator (hanya Packing/Giftbox): produk jadi yang bisa dipilih + isian tersimpan */
   sampleItems: { id: string; name: string }[];
-  samples: { itemId: string; qty: number; source: string; affiliator: string; trackingNo?: string | null; note?: string | null }[];
+  sampleStores: { id: string; name: string }[];
+  samples: { itemId: string; qty: number; platform: string; storeId: string }[];
 };
 
 type Step = { key: string; label: string };
@@ -94,7 +95,7 @@ export function ReportForm(p: Props) {
     return w;
   });
   const [stock, setStock] = useState(p.stock);
-  const [samples, setSamples] = useState(() => p.samples.map((x, i) => ({ key: i, itemId: x.itemId, qty: String(x.qty), source: x.source, affiliator: x.affiliator, resi: x.trackingNo ?? "", note: x.note ?? "" })));
+  const [samples, setSamples] = useState(() => p.samples.map((x, i) => ({ key: i, itemId: x.itemId, qty: String(x.qty), platform: x.platform, storeId: x.storeId })));
   const [checks, setChecks] = useState(() => p.checklist.map((c) => c.done));
 
   const setGrid = (s: GridSection, rows: GridRow[]) => setWork((w) => ({ ...w, [s.key]: rows }));
@@ -556,7 +557,7 @@ export function ReportForm(p: Props) {
         <section data-step="sample" className={`card space-y-3 p-4 ${show("sample")}`}>
           <input type="hidden" name="sm.present" value="1" />
           <h3 className="font-semibold text-slate-800">Sample affiliator</h3>
-          <p className="text-xs text-slate-500">Produk yang dikirim sebagai sample untuk affiliator (TikTok/Shopee Rp0 atau offline). Bukan resi penjualan; stok keluar dan nilainya jadi beban promosi. Kosongkan bila tidak ada.</p>
+          <p className="text-xs text-slate-500">Produk yang dikirim sebagai sample untuk affiliator (TikTok Shop / Shopee). Bukan resi penjualan; stok keluar dan nilainya jadi beban promosi. Kosongkan bila tidak ada.</p>
           {samples.map((x, i) => {
             const patch = (pp: Partial<typeof x>) => setSamples((xs) => xs.map((y, j) => (j === i ? { ...y, ...pp } : y)));
             return (
@@ -570,20 +571,19 @@ export function ReportForm(p: Props) {
                   <button type="button" className="grid h-9 w-7 shrink-0 place-items-center rounded-md text-rose-600 hover:bg-rose-50" onClick={() => setSamples((xs) => xs.filter((_, j) => j !== i))} aria-label={`Hapus sample ${i + 1}`}>✕</button>
                 </div>
                 <div className="flex gap-1.5">
-                  <select name="sm.source" value={x.source} onChange={(e) => patch({ source: e.target.value })} className="input w-36 shrink-0 px-2 text-sm" aria-label={`Sumber sample ${i + 1}`}>
-                    <option value="">— sumber —</option>
-                    {Object.entries(SAMPLE_SOURCES).map(([k, v]) => <option key={k} value={k}>{v.split(" ")[0]}</option>)}
+                  <select name="sm.platform" value={x.platform} onChange={(e) => patch({ platform: e.target.value })} className="input min-w-0 flex-1 px-2 text-sm" aria-label={`Platform sample ${i + 1}`}>
+                    <option value="">— platform —</option>
+                    {Object.entries(SAMPLE_PLATFORMS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
-                  <input name="sm.affiliator" value={x.affiliator} onChange={(e) => patch({ affiliator: e.target.value })} className="input min-w-0 flex-1 px-2 text-sm" placeholder="Nama / username affiliator" maxLength={80} />
-                </div>
-                <div className="flex gap-1.5">
-                  <input name="sm.resi" value={x.resi} onChange={(e) => patch({ resi: e.target.value })} className="input min-w-0 flex-1 px-2 text-sm" placeholder={x.source === "OFFLINE" ? "No. resi (bila ada)" : "No. resi marketplace"} maxLength={40} />
-                  <input name="sm.note" value={x.note} onChange={(e) => patch({ note: e.target.value })} className="input min-w-0 flex-1 px-2 text-sm" placeholder="Catatan (opsional)" maxLength={200} />
+                  <select name="sm.store" value={x.storeId} onChange={(e) => patch({ storeId: e.target.value })} className="input min-w-0 flex-1 px-2 text-sm" aria-label={`Toko sample ${i + 1}`}>
+                    <option value="">— toko —</option>
+                    {p.sampleStores.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
                 </div>
               </div>
             );
           })}
-          <button type="button" className="btn-secondary w-full" onClick={() => setSamples((xs) => [...xs, { key: Date.now() + xs.length, itemId: "", qty: "", source: "", affiliator: "", resi: "", note: "" }])}>+ Sample</button>
+          <button type="button" className="btn-secondary w-full" onClick={() => setSamples((xs) => [...xs, { key: Date.now() + xs.length, itemId: "", qty: "", platform: "", storeId: "" }])}>+ Sample</button>
         </section>
       )}
 

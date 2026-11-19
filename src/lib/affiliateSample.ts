@@ -6,28 +6,28 @@ import { locationSettings, recordMovement, reverseMovementsByRef, StockError } f
 import { recipeMaterialCost } from "./hpp";
 import { shiftEndAt } from "./shiftReport";
 import { addDays, dateOnly, todayStr } from "./time";
-import { SAMPLE_KEY, SAMPLE_SOURCES, isSampleTemplate, type SampleEntry } from "./sampleShared";
+import { SAMPLE_KEY, SAMPLE_PLATFORMS, isSampleTemplate, type SampleEntry } from "./sampleShared";
 
-export { SAMPLE_KEY, SAMPLE_SOURCES, isSampleTemplate, type SampleEntry } from "./sampleShared";
+export { SAMPLE_KEY, SAMPLE_PLATFORMS, isSampleTemplate, type SampleEntry } from "./sampleShared";
 
 type Tx = Prisma.TransactionClient;
 type Actor = { id: string; name: string };
 
-/** Isian form: sm.item / sm.qty / sm.source / sm.affiliator / sm.resi / sm.note (baris kosong diabaikan, setengah terisi = error) */
+/** Isian form: sm.item / sm.qty / sm.platform / sm.store (baris kosong diabaikan, setengah terisi = error) */
 export function parseSamples(getAll: (k: string) => string[]): SampleEntry[] {
-  const items = getAll("sm.item"), qtys = getAll("sm.qty"), sources = getAll("sm.source"), affs = getAll("sm.affiliator"), resi = getAll("sm.resi"), notes = getAll("sm.note");
+  const items = getAll("sm.item"), qtys = getAll("sm.qty"), platforms = getAll("sm.platform"), stores = getAll("sm.store");
   const out: SampleEntry[] = [];
   items.forEach((itemId, i) => {
     const raw = (qtys[i] ?? "").trim().replace(/\./g, "").replace(",", ".");
     const qty = raw === "" ? 0 : Number(raw);
-    const aff = (affs[i] ?? "").trim();
-    if (!itemId && !(qty > 0) && !aff) return;
+    const platform = platforms[i] ?? "";
+    const storeId = stores[i] ?? "";
+    if (!itemId && !(qty > 0) && !platform && !storeId) return;
     if (!itemId) throw new Error(`Sample baris ${i + 1}: pilih produknya`);
     if (!Number.isFinite(qty) || !(qty > 0) || !Number.isInteger(qty)) throw new Error(`Sample baris ${i + 1}: isi jumlah (bilangan bulat)`);
-    const source = sources[i] ?? "";
-    if (!SAMPLE_SOURCES[source]) throw new Error(`Sample baris ${i + 1}: pilih sumber (TikTok/Shopee/Offline)`);
-    if (!aff) throw new Error(`Sample baris ${i + 1}: isi nama/username affiliator`);
-    out.push({ itemId, qty, source, affiliator: aff.slice(0, 80), trackingNo: (resi[i] ?? "").trim().toUpperCase().slice(0, 40) || null, note: (notes[i] ?? "").trim().slice(0, 200) || null });
+    if (!SAMPLE_PLATFORMS[platform]) throw new Error(`Sample baris ${i + 1}: pilih platform (TikTok Shop / Shopee)`);
+    if (!storeId) throw new Error(`Sample baris ${i + 1}: pilih toko`);
+    out.push({ itemId, qty, platform, storeId });
   });
   return out;
 }
@@ -54,6 +54,9 @@ export async function applyReportSamples(reportId: string, actor: Actor, now: Da
     await undoSamples(tx, r.id, actor);
     if (!entries.length) return;
     const items = await tx.item.findMany({ where: { id: { in: entries.map((e) => e.itemId) } } });
+    const stores = await tx.store.findMany({ where: { id: { in: entries.map((e) => e.storeId) } }, select: { id: true, name: true } });
+    const storeName = new Map(stores.map((x) => [x.id, x.name]));
+    for (const e of entries) if (!storeName.has(e.storeId)) throw new StockError("Toko sample tidak ditemukan");
     const ref = `SMP:${r.id}:${Date.now().toString(36)}`;
     for (const e of entries) {
       const item = items.find((i) => i.id === e.itemId);
@@ -63,12 +66,12 @@ export async function applyReportSamples(reportId: string, actor: Actor, now: Da
       if (on) {
         if (!finished) throw new StockError("Lokasi gudang barang jadi belum diatur di Pengaturan");
         const fb = unitCost > 0 ? 0 : await recipeMaterialCost(item.id);
-        const mv = await recordMovement(tx, { type: "PENYESUAIAN", itemId: item.id, qty: e.qty, fromLocationId: finished, increase: false, allowNegative: true, expenseCode: COA.BEBAN_PROMOSI_SAMPLE, fallbackUnitCost: fb > 0 ? { value: fb, note: "harga pokok dari resep" } : null, ref, note: `Sample affiliator ${e.affiliator} (${SAMPLE_SOURCES[e.source]})${e.trackingNo ? ` resi ${e.trackingNo}` : ""}`, date: at }, actor);
+        const mv = await recordMovement(tx, { type: "PENYESUAIAN", itemId: item.id, qty: e.qty, fromLocationId: finished, increase: false, allowNegative: true, expenseCode: COA.BEBAN_PROMOSI_SAMPLE, fallbackUnitCost: fb > 0 ? { value: fb, note: "harga pokok dari resep" } : null, ref, note: `Sample affiliator ${SAMPLE_PLATFORMS[e.platform]} · ${storeName.get(e.storeId) ?? "toko"}`, date: at }, actor);
         unitCost = Number(mv.unitCost);
         didPost = true;
         posted++;
       }
-      await tx.affiliateSample.create({ data: { reportId: r.id, divisionId: r.divisionId, date: r.date, itemId: item.id, qty: new Prisma.Decimal(e.qty), source: e.source, affiliator: e.affiliator, trackingNo: e.trackingNo ?? null, note: e.note ?? null, posted: didPost, ref: didPost ? ref : null, unitCost: BigInt(Math.round(unitCost)), createdBy: actor.name } });
+      await tx.affiliateSample.create({ data: { reportId: r.id, divisionId: r.divisionId, date: r.date, itemId: item.id, qty: new Prisma.Decimal(e.qty), platform: e.platform, storeId: e.storeId, posted: didPost, ref: didPost ? ref : null, unitCost: BigInt(Math.round(unitCost)), createdBy: actor.name } });
     }
   }, { timeout: 30000 });
   return { rows: entries.length, posted };
@@ -85,18 +88,21 @@ async function undoSamples(tx: Tx, reportId: string, actor: Actor) {
   if (old.length) await tx.affiliateSample.deleteMany({ where: { reportId } });
 }
 
-/** Rekap sample per affiliator (periode): jumlah, nilai (HPP × jumlah), per sumber */
+/** Rekap sample per platform & toko (periode): jumlah, nilai (HPP × jumlah), rincian produk */
 export async function sampleRecap(days = 30, now: Date = new Date()) {
   const since = dateOnly(addDays(todayStr(now), -days));
   const rows = await prisma.affiliateSample.findMany({ where: { date: { gte: since } }, orderBy: { date: "desc" } });
-  const items = await prisma.item.findMany({ where: { id: { in: [...new Set(rows.map((x) => x.itemId))] } }, select: { id: true, name: true } });
-  const by = new Map<string, { affiliator: string; qty: number; value: number; sources: Set<string>; last: Date; lines: { date: Date; item: string; qty: number; source: string; trackingNo: string | null; value: number }[] }>();
+  const [items, stores] = await Promise.all([
+    prisma.item.findMany({ where: { id: { in: [...new Set(rows.map((x) => x.itemId))] } }, select: { id: true, name: true } }),
+    prisma.store.findMany({ select: { id: true, name: true } }),
+  ]);
+  const by = new Map<string, { platform: string; storeId: string; store: string; qty: number; value: number; lines: { date: Date; item: string; qty: number; value: number }[] }>();
   for (const x of rows) {
-    const k = x.affiliator.toLowerCase();
-    const c = by.get(k) ?? { affiliator: x.affiliator, qty: 0, value: 0, sources: new Set<string>(), last: x.date, lines: [] };
+    const k = `${x.platform}|${x.storeId}`;
+    const c = by.get(k) ?? { platform: x.platform, storeId: x.storeId, store: stores.find((s) => s.id === x.storeId)?.name ?? "-", qty: 0, value: 0, lines: [] };
     const v = Number(x.qty) * Number(x.unitCost);
-    c.qty += Number(x.qty); c.value += v; c.sources.add(x.source);
-    c.lines.push({ date: x.date, item: items.find((i) => i.id === x.itemId)?.name ?? "-", qty: Number(x.qty), source: x.source, trackingNo: x.trackingNo, value: v });
+    c.qty += Number(x.qty); c.value += v;
+    c.lines.push({ date: x.date, item: items.find((i) => i.id === x.itemId)?.name ?? "-", qty: Number(x.qty), value: v });
     by.set(k, c);
   }
   const list = [...by.values()].sort((a, b) => b.value - a.value);
