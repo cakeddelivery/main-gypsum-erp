@@ -4,11 +4,13 @@ import { toRecipeQty, useUnitOptions } from "@/lib/itemCatalog";
 import { CHANNEL_LABEL, channelParams, suggestPrice, type FeeConfig } from "@/lib/pricing";
 
 export type RecipeComponent = { id: string; name: string; unit: string; price: number; source: "BB" | "BSJ"; packaging: boolean };
-export type RecipeTask = { id: string; name: string; rate: number };
+export type RecipeTask = { id: string; name: string; rate: number; /** Rincian tarif, mis. "pekerja 30 + koordinator 15 + driver 15" */ detail?: string };
+/** Upah (tugas) & overhead yang sudah dihitung di setengah jadi (sumber = nama setengah jadi) */
+export type RecipeCoverage = Record<string, { tasks: Record<string, string>; overheads: Record<string, string> }>;
 export type RecipeOverheadOpt = { id: string; name: string; perPcs: number };
 export type RecipeInitial = {
   comp: { itemId: string; qty: number; useUnit: string }[];
-  labor: { taskId: string; name: string; rate: number }[];
+  labor: { taskId: string; name: string; rate: number; override?: boolean }[];
   oh: { overheadId: string; factor: number }[];
   extraPackaging?: number;
   targetMargin?: number;
@@ -54,12 +56,15 @@ const Del = ({ onClick }: { onClick: () => void }) => <button type="button" aria
  * Penyusun resep HPP: komponen (bahan baku / setengah jadi) dengan satuan pakai, tenaga kerja borongan,
  * overhead, dan (untuk produk) packaging + target margin + saran harga. Semua dihitung langsung di layar.
  */
-export function RecipeEditor({ components, tasks, overheads, initial, product }: {
+export function RecipeEditor({ components, tasks, overheads, initial, product, coverage = {}, isOwner = false }: {
   components: RecipeComponent[];
   tasks: RecipeTask[];
   overheads: RecipeOverheadOpt[];
   initial?: RecipeInitial;
   product?: { fees: FeeConfig; affiliatePct: number; adsPct: number; itemsPerOrder: number; legacy?: number };
+  coverage?: RecipeCoverage;
+  /** Hanya Owner yang boleh mengetik tarif sendiri / faktor overhead ≠ 1 (ditandai override) */
+  isOwner?: boolean;
 }) {
   const byId = new Map(components.map((c) => [c.id, c]));
   const isPack = (id: string) => !!product && !!byId.get(id)?.packaging;
@@ -69,7 +74,7 @@ export function RecipeEditor({ components, tasks, overheads, initial, product }:
   const [pack, setPack] = useState<CompRow[]>(() => init.filter((c) => isPack(c.itemId)).map(toRow));
   const [labor, setLabor] = useState<LaborRow[]>(() => (initial?.labor ?? []).map((l) => {
     const t = tasks.find((x) => x.id === l.taskId);
-    return { k: key(), taskId: l.taskId || "", name: l.name, custom: t && t.rate === l.rate ? "" : String(l.rate) };
+    return { k: key(), taskId: l.taskId || "", name: l.name, custom: l.override || (t && t.rate !== l.rate) || !t ? String(l.rate) : "" };
   }));
   const [oh, setOh] = useState<OhRow[]>(() => (initial?.oh ?? []).map((o) => ({ k: key(), overheadId: o.overheadId, factor: String(o.factor) })));
   const [extra, setExtra] = useState(initial?.extraPackaging ? String(initial.extraPackaging) : "");
@@ -87,6 +92,17 @@ export function RecipeEditor({ components, tasks, overheads, initial, product }:
   const laborTotal = sum(labor, laborRate);
   const ohTotal = sum(oh, ohCost);
   const hpp = Math.round(material + packaging + laborTotal + ohTotal + (product?.legacy ?? 0));
+
+  // Upah & overhead yang sudah terhitung di setengah jadi yang dipilih (jangan diisi lagi di resep ini)
+  const covTasks = new Map<string, string>();
+  const covOh = new Map<string, string>();
+  for (const r of comp) {
+    const c = coverage[r.itemId];
+    if (!c) continue;
+    for (const [id, from] of Object.entries(c.tasks)) covTasks.set(id, from);
+    for (const [id, from] of Object.entries(c.overheads)) covOh.set(id, from);
+  }
+  const dupCount = labor.filter((l) => l.taskId && covTasks.has(l.taskId)).length + oh.filter((o) => o.overheadId && covOh.has(o.overheadId)).length;
 
   const compRows = (rows: CompRow[], set: React.Dispatch<React.SetStateAction<CompRow[]>>, packaging: boolean) => {
     const patch = (i: number, p: Partial<CompRow>) => set((x) => x.map((y, j) => (j === i ? { ...y, ...p } : y)));
@@ -138,9 +154,9 @@ export function RecipeEditor({ components, tasks, overheads, initial, product }:
         <Total label="Total Biaya Bahan:" value={material} />
       </Section>
 
-      <Section title={product ? "Section 2: Biaya Tenaga Kerja Borongan" : "Biaya Tenaga Kerja Borongan (Opsional)"} tone="border-indigo-200 bg-indigo-50/40 dark:border-indigo-900 dark:bg-indigo-950/20" add="Tenaga Kerja" onAdd={() => setLabor((x) => [...x, { k: key(), taskId: "", name: "", custom: "" }])} hint={<>Hanya untuk pekerjaan <b>borongan</b> (dibayar per pcs). Karyawan bergaji bulanan tidak diisi di sini: bila gajinya mau dihitung ke HPP, pilih Overhead &quot;Gaji Produksi&quot; di bagian Overhead (totalnya otomatis dari gaji pokok + tunjangan + BPJS TK karyawan, dibagi output per bulan).</>}>
+      <Section title={product ? "Section 2: Biaya Tenaga Kerja Borongan" : "Biaya Tenaga Kerja Borongan (Opsional)"} tone="border-indigo-200 bg-indigo-50/40 dark:border-indigo-900 dark:bg-indigo-950/20" add="Tenaga Kerja" onAdd={() => setLabor((x) => [...x, { k: key(), taskId: "", name: "", custom: "" }])} hint={<>Pilih pekerjaan <b>borongan</b>: tarifnya <b>otomatis dari Tugas &amp; Tarif</b> dan ikut berubah bila tarif diubah (tidak diketik di sini). Upah yang sudah dihitung di setengah jadi tidak perlu dipilih lagi. Gaji bulanan lewat Overhead &quot;Gaji Produksi&quot;.</>}>
         <table className="tbl min-w-[560px]">
-          <thead><tr><th>Pekerja / Spesialisasi Borongan</th><th className="num">Tarif Master / Pcs</th><th>Tarif Custom / Pcs</th><th className="num">Subtotal</th><th /></tr></thead>
+          <thead><tr><th>Pekerjaan Borongan</th><th className="num">Tarif otomatis / Pcs</th>{isOwner && <th>Override Owner / Pcs</th>}<th className="num">Subtotal</th><th /></tr></thead>
           <tbody>
             {labor.length === 0 && <tr><td colSpan={5} className="text-center text-xs text-slate-400">Belum ada baris</td></tr>}
             {labor.map((r, i) => {
@@ -150,13 +166,13 @@ export function RecipeEditor({ components, tasks, overheads, initial, product }:
                 <tr key={r.k}>
                   <td className="min-w-48">
                     <select name="labor_task" value={r.taskId} className="input" onChange={(e) => patch({ taskId: e.target.value, name: tasks.find((x) => x.id === e.target.value)?.name ?? r.name })}>
-                      <option value="">Lainnya (tulis sendiri)</option>
+                      {isOwner ? <option value="">Lainnya (tulis sendiri, Owner)</option> : <option value="" disabled>— pilih pekerjaan —</option>}
                       {tasks.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
                     </select>
                     {!r.taskId ? <input name="labor_name" value={r.name} placeholder="Nama pekerjaan" className="input mt-1" required onChange={(e) => patch({ name: e.target.value })} /> : <input type="hidden" name="labor_name" value={t?.name ?? r.name} />}
                   </td>
-                  <td className="num whitespace-nowrap">{rp(t?.rate ?? 0)}</td>
-                  <td className="w-36"><input name="labor_rate" value={r.custom} inputMode="numeric" placeholder={t ? "kosong = master" : "Cth: 1500"} className="input text-right" onChange={(e) => patch({ custom: e.target.value })} /></td>
+                  <td className="num whitespace-nowrap">{rp(t?.rate ?? 0)}{t?.detail && <div className="text-xs font-normal text-slate-500">dari tarif: {t.detail}</div>}{r.taskId && covTasks.has(r.taskId) && <div className="text-xs font-semibold text-rose-700">⚠ Sudah dihitung di &quot;{covTasks.get(r.taskId)}&quot;. Hapus baris ini.</div>}</td>
+                  {isOwner ? <td className="w-36"><input name="labor_rate" value={r.custom} inputMode="numeric" placeholder={t ? "kosong = otomatis" : "Cth: 1500"} className="input text-right" onChange={(e) => patch({ custom: e.target.value })} />{r.custom.trim() && <div className="text-xs text-amber-700">override</div>}</td> : <input type="hidden" name="labor_rate" value="" />}
                   <td className="num whitespace-nowrap">{rp(laborRate(r))}</td>
                   <td><Del onClick={() => setLabor((x) => x.filter((_, j) => j !== i))} /></td>
                 </tr>
@@ -167,7 +183,7 @@ export function RecipeEditor({ components, tasks, overheads, initial, product }:
         <Total label="Total Biaya Tenaga Kerja:" value={laborTotal} />
       </Section>
 
-      <Section title={product ? "Section 3: Overhead Produksi (Listrik, Air, Gas, Sewa, Oven, dll)" : "Overhead Produksi (Opsional)"} tone="border-amber-200 bg-amber-50/40 dark:border-amber-900 dark:bg-amber-950/20" add="Overhead" onAdd={() => setOh((x) => [...x, { k: key(), overheadId: "", factor: "1" }])}>
+      <Section title={product ? "Section 3: Overhead Produksi (Listrik, Air, Gas, Sewa, Oven, dll)" : "Overhead Produksi (Opsional)"} tone="border-amber-200 bg-amber-50/40 dark:border-amber-900 dark:bg-amber-950/20" add="Overhead" onAdd={() => setOh((x) => [...x, { k: key(), overheadId: "", factor: "1" }])} hint={<>Biayanya <b>otomatis dari alokasi biaya bulanan</b> (gaji produksi, listrik, PDAM, LPG, sewa, dll. ÷ output per bulan). Overhead yang sudah dihitung di setengah jadi tidak perlu dipilih lagi.</>}>
         <table className="tbl min-w-[520px]">
           <thead><tr><th>Komponen Overhead Master</th><th className="num">Biaya Master / Pcs</th><th>Faktor / Pcs</th><th className="num">Subtotal</th><th /></tr></thead>
           <tbody>
@@ -178,8 +194,8 @@ export function RecipeEditor({ components, tasks, overheads, initial, product }:
               return (
                 <tr key={r.k}>
                   <td className="min-w-48"><select name="oh_id" value={r.overheadId} className="input" required onChange={(e) => patch({ overheadId: e.target.value })}><option value="" disabled>— pilih —</option>{overheads.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></td>
-                  <td className="num whitespace-nowrap">{rp(o?.perPcs ?? 0)}</td>
-                  <td className="w-28"><input name="oh_factor" value={r.factor} inputMode="decimal" className="input text-right" onChange={(e) => patch({ factor: e.target.value })} /></td>
+                  <td className="num whitespace-nowrap">{rp(o?.perPcs ?? 0)}{r.overheadId && covOh.has(r.overheadId) && <div className="text-xs font-semibold text-rose-700">⚠ Sudah dihitung di &quot;{covOh.get(r.overheadId)}&quot;. Hapus baris ini.</div>}</td>
+                  <td className="w-28">{isOwner ? <input name="oh_factor" value={r.factor} inputMode="decimal" className="input text-right" onChange={(e) => patch({ factor: e.target.value })} /> : <><input type="hidden" name="oh_factor" value="1" /><span className="block text-right text-sm text-slate-500">1</span></>}</td>
                   <td className="num whitespace-nowrap">{rp(ohCost(r))}</td>
                   <td><Del onClick={() => setOh((x) => x.filter((_, j) => j !== i))} /></td>
                 </tr>
@@ -206,6 +222,7 @@ export function RecipeEditor({ components, tasks, overheads, initial, product }:
         </label>
       )}
 
+      {dupCount > 0 && <p role="alert" className="rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-800">⚠ {dupCount} baris upah/overhead sudah dihitung di tahap sebelumnya (setengah jadi). Hapus baris bertanda merah; resep tidak bisa disimpan bila masih dobel.</p>}
       <div className="rounded-2xl bg-indigo-950 p-4 text-white">
         <p className="flex justify-between text-sm">Total HPP Modal / Pcs: <b className="text-xl">{rp(hpp)}</b></p>
         {product?.legacy ? <p className="mt-1 text-xs text-indigo-200">Termasuk biaya manual lama {rp(product.legacy)} yang akan dihapus saat resep disimpan.</p> : null}
