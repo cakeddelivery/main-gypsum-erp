@@ -18,7 +18,7 @@ export default async function Cutover() {
   const groups = [...new Set(list.map((x) => `${x.type} · ${x.division}`))];
   return (
     <div className="space-y-5">
-      <PageHeader title="Cut-over stok terpadu" subtitle={r.date ? `Mulai ${r.date}${r.daysLeft != null ? ` · ${r.daysLeft >= 0 ? `${r.daysLeft} hari lagi` : `sudah berjalan ${-r.daysLeft} hari`}` : ""}` : "Tanggal mulai belum diatur"} actions={<Link href="/stok" className="btn-secondary">Kembali</Link>} />
+      <PageHeader title="Cut-over stok terpadu" subtitle={r.date ? `Mulai ${r.date}${r.daysLeft != null ? ` · ${r.daysLeft >= 0 ? `${r.daysLeft} hari lagi` : `sudah berjalan ${-r.daysLeft} hari`}` : ""}` : "Tanggal mulai belum diatur"} actions={<><Link href="/stok/selisih" className="btn-secondary">Selisih vs laporan</Link><Link href="/stok" className="btn-secondary">Kembali</Link></>} />
       <Card title="Apa ini?">
         <p className="text-sm text-slate-700">Mulai tanggal ini, <b>stok di aplikasi dihitung dari laporan shift saja</b>: hasil produksi, pemakaian bahan, dan reject masuk otomatis, sedangkan menu Produksi manual hanya untuk koreksi Owner. Sebelum tanggal ini semuanya berjalan seperti biasa. Sehari sebelumnya semua barang dihitung fisik (stok awal) supaya mulai dari angka yang benar.</p>
         {user.can("settings.manage") && (

@@ -25,36 +25,44 @@ describe("Laba & reject per produk", () => {
     expect(rate(0, 0)).toBe(0);
   });
 
-  it("laba = jadi × laba/pcs harga resep, dikurangi reject × bahan/pcs", async () => {
-    const product = await prisma.product.findFirstOrThrow({ where: { active: true } });
-    const [shift, division, employee] = await Promise.all([prisma.shift.findFirstOrThrow(), prisma.division.findFirstOrThrow(), prisma.employee.findFirstOrThrow()]);
-    const date = new Date("2031-03-10T00:00:00.000Z");
+  it("laba = jadi × laba/pcs harga resep, dikurangi reject × bahan/pcs — dari Laporan Shift (katalog) + Reject produksi", async () => {
+    const product = await prisma.product.findFirstOrThrow({ where: { active: true, finishedItemId: { not: null } } });
+    const shift = await prisma.shift.findFirstOrThrow();
+    const division = await prisma.division.create({ data: { code: `PL${Date.now().toString(36).slice(-5).toUpperCase()}`, name: `Packing Laba ${Date.now()}`, shiftCount: 1, reportTemplate: "PACKING" } });
     await prisma.priceHistory.create({ data: { productId: product.id, channel: "OFFLINE", price: BigInt(50000), hpp: BigInt(0), effectiveAt: new Date("2031-03-01"), createdBy: "test" } });
-    const base = { date, shiftId: shift.id, divisionId: division.id, employeeId: employee.id, productId: product.id, createdBy: "test", stockPosted: true };
-    await prisma.productionEntry.createMany({
-      data: [
-        { ...base, stage: "CETAK", qtyGood: 100, qtyReject: 4, rejectReason: "Pecah / retak" },
-        { ...base, stage: "BARANG_JADI", qtyGood: 90, qtyReject: 1, rejectReason: "Kotor / noda" },
-      ],
-    });
-    const range = { start: new Date("2031-03-01T00:00:00Z"), end: new Date("2031-04-01T00:00:00Z") };
-    const { rows } = await productProfit(range, "OFFLINE");
-    const r = rows.find((x) => x.productId === product.id)!;
-    expect(r.qtyDone).toBe(90);
-    expect(r.qtyReject).toBe(5);
-    expect(r.price).toBe(50000);
-    expect(r.profitUnit).toBe(50000 - r.hpp);
-    expect(r.profit).toBe((50000 - r.hpp) * 90);
-    expect(r.rejectLoss).toBe(r.materialUnit * 5);
-    expect(r.net).toBe(r.profit! - r.rejectLoss);
-    // Produk tanpa harga di kanal terpilih: laba kosong (bukan 0) supaya tidak menyesatkan
-    await prisma.priceHistory.deleteMany({ where: { productId: product.id, channel: "RESELLER" } });
-    const res = (await productProfit(range, "RESELLER")).rows.find((x) => x.productId === product.id)!;
-    expect(res.price).toBeNull();
-    expect(res.net).toBeNull();
-    expect(res.rejectLoss).toBe(r.rejectLoss);
-    const rj = await rejectBreakdown(range);
-    expect(rj.reason).toEqual([{ label: "Pecah / retak", reject: 4 }, { label: "Kotor / noda", reject: 1 }]);
-    expect(rj.stage.map((s) => s.stage)).toEqual(["CETAK", "BARANG_JADI"]);
+    const line = (qty: number) => ({ productId: product.id, sku: product.sku, label: "x", col: "x", variant: "Mix", patung: 1, qty });
+    const rep = await prisma.shiftReport.create({ data: { date: new Date("2036-07-10T00:00:00.000Z"), shiftId: shift.id, divisionId: division.id, createdBy: "t", status: "TERKIRIM", work: { st: [line(90)] } } });
+    const draft = await prisma.shiftReport.create({ data: { date: new Date("2036-07-11T00:00:00.000Z"), shiftId: shift.id, divisionId: division.id, createdBy: "t", status: "DRAFT", work: { st: [line(999)] } } });
+    await prisma.productionReject.createMany({ data: [
+      { reportId: rep.id, divisionId: division.id, stage: "CETAK", itemId: product.finishedItemId!, qty: 4, reason: "RETAK", createdBy: "t" },
+      { reportId: rep.id, divisionId: division.id, stage: "PACKING", itemId: product.finishedItemId!, qty: 1, reason: "CACAT_CAT", createdBy: "t" },
+    ] });
+    try {
+      const range = { start: new Date("2036-07-01T00:00:00Z"), end: new Date("2036-08-01T00:00:00Z") };
+      const { rows } = await productProfit(range, "OFFLINE");
+      const r = rows.find((x) => x.productId === product.id)!;
+      expect(r.qtyDone).toBe(90); // draf (999) tidak dihitung
+      expect(r.qtyReject).toBe(5);
+      expect(r.price).toBe(50000);
+      expect(r.profitUnit).toBe(50000 - r.hpp);
+      expect(r.profit).toBe((50000 - r.hpp) * 90);
+      expect(r.rejectLoss).toBe(r.materialUnit * 5);
+      expect(r.net).toBe(r.profit! - r.rejectLoss);
+      // Produk tanpa harga di kanal terpilih: laba kosong (bukan 0) supaya tidak menyesatkan
+      await prisma.priceHistory.deleteMany({ where: { productId: product.id, channel: "RESELLER" } });
+      const res = (await productProfit(range, "RESELLER")).rows.find((x) => x.productId === product.id)!;
+      expect(res.price).toBeNull();
+      expect(res.net).toBeNull();
+      expect(res.rejectLoss).toBe(r.rejectLoss);
+      const rj = await rejectBreakdown(range);
+      expect(rj.reason).toEqual([{ label: "Reject RETAK", reject: 4 }, { label: "Reject CACAT_CAT", reject: 1 }].map((x) => ({ label: x.label.replace("Reject ", ""), reject: x.reject })));
+      expect(rj.stage.filter((s) => ["CETAK", "PACKING"].includes(s.stage)).map((s) => s.stage)).toEqual(["CETAK", "PACKING"]);
+      expect(rj.stage.find((s) => s.stage === "PACKING")).toMatchObject({ good: 90, reject: 1 });
+      expect(rj.division.find((d) => d.label === division.name)).toMatchObject({ reject: 5 });
+    } finally {
+      await prisma.productionReject.deleteMany({ where: { reportId: rep.id } });
+      await prisma.shiftReport.deleteMany({ where: { id: { in: [rep.id, draft.id] } } });
+      await prisma.division.delete({ where: { id: division.id } });
+    }
   });
 });

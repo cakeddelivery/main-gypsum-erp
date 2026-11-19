@@ -19,8 +19,9 @@ export async function dailyRecapText(now: Date, forDate?: string) {
   const cashIn = moves.filter((m) => m.amount > 0).reduce((s, m) => s + m.amount, 0);
   const cashOut = moves.filter((m) => m.amount < 0).reduce((s, m) => s - m.amount, 0);
   const pending = await prisma.financeTransaction.groupBy({ by: ["status"], where: { status: { in: ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"] } }, _count: true });
-  const prod = await prisma.productionEntry.aggregate({ where: { date: dateOnly(date) }, _sum: { qtyGood: true, qtyReject: true } });
-  const finished = await prisma.productionEntry.aggregate({ where: { date: dateOnly(date), stage: "BARANG_JADI" }, _sum: { qtyGood: true } });
+  // Produksi dari Laporan Shift + Borongan (sama dengan Alur Produksi), bukan input manual
+  const { productionSummary } = await import("./alurProduksi");
+  const prod = await productionSummary(date);
   const banks = await bankBalances();
   const low = await lowStockItems();
   const { unsentReportCount } = await import("./shiftReportStock");
@@ -46,7 +47,7 @@ export async function dailyRecapText(now: Date, forDate?: string) {
     `Draft: ${p("DRAFT")} · Perlu ditinjau: ${p("PERLU_DITINJAU")} · Menunggu konfirmasi: ${p("MENUNGGU_KONFIRMASI")}`,
     ``,
     `<b>Produksi</b>`,
-    `Hasil: ${prod._sum.qtyGood ?? 0} pcs · Reject: ${prod._sum.qtyReject ?? 0} pcs · Barang jadi: ${finished._sum.qtyGood ?? 0} pcs`,
+    ...prod.boxes.map((b) => `${b.label}: ${b.good.toLocaleString("id-ID")} ${b.unit}${b.reject ? ` · reject ${b.reject.toLocaleString("id-ID")}` : ""}`),
     `Laporan shift belum dikirim: ${unsent}`,
     `Peringatan stok & produksi terbuka: ${anomali}${anomali ? " (lihat Laporan › Kebocoran & Efisiensi)" : ""}`,
     low.length ? `\n⚠️ Stok menipis: ${low.slice(0, 8).map((i) => i.name).join(", ")}` : "",

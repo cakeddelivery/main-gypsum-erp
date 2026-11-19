@@ -4,6 +4,8 @@ import { prisma } from "./db";
 import { CHANNELS, feeConfig, itemCosts, productCosting } from "./hpp";
 import { channelParams, priceBreakdown } from "./pricing";
 import { STAGES } from "./stock";
+import { catalogLines, isTemplate, type ReportTemplate, type WorkData } from "./shiftReport";
+import { cetakOf, giftboxOf, ovenOf, packingOf } from "./alurProduksi";
 
 export type ProfitRow = {
   productId: string;
@@ -40,32 +42,51 @@ export const rate = (reject: number, good: number) => (reject + good > 0 ? Math.
  * setelah potongan marketplace/affiliate/iklan) dikurangi rugi reject (reject × nilai bahan per pcs).
  * Ini PERKIRAAN, bukan penjualan nyata: menganggap semua hasil jadi laku dengan harga resep.
  */
+/** Hasil per produk dari Laporan Shift (Packing/Giftbox, katalog SKU) dan reject per barang jadi dari Reject produksi — bukan input manual */
+async function reportResults(range: { start: Date; end: Date }) {
+  const reports = await prisma.shiftReport.findMany({
+    where: { date: { gte: range.start, lt: range.end }, status: { not: "DRAFT" } },
+    select: { id: true, work: true, divisionId: true, division: { select: { reportTemplate: true } } },
+  });
+  const done = new Map<string, number>();
+  for (const r of reports) {
+    if (r.division.reportTemplate !== "PACKING" && r.division.reportTemplate !== "GIFTBOX") continue;
+    for (const key of ["pk", "st", "gb"]) for (const l of catalogLines(r.work as WorkData, key)) done.set(l.productId, (done.get(l.productId) ?? 0) + l.qty);
+  }
+  const rejects = await prisma.productionReject.findMany({ where: { reportId: { in: reports.map((r) => r.id) } }, select: { itemId: true, qty: true } });
+  const prods = await prisma.product.findMany({ where: { finishedItemId: { in: [...new Set(rejects.map((x) => x.itemId))] } }, select: { id: true, finishedItemId: true } });
+  const reject = new Map<string, number>();
+  for (const x of rejects) {
+    const p = prods.find((q) => q.finishedItemId === x.itemId);
+    if (p) reject.set(p.id, (reject.get(p.id) ?? 0) + Number(x.qty));
+  }
+  return { done, reject, reports };
+}
+
 export async function productProfit(range: { start: Date; end: Date }, channel: string) {
-  const where = { date: { gte: range.start, lt: range.end } };
-  const [grouped, fees, costs, prices] = await Promise.all([
-    prisma.productionEntry.groupBy({ by: ["productId", "stage"], where, _sum: { qtyGood: true, qtyReject: true } }),
+  const [res, fees, costs, prices] = await Promise.all([
+    reportResults(range),
     feeConfig(),
     itemCosts(),
     prisma.priceHistory.findMany({ where: { channel }, orderBy: { effectiveAt: "desc" } }),
   ]);
   const latest = new Map<string, bigint>();
   for (const p of prices) if (!latest.has(p.productId)) latest.set(p.productId, p.price);
-  const ids = [...new Set(grouped.map((g) => g.productId))];
+  const ids = [...new Set([...res.done.keys(), ...res.reject.keys()])];
   const rows: ProfitRow[] = [];
   for (const id of ids) {
-    const mine = grouped.filter((g) => g.productId === id);
-    const done = doneQty(new Map(mine.map((g) => [g.stage, g._sum.qtyGood ?? 0])));
-    const reject = mine.reduce((s, g) => s + (g._sum.qtyReject ?? 0), 0);
+    const qtyDone = res.done.get(id) ?? 0;
+    const reject = res.reject.get(id) ?? 0;
     const c = await productCosting(id, costs);
     const p = c.product;
     const priceRaw = latest.get(id);
     const price = priceRaw != null ? Number(priceRaw) : null;
     const params = channelParams(channel, c.hpp, fees, { affiliatePct: Number(p.affiliatePct), adsPct: Number(p.adsPct), itemsPerOrder: Number(p.itemsPerOrder) || 1 });
     const profitUnit = price != null ? priceBreakdown(price, params).profit : null;
-    const profit = profitUnit != null ? profitUnit * done.qty : null;
+    const profit = profitUnit != null ? profitUnit * qtyDone : null;
     const rejectLoss = c.bookMaterial * reject;
     rows.push({
-      productId: id, sku: p.sku, name: p.name, qtyDone: done.qty, doneStage: done.stage, qtyReject: reject, rejectRate: rate(reject, done.qty),
+      productId: id, sku: p.sku, name: p.name, qtyDone, doneStage: "BARANG_JADI", qtyReject: reject, rejectRate: rate(reject, qtyDone),
       hpp: c.hpp, materialUnit: c.bookMaterial, price, profitUnit, profit, rejectLoss, net: profit != null ? profit - rejectLoss : null,
     });
   }
@@ -73,24 +94,43 @@ export async function productProfit(range: { start: Date; end: Date }, channel: 
   return { rows, channels: CHANNELS };
 }
 
-/** Rincian reject periode: per tahap, penyebab, karyawan, dan divisi */
+/** Nama tahap Alur Produksi (kunci = tahap reject produksi) */
+export const STAGE_NAME: Record<string, string> = { CETAK: "Cetak", OVEN: "Oven", ASSEMBLING: "Assembling / Borongan", PACKING: "Packing", GIFTBOX: "Giftbox" };
+
+/** Rincian reject periode dari Laporan Shift: per tahap, penyebab, dan divisi (per karyawan tidak lagi tersedia karena laporan mencatat per divisi) */
 export async function rejectBreakdown(range: { start: Date; end: Date }) {
-  const where = { date: { gte: range.start, lt: range.end } };
-  const [byStage, byReason, byEmp, byDiv] = await Promise.all([
-    prisma.productionEntry.groupBy({ by: ["stage"], where, _sum: { qtyGood: true, qtyReject: true } }),
-    prisma.productionEntry.groupBy({ by: ["rejectReason"], where: { ...where, qtyReject: { gt: 0 } }, _sum: { qtyReject: true } }),
-    prisma.productionEntry.groupBy({ by: ["employeeId"], where, _sum: { qtyGood: true, qtyReject: true } }),
-    prisma.productionEntry.groupBy({ by: ["divisionId"], where, _sum: { qtyGood: true, qtyReject: true } }),
-  ]);
-  const [emps, divs] = await Promise.all([
-    prisma.employee.findMany({ where: { id: { in: byEmp.map((e) => e.employeeId) } }, select: { id: true, name: true } }),
-    prisma.division.findMany({ where: { id: { in: byDiv.map((d) => d.divisionId) } }, select: { id: true, name: true } }),
-  ]);
-  const row = (label: string, s: { qtyGood: number | null; qtyReject: number | null }) => ({ label, good: s.qtyGood ?? 0, reject: s.qtyReject ?? 0, rate: rate(s.qtyReject ?? 0, s.qtyGood ?? 0) });
+  const { reports } = await reportResults(range);
+  const rj = await prisma.productionReject.findMany({ where: { reportId: { in: reports.map((r) => r.id) } }, select: { stage: true, reason: true, qty: true, divisionId: true } });
+  const good = new Map<string, number>();
+  const bad = new Map<string, number>();
+  const byDivGood = new Map<string, number>();
+  const byDivBad = new Map<string, number>();
+  const add = (m: Map<string, number>, k: string, v: number) => m.set(k, (m.get(k) ?? 0) + v);
+  const reason = new Map<string, number>();
+  for (const r of reports) {
+    if (!isTemplate(r.division.reportTemplate)) continue;
+    const x = { template: r.division.reportTemplate as ReportTemplate, work: r.work as WorkData };
+    let g = 0;
+    if (x.template === "CETAK" || x.template === "PRODUKSI") { const c = cetakOf(x).total; add(good, "CETAK", c); g += c; }
+    if (x.template === "PRODUKSI") {
+      const o = ovenOf(x);
+      add(good, "OVEN", o.good); add(bad, "OVEN", o.reject); add(byDivBad, r.divisionId, o.reject); g += o.good;
+      if (o.reject) add(reason, "Reject panen oven", o.reject);
+    }
+    if (x.template === "PACKING") { const p = packingOf(x).patung; add(good, "PACKING", p); g += p; }
+    if (x.template === "GIFTBOX") { const q = giftboxOf(x).box; add(good, "GIFTBOX", q); g += q; }
+    add(byDivGood, r.divisionId, g);
+  }
+  for (const x of rj) {
+    const q = Number(x.qty);
+    add(bad, x.stage, q); add(byDivBad, x.divisionId, q); add(reason, x.reason, q);
+  }
+  const divs = await prisma.division.findMany({ where: { id: { in: [...new Set([...byDivGood.keys(), ...byDivBad.keys()])] } }, select: { id: true, name: true } });
+  const row = (label: string, g: number, b: number) => ({ label, good: g, reject: b, rate: rate(b, g) });
   return {
-    stage: STAGES.filter((s) => byStage.some((b) => b.stage === s)).map((s) => ({ stage: s, ...row(s, byStage.find((b) => b.stage === s)!._sum) })),
-    reason: byReason.map((r) => ({ label: r.rejectReason ?? "Tanpa keterangan", reject: r._sum.qtyReject ?? 0 })).sort((a, b) => b.reject - a.reject),
-    employee: byEmp.map((e) => row(emps.find((x) => x.id === e.employeeId)?.name ?? "-", e._sum)).filter((r) => r.reject > 0).sort((a, b) => b.rate - a.rate),
-    division: byDiv.map((d) => row(divs.find((x) => x.id === d.divisionId)?.name ?? "-", d._sum)).sort((a, b) => b.rate - a.rate),
+    stage: Object.keys(STAGE_NAME).filter((k) => good.has(k) || bad.has(k)).map((k) => ({ stage: k, ...row(STAGE_NAME[k], good.get(k) ?? 0, bad.get(k) ?? 0) })),
+    reason: [...reason.entries()].map(([label, reject]) => ({ label, reject })).sort((a, b) => b.reject - a.reject),
+    employee: [] as { label: string; good: number; reject: number; rate: number }[],
+    division: [...new Set([...byDivGood.keys(), ...byDivBad.keys()])].map((id) => row(divs.find((d) => d.id === id)?.name ?? "-", byDivGood.get(id) ?? 0, byDivBad.get(id) ?? 0)).sort((a, b) => b.rate - a.rate),
   };
 }

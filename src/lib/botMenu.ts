@@ -3,7 +3,7 @@ import { prisma } from "./db";
 import type { Permission } from "./rbac";
 import { alertsFor } from "./alerts";
 import { bankBalances } from "./finance";
-import { productionSummary } from "./dashboard";
+import { productionSummary } from "./alurProduksi";
 import { lowStockItems } from "./stock";
 import { dailyRecapText } from "./jobs";
 import { idr } from "./money";
@@ -206,7 +206,7 @@ export async function summaryText(i: BotIdent) {
   if (can(i, "production.view", "dashboard.view")) {
     tasks.push(
       productionSummary(today, { divisionId: div }).then((p) => {
-        parts.prod = [`<b>Produksi hari ini${div ? " (divisi Anda)" : ""}</b>`, `Hasil: ${p.good} pcs · Reject: ${p.reject} pcs (${p.rejectRate}%)`, `Barang jadi: ${p.finished} pcs${p.target ? ` · Target: ${p.achieved}/${p.target}` : ""}`];
+        parts.prod = [`<b>Produksi hari ini${div ? " (divisi Anda)" : ""}</b> <i>(dari laporan shift & borongan)</i>`, ...p.boxes.filter((b) => b.good || b.reject).map((b) => `${b.label}: ${b.good.toLocaleString("id-ID")} ${b.unit}${b.reject ? ` · reject ${b.reject.toLocaleString("id-ID")}` : ""}`), ...(p.boxes.some((b) => b.good || b.reject) ? [] : ["Belum ada laporan terkirim."]), ...(p.target ? [`Target: ${p.achieved}/${p.target}`] : [])];
       }),
     );
   }

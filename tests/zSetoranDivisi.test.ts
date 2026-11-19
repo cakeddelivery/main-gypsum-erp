@@ -130,9 +130,9 @@ describe("Mutasi stok manual dibatasi (tidak dobel dengan Serah terima / Pembeli
     await expect(manualMovementGuard({ type: "TRANSFER", role: "OWNER", reason: "x", fromLocationId: raw, toLocationId: bmr.locationId })).rejects.toThrow(/Serah terima/);
     await expect(manualMovementGuard({ type: "PENERIMAAN", role: "ADMIN", reason: "x", fromLocationId: null, toLocationId: raw })).rejects.toThrow(/Pembelian/);
     await expect(manualMovementGuard({ type: "PENERIMAAN", role: "OWNER", reason: "", fromLocationId: null, toLocationId: raw })).rejects.toThrow(/alasan/);
-    await expect(manualMovementGuard({ type: "PENERIMAAN", role: "OWNER", reason: "hibah", fromLocationId: null, toLocationId: raw })).resolves.toBeUndefined();
+    await expect(manualMovementGuard({ type: "PENERIMAAN", role: "OWNER", reason: "hibah", fromLocationId: null, toLocationId: raw })).resolves.toEqual({ correction: false });
     await expect(manualMovementGuard({ type: "PENYESUAIAN", role: "OWNER", reason: null, fromLocationId: raw, toLocationId: null })).rejects.toThrow(/alasan/);
-    await expect(manualMovementGuard({ type: "PENGELUARAN", role: "ADMIN", reason: null, fromLocationId: raw, toLocationId: null })).resolves.toBeUndefined();
+    await expect(manualMovementGuard({ type: "PENGELUARAN", role: "ADMIN", reason: null, fromLocationId: raw, toLocationId: null })).resolves.toEqual({ correction: false });
     // Mutasi manual lama ke titik (sebelum dibatasi) ditandai
     const item = await prisma.item.findFirstOrThrow({ where: { type: "BAHAN_BAKU" } });
     await prisma.stockMovement.create({ data: { type: "TRANSFER", itemId: item.id, qty: 1, fromLocationId: raw, toLocationId: bmr.locationId, unitCost: BigInt(0), ref: "MUT", createdBy: "uji", date: new Date() } });
