@@ -13,7 +13,7 @@ import { canDecideLeave } from "./leave";
 export const DAYOFF_DEADLINE_DOW = 5; // Jumat
 export const DAYOFF_MAX_DAYS = 6;
 export const DAYOFF_REMINDER_KEY = "pengingat_libur_teks";
-export const DAYOFF_REMINDER_DEFAULT = { title: "Ajukan libur minggu depan", body: "Ajukan libur minggu depan paling lambat Jumat." };
+export const DAYOFF_REMINDER_DEFAULT = { title: "Ajukan libur minggu depan", body: "Ajukan libur minggu depan hari ini (batas Jumat 23:59)." };
 
 /** Senin dari tanggal (YYYY-MM-DD) */
 export const mondayOf = (day: string) => addDays(day, -((dateOnly(day).getUTCDay() + 6) % 7));
@@ -134,21 +134,3 @@ export async function dayOffReminderText() {
   const [t, ...rest] = v.split("|");
   return rest.length ? { title: t.trim() || DAYOFF_REMINDER_DEFAULT.title, body: rest.join("|").trim() || DAYOFF_REMINDER_DEFAULT.body } : { title: DAYOFF_REMINDER_DEFAULT.title, body: v };
 }
-
-/** Pengingat Senin–Jumat 08.00: ke semua karyawan aktif yang belum mengajukan untuk minggu depan (hanya bila batas belum lewat) */
-export async function sendDayOffReminders(now: Date = new Date()) {
-  const today = todayStr(now);
-  const w = dayOffWindow(today);
-  const dow = dateOnly(today).getUTCDay();
-  if (!w.open || dow === 0 || dow === 6) return { skipped: "bukan hari kerja / batas lewat", sent: 0 };
-  const [users, done, text] = await Promise.all([
-    prisma.user.findMany({ where: { active: true, employee: { is: { status: "AKTIF" } } }, select: { id: true, employeeId: true } }),
-    prisma.dayOffRequest.findMany({ where: { weekStart: dateOnly(w.weekStart), status: { in: ["MENUNGGU", "DISETUJUI"] } }, select: { employeeId: true } }),
-    dayOffReminderText(),
-  ]);
-  const has = new Set(done.map((x) => x.employeeId));
-  const ids = users.filter((u) => u.employeeId && !has.has(u.employeeId)).map((u) => u.id);
-  const r = await sendPush(ids, { title: text.title, body: text.body, url: "/absensi?tab=izin", tag: "libur-minggu-depan" });
-  return { penerima: ids.length, ...r };
-}
-

@@ -121,4 +121,30 @@ describe("Libur minggu depan & pengingat: alur database", () => {
     await prisma.shiftReport.create({ data: { date: dateOnly(day), shiftId: shift.id, divisionId: b.div.id, status: "TERKIRIM", createdBy: "t" } });
     expect((await dueReminders(near, b.emp.id)).filter((x) => x.kind === "LAPORAN")).toHaveLength(0);
   });
+
+  it("08.00: jadwal kerja harian untuk yang dijadwalkan; libur minggu depan HANYA Jumat (klik → halaman pengajuan)", async () => {
+    const a = await setup("E");
+    const c = await setup("F"); // tidak dijadwalkan
+    const shift = await prisma.shift.findFirstOrThrow({ where: { active: true }, orderBy: { code: "asc" } });
+    const thu = "2032-06-03"; // Kamis
+    await prisma.shiftSchedule.create({ data: { employeeId: a.emp.id, shiftId: shift.id, date: dateOnly(thu) } });
+    const at = jakartaDateTime(thu, "08:00");
+    const mine = await dueReminders(at, a.emp.id);
+    expect(mine.filter((x) => x.kind === "LIBUR")).toHaveLength(0); // bukan Jumat
+    const j = mine.filter((x) => x.kind === "JADWAL" || x.kind === "MASUK");
+    expect(j).toHaveLength(1); // tidak dobel dengan pengingat 30 menit
+    if (j[0].kind === "JADWAL") expect(j[0].body).toBe(`Jadwal kerja hari ini: ${shift.name} ${shift.startTime}–${shift.endTime} · jangan lupa absen masuk`);
+    expect(await dueReminders(at, c.emp.id)).toHaveLength(0); // tidak dijadwalkan
+    expect((await dueReminders(jakartaDateTime(thu, "07:59"), a.emp.id)).filter((x) => x.kind === "JADWAL")).toHaveLength(0); // belum 08.00
+
+    const fri = "2032-06-04";
+    const l = await dueReminders(jakartaDateTime(fri, "08:00"), c.emp.id);
+    expect(l.filter((x) => x.kind === "LIBUR")).toHaveLength(1);
+    expect(l.find((x) => x.kind === "LIBUR")!.url).toBe("/absensi?tab=izin#libur");
+    expect((await dueReminders(jakartaDateTime(fri, "07:59"), c.emp.id)).filter((x) => x.kind === "LIBUR")).toHaveLength(0);
+    expect((await dueReminders(jakartaDateTime("2032-06-05", "09:00"), c.emp.id)).filter((x) => x.kind === "LIBUR")).toHaveLength(0); // Sabtu
+    // sudah mengajukan → tidak diingatkan lagi
+    await submitDayOff(c.actor, { dates: [], none: true }, jakartaDateTime(fri, "07:00"));
+    expect((await dueReminders(jakartaDateTime(fri, "10:00"), c.emp.id)).filter((x) => x.kind === "LIBUR")).toHaveLength(0);
+  });
 });

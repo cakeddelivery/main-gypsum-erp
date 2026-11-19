@@ -130,7 +130,7 @@ export async function IzinSakit({ user }: { user: { role: Role; employeeId: stri
   return (
     <div className="mx-auto max-w-2xl space-y-5">
       {user.employeeId && (
-        <section className="card space-y-3 p-4">
+        <section id="libur" className="card scroll-mt-20 space-y-3 p-4">
           <div>
             <h3 className="font-bold text-slate-800">Libur minggu depan</h3>
             <p className="text-sm text-slate-500">{fmtDay(w.weekStart)} – {fmtDay(w.weekEnd)} · ajukan paling lambat <b>Jumat {fmtDay(w.deadline)} pukul 23.59</b></p>

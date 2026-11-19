@@ -11,7 +11,7 @@ Web Push + VAPID dari pustaka `web-push`. Tanpa kunci VAPID, fitur ini diam:
 | Tampilkan & klik notifikasi | `public/sw.js` (event `push`, `notificationclick`, VERSION v2) |
 | Ajakan "Aktifkan notifikasi" + petunjuk bila diblokir / iPhone belum dipasang | `src/components/PushNotif.tsx` (`PushPrompt` di layout) |
 | Pengaturan di **Profil › Notifikasi** (aktif/nonaktif per perangkat, Kirim tes) | `PushSettings` |
-| Libur minggu depan (Senin–Jumat 08.00 WIB) | `src/lib/dayOff.ts` (`sendDayOffReminders`; teks bisa diganti: Setting `pengingat_libur_teks` = `judul \| isi`) |
+| Jadwal kerja harian (tiap hari 08.00 WIB) & "Ajukan libur minggu depan" (tiap Jumat 08.00 WIB; teks libur bisa diganti: Setting `pengingat_libur_teks` = `judul \| isi`) | `src/lib/shiftReminders.ts` + `src/lib/dayOff.ts` |
 | Pengingat absen masuk & kirim laporan (30 menit sebelum mulai / selesai shift) | `src/lib/shiftReminders.ts`, tiap menit lewat `runDueJobs`; popup di aplikasi: `src/components/ReminderPopup.tsx` + `/api/pengingat` |
 | Pengingat 12.00 & 15.00 WIB | `src/lib/pushReminders.ts`, dipanggil `runDueJobs` (`maingypsum-jadwal`) |
 | Ketuk notifikasi → laporan hari ini + popup | `/laporan/buka?f=masuk` (+ Barang masuk) atau `?f=terima` (+ Penerimaan borongan) |

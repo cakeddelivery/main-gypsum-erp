@@ -1,10 +1,14 @@
 import { prisma } from "./db";
 import { addDays, dateOnly, todayStr } from "./time";
 import { shiftWindow } from "./workday";
+import { dateOnly as dOnly, jakartaDateTime } from "./time";
+import { dayOffReminderText, dayOffWindow } from "./dayOff";
 import { sendPush } from "./push";
 
 /**
  * Pengingat absen & laporan shift (push + popup di aplikasi):
+ *  - JADWAL : SETIAP HARI 08.00 WIB, ke yang dijadwalkan masuk hari itu: "Jadwal kerja hari ini: Shift X HH:MM–HH:MM · jangan lupa absen masuk";
+ *  - LIBUR  : SETIAP JUMAT 08.00 WIB, ke karyawan yang belum mengajukan libur minggu depan (teks bisa diganti: Setting pengingat_libur_teks), klik → halaman pengajuan;
  *  - MASUK  : 30 menit sebelum jam mulai shift terjadwal, bila belum absen masuk (dan tidak libur/izin/sakit);
  *  - LAPORAN: 30 menit sebelum jam selesai shift, bila sudah absen masuk, belum pulang, dan laporan divisi untuk shift itu belum terkirim.
  * Hanya karyawan yang bersangkutan. Shift lintas tengah malam (S2) memakai tanggal kerja = tanggal mulai shift.
@@ -13,8 +17,11 @@ import { sendPush } from "./push";
 export const REMIND_BEFORE_MIN = 30;
 /** Popup pengingat laporan masih tampil sampai sekian menit setelah jam selesai (selama belum pulang & laporan belum terkirim) */
 export const REPORT_GRACE_MIN = 60;
+/** Jam pengingat harian (WIB) */
+export const DAILY_REMINDER_HHMM = "08:00";
+export const DAYOFF_URL = "/absensi?tab=izin#libur";
 
-export type ReminderItem = { kind: "MASUK" | "LAPORAN"; key: string; employeeId: string; userId: string | null; title: string; body: string; url: string };
+export type ReminderItem = { kind: "MASUK" | "LAPORAN" | "JADWAL" | "LIBUR"; key: string; employeeId: string; userId: string | null; title: string; body: string; url: string };
 type ShiftT = { id: string; name: string; startTime: string; endTime: string };
 
 const minutesLeft = (target: Date, now: Date) => Math.ceil((target.getTime() - now.getTime()) / 60000);
@@ -34,6 +41,10 @@ export function reportDue(now: Date, date: string, s: ShiftT) {
 export function checkInText(now: Date, date: string, s: ShiftT) {
   const left = minutesLeft(shiftWindow(date, s).start, now);
   return { title: `${s.name} segera mulai`, body: `${s.name} mulai ${s.startTime}, ${left > 0 ? `${left} menit lagi` : "sudah dimulai"}. Jangan lupa absen masuk.` };
+}
+
+export function scheduleText(s: ShiftT) {
+  return { title: "Jadwal kerja hari ini", body: `Jadwal kerja hari ini: ${s.name} ${s.startTime}–${s.endTime} · jangan lupa absen masuk` };
 }
 
 export function reportText(division: string) {
@@ -60,6 +71,7 @@ export async function dueReminders(now: Date = new Date(), employeeId?: string):
   const out: ReminderItem[] = [];
   const needReport: { it: ReminderItem; divisionId: string; shiftId: string; date: string }[] = [];
 
+  const masukKeys = new Set<string>();
   // MASUK: dijadwalkan, belum absen masuk, bukan libur/izin/sakit
   for (const sc of scheds) {
     const date = sc.date.toISOString().slice(0, 10);
@@ -70,7 +82,34 @@ export async function dueReminders(now: Date = new Date(), employeeId?: string):
     if (leaves.some((l) => l.employeeId === sc.employeeId && l.dateFrom <= sc.date && l.dateTo >= sc.date)) continue;
     if (!checkInDue(now, date, s)) continue;
     const t = checkInText(now, date, s);
+    masukKeys.add(`${sc.employeeId}|${date}`);
     out.push({ kind: "MASUK", key: `MASUK:${sc.employeeId}:${date}`, employeeId: sc.employeeId, userId: sc.employee.user.id, title: t.title, body: t.body, url: "/absensi?tab=saya" });
+  }
+
+  // JADWAL: tiap hari mulai 08.00 untuk yang dijadwalkan hari ini dan belum absen masuk (tidak dobel dengan pengingat 30 menit)
+  if (now.getTime() >= jakartaDateTime(today, DAILY_REMINDER_HHMM).getTime()) {
+    for (const sc of scheds) {
+      const date = sc.date.toISOString().slice(0, 10);
+      if (date !== today || masukKeys.has(`${sc.employeeId}|${date}`)) continue;
+      const sh = shiftOf.get(sc.shiftId);
+      if (!sh || !sc.employee.user?.active || now.getTime() >= shiftWindow(date, sh).end.getTime()) continue;
+      const a = attOf.get(`${sc.employeeId}|${date}`);
+      if (a?.checkIn || (a && ["IZIN", "SAKIT", "LIBUR"].includes(a.status))) continue;
+      if (leaves.some((l) => l.employeeId === sc.employeeId && l.dateFrom <= sc.date && l.dateTo >= sc.date)) continue;
+      const t = scheduleText(sh);
+      out.push({ kind: "JADWAL", key: `JADWAL:${sc.employeeId}:${date}`, employeeId: sc.employeeId, userId: sc.employee.user.id, title: t.title, body: t.body, url: "/absensi?tab=saya" });
+    }
+    // LIBUR: setiap Jumat, yang belum mengajukan libur minggu depan (sampai pukul 23.59)
+    const w = dayOffWindow(today);
+    if (dOnly(today).getUTCDay() === 5 && w.open) {
+      const [users, done, text] = await Promise.all([
+        prisma.user.findMany({ where: { active: true, employee: { is: { status: "AKTIF" } }, ...(employeeId ? { employeeId } : { employeeId: { not: null } }) }, select: { id: true, employeeId: true } }),
+        prisma.dayOffRequest.findMany({ where: { weekStart: dOnly(w.weekStart), status: { in: ["MENUNGGU", "DISETUJUI"] }, ...empWhere }, select: { employeeId: true } }),
+        dayOffReminderText(),
+      ]);
+      const has = new Set(done.map((x) => x.employeeId));
+      for (const u of users) if (u.employeeId && !has.has(u.employeeId)) out.push({ kind: "LIBUR", key: `LIBUR:${u.employeeId}:${w.weekStart}`, employeeId: u.employeeId, userId: u.id, title: text.title, body: text.body, url: DAYOFF_URL });
+    }
   }
 
   // LAPORAN: sudah absen masuk, belum pulang, laporan divisi untuk shift itu belum terkirim
@@ -106,7 +145,7 @@ export async function sendShiftTimeReminders(now: Date = new Date()) {
       skipped++;
       continue;
     }
-    const r = await sendPush([it.userId], { title: it.title, body: it.body, url: it.url, tag: it.kind === "MASUK" ? "ingat-masuk" : "ingat-laporan" });
+    const r = await sendPush([it.userId], { title: it.title, body: it.body, url: it.url, tag: ({ MASUK: "ingat-masuk", JADWAL: "ingat-jadwal", LIBUR: "libur-minggu-depan", LAPORAN: "ingat-laporan" } as const)[it.kind] });
     sent += r.sent;
   }
   // Bersihkan penanda lama (> 3 hari)

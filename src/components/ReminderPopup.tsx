@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-type Item = { kind: "MASUK" | "LAPORAN"; key: string; title: string; body: string; url: string };
+type Item = { kind: "MASUK" | "LAPORAN" | "JADWAL" | "LIBUR"; key: string; title: string; body: string; url: string };
 const STORE = "mg_ingat_ditutup";
 
 function dismissed(): string[] {
@@ -51,12 +51,12 @@ export function ReminderPopup({ enabled }: { enabled: boolean }) {
   return (
     <div role="alertdialog" aria-modal="true" aria-labelledby="ingat-judul" className="fixed inset-0 z-[80] grid place-items-center bg-slate-900/50 p-4">
       <div className="card w-full max-w-sm space-y-3 p-5 text-center">
-        <div className="text-4xl" aria-hidden>{item.kind === "MASUK" ? "⏰" : "📝"}</div>
+        <div className="text-4xl" aria-hidden>{item.kind === "LAPORAN" ? "📝" : item.kind === "LIBUR" ? "🏖" : "⏰"}</div>
         <h2 id="ingat-judul" className="text-lg font-extrabold text-slate-900">{item.title}</h2>
         <p className="text-slate-700">{item.body}</p>
         <div className="flex gap-2">
           <button type="button" className="btn-secondary flex-1" onClick={close}>Nanti</button>
-          <button type="button" className="btn-primary flex-1" onClick={() => { close(); router.push(item.url); }}>{item.kind === "MASUK" ? "Absen sekarang" : "Buka laporan"}</button>
+          <button type="button" className="btn-primary flex-1" onClick={() => { close(); router.push(item.url); }}>{item.kind === "LAPORAN" ? "Buka laporan" : item.kind === "LIBUR" ? "Ajukan libur" : "Absen sekarang"}</button>
         </div>
       </div>
     </div>
