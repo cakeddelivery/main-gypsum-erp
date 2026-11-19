@@ -52,6 +52,7 @@ export const PERMISSIONS = {
   "payroll.manage": "Hitung penggajian",
   "payroll.approve": "Setujui & bayar gaji",
   "payroll.self": "Lihat slip gaji sendiri",
+  "hrd.manage": "HRD: kontrak kerja digital (buat, tandatangani, pengaturan)",
   "sales.view": "Lihat penjualan & piutang pelanggan",
   "sales.manage": "Catat penjualan, terima cicilan piutang, batalkan penjualan",
   "retur.manage": "Catat paket retur (scan label, video unboxing), periksa barang, ajukan klaim",
@@ -82,7 +83,7 @@ export const DEFAULT_MATRIX: Record<Role, Permission[]> = {
   OWNER: ALL_PERMISSIONS,
   FINANCE: [
     "dashboard.view", "dashboard.finance", "finance.view", "finance.create", "finance.review", "finance.approve",
-    "accounting.view", "accounting.post", "accounting.close", "payroll.view", "payroll.approve", "payroll.self",
+    "accounting.view", "accounting.post", "accounting.close", "payroll.view", "payroll.approve", "payroll.self", "hrd.manage",
     "stock.view", "product.view", "employee.view", "production.view", "production.target", "report.view", "audit.view",
     "attendance.view", "attendance.manage", "partner.view", "partner.manage", "borongan.view", "borongan.pay",
     "sales.view", "sales.manage", "retur.manage", "refund.request", "refund.approve", "refund.pay",
@@ -128,7 +129,7 @@ export const RESTRICTED: Partial<Record<Permission, Role[]>> = {
 export const SENSITIVE: Permission[] = [
   "dashboard.finance", "finance.view", "finance.create", "finance.review", "finance.approve",
   "accounting.view", "accounting.post", "accounting.close", "payroll.view", "payroll.manage", "payroll.approve",
-  "sales.manage", "borongan.pay", "refund.approve", "refund.pay", "settings.manage", "users.manage", "audit.view",
+  "sales.manage", "borongan.pay", "refund.approve", "refund.pay", "settings.manage", "users.manage", "audit.view", "hrd.manage",
 ];
 export const isSensitive = (p: string) => (SENSITIVE as string[]).includes(p);
 
@@ -175,7 +176,7 @@ export const MENU_GROUPS: { key: string; label: string; perms: Permission[]; on:
   { key: "partner", label: "Supplier & Pelanggan", perms: ["partner.view", "partner.manage"], on: ["partner.view"] },
   { key: "borongan", label: "Borongan", perms: ["borongan.view", "borongan.point", "borongan.driver", "borongan.manage", "borongan.pay"], on: ["borongan.view"] },
   { key: "employee", label: "Karyawan", perms: ["employee.view", "employee.manage"], on: ["employee.view"] },
-  { key: "payroll", label: "Penggajian", perms: ["payroll.view", "payroll.manage", "payroll.approve", "payroll.self"], on: ["payroll.self"] },
+  { key: "payroll", label: "Penggajian", perms: ["payroll.view", "payroll.manage", "payroll.approve", "payroll.self", "hrd.manage"], on: ["payroll.self"] },
   { key: "finance", label: "Transaksi", perms: ["finance.view", "finance.create", "finance.review", "finance.approve"], on: ["finance.view"] },
   { key: "accounting", label: "Akuntansi & Analitik", perms: ["accounting.view", "accounting.post", "accounting.close"], on: ["accounting.view"] },
   { key: "settings", label: "Pengaturan", perms: ["settings.manage", "users.manage", "audit.view"], on: ["audit.view"] },

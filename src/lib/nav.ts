@@ -17,6 +17,7 @@ export const NAV: NavItem[] = [
   { href: "/pelanggan", label: "Pelanggan", icon: "user", perms: ["partner.view"] },
   { href: "/borongan", label: "Borongan", icon: "users", perms: ["borongan.view"] },
   { href: "/karyawan", label: "Karyawan", icon: "users", perms: ["employee.view"] },
+  { href: "/kontrak", label: "Kontrak kerja", icon: "book", perms: ["hrd.manage", "payroll.self"] },
   { href: "/gaji", label: "Penggajian", icon: "wallet", perms: ["payroll.view", "payroll.self"] },
   { href: "/finance", label: "Transaksi", icon: "inbox", perms: ["finance.view"] },
   { href: "/akuntansi", label: "Akuntansi", icon: "book", perms: ["accounting.view"] },
@@ -63,7 +64,8 @@ export function bottomNavFor(role: Role, can: (p: Permission) => boolean, opts: 
   const allowed = NAV.filter((n) => n.perms.some(can) && !opts.exclude?.includes(n.href));
   const byHref = new Map(allowed.map((n) => [n.href, n]));
   const picked = PRIORITY_NAV[role].map((h) => byHref.get(h)).filter((n): n is NavItem => !!n);
-  for (const n of allowed) if (picked.length < size && !picked.includes(n)) picked.push(n);
+  // Kontrak kerja hanya di menu samping (tidak mengisi slot navigasi bawah)
+  for (const n of allowed) if (picked.length < size && !picked.includes(n) && n.href !== "/kontrak") picked.push(n);
   return picked.slice(0, size).map((n) => ({ href: n.href, label: SHORT_LABEL[n.href] ?? n.label, icon: n.icon }));
 }
 

@@ -284,6 +284,8 @@ model Employee {
   birthDate       DateTime?           @db.Date
   address         String?
   gender          Gender?
+  /// NIK (KTP) untuk kontrak kerja; diisi HRD
+  nik             String?
   email           String?
   /// Rekening gaji (bank / e-wallet): hanya terlihat Owner/Finance
   bankName        String?
@@ -306,6 +308,7 @@ model Employee {
   pieceWorks      PieceWork[]
   advances        CashAdvance[]
   allowances      EmployeeAllowance[]
+  contracts       Contract[]
 }
 
 model ShiftSchedule {
@@ -2676,4 +2679,65 @@ model AffiliateSample {
 
   @@index([reportId])
   @@index([platform, storeId, date])
+}
+
+// ============ KONTRAK KERJA DIGITAL ============
+
+enum ContractKind {
+  PKWT
+  ADD
+}
+
+enum ContractStatus {
+  DRAFT
+  /// Sudah ditandatangani HRD (QR), menunggu tanda tangan karyawan
+  HRD_TTD
+  /// Ditandatangani kedua pihak: TERKUNCI (perubahan lewat addendum)
+  AKTIF
+  BATAL
+}
+
+/// Pencacah nomor dokumen yang aman bersamaan (kontrak per tahun; invoice per toko+channel+bulan)
+model DocCounter {
+  key  String @id
+  last Int     @default(0)
+}
+
+/// Perjanjian kerja (PKWT) atau addendum bernomor. Isi dibekukan di snapshot saat dibuat; hash dokumen dihitung saat HRD menandatangani.
+model Contract {
+  id                String         @id @default(cuid())
+  /// {urut 3 digit}/MG-HRD/{PKWT|ADD}/{bulan romawi}/{tahun}
+  number            String         @unique
+  seq               Int
+  year              Int
+  kind              ContractKind
+  status            ContractStatus @default(DRAFT)
+  employeeId        String
+  employee          Employee       @relation(fields: [employeeId], references: [id])
+  /// Kontrak induk (untuk addendum)
+  parentId          String?
+  startDate         DateTime       @db.Date
+  endDate           DateTime       @db.Date
+  months            Int
+  /// Seluruh isi dokumen (data karyawan, upah, tunjangan, pasal terisi) — tidak berubah setelah HRD menandatangani
+  snapshot          Json
+  /// SHA-256 isi dokumen (saat HRD menandatangani)
+  contentHash       String?
+  /// SHA-256 akhir (isi + tanda tangan karyawan + waktu) saat terkunci
+  finalHash         String?
+  /// Kode di QR / halaman verifikasi publik
+  verifyCode        String         @unique
+  createdBy         String
+  createdAt         DateTime       @default(now())
+  hrdSignedAt       DateTime?
+  hrdSignedBy       String?
+  hrdSignedById     String?
+  /// Gambar tanda tangan karyawan (data URL PNG)
+  employeeSignature String?
+  employeeSignedAt  DateTime?
+  employeeDevice    String?
+  lockedAt          DateTime?
+
+  @@index([employeeId, status])
+  @@index([parentId])
 }
