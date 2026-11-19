@@ -9,7 +9,7 @@ import { taskGroupName } from "@/lib/boronganKirim";
 import { pointConfig, taskKits } from "@/lib/boronganSetup";
 import { STATE_LABEL, byColumn, canCompleteAssembling, canCancelShipment, canDistribute, fullAccess, canInputKering, canPickup, canReceive, canReport, canShip, canShipGroup, isAssemblingName, isCoordinatorScope, openShipments, scopeShipments, shipmentViews, shortTaskName, type ShipmentView } from "@/lib/boronganFlow";
 import { Badge, Empty } from "@/components/ui";
-import { ActionForm } from "@/components/ActionForm";
+import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { AmbilForm, BagiForm, KeringForm, KirimForm, KoreksiForm, LaporForm, TerimaForm, type KirimGroupOpt } from "./KirimanForms";
@@ -84,7 +84,15 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
   const groups = allGroups.filter((g) => canShipGroup(scope, g.name));
   const asmGroup = allGroups.find((g) => isAssemblingName(g.name));
   const waiting = all.filter((s) => s.waitingSupport);
-  const creators = new Map((await prisma.boronganPickup.findMany({ where: { id: { in: all.flatMap((s) => s.pickups.map((p) => p.id)) } }, select: { id: true, createdById: true } })).map((p) => [p.id, p.createdById]));
+  const creators = new Map((await prisma.boronganPickup.findMany({ where: { id: { in: all.flatMap((s) => s.pickups.map((p) => p.id)) } }, select: { id: true, createdById: true, createdAt: true } })).map((p) => [p.id, { by: p.createdById, at: p.createdAt }]));
+  const sameDay = (d?: Date) => !!d && todayStr(d) === todayStr();
+  // Batalkan AMB: pencatatnya hanya yang miliknya & hari ini; Supervisor/Owner kapan saja (belum dihitung); sudah dihitung hanya Owner; koordinator tidak pernah
+  const canCancelAmb = (id: string, status: string) => {
+    if (isCoordinatorScope(scope) || status === "DIBATALKAN") return false;
+    if (status !== "DIBAWA") return !!scope.owner;
+    const c = creators.get(id);
+    return fullAccess(scope) || (c?.by === userId && sameDay(c?.at));
+  };
   const toReceive = all.flatMap((s) => s.pickups.filter((p) => p.status === "DIBAWA" && canReceive(scope, s.tasks.filter((t) => p.lines.some((l) => l.taskId === t.id)))).map((p) => ({ s, p })));
   // Koreksi / lepas tahanan: Owner (Supervisor hanya memantau)
   const held = scope.owner ? all.flatMap((s) => s.pickups.filter((p) => p.status === "KURANG").map((p) => ({ s, p }))) : [];
@@ -176,7 +184,9 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
         {!running.length && <Empty title="Belum ada kiriman berjalan" hint={ship ? "Tekan + Kirim Assembling / + Kirim Cat untuk mencatat kiriman baru." : undefined} />}
         {running.map((s) => {
           const ids = s.tasks.map((t) => t.id);
-          const bagi = canDistribute(scope, { mode: s.mode, taskIds: ids });
+          // Pembagian dikunci setelah ada pengambilan (AMB) pertama: hanya Supervisor/Owner (backup) dengan alasan
+          const hasAmb = s.pickups.some((p) => p.status !== "DIBATALKAN");
+          const bagi = canDistribute(scope, { mode: s.mode, taskIds: ids }) && (!hasAmb || fullAccess(scope));
           const ambil = canPickup(scope, { mode: s.mode, taskIds: ids }) && s.cells.some((c) => !c.done);
           const bWho = s.mode === "DRIVER" ? "Driver" : "tim divisi";
           const lapor = s.points.filter((p) => s.cells.some((c) => c.pointId === p.id) && canReport(scope, { taskIds: ids }, p.id, p.coordinator));
@@ -203,8 +213,15 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
                     <li key={p.id} className="flex flex-wrap items-center gap-2">
                       <Chip>{p.number}</Chip> ke-{i + 1} · {f(p.lines.reduce((a, l) => a + l.qty, 0))} pcs ·
                       {p.status === "DIBAWA" ? <span className="font-semibold text-amber-700">menunggu dihitung</span> : p.status === "KURANG" ? <span className="font-semibold text-rose-700">kurang, upah ditahan</span> : <span className="font-semibold text-emerald-700">diterima</span>}
-                      {p.status === "DIBAWA" && (fullAccess(scope) || creators.get(p.id) === userId) && (
-                        <ActionForm action={batalAmbil} confirm={`Batalkan pengambilan ${p.number}?`}><input type="hidden" name="id" value={p.id} /><button className="text-xs font-semibold text-rose-600 underline">Batalkan</button></ActionForm>
+                      {canCancelAmb(p.id, p.status) && (
+                        <Modal trigger="Batalkan" triggerClass="text-xs font-semibold text-rose-600 underline" title={`Batalkan ${p.number}`} subtitle={p.status === "DIBAWA" ? "Belum dihitung divisi" : "Sudah dihitung divisi: setoran, stok & jurnal dibalik (Owner)"}>
+                          <ModalForm action={batalAmbil} className="space-y-3" confirm={`Batalkan pengambilan ${p.number}? Tindakan ini tercatat di riwayat aktivitas.`}>
+                            <input type="hidden" name="id" value={p.id} />
+                            <p className="text-sm text-slate-600">{p.status === "DIBAWA" ? "Pengambilan hanya bisa dibatalkan pencatatnya pada hari yang sama; setelah itu oleh Supervisor/Owner." : "Hanya Owner. Upah yang sudah dibayar tidak bisa dibalik."}</p>
+                            <label className="block"><span className="label">Alasan (wajib)</span><input name="reason" className="input" required minLength={3} placeholder="mis. salah hitung, salah titik" /></label>
+                            <Submit className="btn-danger">Batalkan pengambilan</Submit>
+                          </ModalForm>
+                        </Modal>
                       )}
                     </li>
                   ))}
@@ -213,12 +230,12 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
               <div className="flex flex-wrap gap-2 pt-1">
                 {bagi && (
                   <Modal trigger={`${allotted ? "Ubah pembagian" : "Bagi ke pekerja"}${bk(scope, bWho).label}`} triggerClass={allotted ? "btn-secondary btn-sm" : "btn-primary btn-sm"} title="Pembagian ke pekerja" subtitle={`${s.number} · ${s.group}`} wide>
-                    <ModalForm action={simpanPembagian} className="space-y-3" confirm={bk(scope, bWho).confirm}>{bk(scope, bWho).note}<BagiForm view={s} workers={workers.filter((w) => s.points.some((p) => p.id === w.pointId)).map((w) => ({ ...w, pointId: w.pointId! }))} /></ModalForm>
+                    <ModalForm action={simpanPembagian} className="space-y-3" confirm={bk(scope, bWho).confirm}>{bk(scope, bWho).note}{hasAmb && <label className="block"><span className="label">Alasan perubahan (wajib, pembagian sudah dikunci pengambilan)</span><input name="reason" className="input" required minLength={3} /></label>}<BagiForm view={s} workers={workers.filter((w) => s.points.some((p) => p.id === w.pointId)).map((w) => ({ ...w, pointId: w.pointId! }))} /></ModalForm>
                   </Modal>
                 )}
                 {lapor.map((p) => (
                   <Modal key={p.id} trigger={`Lapor hasil${s.points.length > 1 ? ` ${p.name}` : ""}${bk(scope, "Koordinator").label}`} triggerClass="btn-secondary btn-sm" title={`Lapor hasil · ${p.name}`} subtitle={s.number} wide>
-                    <ModalForm action={laporHasil} className="space-y-3" confirm={bk(scope, "Koordinator").confirm}>{bk(scope, "Koordinator").note}<LaporForm view={s} pointId={p.id} /></ModalForm>
+                    <ModalForm action={laporHasil} className="space-y-3" confirm={bk(scope, "Koordinator").confirm}>{bk(scope, "Koordinator").note}{scope.backup && <label className="block"><span className="label">Alasan koreksi (wajib bila sudah dihitung divisi)</span><input name="reason" className="input" /></label>}<LaporForm view={s} pointId={p.id} /></ModalForm>
                   </Modal>
                 ))}
                 {ambil && (
