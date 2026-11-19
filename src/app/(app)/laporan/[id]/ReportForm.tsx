@@ -665,7 +665,7 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
     const on = rows.find((r) => r.orderLine === o.lineId);
     if (on) return setRows((xs) => (xs.length > 1 ? xs.filter((x) => x.key !== on.key) : [newRow()]));
     const fill = { itemId: o.itemId, orderLine: o.lineId, shop: o.vendor, qty: String(o.remaining).replace(".", ",") };
-    const empty = rows.find((r) => !r.itemId && !r.qty);
+    const empty = rows.find((r) => !r.itemId && !(qtyOf(r) > 0));
     if (empty) patch(empty.key, fill);
     else setRows((xs) => [...xs, { ...newRow(), ...fill }]);
   };
@@ -682,7 +682,9 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
     if (box.current) mo.observe(box.current, { childList: true, subtree: true, characterData: true });
     return () => { window.clearTimeout(t); mo.disconnect(); };
   }, [rows]);
-  const filled = rows.filter((r) => r.itemId || r.qty);
+  // Baris kosong (bahan belum dipilih DAN jumlah kosong/0) diabaikan; error hanya untuk baris setengah terisi
+  const qtyOf = (r: ReceiptRow) => Number(r.qty.replace(/\./g, "").replace(",", "."));
+  const filled = rows.filter((r) => r.itemId || qtyOf(r) > 0);
   const save = () =>
     run(async () => {
       // Baris yang belum lengkap: kolomnya ditandai merah & difokus (isian lain tetap)
@@ -691,10 +693,10 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
         if (el) markInvalid(el, text);
         return new Error(text);
       };
-      if (!filled.length) throw mark("Barang 1", "Pilih barang dan isi jumlahnya");
-      const noItem = rows.findIndex((r) => (r.itemId || r.qty) && !r.itemId);
+      if (!filled.length) throw new Error("Tidak ada barang baru");
+      const noItem = rows.findIndex((r) => (r.itemId || qtyOf(r) > 0) && !r.itemId);
       if (noItem >= 0) throw mark(`Barang ${noItem + 1}`, "Pilih barang di baris ini");
-      const noQty = rows.findIndex((r) => r.itemId && !(Number(r.qty.replace(/\./g, "").replace(",", ".")) > 0));
+      const noQty = rows.findIndex((r) => r.itemId && !(qtyOf(r) > 0));
       if (noQty >= 0) throw mark(`Jumlah barang ${noQty + 1}`, "Isi jumlahnya");
       const fd = new FormData();
       fd.set("id", id);
@@ -795,7 +797,7 @@ export function ReceiptSection({ id, receipts, materials, applied, orders, banks
           </div>
           <CameraCapture open={cam} title="Foto nota" onClose={() => setCam(false)} onCapture={(blob) => setPhoto({ blob, url: URL.createObjectURL(blob) })} />
         </div>
-        <button type="button" className="btn-primary w-full py-3 text-base" disabled={busy} onClick={save}>{busy ? "Menyimpan…" : filled.length > 1 ? `Simpan semua (${filled.length} barang)` : "Simpan barang masuk"}</button>
+        <button type="button" className="btn-primary w-full py-3 text-base" disabled={busy || !filled.length} onClick={save}>{busy ? "Menyimpan…" : !filled.length ? "Tidak ada barang baru" : filled.length > 1 ? `Simpan semua (${filled.length} barang)` : "Simpan barang masuk"}</button>
       </div>
     </section>
   );
