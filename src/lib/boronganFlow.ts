@@ -133,25 +133,27 @@ export const canInputKering = (scope: Scope) => scope.all || !!scope.kering;
 export const canCompleteAssembling = (scope: Scope) => scope.all || scope.division?.template === "ASSEMBLING" || !!scope.warehouse;
 /** Tim divisi (Assembling / Giftbox) yang mencatat semua jenis pekerjaan kiriman ini */
 const divisionCovers = (scope: Scope, taskIds: string[]) => !!scope.division && !scope.driver && taskIds.every((id) => canTask(scope, id));
+/** Akses penuh semua aksi kiriman: Owner dan Supervisor (backup, atas nama peran aslinya) */
+export const fullAccess = (scope: Scope) => !!scope.owner || !!scope.backup;
 /** Pembagian & ambil setoran: lewat driver = driver; diantar langsung = tim divisi; Owner selalu boleh (Supervisor hanya memantau) */
-export const canDistribute = (scope: Scope, s: { mode: ShipmentMode; taskIds: string[] }) => !!scope.owner || (s.mode === "DRIVER" ? !!scope.driver : divisionCovers(scope, s.taskIds));
+export const canDistribute = (scope: Scope, s: { mode: ShipmentMode; taskIds: string[] }) => fullAccess(scope) || (s.mode === "DRIVER" ? !!scope.driver : divisionCovers(scope, s.taskIds));
 export const canPickup = canDistribute;
 export const isCoordinatorOf = (scope: Scope, pointId: string) => !scope.all && !scope.driver && !scope.division && !!scope.personId && scope.pointIds.includes(pointId);
 /** Lapor hasil: koordinator titik; titik tanpa koordinator (Beringin) oleh tim divisi; Owner selalu boleh */
-export const canReport = (scope: Scope, s: { taskIds: string[] }, pointId: string, hasCoordinator: boolean) => !!scope.owner || isCoordinatorOf(scope, pointId) || (!hasCoordinator && divisionCovers(scope, s.taskIds));
+export const canReport = (scope: Scope, s: { taskIds: string[] }, pointId: string, hasCoordinator: boolean) => fullAccess(scope) || isCoordinatorOf(scope, pointId) || (!hasCoordinator && divisionCovers(scope, s.taskIds));
 /**
  * Terima setoran: patung Assembling diterima tim PACKING; pekerjaan lain oleh divisi tugasnya (Cat Plastik: Assembling,
  * Cat Giftbox: Giftbox); Owner selalu boleh.
  */
 export const canReceive = (scope: Scope, tasks: { name: string; divisionId: string | null }[]) =>
-  !!scope.owner || (!!scope.division && !scope.driver && tasks.every((t) => (isAssemblingName(t.name) ? !!scope.packing : t.divisionId === scope.division!.id)));
+  fullAccess(scope) || (!!scope.division && !scope.driver && tasks.every((t) => (isAssemblingName(t.name) ? !!scope.packing : t.divisionId === scope.division!.id)));
 
 /**
  * Batalkan kiriman: Owner kapan saja (sebelum ada pengambilan); pencatatnya selama belum dibagi ke pekerja.
  * Isian patung kering yang belum dilengkapi: juga tim Assembling. Supervisor lain hanya memantau.
  */
 export function canCancelShipment(scope: Scope, s: { waitingSupport: boolean; createdById: string | null; _count?: { allots: number } }, userId: string) {
-  if (scope.owner) return true;
+  if (fullAccess(scope)) return true;
   if (s.waitingSupport) return (canCompleteAssembling(scope) && !scope.all) || s.createdById === userId;
   return s.createdById === userId && (s._count?.allots ?? 0) === 0;
 }
@@ -656,7 +658,7 @@ export async function cancelPickup(id: string, actor: Actor, scope: Scope) {
     await tx.$queryRaw`SELECT id FROM "BoronganPickup" WHERE id = ${id} FOR UPDATE`;
     const p = await tx.boronganPickup.findUniqueOrThrow({ where: { id }, include: { shipment: { include: { tasks: true } } } });
     if (p.status !== "DIBAWA") throw new BoronganError("Pengambilan yang sudah diterima divisi tidak bisa dibatalkan");
-    if (!scope.owner && p.createdById !== actor.id) throw new BoronganError("Hanya pencatat atau Owner yang bisa membatalkan");
+    if (!fullAccess(scope) && p.createdById !== actor.id) throw new BoronganError("Hanya pencatat, Supervisor, atau Owner yang bisa membatalkan");
     await tx.boronganPickup.update({ where: { id }, data: { status: "DIBATALKAN" } });
     await audit(actor, "AMBIL_SETORAN_DIBATALKAN", "BoronganPickup", id, { number: p.number }, tx);
   });

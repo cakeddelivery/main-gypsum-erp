@@ -6,6 +6,12 @@ import { cancelPickup, cancelShipment, createPickup, createShipment, receivePick
 import { todayStr } from "@/lib/time";
 import { autoClaims } from "@/lib/boronganClaim";
 import { FieldError } from "@/lib/fieldError";
+import { audit } from "@/lib/audit";
+
+/** Supervisor/Owner (backup) yang mengerjakan atas nama peran lain: pelaku sebenarnya tercatat di audit */
+async function backupAudit(scope: Awaited<ReturnType<typeof boronganScope>>, user: { id: string; name: string }, aksi: string, ref: string, atasNama: string) {
+  if (scope.backup) await audit(user, "BORONGAN_BACKUP", "BoronganShipment", ref, { aksi, atasNama });
+}
 
 /** Alur kiriman borongan (KRM → bagi → lapor → AMB → terima). Driver punya izin borongan.driver. */
 const PERMS = ["borongan.manage", "borongan.point", "borongan.driver"] as const;
@@ -38,7 +44,9 @@ export const kirimBahan = action(
 export const batalKiriman = action(
   [...PERMS],
   async (fd, user) => {
-    await cancelShipment(str(fd, "id"), user, await boronganScope(prisma, user));
+    const scope = await boronganScope(prisma, user);
+    await cancelShipment(str(fd, "id"), user, scope);
+    await backupAudit(scope, user, "batal kiriman", str(fd, "id"), "pencatat kiriman");
     return "Kiriman dibatalkan, bahan kembali ke gudang";
   },
   PATHS,
@@ -52,7 +60,9 @@ export const simpanPembagian = action(
       const [, pointId, workerId, taskId] = k.split(":");
       return { pointId, workerId, taskId, qty: int(v) };
     });
-    const r = await saveAllots(str(fd, "shipmentId"), rows, user, await boronganScope(prisma, user));
+    const scope = await boronganScope(prisma, user);
+    const r = await saveAllots(str(fd, "shipmentId"), rows, user, scope);
+    await backupAudit(scope, user, "pembagian ke pekerja", str(fd, "shipmentId"), "Driver / tim divisi");
     return r.left > 0 ? `Pembagian ${r.number} tersimpan. Masih sisa ${fmt(r.left)} pcs belum dibagi.` : `Pembagian ${r.number} tersimpan, semua sudah dibagi`;
   },
   PATHS,
@@ -72,7 +82,9 @@ export const laporHasil = action(
       m.set(`${workerId}:${taskId}`, cur);
     }
     const rows = [...m.values()];
-    await saveWorkReport(str(fd, "shipmentId"), str(fd, "pointId"), rows, fd.get("checked") === "on", user, await boronganScope(prisma, user));
+    const scope = await boronganScope(prisma, user);
+    await saveWorkReport(str(fd, "shipmentId"), str(fd, "pointId"), rows, fd.get("checked") === "on", user, scope);
+    await backupAudit(scope, user, "lapor hasil titik", str(fd, "shipmentId"), "Koordinator titik");
     return `Laporan terkirim: setoran ${fmt(rows.reduce((a, r) => a + r.good, 0))}, reject ${fmt(rows.reduce((a, r) => a + r.reject, 0))}`;
   },
   PATHS,
@@ -87,7 +99,9 @@ export const ambilSetoran = action(
       const [, pointId, workerId, taskId] = k.split(":");
       return { pointId, workerId, taskId, qty: int(v), done: done.has(workerId) };
     });
-    const p = await createPickup(str(fd, "shipmentId"), rows, user, await boronganScope(prisma, user));
+    const scope = await boronganScope(prisma, user);
+    const p = await createPickup(str(fd, "shipmentId"), rows, user, scope);
+    await backupAudit(scope, user, "ambil setoran", str(fd, "shipmentId"), "Driver / tim divisi");
     return `Pengambilan ${p.number} tercatat (${fmt(rows.reduce((a, r) => a + r.qty, 0))} pcs), menunggu dihitung divisi`;
   },
   PATHS,
@@ -96,7 +110,9 @@ export const ambilSetoran = action(
 export const batalAmbil = action(
   [...PERMS],
   async (fd, user) => {
-    await cancelPickup(str(fd, "id"), user, await boronganScope(prisma, user));
+    const scope = await boronganScope(prisma, user);
+    await cancelPickup(str(fd, "id"), user, scope);
+    await backupAudit(scope, user, "batal pengambilan", str(fd, "id"), "pencatat pengambilan");
     return "Pengambilan dibatalkan";
   },
   PATHS,
@@ -109,7 +125,9 @@ export const terimaSetoran = action(
     const counts = [...fd.entries()].filter(([k]) => k.startsWith("c:")).map(([k, v]) => ({ taskId: k.slice(2), qty: String(v).trim() === "" ? -1 : int(v) }));
     const empty = counts.find((c) => c.qty < 0);
     if (empty) throw new FieldError(`c:${empty.taskId}`, "Isi hitungan jenis ini (0 bila tidak ada)");
-    const r = await receivePickup(str(fd, "pickupId"), counts, user, await boronganScope(prisma, user));
+    const scope = await boronganScope(prisma, user);
+    const r = await receivePickup(str(fd, "pickupId"), counts, user, scope);
+    await backupAudit(scope, user, "terima setoran", str(fd, "pickupId"), "divisi penerima");
     // Setiap 7× setoran Assembling per titik, klaim upah dibuat otomatis
     if (!r.short) await autoClaims(r.pointIds);
     return r.short ? `${r.number} diterima dengan hitungan kurang. Upah ditahan, driver & Supervisor diberi notifikasi.` : `${r.number} cocok, barang masuk gudang`;
