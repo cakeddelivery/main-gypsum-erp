@@ -882,6 +882,44 @@ model ShiftReport {
   @@unique([date, shiftId, divisionId])
 }
 
+/// Status tabung LPG 5 kg yang dilaporkan di laporan shift Oven (penuh / aktif terpasang / kosong). Total harus sama dengan total aset tabung.
+model LpgState {
+  id         String   @id @default(cuid())
+  reportId   String   @unique
+  date       DateTime @db.Date
+  penuh      Int
+  aktif      Int
+  kosong     Int
+  /// Tabung isi ulang yang diterima shift ini (kosong → penuh)
+  isiUlang   Int      @default(0)
+  /// Turunan dari shift sebelumnya: tabung dipasang (penuh → aktif) & tabung habis (aktif → kosong)
+  dipasang   Int      @default(0)
+  habis      Int      @default(0)
+  total      Int
+  picName    String?
+  createdAt  DateTime @default(now())
+
+  @@index([date])
+}
+
+/// Isi ulang tabung LPG (fisik dari laporan Oven) menunggu/dipasangkan ke transaksi pembelian Finance (sering dicatat malam/esok hari).
+/// Tanggal fisik dipakai untuk stok, tanggal transaksi asli untuk keuangan.
+model LpgRefill {
+  id             String    @id @default(cuid())
+  reportId       String    @unique
+  physicalDate   DateTime  @db.Date
+  tabung         Int
+  /// MENUNGGU / DIPASANGKAN
+  status         String    @default("MENUNGGU")
+  transactionId  String?   @unique
+  amount         BigInt?
+  pricePerTabung BigInt?
+  pairedAt       DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([status, physicalDate])
+}
+
 /// Barang masuk dari supplier/toko yang dilaporkan divisi di laporan shift (sebelum stok akhir dihitung).
 /// Belum ditautkan = sudah ada fisik di gudang tapi belum dicatat di Pembelian: stock opname menganggapnya sudah ada
 /// (tidak jadi pemakaian/HPP). Saat ditautkan ke Pembelian, stok masuk bertanggal waktu barang masuk (tidak dobel).

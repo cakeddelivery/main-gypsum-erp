@@ -9,6 +9,7 @@ import { refreshDraftChecklists } from "@/lib/shiftReportChecklist";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { withCurrentLimits } from "@/lib/shiftReportStock";
 import { flowEnabled } from "@/lib/shiftReportFlow";
+import { lpgTotalAset, previousLpg, storedLpg } from "@/lib/lpg";
 import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
 import { resultPlaces } from "@/lib/resultCountGroups";
 import { divisionPendingReturns } from "@/lib/borongan";
@@ -103,6 +104,9 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const materials = items.map((i) => ({ id: i.id, name: i.name, unit: i.unit }));
   // Giftbox Mix: bawaan patung ke-5 = karakter patung kering dengan stok terbanyak
   const moveShifts = reportDivision(user) === null && r.division.shiftCount > 1 ? (await prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, take: r.division.shiftCount })) : [];
+  const lpgProps = template === "PRODUKSI"
+    ? await (async () => { const pv = await previousLpg(r.id, r.date); return { cur: storedLpg(work), prev: pv ? { penuh: pv.penuh, aktif: pv.aktif, kosong: pv.kosong } : null, total: await lpgTotalAset() }; })()
+    : null;
   const mixDefault = template === "GIFTBOX" ? await mostStockedVariant() : null;
 
   return (
@@ -165,6 +169,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   resultCount={[...rItems].sort((a, b) => (places.get(a.id)?.order ?? 0) - (places.get(b.id)?.order ?? 0)).map((i) => { const pl = places.get(i.id); return { key: i.id, label: i.name, unit: i.unit, qty: rv[i.id] ?? null, group: pl?.group, sub: pl?.sub, col: pl?.col }; })}
                   flow={flowOn && template ? flow : null}
                   sent={r.workPostedVersion > 0 || r.status !== "DRAFT"}
+                  lpg={lpgProps}
                 />
               </Modal>
             )}
