@@ -882,6 +882,34 @@ model ShiftReport {
   @@unique([date, shiftId, divisionId])
 }
 
+/// Neraca stok per barang per shift (snapshot saat laporan dikirim/direvisi): awal + masuk − keluar − reject = sistem, dibandingkan hitung fisik.
+/// Selisih negatif = kebocoran/hilang. Sumber halaman Kebocoran & alert (tahap berikutnya).
+model ShiftBalance {
+  id            String   @id @default(cuid())
+  reportId      String
+  divisionId    String
+  itemId        String
+  opening       Decimal  @db.Decimal(14, 3)
+  inProduksi    Decimal  @default(0) @db.Decimal(14, 3)
+  inMasuk       Decimal  @default(0) @db.Decimal(14, 3)
+  inBorongan    Decimal  @default(0) @db.Decimal(14, 3)
+  inLain        Decimal  @default(0) @db.Decimal(14, 3)
+  outPakai      Decimal  @default(0) @db.Decimal(14, 3)
+  outBorongan   Decimal  @default(0) @db.Decimal(14, 3)
+  outJual       Decimal  @default(0) @db.Decimal(14, 3)
+  outReject     Decimal  @default(0) @db.Decimal(14, 3)
+  outLain       Decimal  @default(0) @db.Decimal(14, 3)
+  systemClosing Decimal  @db.Decimal(14, 3)
+  counted       Decimal? @db.Decimal(14, 3)
+  diff          Decimal? @db.Decimal(14, 3)
+  unitCost      BigInt   @default(0)
+  picName       String?
+  computedAt    DateTime @default(now())
+
+  @@unique([reportId, itemId])
+  @@index([divisionId, computedAt])
+}
+
 /// Barang masuk dari supplier/toko yang dilaporkan divisi di laporan shift (sebelum stok akhir dihitung).
 /// Belum ditautkan = sudah ada fisik di gudang tapi belum dicatat di Pembelian: stock opname menganggapnya sudah ada
 /// (tidak jadi pemakaian/HPP). Saat ditautkan ke Pembelian, stok masuk bertanggal waktu barang masuk (tidak dobel).

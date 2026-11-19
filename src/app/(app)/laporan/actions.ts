@@ -14,6 +14,7 @@ import { STAGE_LABEL } from "@/lib/stock";
 import { applyShiftStockCount } from "@/lib/shiftReportStock";
 import { postShiftWork } from "@/lib/shiftReportFlow";
 import { assertMemberOwnsReport, memberReportSlot, moveReportShift } from "@/lib/reportShift";
+import { boronganBalanceLines, saveShiftBalance } from "@/lib/shiftBalance";
 import { sendShiftReportJpg } from "@/lib/shiftReportJpg";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { receiptReportLines } from "@/lib/boronganReceipt";
@@ -208,6 +209,8 @@ async function sendReportData(id: string, user: User): Promise<string> {
     // Stok akhir setengah jadi / produk jadi milik divisi (sesudah hasil kerja diposting): selisih ditandai; disamakan bila sakelar menyala
     const resultRes = await applyResultCount(id, user);
     const resultStatus = await resultCountStatus(id);
+    // Neraca stok per barang (awal + masuk − keluar = sistem vs hitung fisik) disimpan sebagai snapshot; tidak menahan pengiriman bila gagal
+    const balance = await saveShiftBalance(id).catch((e) => (console.error("Neraca shift gagal:", e), []));
     const receipts = await prisma.shiftReceipt.findMany({ where: { reportId: id }, include: { item: true }, orderBy: { number: "asc" } });
     const template = r.division.reportTemplate;
     const checklist = toEntries(r.checklist) as ChecklistEntry[];
@@ -224,6 +227,7 @@ async function sendReportData(id: string, user: User): Promise<string> {
         ...workLines(template, work).map(esc),
         ...(await boronganLines(template, r.date, r.divisionId)).map(esc),
         ...(await receiptReportLines(r.divisionId, r.date)).map((l) => (l.includes("⚠") ? `<b>${esc(l)}</b>` : esc(l))),
+        ...boronganBalanceLines(balance).map(esc),
         ...(resultStatus ? resultLines(resultStatus).map((l) => (l.includes("⚠") ? `<b>${esc(l)}</b>` : esc(l))) : []),
         ...(receipts.length ? ["", `<b>Barang masuk (${receipts.length})</b>`, ...receipts.map((x) => `• ${esc(x.item.name)}: ${Number(x.qty).toLocaleString("id-ID")} ${esc(x.item.unit)}${x.supplierName ? ` · ${esc(x.supplierName)}` : ""}${x.purchaseId ? "" : " (belum dicatat di Pembelian)"}`)] : []),
         "",
