@@ -9,6 +9,8 @@ import { refreshDraftChecklists } from "@/lib/shiftReportChecklist";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { withCurrentLimits } from "@/lib/shiftReportStock";
 import { flowEnabled } from "@/lib/shiftReportFlow";
+import { REJECT_STAGE_LABEL, stageOfTemplate } from "@/lib/rejectShared";
+import { storedRejects } from "@/lib/productionReject";
 import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
 import { resultPlaces } from "@/lib/resultCountGroups";
 import { divisionPendingReturns } from "@/lib/borongan";
@@ -91,6 +93,8 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const [rItems, rv] = await Promise.all([resultItems(r.divisionId), resultValues(work, r.division.reportTemplate)]);
   // Tahap "Stok jadi": hanya barang milik divisi ini, dikelompokkan produk induk → paket → series
   const places = await resultPlaces(rItems);
+  // Reject: barang setengah jadi / jadi milik divisi (hanya divisi berformat laporan)
+  const rejectItems = stageOfTemplate(template) ? rItems.map((i) => ({ id: i.id, name: i.name, unit: i.unit })) : [];
   const receiptLines = receipts.map((x) => `${x.item.name}: ${Number(x.qty).toLocaleString("id-ID")} ${x.item.unit}${x.supplierName ? ` · ${x.supplierName}` : ""}${x.purchaseId ? "" : " (belum dicatat di Pembelian)"}`);
   const flow = flowOn && template ? flowLines(plannedFlow(template, work)) : [];
   const fname = `laporan-${r.division.code}-${r.shift.code}-${day}`;
@@ -165,6 +169,9 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   resultCount={[...rItems].sort((a, b) => (places.get(a.id)?.order ?? 0) - (places.get(b.id)?.order ?? 0)).map((i) => { const pl = places.get(i.id); return { key: i.id, label: i.name, unit: i.unit, qty: rv[i.id] ?? null, group: pl?.group, sub: pl?.sub, col: pl?.col }; })}
                   flow={flowOn && template ? flow : null}
                   sent={r.workPostedVersion > 0 || r.status !== "DRAFT"}
+                  rejectItems={rejectItems}
+                  rejects={storedRejects(r.work)}
+                  rejectStageLabel={stageOfTemplate(template) ? REJECT_STAGE_LABEL[stageOfTemplate(template)!] : null}
                 />
               </Modal>
             )}

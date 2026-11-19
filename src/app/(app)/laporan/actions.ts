@@ -14,6 +14,7 @@ import { STAGE_LABEL } from "@/lib/stock";
 import { applyShiftStockCount } from "@/lib/shiftReportStock";
 import { postShiftWork } from "@/lib/shiftReportFlow";
 import { assertMemberOwnsReport, memberReportSlot, moveReportShift } from "@/lib/reportShift";
+import { REJECT_KEY, REJECT_REASONS, applyReportRejects, parseRejects, storedRejects } from "@/lib/productionReject";
 import { sendShiftReportJpg } from "@/lib/shiftReportJpg";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { receiptReportLines } from "@/lib/boronganReceipt";
@@ -114,6 +115,9 @@ async function saveReportData(fd: FormData, user: User) {
     const work: Record<string, unknown> = isTemplate(template) ? parseWork(template, get, await reportCatalogs(template)) : {};
     const rc = parseResultCount((await resultItems(r.divisionId)).map((i) => i.id), get);
     if (rc) work[RESULT_KEY] = rc;
+    // Reject per tahap (jenis + jumlah + alasan); tanpa penanda form → reject lama dipertahankan
+    if (fd.has("rj.present")) work[REJECT_KEY] = parseRejects((k) => fd.getAll(k).map(String));
+    else if ((r.work as Record<string, unknown>)?.[REJECT_KEY]) work[REJECT_KEY] = (r.work as Record<string, unknown>)[REJECT_KEY];
     const stock = (await stockRows(r.divisionId, r.stockCount as StockCountRow[])).map((row) => (fd.has(`s.${row.itemId}`) ? { ...row, qty: num(str(fd, `s.${row.itemId}`)) } : row));
     await prisma.shiftReport.update({
       where: { id },
@@ -205,10 +209,14 @@ async function sendReportData(id: string, user: User): Promise<string> {
     await autoRequestsFromReport(id, user).catch((e) => console.error("Permintaan stok otomatis gagal:", e));
     // Hasil kerja → stok setengah jadi / barang jadi (bila diaktifkan Owner)
     const flowRes = await postShiftWork(id, user);
+    // Reject per tahap: dicatat per jenis & alasan; stok keluar + Beban Reject Produksi bila sakelar menyala
+    const rejectRes = await applyReportRejects(id, user);
     // Stok akhir setengah jadi / produk jadi milik divisi (sesudah hasil kerja diposting): selisih ditandai; disamakan bila sakelar menyala
     const resultRes = await applyResultCount(id, user);
     const resultStatus = await resultCountStatus(id);
     const receipts = await prisma.shiftReceipt.findMany({ where: { reportId: id }, include: { item: true }, orderBy: { number: "asc" } });
+    const rejectIds = storedRejects(r.work).map((x) => x.itemId);
+    const itemNames = new Map((await prisma.item.findMany({ where: { id: { in: rejectIds } }, select: { id: true, name: true, unit: true } })).map((i) => [i.id, `${i.name}`]));
     const template = r.division.reportTemplate;
     const checklist = toEntries(r.checklist) as ChecklistEntry[];
     const stock = await withCurrentLimits(r.stockCount as StockCountRow[]);
@@ -224,6 +232,7 @@ async function sendReportData(id: string, user: User): Promise<string> {
         ...workLines(template, work).map(esc),
         ...(await boronganLines(template, r.date, r.divisionId)).map(esc),
         ...(await receiptReportLines(r.divisionId, r.date)).map((l) => (l.includes("⚠") ? `<b>${esc(l)}</b>` : esc(l))),
+        ...rejectLines(r.work, itemNames).map(esc),
         ...(resultStatus ? resultLines(resultStatus).map((l) => (l.includes("⚠") ? `<b>${esc(l)}</b>` : esc(l))) : []),
         ...(receipts.length ? ["", `<b>Barang masuk (${receipts.length})</b>`, ...receipts.map((x) => `• ${esc(x.item.name)}: ${Number(x.qty).toLocaleString("id-ID")} ${esc(x.item.unit)}${x.supplierName ? ` · ${esc(x.supplierName)}` : ""}${x.purchaseId ? "" : " (belum dicatat di Pembelian)"}`)] : []),
         "",
@@ -263,7 +272,7 @@ async function sendReportData(id: string, user: User): Promise<string> {
       prisma.reportSend.create({ data: { reportId: id, sentBy: user.name, channel, status, error } }),
       prisma.shiftReport.update({ where: { id }, data: { status: status === "GAGAL" ? r.status : "TERKIRIM" } }),
     ]);
-    await audit(user, "LAPORAN_DIKIRIM", "ShiftReport", id, { status, channel, stockAdjusted: stockRes.adjusted, stockSkipped: stockRes.skipped ?? null, workPosted: flowRes.posted, resultAdjusted: resultRes.adjusted });
+    await audit(user, "LAPORAN_DIKIRIM", "ShiftReport", id, { status, channel, stockAdjusted: stockRes.adjusted, stockSkipped: stockRes.skipped ?? null, workPosted: flowRes.posted, rejectRows: rejectRes.rows, rejectPosted: rejectRes.posted, resultAdjusted: resultRes.adjusted });
     // JPG laporan ke penerima & grup Telegram (latar belakang; tidak menahan tombol Kirim)
     if (channel === "TELEGRAM" && status !== "GAGAL") {
       const summary = isTemplate(template) ? summaryOf(template, r.work as Parameters<typeof workLines>[1]).map((s) => `${s.label}: ${s.value.toLocaleString("id-ID")}${s.unit ? ` ${s.unit}` : ""}`).join(" | ") : "";
@@ -273,6 +282,13 @@ async function sendReportData(id: string, user: User): Promise<string> {
     const msg = status === "SEBAGIAN" ? "Terkirim sebagian, cek riwayat" : "Laporan terkirim";
     return stockRes.skipped ? `${msg}. ${stockRes.skipped}` : msg;
   }
+}
+
+/** Baris teks reject laporan untuk pesan Telegram */
+function rejectLines(work: unknown, names: Map<string, string>): string[] {
+  const list = storedRejects(work);
+  if (!list.length) return [];
+  return ["REJECT", ...list.map((x) => `• ${names.get(x.itemId) ?? "Barang"}: ${x.qty.toLocaleString("id-ID")} — ${REJECT_REASONS[x.reason] ?? x.reason}${x.note ? ` (${x.note})` : ""}`)];
 }
 
 /** Barang masuk hari ini (dari supplier/toko), dicatat sebelum stok akhir; foto nota opsional */

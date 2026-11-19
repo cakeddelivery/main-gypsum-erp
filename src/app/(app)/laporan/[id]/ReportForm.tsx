@@ -35,6 +35,7 @@ import { FormDraft, clearFormDraft } from "@/components/FormDraft";
 import { CameraCapture } from "@/components/CameraCapture";
 import { readReopen, reportReopenKey, writeReopen } from "@/lib/reopen";
 import { setUploading } from "@/lib/appVersion";
+import { REJECT_REASONS } from "@/lib/rejectShared";
 
 /** Baris pesanan yang sedang dikirim (Stok → Pembelian) untuk barang divisi ini */
 export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean; vendor: string; itemName: string; unit: string };
@@ -72,6 +73,10 @@ type Props = {
   flow: string[] | null;
   /** Laporan sudah pernah dikirim (kirim ulang = revisi) */
   sent: boolean;
+  /** Reject per tahap: barang divisi yang bisa dipilih + isian tersimpan */
+  rejectItems: { id: string; name: string; unit: string }[];
+  rejects: { itemId: string; qty: number; reason: string; note?: string | null }[];
+  rejectStageLabel: string | null;
 };
 
 type Step = { key: string; label: string };
@@ -90,6 +95,7 @@ export function ReportForm(p: Props) {
     return w;
   });
   const [stock, setStock] = useState(p.stock);
+  const [rejects, setRejects] = useState(() => p.rejects.map((r, i) => ({ key: i, itemId: r.itemId, qty: String(r.qty).replace(".", ","), reason: r.reason, note: r.note ?? "" })));
   const [checks, setChecks] = useState(() => p.checklist.map((c) => c.done));
 
   const setGrid = (s: GridSection, rows: GridRow[]) => setWork((w) => ({ ...w, [s.key]: rows }));
@@ -104,6 +110,7 @@ export function ReportForm(p: Props) {
     { key: "checklist", label: "Checklist" },
     ...(p.resultTitle && p.resultCount.length > 0 ? [{ key: "hasilakhir", label: "Stok jadi" }] : []),
     ...(stock.length > 0 ? [{ key: "stok", label: "Stok akhir" }] : []),
+    ...(p.rejectItems.length > 0 ? [{ key: "reject", label: "Reject" }] : []),
     { key: "catatan", label: "Catatan & kirim" },
   ];
   // Halaman sempat dimuat ulang (mis. HP menutup browser saat kamera dibuka): lanjut di langkah terakhir
@@ -543,6 +550,34 @@ export function ReportForm(p: Props) {
               <ul className="space-y-0.5">{order.map((o) => <li key={o.itemId}>⚠ {o.name} — stok {fmt(o.qty!)} · limit {fmt(o.limit)} {o.unit}</li>)}</ul>
             </div>
           )}
+        </section>
+      )}
+
+      {p.rejectItems.length > 0 && (
+        <section data-step="reject" className={`card space-y-3 p-4 ${show("reject")}`}>
+          <input type="hidden" name="rj.present" value="1" />
+          <h3 className="font-semibold text-slate-800">Reject {p.rejectStageLabel ?? ""}</h3>
+          <p className="text-xs text-slate-500">Catat barang yang rusak/gagal shift ini: jenis, jumlah, dan alasannya. Kosongkan bila tidak ada reject. Nilainya tercatat sebagai beban reject.</p>
+          {rejects.map((r, i) => (
+            <div key={r.key} className="space-y-1.5 rounded-lg border border-slate-200 p-2">
+              <div className="flex items-center gap-1.5">
+                <select name="rj.item" value={r.itemId} onChange={(e) => setRejects((x) => x.map((y, j) => (j === i ? { ...y, itemId: e.target.value } : y)))} className="input min-w-0 flex-1 px-2 text-sm" aria-label={`Barang reject ${i + 1}`}>
+                  <option value="">— pilih barang —</option>
+                  {p.rejectItems.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+                <input name="rj.qty" inputMode="decimal" value={r.qty} onChange={(e) => setRejects((x) => x.map((y, j) => (j === i ? { ...y, qty: e.target.value } : y)))} className="input w-20 px-1.5 text-right tabular-nums" placeholder="0" aria-label={`Jumlah reject ${i + 1}`} />
+                <button type="button" className="grid h-9 w-7 shrink-0 place-items-center rounded-md text-rose-600 hover:bg-rose-50" onClick={() => setRejects((x) => x.filter((_, j) => j !== i))} aria-label={`Hapus reject ${i + 1}`}>✕</button>
+              </div>
+              <div className="flex gap-1.5">
+                <select name="rj.reason" value={r.reason} onChange={(e) => setRejects((x) => x.map((y, j) => (j === i ? { ...y, reason: e.target.value } : y)))} className="input w-40 shrink-0 px-2 text-sm" aria-label={`Alasan reject ${i + 1}`}>
+                  <option value="">— alasan —</option>
+                  {Object.entries(REJECT_REASONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+                <input name="rj.note" value={r.note} onChange={(e) => setRejects((x) => x.map((y, j) => (j === i ? { ...y, note: e.target.value } : y)))} className="input min-w-0 flex-1 px-2 text-sm" placeholder="Catatan (opsional)" maxLength={200} />
+              </div>
+            </div>
+          ))}
+          <button type="button" className="btn-secondary w-full" onClick={() => setRejects((x) => [...x, { key: Date.now() + x.length, itemId: "", qty: "", reason: "", note: "" }])}>+ Tambah reject</button>
         </section>
       )}
 
