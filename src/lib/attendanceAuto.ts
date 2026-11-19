@@ -34,18 +34,20 @@ export async function reconcileDay(day: string, opts: { apply: boolean; employee
   const now = opts.now ?? new Date();
   const d = dateOnly(day);
   const only = opts.employeeIds ? { id: { in: opts.employeeIds } } : {};
-  const [shifts, emps, atts, scheds, week, leaves] = await Promise.all([
+  const [shifts, emps, atts, scheds, week, leaves, dayOffs] = await Promise.all([
     prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
     prisma.employee.findMany({ where: { status: "AKTIF", wageType: { not: "BORONGAN" }, joinDate: { not: null, lte: d }, OR: [{ resignDate: null }, { resignDate: { gt: d } }], ...only }, select: { id: true, name: true, division: { select: { shiftCount: true } } } }),
     prisma.attendance.findMany({ where: { date: d, ...(opts.employeeIds ? { employeeId: { in: opts.employeeIds } } : {}) }, include: { employee: { select: { name: true, division: { select: { shiftCount: true } } } } } }),
     prisma.shiftSchedule.findMany({ where: { date: d } }),
     prisma.shiftSchedule.findMany({ where: { date: { gte: dateOnly(monday(day)), lte: dateOnly(addDays(monday(day), 6)) } }, select: { employeeId: true } }),
     prisma.leaveRequest.findMany({ where: { status: "DISETUJUI", dateFrom: { lte: d }, dateTo: { gte: d } }, select: { employeeId: true, kind: true } }),
+    prisma.dayOffRequest.findMany({ where: { status: "DISETUJUI", dates: { has: day } }, select: { employeeId: true } }),
   ]);
   if (!shifts.length) return [];
   const attOf = new Map(atts.map((a) => [a.employeeId, a]));
   const schedOf = new Map(scheds.map((s) => [s.employeeId, s]));
   const planned = new Set(week.map((s) => s.employeeId));
+  const dayOffOf = new Set(dayOffs.map((x) => x.employeeId));
   const leaveOf = new Map(leaves.map((l) => [l.employeeId, l.kind]));
   const changes: DayChange[] = [];
   const ops: ((tx: Prisma.TransactionClient) => Promise<unknown>)[] = [];
@@ -93,7 +95,7 @@ export async function reconcileDay(day: string, opts: { apply: boolean; employee
     const sc = schedOf.get(e.id);
     const scShift = sc ? shifts.find((x) => x.id === sc.shiftId) : null;
     if (!a && scShift && nightShiftRunning(now, day, scShift)) continue;
-    const t = targetStatus({ scheduled: schedOf.has(e.id), weekPlanned: planned.has(e.id), leave: (leaveOf.get(e.id) as "IZIN" | "SAKIT" | undefined) ?? null, att: a });
+    const t = targetStatus({ scheduled: schedOf.has(e.id), weekPlanned: planned.has(e.id), leave: (leaveOf.get(e.id) as "IZIN" | "SAKIT" | undefined) ?? null, att: a, dayOff: dayOffOf.has(e.id) });
     if (!a && t) {
       changes.push({ employeeId: e.id, name: e.name, date: day, kind: "STATUS_BARU", to: t.status });
       const shiftId = schedOf.get(e.id)?.shiftId ?? shifts[0].id;

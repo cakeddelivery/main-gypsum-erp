@@ -46,7 +46,7 @@ export default async function PenjualanDetail({ params }: { params: Promise<{ id
         subtitle={<>{s.customerName} · {fmtDate(s.date)} · <Badge tone={st.tone}>{st.label}</Badge></>}
         actions={<>
           <Link href="/penjualan" className="btn-secondary">Kembali</Link>
-          {!s.cancelledAt && <DownloadJpg targetId="nota" filename={`nota-${s.number}`} />}
+          {!s.cancelledAt && <DownloadJpg targetId="nota" filename={`nota-${s.number}`} label="👁 Lihat nota" />}
           {canManage && !s.cancelledAt && rest > 0 && (
             <Modal trigger="Terima pembayaran" title={`Pembayaran ${s.number}`}>
               <ModalForm action={receiveSalePayment} className="space-y-3">

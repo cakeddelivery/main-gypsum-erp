@@ -7,6 +7,8 @@ import { dateStr, fmtDateTime, fmtDay, todayStr } from "@/lib/time";
 import { qrSvg } from "@/lib/qr";
 import { baseUrl } from "@/lib/baseUrl";
 import { Badge, Field, PageHeader } from "@/components/ui";
+import { DownloadJpg } from "@/components/DownloadJpg";
+import { DocExport } from "@/components/DocSheet";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { ActionForm, Submit } from "@/components/ActionForm";
@@ -38,7 +40,7 @@ export default async function KontrakDetail({ params }: { params: Promise<{ id: 
       <PageHeader
         title={`${c.kind === "ADD" ? "Addendum" : "Kontrak"} ${c.number}`}
         subtitle={`${c.employee.name} · ${fmtDay(c.startDate)} – ${fmtDay(c.endDate)}`}
-        actions={<><Link href="/kontrak" className="btn-secondary">Kembali</Link>{c.hrdSignedAt && <a href={`/cetak/kontrak/${c.id}?print=1`} target="_blank" className="btn-secondary">📄 Unduh PDF</a>}</>}
+        actions={<><Link href="/kontrak" className="btn-secondary">Kembali</Link><DownloadJpg targetId="kontrak" filename={`kontrak-${c.number.replace(/\//g, "-")}`} label="👁 Baca kontrak" className="btn-primary" pdfHref={c.hrdSignedAt ? `/cetak/kontrak/${c.id}?print=1` : undefined} /></>}
       />
       <div className="flex flex-wrap items-center gap-2">
         <Badge tone={tone}>{label}</Badge>
@@ -89,7 +91,7 @@ export default async function KontrakDetail({ params }: { params: Promise<{ id: 
       {mine && c.status === "HRD_TTD" && (
         <section className="card space-y-3 p-4">
           <h3 className="font-bold text-slate-800">Tandatangani kontrak Anda</h3>
-          <p className="text-sm text-slate-600">Baca seluruh isi kontrak di bawah. Setelah ditandatangani, kontrak <b>terkunci</b> dan tidak dapat diubah.</p>
+          <p className="text-sm text-slate-600">Ketuk <b>Baca kontrak</b> di bagian atas untuk membaca seluruh isinya. Setelah ditandatangani, kontrak <b>terkunci</b> dan tidak dapat diubah.</p>
           <ActionForm action={employeeSignAction} className="space-y-3">
             <input type="hidden" name="id" value={c.id} />
             <SignatureCard />
@@ -101,7 +103,7 @@ export default async function KontrakDetail({ params }: { params: Promise<{ id: 
         <p className="break-all rounded-lg bg-slate-50 px-3 py-2 font-mono text-[11px] text-slate-500">Hash isi: {c.contentHash}{c.finalHash && <><br />Hash akhir: {c.finalHash}</>}</p>
       )}
 
-      <ContractDoc doc={{ ...c, kind: c.kind }} qr={qr} verifyUrl={verifyUrl} />
+      <DocExport><ContractDoc doc={{ ...c, kind: c.kind }} qr={qr} verifyUrl={verifyUrl} /></DocExport>
 
       {children.length > 0 && (
         <div className="text-sm">Addendum: {children.map((a) => <Link key={a.id} href={`/kontrak/${a.id}`} className="link mr-3 font-mono text-xs">{a.number}</Link>)}</div>

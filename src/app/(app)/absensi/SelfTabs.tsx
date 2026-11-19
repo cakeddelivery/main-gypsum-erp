@@ -13,7 +13,9 @@ import { ModalForm } from "@/components/ModalForm";
 import { Paged } from "@/components/Paged";
 import { Avatar } from "@/components/Avatar";
 import { avatarUrl } from "@/lib/profilePhoto";
-import { cancelLeaveRequest, decideLeaveRequest, submitLeaveRequest } from "./actions";
+import { cancelDayOffRequest, cancelLeaveRequest, decideDayOffRequest, decideLeaveRequest, submitDayOffRequest, submitLeaveRequest } from "./actions";
+import { DayOffFields } from "./DayOffFields";
+import { dayOffWindow } from "@/lib/dayOff";
 import { LeaveFields } from "./LeaveFields";
 
 const DOT: Record<AttendanceStatus, string> = { HADIR: "bg-emerald-500", TERLAMBAT: "bg-amber-500", IZIN: "bg-sky-500", SAKIT: "bg-violet-500", LIBUR: "bg-slate-300", ALPA: "bg-rose-500" };
@@ -117,8 +119,103 @@ export async function IzinSakit({ user }: { user: { role: Role; employeeId: stri
     approver ? prisma.leaveRequest.findMany({ where: { status: "MENUNGGU" }, orderBy: { createdAt: "asc" }, include: { employee: { include: { division: true, user: true } } } }) : Promise.resolve([]),
     approver ? prisma.leaveRequest.findMany({ where: { status: { not: "MENUNGGU" } }, orderBy: { decidedAt: "desc" }, take: 50, include: { employee: { include: { division: true } } } }) : Promise.resolve([]),
   ]);
+  const w = dayOffWindow(today);
+  const weekDays = Array.from({ length: 7 }, (_, i) => { const d = addDays(w.weekStart, i); return { date: d, label: `${fmtDay(d).split(",")[0]} ${d.slice(8)}/${d.slice(5, 7)}` }; });
+  const [myOff, pendingOff] = await Promise.all([
+    user.employeeId ? prisma.dayOffRequest.findMany({ where: { employeeId: user.employeeId }, orderBy: { createdAt: "desc" }, take: 12 }) : Promise.resolve([]),
+    approver ? prisma.dayOffRequest.findMany({ where: { status: "MENUNGGU" }, orderBy: { createdAt: "asc" }, include: { employee: { include: { division: true, user: true } } } }) : Promise.resolve([]),
+  ]);
+  const offText = (dates: string[]) => (dates.length ? dates.map((d) => fmtDay(d)).join(", ") : "Tidak ada libur");
+  const alreadyOff = myOff.some((r) => dateStr(r.weekStart) === w.weekStart && r.status !== "DITOLAK");
   return (
     <div className="mx-auto max-w-2xl space-y-5">
+      {user.employeeId && (
+        <section id="libur" className="card scroll-mt-20 space-y-3 p-4">
+          <div>
+            <h3 className="font-bold text-slate-800">Libur minggu depan</h3>
+            <p className="text-sm text-slate-500">{fmtDay(w.weekStart)} – {fmtDay(w.weekEnd)} · ajukan paling lambat <b>Jumat {fmtDay(w.deadline)} pukul 23.59</b></p>
+          </div>
+          {!w.open ? (
+            <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">Batas pengajuan libur minggu depan sudah lewat. Hubungi Supervisor bila sangat perlu.</p>
+          ) : alreadyOff ? (
+            <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Anda sudah mengajukan untuk minggu depan (lihat di bawah). Batalkan dulu bila ingin mengubah.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              <Modal trigger="+ Ajukan libur minggu depan" title="Ajukan libur minggu depan">
+                <ModalForm action={submitDayOffRequest} className="space-y-3">
+                  <DayOffFields days={weekDays} />
+                  <Submit>Ajukan</Submit>
+                </ModalForm>
+              </Modal>
+              <ActionForm action={submitDayOffRequest} confirm="Tidak ada libur minggu depan? Pengingat akan berhenti.">
+                <input type="hidden" name="none" value="1" />
+                <Submit className="btn-secondary" pendingText="…">Tidak ada libur</Submit>
+              </ActionForm>
+            </div>
+          )}
+          {myOff.length > 0 && (
+            <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+              {myOff.map((r) => (
+                <li key={r.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                  <div className="min-w-0 text-sm">
+                    <div className="font-medium text-slate-900">Minggu {fmtDay(r.weekStart)}: {offText(r.dates)}</div>
+                    {r.reason && <div className="text-slate-500">{r.reason}</div>}
+                    {r.status === "DITOLAK" && r.rejectReason && <div className="text-rose-700">Ditolak {r.decidedBy}: {r.rejectReason}</div>}
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <Badge tone={LEAVE_TONE[r.status]}>{LEAVE_STATUS[r.status]}</Badge>
+                    {(r.status === "MENUNGGU" || (r.status === "DISETUJUI" && !r.dates.length)) && dateStr(r.weekStart) >= w.weekStart && (
+                      <ActionForm action={cancelDayOffRequest} confirm="Batalkan pengajuan ini?">
+                        <input type="hidden" name="id" value={r.id} />
+                        <Submit className="text-xs text-slate-500 underline" pendingText="…">Batalkan</Submit>
+                      </ActionForm>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {approver && (
+        <section className="space-y-2">
+          <h3 className="font-bold text-slate-800">Libur minggu depan menunggu persetujuan {pendingOff.length > 0 && <Badge tone="amber">{pendingOff.length}</Badge>}</h3>
+          {pendingOff.length ? (
+            <div className="card divide-y divide-slate-100">
+              {pendingOff.map((r) => (
+                <div key={r.id} className="space-y-3 p-4">
+                  <div className="flex gap-3">
+                    <Avatar name={r.employee.name} src={r.employee.user ? avatarUrl(r.employee.user) : null} size={40} />
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-slate-900">{r.employee.name}</div>
+                      <div className="text-xs text-slate-500">{r.employee.division.name} · diajukan {fmtDate(r.createdAt)}</div>
+                      <div className="text-sm text-slate-700">Minggu {fmtDay(r.weekStart)}: {offText(r.dates)}</div>
+                      {r.reason && <div className="text-sm text-slate-500">{r.reason}</div>}
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Modal trigger="Tolak" triggerClass="btn-secondary text-rose-700" title={`Tolak libur ${r.employee.name}`}>
+                      <ModalForm action={decideDayOffRequest} className="space-y-3">
+                        <input type="hidden" name="id" value={r.id} /><input type="hidden" name="decision" value="tolak" />
+                        <Field label="Alasan penolakan"><textarea name="rejectReason" className="input" rows={3} required placeholder="Mis. hari itu kekurangan orang" /></Field>
+                        <Submit className="btn-danger">Tolak pengajuan</Submit>
+                      </ModalForm>
+                    </Modal>
+                    <ActionForm action={decideDayOffRequest} confirm={`Setujui libur ${r.employee.name} (${offText(r.dates)})? Jadwal hari itu dihapus (libur).`}>
+                      <input type="hidden" name="id" value={r.id} /><input type="hidden" name="decision" value="setuju" />
+                      <Submit className="btn-success" pendingText="…">✓ Setujui</Submit>
+                    </ActionForm>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-xl border border-dashed border-slate-300 bg-white p-4 text-center text-sm text-slate-500">Tidak ada pengajuan libur yang menunggu.</p>
+          )}
+        </section>
+      )}
+
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-2xl font-extrabold text-slate-900">Izin &amp; Sakit</h2>
