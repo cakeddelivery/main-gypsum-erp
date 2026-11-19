@@ -132,7 +132,7 @@ export async function loadReturnAnalytics(start: Date, end: Date) {
     // Data rekening pembeli sengaja tidak diambil
     prisma.complaint.findMany({
       where: { cancelledAt: null, status: { not: "DITOLAK" }, date: { gte: start, lt: end } },
-      select: { number: true, date: true, marketplace: true, courier: true, city: true, province: true, issueType: true, solution: true, refundAmount: true, paidAt: true, replacementValue: true, shippingCost: true, lines: { include: { item: { select: { name: true } } } } },
+      select: { number: true, date: true, marketplace: true, courier: true, city: true, province: true, issueType: true, solution: true, refundAmount: true, paidAt: true, replacementValue: true, shippingCost: true, lines: { include: { item: { select: { name: true } }, pieces: { select: { perPack: true, damagedQty: true } } } } },
     }),
     prisma.$queryRaw<{ m: string; v: number }[]>`
       SELECT to_char((j.date AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Jakarta', 'YYYY-MM') AS m, COALESCE(SUM(l.credit - l.debit), 0)::float8 AS v
@@ -158,7 +158,7 @@ export async function loadReturnAnalytics(start: Date, end: Date) {
       return {
         kind: "KOMPLAIN", number: c.number, date: c.date, marketplace: c.marketplace, courier: c.courier, city: c.city, province: c.province, reason: issueLabel(c.issueType),
         goods: Number(c.replacementValue), refund, shipping: Number(c.shippingCost), claim: 0,
-        lines: c.lines.map((l) => ({ itemId: l.itemId, itemName: l.item?.name ?? null, sku: l.labelSku, variation: null, qty: l.qty, bad: l.qty, loss: Math.round((refund * l.qty) / totalQty) + l.sendQty * Number(l.unitCost) })),
+        lines: c.lines.map((l) => ({ itemId: l.itemId, itemName: l.item?.name ?? null, sku: l.labelSku, variation: null, qty: l.pieces.length ? Math.max(l.qty, l.pieces.reduce((a, p) => a + p.perPack, 0) * l.qty) : l.qty, bad: l.pieces.length ? l.pieces.reduce((a, p) => a + p.damagedQty, 0) : l.qty, loss: Math.round((refund * l.qty) / totalQty) + l.sendQty * Number(l.unitCost) })),
       };
     }),
   ];

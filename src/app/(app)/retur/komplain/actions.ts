@@ -143,3 +143,18 @@ export const cancelComplaintAction = action(
   },
   PATHS,
 );
+
+/** Rincian pcs rusak per karakter: isian pc:<baris>:<barang> = jumlah pcs */
+export const pcsRusakAction = action(
+  ["refund.request", "refund.approve", "refund.pay"],
+  async (fd, user) => {
+    const rows = [...fd.entries()].map(([k, v]) => {
+      const m = /^pc:([^:]+):([^:]+)$/.exec(k);
+      return m ? { lineId: m[1], itemId: m[2], damagedQty: Number(String(v).trim() || 0) } : null;
+    }).filter((x): x is { lineId: string; itemId: string; damagedQty: number } => !!x);
+    const { saveComplaintPieces } = await import("@/lib/complaints");
+    const r = await saveComplaintPieces(str(fd, "id"), rows, user);
+    return `Rincian tersimpan: ${r.pcs} pcs rusak, nilai Rp ${r.value.toLocaleString("id-ID")}`;
+  },
+  PATHS,
+);

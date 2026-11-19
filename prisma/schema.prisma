@@ -1042,6 +1042,7 @@ model Item {
   boronganReceiptLines BoronganReceiptLine[]
   returnLines          ReturnLine[]
   returnPieces         ReturnPiece[]          @relation("ReturnPieceItem")
+  complaintPieces      ComplaintPiece[]       @relation("ComplaintPieceItem")
   complaintLines       ComplaintLine[]
   skuMaps              MarketplaceSkuMap[]
 }
@@ -2261,6 +2262,22 @@ model ComplaintLine {
   sendQty     Int       @default(0)
   unitCost    BigInt    @default(0)
   sortOrder   Int       @default(0)
+  /// Rincian pcs rusak per karakter (paket Single Pack)
+  pieces      ComplaintPiece[]
+}
+
+/// Pcs rusak/bermasalah per karakter pada satu baris komplain (nilai = harga pokok pcs × jumlah)
+model ComplaintPiece {
+  id         String         @id @default(cuid())
+  lineId     String
+  line       ComplaintLine  @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  itemId     String
+  item       Item           @relation("ComplaintPieceItem", fields: [itemId], references: [id])
+  perPack    Int
+  damagedQty Int            @default(0)
+  unitCost   BigInt         @default(0)
+
+  @@index([lineId])
 }
 
 /// Bukti dari pembeli (foto/video chat) — lewat lapisan mediaStore

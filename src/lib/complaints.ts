@@ -226,3 +226,34 @@ export async function sendRefundProof(id: string, readFile: (rel: string) => Pro
   if (r.ok) await prisma.complaint.update({ where: { id }, data: { proofSentAt: new Date() } });
   return { sent: r.ok };
 }
+
+/**
+ * Rincian pcs bermasalah per karakter untuk baris paket Single Pack (mis. Mix 24: Hewan 2, Cowok 3).
+ * Validasi: pcs ≤ isi per paket × jumlah paket di baris. Nilai = harga pokok pcs (rata-rata, atau dari resep).
+ */
+export async function saveComplaintPieces(complaintId: string, rows: { lineId: string; itemId: string; damagedQty: number }[], actor: Actor) {
+  const { packComponents } = await import("./returnPieces");
+  return prisma.$transaction(async (tx) => {
+    const c = await tx.complaint.findUniqueOrThrow({ where: { id: complaintId }, include: { lines: true } });
+    if (c.cancelledAt) throw new StockError(`${c.number} sudah dibatalkan`);
+    let pcs = 0, value = 0;
+    for (const l of c.lines) {
+      if (!l.itemId) continue;
+      const comps = await packComponents(tx, l.itemId);
+      if (!comps.length) continue;
+      await tx.complaintPiece.deleteMany({ where: { lineId: l.id } });
+      for (const comp of comps) {
+        const q = rows.find((r) => r.lineId === l.id && r.itemId === comp.itemId)?.damagedQty ?? 0;
+        if (!Number.isInteger(q) || q < 0) throw new StockError("Jumlah pcs rusak harus bilangan bulat ≥ 0");
+        const cap = comp.perPack * l.qty;
+        if (q > cap) throw new StockError(`${comp.name}: maks ${cap} pcs (isi paket ${comp.perPack} × ${l.qty})`);
+        const item = await tx.item.findUniqueOrThrow({ where: { id: comp.itemId }, select: { id: true, avgCost: true } });
+        const unit = Number(item.avgCost) > 0 ? Number(item.avgCost) : await recipeMaterialCost(item.id);
+        await tx.complaintPiece.create({ data: { lineId: l.id, itemId: comp.itemId, perPack: comp.perPack, damagedQty: q, unitCost: BigInt(Math.round(unit)) } });
+        pcs += q; value += q * unit;
+      }
+    }
+    await audit(actor, "KOMPLAIN_PCS_RUSAK", "Complaint", complaintId, { number: c.number, pcs, nilai: Math.round(value) }, tx);
+    return { pcs, value: Math.round(value) };
+  });
+}

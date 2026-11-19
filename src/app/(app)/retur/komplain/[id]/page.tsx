@@ -13,7 +13,8 @@ import { Badge, Card, Field, PageHeader } from "@/components/ui";
 import { Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { addEvidenceAction, approveAction, cancelComplaintAction, finishComplaintAction, payAction, rejectAction, resendProofAction, sendReplacementAction } from "../actions";
+import { packComponents } from "@/lib/returnPieces";
+import { addEvidenceAction, pcsRusakAction, approveAction, cancelComplaintAction, finishComplaintAction, payAction, rejectAction, resendProofAction, sendReplacementAction } from "../actions";
 
 export const metadata = { title: "Detail Komplain" };
 const media = (id: string) => `/api/files/komplain-media/${id}`;
@@ -21,7 +22,7 @@ const media = (id: string) => `/api/files/komplain-media/${id}`;
 export default async function KomplainDetail({ params }: { params: Promise<{ id: string }> }) {
   const user = await requirePerm("refund.request", "refund.approve", "refund.pay");
   const { id } = await params;
-  const c = await prisma.complaint.findUnique({ where: { id }, include: { lines: { include: { item: { select: { name: true } } }, orderBy: { sortOrder: "asc" } }, media: { orderBy: { createdAt: "asc" } } } });
+  const c = await prisma.complaint.findUnique({ where: { id }, include: { lines: { include: { item: { select: { name: true } }, pieces: { include: { item: { select: { name: true } } } } }, orderBy: { sortOrder: "asc" } }, media: { orderBy: { createdAt: "asc" } } } });
   if (!c) notFound();
   const st = complaintStatusOf(c);
   const open = !c.cancelledAt && c.status !== "SELESAI" && c.status !== "DITOLAK";
@@ -32,6 +33,9 @@ export default async function KomplainDetail({ params }: { params: Promise<{ id:
     c.payJournalId ? prisma.financeTransaction.findFirst({ where: { journalId: c.payJournalId }, select: { id: true, number: true } }) : null,
     c.trackingNo ? prisma.returnCase.findFirst({ where: { trackingNo: c.trackingNo, cancelledAt: null }, select: { id: true, number: true } }) : null,
   ]);
+  const comps = new Map(await Promise.all(c.lines.map(async (l) => [l.id, l.itemId ? await packComponents(prisma, l.itemId) : []] as const)));
+  const hasPacks = [...comps.values()].some((x) => x.length);
+  const pieceValue = c.lines.reduce((a, l) => a + l.pieces.reduce((b, p) => b + p.damagedQty * Number(p.unitCost), 0), 0);
   const canApprove = user.can("refund.approve") && refund && c.status === "DIAJUKAN";
   const info: [string, React.ReactNode][] = [
     ["Tanggal", fmtDate(c.date)], ["Marketplace", marketplaceLabel(c.marketplace)], ["No. pesanan", c.orderNo ?? "-"], ["No. resi", c.trackingNo ?? "-"],
@@ -139,13 +143,40 @@ export default async function KomplainDetail({ params }: { params: Promise<{ id:
         </Card>
       </div>
 
-      <Card title="Barang bermasalah">
+      <Card title="Barang bermasalah" actions={hasPacks && !c.cancelledAt ? (
+        <Modal trigger="Isi pcs rusak" title={`Pcs rusak per karakter · ${c.number}`} triggerClass="btn-secondary">
+          <ModalForm action={pcsRusakAction} className="space-y-3">
+            <input type="hidden" name="id" value={c.id} />
+            <p className="text-sm text-slate-600">Isi jumlah <b>PCS</b> yang rusak/bermasalah per karakter. Maksimal = isi paket × jumlah paket di baris. Nilai kerugian dihitung dari harga pokok per pcs.</p>
+            {c.lines.filter((l) => comps.get(l.id)!.length).map((l) => (
+              <div key={l.id} className="rounded-lg border border-slate-200 p-3">
+                <p className="text-sm font-medium">{l.item?.name} <span className="text-slate-500">× {l.qty} paket = {comps.get(l.id)!.reduce((a, x) => a + x.perPack, 0) * l.qty} pcs</span></p>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  {comps.get(l.id)!.map((x) => (
+                    <Field key={x.itemId} label={`${x.name.replace(/^single pack\s*/i, "")} (maks ${x.perPack * l.qty} pcs)`}>
+                      <input name={`pc:${l.id}:${x.itemId}`} type="number" inputMode="numeric" min={0} max={x.perPack * l.qty} defaultValue={l.pieces.find((p) => p.itemId === x.itemId)?.damagedQty ?? 0} className="input" />
+                    </Field>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <Submit>Simpan rincian</Submit>
+          </ModalForm>
+        </Modal>
+      ) : undefined}>
         <div className="table-wrap">
           <table className="tbl">
             <thead><tr><th>Produk</th><th>Label</th><th className="num">Qty bermasalah</th>{!refund && <th className="num">Pengganti</th>}</tr></thead>
             <tbody>{c.lines.map((l) => <tr key={l.id}><td>{l.item?.name ?? "-"}</td><td className="text-xs">{[l.labelSku, l.labelName].filter(Boolean).join(" · ") || "-"}</td><td className="num">{l.qty}</td>{!refund && <td className="num">{l.sendQty}</td>}</tr>)}</tbody>
           </table>
         </div>
+        {c.lines.some((l) => l.pieces.length) && (
+          <div className="mt-3 text-sm">
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Pcs rusak per karakter</p>
+            <ul className="space-y-0.5">{c.lines.flatMap((l) => l.pieces.filter((p) => p.damagedQty > 0).map((p) => <li key={p.id}>{p.item.name.replace(/^single pack\s*/i, "")}: <b>{p.damagedQty} pcs</b> × {idr(Number(p.unitCost))} = {idr(p.damagedQty * Number(p.unitCost))}</li>))}</ul>
+            <p className="mt-1">Nilai pcs rusak: <b className="text-rose-700">{idr(pieceValue)}</b></p>
+          </div>
+        )}
       </Card>
 
       <Card title="Bukti dari pembeli" actions={!c.cancelledAt ? (

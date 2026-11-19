@@ -55,8 +55,10 @@ export type Scope = {
   packing?: boolean;
   /** Akun driver borongan (role DRIVER): hanya pembagian & ambil setoran kiriman lewat driver */
   driver?: boolean;
-  /** Owner: boleh semua aksi. Pengelola lain (Supervisor) hanya kirim & memantau */
+  /** Owner: boleh semua aksi, termasuk koreksi/lepas tahanan setoran */
   owner?: boolean;
+  /** Pengelola borongan (Owner & Supervisor): BACKUP semua aksi kiriman (bagi, lapor, ambil, terima, batal) atas nama Driver/Koordinator/divisi; tercatat di audit */
+  backup?: boolean;
 };
 type ScopeUser = { id: string; can: (p: "borongan.manage") => boolean; role?: string; divisionId?: string | null };
 
@@ -79,7 +81,7 @@ export { assignDefaultTaskDivisions, defaultTaskTemplate } from "./taskDivision"
 
 /** Pengelola melihat semua titik; Kapten Assembling & anggota divisi: titik yang mengerjakan tugas divisinya; koordinator hanya titiknya */
 export async function boronganScope(db: DB, user: ScopeUser): Promise<Scope> {
-  if (user.can("borongan.manage")) return { all: true, owner: user.role === "OWNER", pointIds: [], personId: null, taskIds: null };
+  if (user.can("borongan.manage")) return { all: true, owner: user.role === "OWNER", backup: true, pointIds: [], personId: null, taskIds: null };
   const coord = await db.boronganPerson.findFirst({ where: { userId: user.id, role: "KOORDINATOR", active: true } });
   if (coord) return { all: false, pointIds: coord.pointId ? [coord.pointId] : [], personId: coord.id, taskIds: null };
   const drv = await db.boronganPerson.findFirst({ where: { userId: user.id, role: "DRIVER", active: true } });
