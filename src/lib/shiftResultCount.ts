@@ -33,7 +33,7 @@ export async function resultItems(divisionId: string, db: Tx | typeof prisma = p
  * Hitungan tersimpan per id barang. Laporan lama menyimpan per karakter ("Hewan": n) untuk patung kering (Produksi)
  * atau produk jadi (Assembling): diterjemahkan ke barangnya.
  */
-async function storedCounts(work: WorkData, template: string | null, tx: Tx): Promise<Map<string, number>> {
+export async function storedCounts(work: WorkData, template: string | null, tx: Tx): Promise<Map<string, number>> {
   const raw = work[RESULT_KEY];
   const v = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, number | null>) : {};
   const out = new Map<string, number>();

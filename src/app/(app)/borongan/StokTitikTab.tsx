@@ -7,7 +7,9 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Submit } from "@/components/ActionForm";
 import { Paged } from "@/components/Paged";
-import { koreksiStokTitik, mintaBahan } from "./stokActions";
+import { MATERIAL_REJECT_REASONS } from "@/lib/boronganPointStock";
+import { fmtDay } from "@/lib/time";
+import { koreksiStokTitik, mintaBahan, rejectBahanTitik } from "./stokActions";
 
 const f = (n: number) => Number(n.toFixed(3)).toLocaleString("id-ID");
 
@@ -46,6 +48,27 @@ export async function StokTitikTab({ scope }: { scope: Scope }) {
                     <Submit>Kirim permintaan</Submit>
                   </ModalForm>
                 </Modal>
+                <Modal trigger="Reject bahan" triggerClass="btn-secondary btn-sm" title={`Reject bahan · ${point.name}`}>
+                  <ModalForm action={rejectBahanTitik} className="space-y-3">
+                    <input type="hidden" name="pointId" value={point.id} />
+                    <p className="text-sm text-slate-600">Catat bahan yang rusak/terbuang: cat cair tumpah, plastik klip atau plastik OPP robek. Stok titik berkurang dan tercatat sebagai reject.</p>
+                    <Field label="Bahan">
+                      <select name="itemId" className="input" required defaultValue="">
+                        <option value="" disabled>— pilih bahan —</option>
+                        {rows.map((r) => <option key={r.itemId} value={r.itemId}>{r.name} (stok {f(r.stock)} {r.unit})</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Jumlah reject"><input name="qty" inputMode="decimal" className="input" required placeholder="0" /></Field>
+                    <Field label="Alasan">
+                      <select name="reason" className="input" required defaultValue="">
+                        <option value="" disabled>— pilih alasan —</option>
+                        {Object.entries(MATERIAL_REJECT_REASONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                      </select>
+                    </Field>
+                    <Field label="Catatan (opsional)"><input name="note" className="input" placeholder="mis. cat merah tumpah saat dituang" /></Field>
+                    <Submit>Simpan reject</Submit>
+                  </ModalForm>
+                </Modal>
                 <Modal trigger="Koreksi stok" triggerClass="btn-secondary btn-sm" title={`Koreksi stok · ${point.name}`}>
                   <ModalForm action={koreksiStokTitik} className="space-y-3">
                     <input type="hidden" name="pointId" value={point.id} />
@@ -74,7 +97,7 @@ export async function StokTitikTab({ scope }: { scope: Scope }) {
               <div className="table-wrap">
                 <Paged>
                   <table className="tbl">
-                    <thead><tr><th>Bahan</th><th className="num">Stok</th><th className="num">Masuk</th><th className="num">Pakai</th></tr></thead>
+                    <thead><tr><th>Bahan</th><th className="num">Stok</th><th className="num">Masuk</th><th className="num">Pakai</th><th className="num">Reject</th><th>Dihitung</th></tr></thead>
                     <tbody>
                       {rows.map((r) => (
                         <tr key={r.itemId}>
@@ -82,6 +105,8 @@ export async function StokTitikTab({ scope }: { scope: Scope }) {
                           <td className={`num font-semibold ${r.stock < 0 ? "text-rose-700" : ""}`}>{f(r.stock)} <span className="text-xs font-normal text-slate-400">{r.unit}</span></td>
                           <td className="num">{f(r.inWeek)}</td>
                           <td className="num">{f(r.usedWeek)}</td>
+                          <td className={`num ${r.rejectWeek > 0 ? "font-semibold text-rose-700" : ""}`}>{f(r.rejectWeek)}</td>
+                          <td className="!whitespace-normal text-xs">{r.lastCounted ? fmtDay(new Date(r.lastCounted)) : "belum pernah"}{r.stale && <> <Badge tone="amber">hitung ulang</Badge></>}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -89,7 +114,7 @@ export async function StokTitikTab({ scope }: { scope: Scope }) {
                 </Paged>
               </div>
             )}
-            <p className="text-xs text-slate-500">Masuk = kiriman/pembagian ke titik minggu ini · Pakai = otomatis dari setoran × resep minggu ini.</p>
+            <p className="text-xs text-slate-500">Masuk = kiriman/pembagian ke titik minggu ini · Pakai = otomatis dari setoran × resep minggu ini · Reject = bahan rusak/terbuang minggu ini · Hitung fisik (Koreksi stok) tiap 7 hari agar cat, plastik klip & plastik OPP terpantau.</p>
           </section>
         );
       })}

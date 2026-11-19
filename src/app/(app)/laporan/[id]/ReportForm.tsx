@@ -35,6 +35,8 @@ import { FormDraft, clearFormDraft } from "@/components/FormDraft";
 import { CameraCapture } from "@/components/CameraCapture";
 import { readReopen, reportReopenKey, writeReopen } from "@/lib/reopen";
 import { setUploading } from "@/lib/appVersion";
+import { REJECT_REASONS } from "@/lib/rejectShared";
+import { lpgFlow } from "@/lib/lpgShared";
 
 /** Baris pesanan yang sedang dikirim (Stok → Pembelian) untuk barang divisi ini */
 export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean; vendor: string; itemName: string; unit: string };
@@ -72,6 +74,12 @@ type Props = {
   flow: string[] | null;
   /** Laporan sudah pernah dikirim (kirim ulang = revisi) */
   sent: boolean;
+  /** Reject per tahap: barang divisi yang bisa dipilih + isian tersimpan */
+  rejectItems: { id: string; name: string; unit: string }[];
+  rejects: { itemId: string; qty: number; reason: string; note?: string | null }[];
+  rejectStageLabel: string | null;
+  /** LPG tabung 5 kg (hanya format Produksi/Oven): isian tersimpan, status shift sebelumnya (prefill), total aset */
+  lpg: { cur: { penuh: number; aktif: number; kosong: number; isiUlang: number } | null; prev: { penuh: number; aktif: number; kosong: number } | null; total: number } | null;
 };
 
 type Step = { key: string; label: string };
@@ -90,6 +98,12 @@ export function ReportForm(p: Props) {
     return w;
   });
   const [stock, setStock] = useState(p.stock);
+  const [rejects, setRejects] = useState(() => p.rejects.map((r, i) => ({ key: i, itemId: r.itemId, qty: String(r.qty).replace(".", ","), reason: r.reason, note: r.note ?? "" })));
+  // LPG: isian laporan ini, atau diisi dulu dari status shift sebelumnya (tinggal ubah yang berbeda)
+  const [lpg, setLpg] = useState(() => {
+    const b = p.lpg?.cur ?? (p.lpg?.prev ? { ...p.lpg.prev, isiUlang: 0 } : null);
+    return { penuh: b ? String(b.penuh) : "", aktif: b ? String(b.aktif) : "", kosong: b ? String(b.kosong) : "", isiUlang: b ? String(b.isiUlang) : "0" };
+  });
   const [checks, setChecks] = useState(() => p.checklist.map((c) => c.done));
 
   const setGrid = (s: GridSection, rows: GridRow[]) => setWork((w) => ({ ...w, [s.key]: rows }));
@@ -104,6 +118,8 @@ export function ReportForm(p: Props) {
     { key: "checklist", label: "Checklist" },
     ...(p.resultTitle && p.resultCount.length > 0 ? [{ key: "hasilakhir", label: "Stok jadi" }] : []),
     ...(stock.length > 0 ? [{ key: "stok", label: "Stok akhir" }] : []),
+    ...(p.rejectItems.length > 0 ? [{ key: "reject", label: "Reject" }] : []),
+    ...(p.lpg ? [{ key: "lpg", label: "LPG" }] : []),
     { key: "catatan", label: "Catatan & kirim" },
   ];
   // Halaman sempat dimuat ulang (mis. HP menutup browser saat kamera dibuka): lanjut di langkah terakhir
@@ -545,6 +561,63 @@ export function ReportForm(p: Props) {
           )}
         </section>
       )}
+
+      {p.rejectItems.length > 0 && (
+        <section data-step="reject" className={`card space-y-3 p-4 ${show("reject")}`}>
+          <input type="hidden" name="rj.present" value="1" />
+          <h3 className="font-semibold text-slate-800">Reject {p.rejectStageLabel ?? ""}</h3>
+          <p className="text-xs text-slate-500">Catat barang yang rusak/gagal shift ini: jenis, jumlah, dan alasannya. Kosongkan bila tidak ada reject. Nilainya tercatat sebagai beban reject.</p>
+          {rejects.map((r, i) => (
+            <div key={r.key} className="space-y-1.5 rounded-lg border border-slate-200 p-2">
+              <div className="flex items-center gap-1.5">
+                <select name="rj.item" value={r.itemId} onChange={(e) => setRejects((x) => x.map((y, j) => (j === i ? { ...y, itemId: e.target.value } : y)))} className="input min-w-0 flex-1 px-2 text-sm" aria-label={`Barang reject ${i + 1}`}>
+                  <option value="">— pilih barang —</option>
+                  {p.rejectItems.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+                <input name="rj.qty" inputMode="decimal" value={r.qty} onChange={(e) => setRejects((x) => x.map((y, j) => (j === i ? { ...y, qty: e.target.value } : y)))} className="input w-20 px-1.5 text-right tabular-nums" placeholder="0" aria-label={`Jumlah reject ${i + 1}`} />
+                <button type="button" className="grid h-9 w-7 shrink-0 place-items-center rounded-md text-rose-600 hover:bg-rose-50" onClick={() => setRejects((x) => x.filter((_, j) => j !== i))} aria-label={`Hapus reject ${i + 1}`}>✕</button>
+              </div>
+              <div className="flex gap-1.5">
+                <select name="rj.reason" value={r.reason} onChange={(e) => setRejects((x) => x.map((y, j) => (j === i ? { ...y, reason: e.target.value } : y)))} className="input w-40 shrink-0 px-2 text-sm" aria-label={`Alasan reject ${i + 1}`}>
+                  <option value="">— alasan —</option>
+                  {Object.entries(REJECT_REASONS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+                <input name="rj.note" value={r.note} onChange={(e) => setRejects((x) => x.map((y, j) => (j === i ? { ...y, note: e.target.value } : y)))} className="input min-w-0 flex-1 px-2 text-sm" placeholder="Catatan (opsional)" maxLength={200} />
+              </div>
+            </div>
+          ))}
+          <button type="button" className="btn-secondary w-full" onClick={() => setRejects((x) => [...x, { key: Date.now() + x.length, itemId: "", qty: "", reason: "", note: "" }])}>+ Tambah reject</button>
+        </section>
+      )}
+      {p.lpg && (() => {
+        const n = (v: string) => (v.trim() === "" ? NaN : Number(v));
+        const cur = { penuh: n(lpg.penuh), aktif: n(lpg.aktif), kosong: n(lpg.kosong), isiUlang: Number(lpg.isiUlang) || 0 };
+        const ok = [cur.penuh, cur.aktif, cur.kosong].every((x) => Number.isInteger(x));
+        const total = cur.penuh + cur.aktif + cur.kosong;
+        const flow = ok ? lpgFlow(p.lpg!.prev, cur) : null;
+        const field = (key: "penuh" | "aktif" | "kosong" | "isiUlang", label: string, hint: string) => (
+          <label className="block">
+            <span className="label">{label}</span>
+            <input name={`lpg.${key}`} inputMode="numeric" value={lpg[key]} onChange={(e) => setLpg((x) => ({ ...x, [key]: e.target.value.replace(/\D/g, "") }))} className="input py-3 text-center text-2xl font-bold tabular-nums" placeholder="0" aria-label={label} />
+            <span className="mt-0.5 block text-center text-xs text-slate-500">{hint}</span>
+          </label>
+        );
+        return (
+          <section data-step="lpg" className={`card space-y-3 p-4 ${show("lpg")}`}>
+            <input type="hidden" name="lpg.present" value="1" />
+            <h3 className="font-semibold text-slate-800">LPG tabung 5 kg</h3>
+            <p className="text-xs text-slate-500">Hitung tabung sekarang. Angka sudah diisi dari shift sebelumnya, ubah yang berbeda saja.</p>
+            <div className="grid grid-cols-3 gap-2">
+              {field("penuh", "Penuh", "cadangan")}
+              {field("aktif", "Aktif", "terpasang")}
+              {field("kosong", "Kosong", "tunggu isi ulang")}
+            </div>
+            {field("isiUlang", "Isi ulang diterima shift ini", "tabung kosong yang kembali penuh")}
+            {ok && total !== p.lpg.total && <p role="alert" className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">Total {total} tabung, seharusnya {p.lpg.total}. Periksa lagi (tabung hilang/bertambah akan diberi tanda).</p>}
+            {flow && p.lpg.prev && <p className={`rounded-lg px-3 py-2 text-sm ${flow.valid ? "bg-sky-50 text-sky-800" : "bg-amber-50 text-amber-800"}`}>{flow.valid ? `Dipasang ${flow.dipasang} · tabung habis ${flow.habis} sejak laporan sebelumnya.` : "Angka tidak masuk akal dibanding laporan sebelumnya. Periksa jumlah penuh/aktif/kosong dan isi ulang."}</p>}
+          </section>
+        );
+      })()}
 
       <section data-step="catatan" className={`card space-y-3 p-4 ${show("catatan")}`}>
         <label className="block"><span className="label">Catatan / kendala (opsional)</span><textarea name="complaints" defaultValue={p.complaints} className="input" rows={3} /></label>

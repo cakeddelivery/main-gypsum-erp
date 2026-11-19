@@ -25,6 +25,8 @@ export async function dailyRecapText(now: Date, forDate?: string) {
   const low = await lowStockItems();
   const { unsentReportCount } = await import("./shiftReportStock");
   const unsent = await unsentReportCount(date);
+  const { openAnomalyCount } = await import("./stockAlerts");
+  const anomali = await openAnomalyCount().catch(() => 0);
   const g = (d: string) => booked.find((b) => b.direction === d);
   const p = (s: string) => pending.find((x) => x.status === s)?._count ?? 0;
   return [
@@ -46,6 +48,7 @@ export async function dailyRecapText(now: Date, forDate?: string) {
     `<b>Produksi</b>`,
     `Hasil: ${prod._sum.qtyGood ?? 0} pcs · Reject: ${prod._sum.qtyReject ?? 0} pcs · Barang jadi: ${finished._sum.qtyGood ?? 0} pcs`,
     `Laporan shift belum dikirim: ${unsent}`,
+    `Peringatan stok & produksi terbuka: ${anomali}${anomali ? " (lihat Laporan › Kebocoran & Efisiensi)" : ""}`,
     low.length ? `\n⚠️ Stok menipis: ${low.slice(0, 8).map((i) => i.name).join(", ")}` : "",
   ].join("\n");
 }
@@ -225,6 +228,12 @@ export async function runDueJobs(now: Date = new Date()) {
   if (minutes >= 6 * 60 && !(await ranToday("job_konsistensi_last", date))) {
     await markRan("job_konsistensi_last", date);
     results.consistency = await logFailure("CEK_KONSISTENSI", date, () => sendConsistencyReport(now));
+  }
+  // Setelah Cek Konsistensi: alert anomali stok & produksi (push untuk yang TINGGI)
+  if (minutes >= 6 * 60 + 20 && !(await ranToday("job_stok_anomali_last", date))) {
+    await markRan("job_stok_anomali_last", date);
+    const { runStockAlerts } = await import("./stockAlerts");
+    results.stokAnomali = await logFailure("ANOMALI_STOK", date, () => runStockAlerts(now));
   }
   if (minutes >= 7 * 60 && !(await ranToday("job_daily_recap_last", date))) {
     await markRan("job_daily_recap_last", date);

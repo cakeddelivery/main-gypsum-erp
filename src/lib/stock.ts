@@ -212,6 +212,8 @@ export type MoveInput = {
   hpp?: boolean;
   /** Stock opname laporan shift: selisih bahan = pemakaian bahan → akun HPP "Pemakaian Bahan Baku" */
   usage?: boolean;
+  /** Akun beban lawan jurnal penyesuaian kurang (mis. Beban Reject Produksi 6-1830) menggantikan Beban Selisih Persediaan */
+  expenseCode?: string;
   /** Barang keluar dengan harga pokok rata-rata 0: pakai nilai ini (mis. HPP resep), dicatat di keterangan jurnal */
   fallbackUnitCost?: { value: number; note: string } | null;
 };
@@ -289,11 +291,11 @@ export async function recordMovement(tx: Tx, m: MoveInput, actor: Actor) {
     const inv = INVENTORY_COA[item.type];
     const inc = m.type === "PENYESUAIAN" && m.increase;
     const toHpp = item.type === "BARANG_JADI" && !inc && (m.type === "PENGELUARAN" || m.hpp);
-    const other = toHpp ? COA.HPP : m.usage && m.type === "PENYESUAIAN" ? await usageAccountCode(tx) : COA.BEBAN_SELISIH_PERSEDIAAN;
+    const other = toHpp ? COA.HPP : m.usage && m.type === "PENYESUAIAN" ? await usageAccountCode(tx) : m.expenseCode ?? COA.BEBAN_SELISIH_PERSEDIAAN;
     const j = await postJournal(tx, {
       date: mv.date,
       storeId: await defaultStore(tx),
-      description: `${m.hpp && !inc ? "Barang terjual (opname)" : m.usage ? "Pemakaian bahan (laporan shift)" : MOVEMENT_LABEL[m.type]} ${item.sku} ${item.name} × ${m.qty}${costNote}`,
+      description: `${m.expenseCode ? "Reject produksi" : m.hpp && !inc ? "Barang terjual (opname)" : m.usage ? "Pemakaian bahan (laporan shift)" : MOVEMENT_LABEL[m.type]} ${item.sku} ${item.name} × ${m.qty}${costNote}`,
       source: "STOK",
       sourceId: mv.id,
       actor,
