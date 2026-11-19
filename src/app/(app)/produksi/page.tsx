@@ -11,8 +11,19 @@ import { deleteEntry } from "./actions";
 import type { Prisma } from "@prisma/client";
 import { Paged } from "@/components/Paged";
 import { DownloadCsv } from "@/components/DownloadCsv";
+import { alurProduksi, BOX_LABEL, BOX_ORDER, type BoxKey } from "@/lib/alurProduksi";
+import type { ProductionStage } from "@prisma/client";
 
 export const metadata = { title: "Produksi" };
+
+/** Filter tahap (tahap yang berlaku sekarang) → tahap lama di input manual */
+const STAGE_FILTER: Record<BoxKey, ProductionStage[]> = {
+  CETAK: ["CETAK"],
+  OVEN: ["OVEN", "PANEN_1", "PANEN_2", "SORTIR_1", "SORTIR_2"],
+  BORONGAN: ["ASSEMBLING", "FILLING_CAT"],
+  PACKING: ["PACKING", "QC", "BARANG_JADI"],
+  GIFTBOX: [],
+};
 
 export default async function ProduksiPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const user = await requirePerm("production.view");
@@ -24,18 +35,19 @@ export default async function ProduksiPage({ searchParams }: { searchParams: Pro
     date: dateOnly(date),
     ...(sp.shift ? { shiftId: sp.shift } : {}),
     ...(fixedDivision ? { divisionId: fixedDivision } : sp.division ? { divisionId: sp.division } : {}),
-    ...(sp.stage ? { stage: sp.stage as never } : {}),
+    ...(sp.stage && sp.stage in STAGE_FILTER ? { stage: { in: STAGE_FILTER[sp.stage as BoxKey] } } : {}),
     ...(isOp ? { employeeId: user.employeeId ?? "__none__" } : {}),
   };
-  const [entries, shifts, divisions, employees, products, byStage] = await Promise.all([
+  const box = sp.box && (BOX_ORDER as string[]).includes(sp.box) ? (sp.box as BoxKey) : null;
+  const isOwner = user.role === "OWNER";
+  const [alur, entries, shifts, divisions, employees, products] = await Promise.all([
+    alurProduksi({ date, shiftId: sp.shift || null, divisionId: fixedDivision ?? (sp.division || null) }),
     prisma.productionEntry.findMany({ where, include: { shift: true, division: true, employee: true, product: true }, orderBy: { createdAt: "desc" }, take: 300 }),
     prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
     prisma.division.findMany({ where: { active: true }, orderBy: { code: "asc" } }),
     prisma.employee.findMany({ where: { status: "AKTIF" }, orderBy: { name: "asc" } }),
     prisma.product.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
-    prisma.productionEntry.groupBy({ by: ["stage"], where, _sum: { qtyGood: true, qtyReject: true } }),
   ]);
-  const stageMap = new Map(byStage.map((s) => [s.stage, s._sum]));
   const totalGood = entries.reduce((s, e) => s + e.qtyGood, 0);
   const totalReject = entries.reduce((s, e) => s + e.qtyReject, 0);
 
@@ -43,13 +55,13 @@ export default async function ProduksiPage({ searchParams }: { searchParams: Pro
     <div>
       <PageHeader
         title="Produksi"
-        subtitle={`Hasil produksi ${fmtDay(dateOnly(date))}`}
+        subtitle={`Alur produksi ${fmtDay(dateOnly(date))} · dibaca dari laporan shift & borongan`}
         actions={
           <>
-            <DownloadCsv filename={`produksi-${date}`} rows={[["Tanggal", "Shift", "Divisi", "Karyawan", "Tahap", "Produk", "Hasil baik", "Reject", "Penyebab reject", "Catatan"], ...entries.map((e) => [date, e.shift.name, e.division.name, e.employee.name, STAGE_LABEL[e.stage], e.product.name, e.qtyGood, e.qtyReject, e.rejectReason ?? "", e.note ?? ""])]} />
+            <DownloadCsv filename={`produksi-${date}`} rows={[["Alur produksi", "Tanggal", "Hasil", "Reject", "Stok tahap", "Sumber"], ...alur.map((b) => [b.label, date, b.good, b.reject, b.stock ?? "", b.from]), [], ["Tanggal", "Shift", "Divisi", "Karyawan", "Tahap", "Produk", "Hasil baik", "Reject", "Penyebab reject", "Catatan"], ...entries.map((e) => [date, e.shift.name, e.division.name, e.employee.name, STAGE_LABEL[e.stage], e.product.name, e.qtyGood, e.qtyReject, e.rejectReason ?? "", e.note ?? ""])]} />
             {user.can("production.target") && <Link href="/produksi/target" className="btn-secondary">Target</Link>}
-            {user.can("production.create") && (
-              <Modal trigger="+ Input hasil" title="Input hasil produksi" defaultOpen={sp.baru === "1"}>
+            {isOwner && user.can("production.create") && (
+              <Modal trigger="+ Koreksi hasil (Owner)" title="Koreksi hasil produksi (Owner)" subtitle="Hasil normal dicatat lewat Laporan Shift & Borongan; form ini hanya untuk koreksi" defaultOpen={sp.baru === "1"}>
                 <EntryForm
                   date={date}
                   shifts={shifts}
@@ -68,20 +80,40 @@ export default async function ProduksiPage({ searchParams }: { searchParams: Pro
 
       <Card title="Alur produksi" className="mb-4">
         <ol className="flex gap-2 overflow-x-auto pb-1 text-xs">
-          {STAGES.map((s, i) => {
-            const v = stageMap.get(s);
+          {alur.map((b, i) => {
+            const q = new URLSearchParams({ date, ...(sp.shift ? { shift: sp.shift } : {}), ...(sp.division ? { division: sp.division } : {}), box: b.key });
             return (
-              <li key={s} className="flex items-center gap-2">
-                <div className={`min-w-[92px] rounded-lg border px-2.5 py-2 ${v ? "border-brand-200 bg-brand-50" : "border-slate-200"}`}>
-                  <div className="font-medium text-slate-700">{STAGE_LABEL[s]}</div>
-                  <div className="tabular-nums text-slate-500">{v?.qtyGood ?? 0} <span className="text-rose-500">· {v?.qtyReject ?? 0} rj</span></div>
-                </div>
-                {i < STAGES.length - 1 && <span className="text-slate-300">→</span>}
+              <li key={b.key} className="flex items-center gap-2">
+                <Link href={`/produksi?${q}#sumber`} scroll={false} className={`block min-w-[132px] rounded-lg border px-2.5 py-2 ${box === b.key ? "border-brand-500 ring-2 ring-brand-200" : b.good || b.reject ? "border-brand-200 bg-brand-50" : "border-slate-200"}`}>
+                  <div className="font-medium text-slate-700">{b.label}</div>
+                  <div className="text-base font-bold tabular-nums text-slate-900">{b.good.toLocaleString("id-ID")} <span className="text-[11px] font-normal text-slate-500">{b.unit}</span></div>
+                  <div className="tabular-nums text-rose-600">reject {b.reject.toLocaleString("id-ID")}</div>
+                  <div className="tabular-nums text-slate-500">stok {b.stock == null ? "—" : Math.round(b.stock).toLocaleString("id-ID")}</div>
+                  <div className="mt-0.5 text-[10px] uppercase tracking-wide text-slate-400">{b.from}</div>
+                </Link>
+                {i < alur.length - 1 && <span className="text-slate-300">→</span>}
               </li>
             );
           })}
         </ol>
+        <p className="mt-2 text-xs text-slate-500">Ketuk kotak untuk melihat laporan/kiriman sumbernya. Angka sama dengan detail hasil kerja di laporan shift tiap divisi.</p>
       </Card>
+      {box && (() => {
+        const b = alur.find((x) => x.key === box)!;
+        return (
+          <Card title={`Sumber · ${BOX_LABEL[box]}`} className="mb-4">
+            <div id="sumber" className="space-y-3">
+              {b.extras.length > 0 && <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-3">{b.extras.map((e) => <div key={e.label}><dt className="text-xs text-slate-500">{e.label}</dt><dd className="font-medium">{e.value}</dd></div>)}</dl>}
+              {Object.keys(b.byVariant).length > 0 && <p className="text-sm text-slate-600">{Object.entries(b.byVariant).map(([k, v]) => `${k} ${v.toLocaleString("id-ID")}`).join(" · ")}</p>}
+              {b.sources.length ? (
+                <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+                  {b.sources.map((x, i) => <li key={i}><Link href={x.href} className="flex items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-slate-50"><span className="font-medium text-brand-700">{x.label}</span><span className="text-xs text-slate-500">{x.detail}</span></Link></li>)}
+                </ul>
+              ) : <p className="text-sm text-slate-500">Belum ada laporan terkirim atau kiriman untuk filter ini.</p>}
+            </div>
+          </Card>
+        );
+      })()}
 
       <FilterBar>
         <Field label="Tanggal"><input type="date" name="date" defaultValue={date} className="input" /></Field>
@@ -94,14 +126,15 @@ export default async function ProduksiPage({ searchParams }: { searchParams: Pro
           </Field>
         )}
         <Field label="Tahap">
-          <select name="stage" defaultValue={sp.stage ?? ""} className="input"><option value="">Semua</option>{STAGES.map((s) => <option key={s} value={s}>{STAGE_LABEL[s]}</option>)}</select>
+          <select name="stage" defaultValue={sp.stage ?? ""} className="input"><option value="">Semua</option>{BOX_ORDER.map((s) => <option key={s} value={s}>{BOX_LABEL[s]}</option>)}</select>
         </Field>
       </FilterBar>
 
       {entries.length === 0 ? (
-        <Empty title="Belum ada hasil produksi" hint="Catat hasil per karyawan, tahap, dan shift dengan tombol Input hasil." />
+        <Empty title="Belum ada koreksi manual" hint="Hasil produksi masuk otomatis dari Laporan Shift dan Borongan. Daftar ini hanya berisi koreksi manual Owner." />
       ) : (
         <div className="table-wrap">
+          <p className="mb-1 px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Koreksi manual</p>
           <Paged><table className="tbl">
             <thead>
               <tr><th>Shift</th><th>Divisi</th><th>Karyawan</th><th>Tahap</th><th>Produk</th><th className="num">Hasil</th><th className="num">Reject</th><th>Catatan</th>{user.can("production.edit") && <th />}</tr>
