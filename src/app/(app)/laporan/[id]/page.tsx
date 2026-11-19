@@ -11,6 +11,7 @@ import { withCurrentLimits } from "@/lib/shiftReportStock";
 import { flowEnabled } from "@/lib/shiftReportFlow";
 import { REJECT_STAGE_LABEL, stageOfTemplate } from "@/lib/rejectShared";
 import { storedRejects } from "@/lib/productionReject";
+import { computeShiftBalance } from "@/lib/shiftBalance";
 import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
 import { resultPlaces } from "@/lib/resultCountGroups";
 import { divisionPendingReturns } from "@/lib/borongan";
@@ -107,6 +108,8 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const materials = items.map((i) => ({ id: i.id, name: i.name, unit: i.unit }));
   // Giftbox Mix: bawaan patung ke-5 = karakter patung kering dengan stok terbanyak
   const moveShifts = reportDivision(user) === null && r.division.shiftCount > 1 ? (await prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, take: r.division.shiftCount })) : [];
+  const balanceRows = r.status === "DRAFT" ? [] : await computeShiftBalance(r.id).catch(() => []);
+  const f3 = (n: number) => Number(n.toFixed(3)).toLocaleString("id-ID");
   const mixDefault = template === "GIFTBOX" ? await mostStockedVariant() : null;
 
   return (
@@ -292,6 +295,27 @@ export default async function ReportDetail({ params, searchParams }: { params: P
             </details>
           )}
         </div>
+      )}
+      {balanceRows.length > 0 && (
+        <Card title="Neraca stok shift">
+          <p className="mb-2 text-xs text-slate-500">Awal + masuk − keluar = sistem; dibandingkan hitung fisik di laporan. Selisih negatif = kemungkinan hilang/bocor. Borongan (KRM/AMB) tampil otomatis.</p>
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead><tr><th>Barang</th><th className="num">Awal</th><th className="num">Masuk</th><th className="num">Borongan masuk</th><th className="num">Pakai/jual</th><th className="num">Borongan keluar</th><th className="num">Reject</th><th className="num">Sistem</th><th className="num">Fisik</th><th className="num">Selisih</th></tr></thead>
+              <tbody>
+                {balanceRows.map((x) => (
+                  <tr key={x.itemId}>
+                    <td className="!whitespace-normal">{x.name}</td>
+                    <td className="num">{f3(x.opening)}</td><td className="num">{f3(x.produksi + x.masuk + x.inLain)}</td><td className="num">{f3(x.inBorongan)}</td>
+                    <td className="num">{f3(x.pakai + x.jual + x.outLain)}</td><td className="num">{f3(x.outBorongan)}</td><td className="num">{f3(x.reject)}</td>
+                    <td className="num font-semibold">{f3(x.systemClosing)}</td><td className="num">{x.counted == null ? "-" : f3(x.counted)}</td>
+                    <td className={`num font-semibold ${x.diff == null || x.diff === 0 ? "text-slate-400" : x.diff < 0 ? "text-rose-700" : "text-emerald-700"}`}>{x.diff == null ? "-" : `${x.diff > 0 ? "+" : ""}${f3(x.diff)}`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       )}
     </div>
   );
