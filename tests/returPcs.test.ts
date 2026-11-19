@@ -73,3 +73,24 @@ describe("Retur diperiksa per pcs (paket Single Pack)", () => {
     });
   });
 });
+
+import { saveComplaintPieces } from "@/lib/complaints";
+describe("Komplain: pcs rusak per karakter", () => {
+  it("validasi ≤ isi × jumlah, nilai per pcs, simpan ulang menimpa", async () => {
+    const t2 = `${tag}K`;
+    const u = await prisma.user.findUniqueOrThrow({ where: { username: "owner" } });
+    const a = { id: u.id, name: u.name };
+    const store = await prisma.store.findFirstOrThrow();
+    const sp = await Promise.all(["Hewan", "Cowok"].map((v) => prisma.item.create({ data: { sku: `KP-${t2}-${v}`, name: `Single Pack ${v} ${t2}`, type: "BARANG_DALAM_PROSES", unit: "pcs", avgCost: 2000 } })));
+    const pack = await prisma.item.create({ data: { sku: `KP-${t2}-P`, name: `Paket 12 Mix ${t2}`, type: "BARANG_JADI", unit: "pcs", avgCost: 30000 } });
+    await prisma.product.create({ data: { sku: `KP-${t2}-PR`, name: `Paket 12 Mix ${t2}`, type: "PAKET_12", variant: "MIX", storeId: store.id, finishedItemId: pack.id, bom: { create: sp.map((s) => ({ itemId: s.id, qty: 6 })) } } });
+    const c = await prisma.complaint.create({ data: { number: `KMP-T${t2}`, date: new Date(), issueType: "PECAH", solution: "REFUND", createdBy: "t", lines: { create: [{ itemId: pack.id, qty: 2 }] } }, include: { lines: true } });
+    const line = c.lines[0].id;
+    await expect(saveComplaintPieces(c.id, [{ lineId: line, itemId: sp[0].id, damagedQty: 13 }], a)).rejects.toThrow(/maks 12 pcs/);
+    const r = await saveComplaintPieces(c.id, [{ lineId: line, itemId: sp[0].id, damagedQty: 2 }, { lineId: line, itemId: sp[1].id, damagedQty: 3 }], a);
+    expect(r).toEqual({ pcs: 5, value: 10000 });
+    const again = await saveComplaintPieces(c.id, [{ lineId: line, itemId: sp[0].id, damagedQty: 1 }], a);
+    expect(again.pcs).toBe(1);
+    expect(await prisma.complaintPiece.count({ where: { lineId: line } })).toBe(2);
+  });
+});

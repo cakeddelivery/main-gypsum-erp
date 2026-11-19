@@ -59,6 +59,7 @@ export default async function ReturDetail({ params, searchParams }: { params: Pr
         subtitle={<>{r.trackingNo} · {fmtDate(r.receivedAt)} · <Badge tone={st.tone}>{st.label}</Badge></>}
         actions={<>
           <Link href="/retur" className="btn-secondary">Kembali</Link>
+          {inspected && <Link href={`/retur/${r.id}/klaim`} className="btn-secondary">Laporan klaim</Link>}
           {open && r.status === "DITERIMA" && (
             <Modal trigger="Ubah data" title={`Ubah ${r.number}`} triggerClass="btn-secondary" full>
               <ModalForm action={editReturn}>
