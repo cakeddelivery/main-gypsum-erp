@@ -882,6 +882,25 @@ model ShiftReport {
   @@unique([date, shiftId, divisionId])
 }
 
+/// Reject bahan pendukung di titik borongan (mis. cat cair tumpah, plastik klip rusak untuk Cat Plastik/Cat Giftbox, plastik OPP untuk Assembling).
+/// Stok titik berkurang dan nilainya dibebankan; dicatat per bahan + alasan untuk pemantauan.
+model BoronganMaterialReject {
+  id        String   @id @default(cuid())
+  pointId   String
+  itemId    String
+  qty       Decimal  @db.Decimal(14, 3)
+  /// ROBEK / RUSAK / TUMPAH / KOTOR / SALAH_WARNA / LAINNYA
+  reason    String
+  note      String?
+  unitCost  BigInt   @default(0)
+  createdBy String
+  createdById String?
+  createdAt DateTime @default(now())
+
+  @@index([pointId, createdAt])
+  @@index([itemId])
+}
+
 /// Barang masuk dari supplier/toko yang dilaporkan divisi di laporan shift (sebelum stok akhir dihitung).
 /// Belum ditautkan = sudah ada fisik di gudang tapi belum dicatat di Pembelian: stock opname menganggapnya sudah ada
 /// (tidak jadi pemakaian/HPP). Saat ditautkan ke Pembelian, stok masuk bertanggal waktu barang masuk (tidak dobel).
