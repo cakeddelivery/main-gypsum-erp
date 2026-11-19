@@ -22,7 +22,7 @@ Semua angka masuk lewat `postShiftWork` (ref `LPH:<laporan>:<versi>`), bertangga
 
 Borongan di laporan (otomatis, hanya tampil): KRM = keluar dari gudang ke driver/titik; HSB = pemakaian bahan di titik; AMB/PND = setoran masuk gudang; reject setoran = penyesuaian bertanda. Sehingga stok akhir laporan = stok aplikasi tanpa input manual ganda (menyelesaikan tugas "sinkron stok setengah jadi ↔ laporan shift": Oven 3000 → KRM 2000 → sisa 1000).
 
-Resi: dari stok jadi (Packing: keluar produk jadi per resi) atau dari nol (bahan → produk langsung): **pertanyaan terbuka untuk Owner** (§8). Usulan: tiap resi di laporan Packing mencatat `sumber = STOK | DARI_NOL`; dari-nol menurunkan Single Pack/patung kering sesuai resep.
+Resi: **"dibuat dari nol" = produk disiapkan (prepare) saat pesanan masuk**, bukan diambil dari stok jadi (jawaban Owner). Tiap resi di laporan Packing/Giftbox mencatat `sumber = STOK | DISIAPKAN`; DISIAPKAN menurunkan Single Pack/patung kering/bahan kemas sesuai resep BOM lalu langsung keluar (HPP); STOK mengurangi produk jadi. Keduanya tercatat per resi (menyelesaikan celah "resi tanpa jejak stok").
 
 ## 2. Form laporan shift yang berubah (field baru)
 - **Semua divisi**: blok "Reject" — baris dinamis (jenis barang · jumlah · alasan dari daftar: retak, pecah, gosong, cacat cat, salah cetak, lainnya + catatan). Wajib bila selisih stok akhir > 0 yang tidak terjelaskan (peringatan, bukan penghalang kirim).
@@ -35,12 +35,12 @@ Resi: dari stok jadi (Packing: keluar produk jadi per resi) atau dari nol (bahan
 
 ## 3. Model data (aditif)
 - `ShiftMovementLine` (reportId, itemId, kind ∈ {PRODUKSI, PAKAI, MASUK, KELUAR, REJECT, BORONGAN_KELUAR, BORONGAN_MASUK, TERIMA, JUAL}, qty, ref, note): jejak per laporan, diturunkan dari mutasi `StockMovement` (bukan sumber baru) agar neraca bisa dijelaskan.
-- `ProductionReject` (id, reportId, divisionId, stage ∈ {CETAK, OVEN, ASSEMBLING, GIFTBOX, PACKING}, itemId, qty, reasonCode, note, createdBy) + **lokasi stok `loc_reject`** (setting baru, satu gudang Reject atau satu per tahap). Reject = `TRANSFER` stok dari gudang tahap ke Reject (stok tetap tercatat, bukan hilang) + opsional jurnal beban "Barang Reject" bila nilai dihapusbukukan.
+- `ProductionReject` (id, reportId, divisionId, stage ∈ {CETAK, OVEN, ASSEMBLING, GIFTBOX, PACKING}, itemId, qty, reasonCode, note, createdBy) + **lokasi stok Reject per tahap** (keputusan Owner: 1 gudang Reject per tahap — Cetak, Oven, Assembling, Giftbox, Packing; setting `loc_reject_<tahap>`). Reject = `TRANSFER` stok dari gudang tahap ke Reject (stok tetap tercatat, bukan hilang) + opsional jurnal beban "Barang Reject" bila nilai dihapusbukukan.
 - `ShiftBalance` (reportId, itemId, opening, inQty, outQty, rejectQty, systemClosing, countedClosing, diff, diffValue, picName, computedAt): snapshot neraca saat laporan dikirim/direvisi; sumber halaman Kebocoran & alert.
 - `UsageStandard` (id, outputItemId, inputItemId, basis ∈ {PER_OUTPUT, PER_PAKET, RENDEMEN, BIAYA_PER_UNIT}, mode ∈ {AUTO, MANUAL}, value, sampleDays, sampleCount, toleranceAuto?, updatedAt, pinnedBy): standar pemakaian.
 - `StockAnomaly` (id, type, severity, divisionId?, itemId?, reportId?, shiftId?, date, expected, actual, pct, status ∈ {BARU, DILIHAT, DIJELASKAN}, note, noteBy, pushedAt): dedupe alert + riwayat penjelasan.
 - Barang **"LPG tabung 5 kg"** (satuan tabung, bahan baku divisi Oven): pembelian = isi ulang per tabung di toko (harga isi ulang masuk harga rata-rata); stok = tabung penuh (+ 1 terpasang); `UsageStandard` memakai tabung habis × 5 kg.
-- Setting: `stok_terpadu_mulai` (tanggal cut-over), `laporan_shift_ke_stok` (sudah), `anomali_ambang_persen` (bawaan 15), `loc_reject`.
+- Setting: `stok_terpadu_mulai` (tanggal cut-over), `laporan_shift_ke_stok` (sudah), `anomali_ambang_persen` (bawaan 15), `loc_reject_<tahap>`.
 - Migrasi: hanya CREATE TABLE/ADD COLUMN; tidak ada backfill wajib (neraca historis dihitung ulang on-demand dari `StockMovement`).
 
 ## 4. Rumus
@@ -48,7 +48,7 @@ Resi: dari stok jadi (Packing: keluar produk jadi per resi) atau dari nol (bahan
 - `awal` = hitung fisik akhir shift sebelumnya (bila ada & diterapkan), jika tidak stok sistem pada awal W.
 - `masuk` = Σ mutasi ke L dalam W (HASIL_PRODUKSI, PENERIMAAN, TRANSFER masuk/PND/AMB, retur baik).
 - `keluar` = Σ mutasi keluar dari L dalam W kecuali reject (KONSUMSI_PRODUKSI, PENGELUARAN jual, TRANSFER KRM/BGI).
-- `reject` = Σ transfer ke `loc_reject`.
+- `reject` = Σ transfer ke `loc_reject_<tahap>`.
 - `sistemAkhir = awal + masuk − keluar − reject`; `selisih = fisikAkhir − sistemAkhir` (negatif = kebocoran/hilang, positif = salah catat/belum dicatat); `nilaiSelisih = selisih × HPP`.
 - Hitung fisik diterapkan sebagai PENYESUAIAN (`LPS:` — sudah ada) sehingga stok aplikasi = stok akhir laporan.
 
@@ -82,7 +82,9 @@ Penerima: Owner, Supervisor, Finance. Dedupe per (jenis, divisi, barang, tanggal
 
 **Halaman "Kebocoran & Efisiensi"** (asisten Owner, bahasa awam): ringkasan minggu ini ("Gypsum terpakai 8% lebih banyak dari biasanya = sekitar Rp X"), tren 30 hari per divisi/varian, daftar kebocoran terbesar (barang · shift · PIC · nilai), reject per tahap + alasan teratas, kartu "standar sekarang" dengan tombol tetapkan manual, dan penjelasan 1 kalimat tiap alert. Hanya baca + tombol "Sudah dijelaskan" dengan catatan.
 
-## 6. Cut-over (tanpa dobel posting)
+## 6. Cut-over = tanggal mulai sistem baru (tanpa dobel posting)
+Bahasa awam: "cut-over" adalah **hari pertama stok aplikasi dihitung dari laporan shift saja**. Sebelum hari itu semua berjalan seperti sekarang; mulai hari itu laporan shift otomatis mengubah stok. Sebelumnya dilakukan hitung stok awal semua barang supaya mulai dari angka yang benar.
+
 1. Tetapkan `stok_terpadu_mulai = T` (mis. awal bulan). Sebelum T: tidak ada perubahan perilaku.
 2. **H-1**: opname awal SEMUA barang (bahan, basah, kering, Single Pack, jadi, LPG) memakai alat Stok awal riil yang sudah ada (`AWAL-`), dibackup dulu (`npm run backup`).
 3. **T 00:00**: nyalakan `laporan_shift_ke_stok`; `postShiftWork`/`applyResultCount` hanya memproses laporan **bertanggal ≥ T** (guard baru) sehingga laporan lama tidak ikut terposting.
@@ -92,7 +94,7 @@ Penerima: Owner, Supervisor, Finance. Dedupe per (jenis, divisi, barang, tanggal
 7. Rollback: matikan sakelar; mutasi `LPH:`/`LPS:` dapat dibalik per laporan (`reverseVersion`, sudah ada).
 
 ## 7. Rencana PR bertahap
-- **P1 – Reject & lokasi Reject**: setting `loc_reject`, tabel `ProductionReject`, blok Reject di form + posting transfer; tes. (Risiko rendah, aditif.)
+- **P1 – Reject & lokasi Reject**: setting `loc_reject_<tahap>`, tabel `ProductionReject`, blok Reject di form + posting transfer; tes. (Risiko rendah, aditif.)
 - **P2 – Neraca per shift**: `ShiftBalance`, mesin neraca (membaca `StockMovement`), tampilan di detail laporan; baris borongan otomatis di laporan (menutup tugas lama sinkron stok).
 - **P3 – Oven/Cetak lengkap**: gypsum terhitung dari stok, patung basah masuk oven, LPG tabung/kg; resep konsumsi Assembling/Packing/Giftbox.
 - **P4 – Standar pemakaian**: `UsageStandard` AUTO/MANUAL + halaman pengaturan.
@@ -103,5 +105,5 @@ Tiap PR kecil, tes, `npm test` 2×, staging dicoba Owner sebelum merge.
 ## 8. Risiko & pertanyaan untuk Owner
 Risiko: (1) beban ketik karyawan naik — mitigasi: angka diturunkan otomatis, input hanya stok akhir fisik + reject; (2) standar AUTO dari data buruk — mitigasi: median, filter pencilan, mode MANUAL; (3) posting ganda saat cut-over — guard tanggal T + ref unik per versi; (4) laporan lama diedit setelah T — revisi tetap aman lewat versi; (5) alert terlalu banyak — dedupe + ambang bisa diubah + hanya Tinggi yang push.
 **Keputusan Owner 19 Nov:** bahan Cetak = gypsum saja (air tidak dilacak); LPG per tabung 5 kg; ambang 15% disetujui; alert bahan pendukung berlaku untuk semua divisi/produk/titik borongan.
-**Bawaan sementara (menunggu Owner):** satu gudang Reject; nilai reject langsung masuk beban otomatis (Owner dapat mengoreksi); penerima alert Owner/Supervisor/Finance.
-**Masih terbuka:** (a) arti persis "resi dibuat dari nol"; (b) berat per sak gypsum (gram) untuk standar gram/patung; (c) tanggal cut-over T; (d) harga isi ulang LPG diambil dari pembelian per tabung (rata-rata) — konfirmasi.
+**Keputusan Owner (lanjutan):** 1 gudang Reject per tahap; nilai reject langsung jadi beban (tanpa menunggu persetujuan); LPG per tabung. **Bawaan sementara:** penerima alert Owner/Supervisor/Finance.
+**Masih terbuka:** (a) berat per sak gypsum (gram) untuk standar gram/patung; (b) tanggal mulai (cut-over) T — Owner baru perlu menjawab setelah penjelasan di §6.
