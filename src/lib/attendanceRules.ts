@@ -35,6 +35,8 @@ export function targetStatus(d: DayInput): Target | null {
   return { status: "ALPA", note: AUTO_NOTE };
 }
 
+export const SCHEDULE_BONUS_MIN = 90;
+
 /**
  * Shift sebenarnya dari jam absen. Divisi 2 shift (Cetak, Oven): shift terdekat dengan jam masuk, walau jadwalnya
  * shift lain (jadwal ikut diperbarui). Divisi 1 shift: shift jadwal bila ada, selain itu shift terdekat.
@@ -42,7 +44,8 @@ export function targetStatus(d: DayInput): Target | null {
 export function actualShift<T extends { id: string; startTime: string }>(divShifts: T[], checkIn: Date, scheduledId: string | null, shiftDiv: boolean): T | null {
   const scheduled = divShifts.find((s) => s.id === scheduledId) ?? null;
   if (!shiftDiv && scheduled) return scheduled;
-  return nearestShift(divShifts, checkIn) ?? scheduled;
+  // Divisi 2 shift: shift terdekat, tetapi shift terjadwal diberi keunggulan 90 menit (S2 yang datang 12:00 tetap S2, bukan S1)
+  return nearestShift(divShifts, checkIn, scheduled ? { id: scheduled.id, bonus: SCHEDULE_BONUS_MIN } : undefined) ?? scheduled;
 }
 
 /** Shift yang boleh dipakai divisi: shift aktif pertama sebanyak jumlah shift divisi (urut kode) */
