@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/db";
 import { recordMovement } from "@/lib/stock";
-import { correctPointStock, isLow, pointStock, requestPointMaterials, weekStart } from "@/lib/boronganPointStock";
+import { correctPointStock, isLow, pointStock, reportMaterialReject, requestPointMaterials, weekStart } from "@/lib/boronganPointStock";
 import { isCoordinatorOf } from "@/lib/boronganFlow";
 import { FieldError } from "@/lib/fieldError";
 import type { Scope } from "@/lib/borongan";
@@ -67,5 +67,19 @@ describe("Stok bahan di titik borongan", () => {
     const coordA: Scope = { all: false, pointIds: [ctx.pA], personId: "k", taskIds: null };
     expect(isCoordinatorOf(coordA, ctx.pA)).toBe(true);
     expect(isCoordinatorOf(coordA, ctx.pB)).toBe(false);
+  });
+
+  it("reject bahan titik (cat cair, plastik klip, OPP): stok berkurang, tercatat per alasan, audit; hitung fisik terakhir & penanda belum dihitung", async () => {
+    const before = (await pointStock(ctx.pA)).find((x) => x.itemId === ctx.item)!;
+    expect(before.lastCounted).not.toBeNull(); // sudah dikoreksi/dihitung di tes sebelumnya
+    expect(before.stale).toBe(false);
+    await expect(reportMaterialReject(ctx.pA, ctx.item, 0, "ROBEK", null, actor)).rejects.toBeInstanceOf(FieldError);
+    await expect(reportMaterialReject(ctx.pA, ctx.item, 2, "", null, actor)).rejects.toBeInstanceOf(FieldError);
+    await expect(reportMaterialReject(ctx.pB, ctx.item, 2, "ROBEK", null, actor)).rejects.toBeInstanceOf(FieldError); // bukan bahan titik B
+    await reportMaterialReject(ctx.pA, ctx.item, 2, "ROBEK", "OPP robek saat dibungkus", actor);
+    const after = (await pointStock(ctx.pA)).find((x) => x.itemId === ctx.item)!;
+    expect([after.stock, after.rejectWeek]).toEqual([before.stock - 2, 2]);
+    expect(await prisma.boronganMaterialReject.count({ where: { pointId: ctx.pA, itemId: ctx.item, reason: "ROBEK" } })).toBe(1);
+    expect(await prisma.auditLog.count({ where: { action: "REJECT_BAHAN_TITIK", entityId: ctx.pA } })).toBe(1);
   });
 });

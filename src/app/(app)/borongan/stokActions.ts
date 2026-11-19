@@ -3,7 +3,7 @@ import { action, optStr, str } from "@/lib/action";
 import { prisma } from "@/lib/db";
 import { boronganScope, BoronganError, type Scope } from "@/lib/borongan";
 import { isCoordinatorOf } from "@/lib/boronganFlow";
-import { correctPointStock, requestPointMaterials } from "@/lib/boronganPointStock";
+import { correctPointStock, reportMaterialReject, requestPointMaterials } from "@/lib/boronganPointStock";
 
 const PERMS = ["borongan.manage", "borongan.point"] as const;
 
@@ -31,6 +31,19 @@ export const koreksiStokTitik = action(
     const raw = str(fd, "counted").replace(/\./g, "").replace(",", ".");
     const r = await correctPointStock(pointId, str(fd, "itemId"), raw === "" ? NaN : Number(raw), str(fd, "reason"), user);
     return r.diff === 0 ? "Stok sudah sesuai, tidak ada perubahan" : `Stok dikoreksi ${r.diff > 0 ? "+" : ""}${r.diff.toLocaleString("id-ID")}`;
+  },
+  ["/borongan", "/stok"],
+);
+
+/** Reject bahan pendukung di titik (cat cair, plastik klip, plastik OPP): jumlah + alasan */
+export const rejectBahanTitik = action(
+  [...PERMS],
+  async (fd, user) => {
+    const pointId = str(fd, "pointId");
+    guard(await boronganScope(prisma, user), pointId);
+    const raw = str(fd, "qty").replace(/\./g, "").replace(",", ".");
+    await reportMaterialReject(pointId, str(fd, "itemId"), raw === "" ? NaN : Number(raw), str(fd, "reason"), optStr(fd, "note"), user);
+    return "Reject bahan tercatat, stok titik berkurang";
   },
   ["/borongan", "/stok"],
 );
