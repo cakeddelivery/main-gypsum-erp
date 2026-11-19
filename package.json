@@ -44,7 +44,9 @@
     "perbaiki:shift-malam": "tsx scripts/perbaiki-shift-malam.ts",
     "setup:kit-tugas": "tsx scripts/kit-tugas-borongan.ts",
     "setup:produk-hpp": "tsx scripts/setup-produk-hpp.ts",
-    "setup:shift-oven": "tsx scripts/setup-shift-oven.ts"
+    "setup:shift-oven": "tsx scripts/setup-shift-oven.ts",
+    "cek:absen": "tsx scripts/cek-absen.ts",
+    "perbaiki:shift-laporan": "tsx scripts/perbaiki-shift-laporan.ts"
   },
   "author": "",
   "license": "ISC",

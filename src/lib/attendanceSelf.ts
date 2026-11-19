@@ -3,7 +3,7 @@ import { audit } from "./audit";
 import { checkGeofence, evaluateCheckIn, type GeoPoint } from "./attendance";
 import { SHIFT_NOTE_PREFIX, SYSTEM_VALIDATOR, actualShift, divisionShifts, isAutoNote, isShiftDivision } from "./attendanceRules";
 import { addDays, dateOnly, fmtDay, todayStr } from "./time";
-import { checkoutDiff, workdayFor } from "./workday";
+import { checkoutDiff, crossesMidnight, workdayFor } from "./workday";
 
 type Actor = { id: string; name: string; employeeId: string | null };
 const activeSites = () => prisma.workSite.findMany({ where: { active: true } });
@@ -14,11 +14,12 @@ const activeSites = () => prisma.workSite.findMany({ where: { active: true } });
  */
 export async function resolveWorkday(employeeId: string, now: Date = new Date()) {
   const y = dateOnly(addDays(todayStr(now), -1));
-  const [att, sched] = await Promise.all([
+  const [att, sched, emp] = await Promise.all([
     prisma.attendance.findUnique({ where: { employeeId_date: { employeeId, date: y } }, include: { shift: true } }),
     prisma.shiftSchedule.findUnique({ where: { employeeId_date: { employeeId, date: y } }, include: { shift: true } }),
+    prisma.employee.findUnique({ where: { id: employeeId }, select: { division: { select: { shiftCount: true } } } }),
   ]);
-  return workdayFor(now, { att, sched });
+  return workdayFor(now, { att, sched, shiftDivision: !!emp?.division && isShiftDivision(emp.division) });
 }
 
 /** Absen masuk diri sendiri dengan cek geofence. Dipakai halaman Absensi dan bot Telegram (`via`). */
@@ -92,11 +93,20 @@ export async function selfCheckOut(user: Actor, pos: GeoPoint | null, via: "WEB"
   if (!geo.ok) throw new Error(geo.error);
   const rep = await divisionReportSent(user.employeeId, a.date, a.shiftId);
   const reportMissing = !!rep && !rep.sent;
+  // Shift tercatat bukan shift malam tetapi jadwalnya shift malam (salah terpilih): samakan dengan jadwal agar lembur/pulang cepat benar
+  let shiftId = a.shiftId;
+  if (wd.carried === "pulang") {
+    const [cur, sch] = await Promise.all([
+      prisma.shift.findUnique({ where: { id: a.shiftId } }),
+      prisma.shiftSchedule.findUnique({ where: { employeeId_date: { employeeId: user.employeeId, date: a.date } }, include: { shift: true } }),
+    ]);
+    if (cur && sch && !crossesMidnight(cur) && crossesMidnight(sch.shift)) shiftId = sch.shiftId;
+  }
   await prisma.attendance.update({
     where: { id: a.id },
-    data: { checkOut: now, checkOutLat: pos?.lat, checkOutLng: pos?.lng, checkOutAccuracy: pos?.accuracy, checkOutDistance: geo.distance, reportMissing },
+    data: { shiftId, checkOut: now, checkOutLat: pos?.lat, checkOutLng: pos?.lng, checkOutAccuracy: pos?.accuracy, checkOutDistance: geo.distance, reportMissing },
   });
-  const shift = await prisma.shift.findUnique({ where: { id: a.shiftId } });
+  const shift = await prisma.shift.findUnique({ where: { id: shiftId } });
   const diff = shift ? checkoutDiff(date, shift, now) : { earlyMinutes: 0, overtimeMinutes: 0 };
   await audit(user, "ABSEN_PULANG", "Attendance", a.id, { tanggalKerja: date, lat: pos?.lat, lng: pos?.lng, lokasi: geo.site?.name, jarak: geo.distance, via, laporanBelumTerkirim: reportMissing || undefined, pulangCepatMenit: diff.earlyMinutes || undefined, lemburMenit: diff.overtimeMinutes || undefined });
   const when = date === todayStr(now) ? "hari ini" : `tanggal ${fmtDay(a.date)}`;

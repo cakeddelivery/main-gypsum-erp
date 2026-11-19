@@ -29,7 +29,12 @@ export function checkoutDiff(date: string, s: ShiftTime, checkOut: Date) {
 export type PrevDay = {
   att: { checkIn: Date | null; checkOut: Date | null; note?: string | null; shift: ShiftTime } | null;
   sched: { shift: ShiftTime } | null;
+  /** Divisi 2 shift (Cetak, Oven): absen masuk kemarin yang belum pulang tetap bisa ditutup sampai OPEN_MAX_HOURS, walau shift tercatatnya bukan shift malam */
+  shiftDivision?: boolean;
 };
+
+/** Batas wajar absen terbuka divisi 2 shift untuk absen pulang (jam sejak absen masuk) */
+export const OPEN_MAX_HOURS = 14;
 
 /**
  * Apakah saat `now` karyawan masih berada di tanggal kerja KEMARIN (shift malam)?
@@ -41,7 +46,11 @@ export type PrevDay = {
 export function carryOver(now: Date, yesterday: string, p: PrevDay): "pulang" | "selesai" | "masuk" | null {
   const a = p.att;
   if (a?.checkIn) {
-    if (!crossesMidnight(a.shift)) return null;
+    if (!crossesMidnight(a.shift)) {
+      // Shift tercatat bukan shift malam (mis. salah terpilih S1 padahal jadwal S2): pulang tengah malam tetap menutup absen kemarin
+      const open = !a.checkOut && p.shiftDivision && now.getTime() - a.checkIn.getTime() < OPEN_MAX_HOURS * 3600_000 && now.getTime() >= a.checkIn.getTime();
+      return open && todayStr(now) !== todayStr(a.checkIn) ? "pulang" : null;
+    }
     const end = shiftWindow(yesterday, a.shift).end.getTime();
     if (!a.checkOut) return now.getTime() < end + NIGHT_GRACE_HOURS * 3600_000 ? "pulang" : null;
     return now.getTime() - a.checkOut.getTime() < DONE_SHOW_MINUTES * 60_000 && now.getTime() < end + NIGHT_GRACE_HOURS * 3600_000 ? "selesai" : null;

@@ -131,6 +131,43 @@ describe("Absen shift malam di database (web & bot memakai fungsi yang sama)", (
     expect(await resolveWorkday(e.id)).toEqual({ date: N, carried: null });
   });
 
+  it("HOTFIX: S2 Cetak datang awal 12:00 tetap S2 (jadwal S2), pulang 00:59 / 01:00 / 01:05 berhasil", async () => {
+    for (const [i, hhmm] of ["00:59", "01:00", "01:05"].entries()) {
+      const { e, actor } = await emp("Cetak", 2);
+      await prisma.shiftSchedule.create({ data: { employeeId: e.id, date: dateOnly(D), shiftId: s2Id } });
+      setNow(at(D, "12:00"));
+      const r = await selfCheckIn(actor, null);
+      expect([r.shift, r.date]).toEqual(["Shift 2", D]);
+      setNow(at(N, hhmm));
+      expect(await resolveWorkday(e.id)).toEqual({ date: D, carried: "pulang" });
+      const out = await selfCheckOut(actor, null);
+      expect(out.date).toBe(D);
+      expect((await row(e.id, D))?.checkOut?.toISOString()).toBe(at(N, hhmm).toISOString());
+      expect(await row(e.id, N)).toBeNull();
+      void i;
+    }
+  });
+
+  it("HOTFIX: absen tercatat Shift 1 padahal jadwal S2 → pulang 01:00 tetap menutup tanggal kerja kemarin dan shift dikoreksi ke S2", async () => {
+    const { e, actor } = await emp("Cetak", 2);
+    await prisma.shiftSchedule.create({ data: { employeeId: e.id, date: dateOnly(D), shiftId: s2Id } });
+    await prisma.attendance.create({ data: { employeeId: e.id, date: dateOnly(D), shiftId: s1Id, checkIn: at(D, "12:00"), status: "HADIR", validated: true } });
+    setNow(at(N, "01:00"));
+    expect(await resolveWorkday(e.id)).toEqual({ date: D, carried: "pulang" });
+    const out = await selfCheckOut(actor, null);
+    expect([out.date, out.overtimeMinutes, out.earlyMinutes]).toEqual([D, 0, 0]);
+    const a = await row(e.id, D);
+    expect([a?.shift.code, a?.checkOut?.toISOString()]).toEqual(["S2", at(N, "01:00").toISOString()]);
+  });
+
+  it("HOTFIX: divisi 1 shift tetap tidak terpengaruh (lupa pulang S1 → 01:00 bukan absen pulang)", () => {
+    const att = { checkIn: at(D, "12:00"), checkOut: null, shift: S1 };
+    expect(carryOver(at(N, "01:00"), D, { att, sched: { shift: S1 } })).toBeNull();
+    expect(carryOver(at(N, "01:00"), D, { att, sched: { shift: S1 }, shiftDivision: true })).toBe("pulang");
+    // lewat 14 jam dari absen masuk tidak lagi dianggap terbuka
+    expect(carryOver(at(N, "23:00"), D, { att, sched: { shift: S1 }, shiftDivision: true })).toBeNull();
+  });
+
   it("Oven S2: lupa pulang, dibuka 06:30 → masih absen pulang tanggal kerja kemarin (lembur dihitung lewat 00:00)", async () => {
     const { e, actor } = await emp("Oven", 2);
     setNow(at(D, "16:08"));
@@ -211,4 +248,14 @@ describe("Absen shift malam di database (web & bot memakai fungsi yang sama)", (
     expect(dateStr((await prisma.shiftReport.findUniqueOrThrow({ where: { id: clash.id } })).date)).toBe(N);
   });
 
+});
+
+import { actualShift } from "@/lib/attendanceRules";
+describe("actualShift: keunggulan jadwal", () => {
+  const sh = [{ id: "a", startTime: "08:30" }, { id: "b", startTime: "16:00" }];
+  it("S2 terjadwal yang datang 12:00 tetap S2; tanpa jadwal tetap terdekat; datang 09:00 tetap S1", () => {
+    expect(actualShift(sh, at(D, "12:00"), "b", true)?.id).toBe("b");
+    expect(actualShift(sh, at(D, "12:00"), null, true)?.id).toBe("a");
+    expect(actualShift(sh, at(D, "09:00"), "b", true)?.id).toBe("a");
+  });
 });
