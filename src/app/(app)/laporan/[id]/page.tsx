@@ -14,6 +14,7 @@ import { storedRejects } from "@/lib/productionReject";
 import { computeShiftBalance } from "@/lib/shiftBalance";
 import { lpgTotalAset, previousLpg, storedLpg } from "@/lib/lpg";
 import { usageCheck } from "@/lib/usageStandard";
+import { isSampleTemplate, storedSamples, SAMPLE_PLATFORMS } from "@/lib/affiliateSample";
 import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
 import { resultPlaces } from "@/lib/resultCountGroups";
 import { divisionPendingReturns } from "@/lib/borongan";
@@ -92,7 +93,10 @@ export default async function ReportDetail({ params, searchParams }: { params: P
     return { lineId: l.id, itemId: l.itemId, remaining, cod: p.cod, vendor: p.vendor, itemName: l.item.name, unit: l.item.unit, label: `${p.number} · ${p.vendor} · sisa ${remaining.toLocaleString("id-ID")} ${l.item.unit}${p.cod ? " · COD" : ""}` };
   }));
   const banks = [...bankRows].sort((a, b) => (a.code === "KAS" ? -1 : b.code === "KAS" ? 1 : 0)).map((b) => ({ id: b.id, name: b.name }));
-  const extraLines = [...bLines, ...(await receiptReportLines(r.divisionId, r.date)), ...(resultStatus ? resultLines(resultStatus) : [])];
+  const sampleNames = new Map((await prisma.item.findMany({ where: { id: { in: storedSamples(work).map((x) => x.itemId) } }, select: { id: true, name: true } })).map((i) => [i.id, i.name]));
+  const sampleStores = isSampleTemplate(template) || storedSamples(work).length ? await prisma.store.findMany({ where: { active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [];
+  const sampleLines = storedSamples(work).length ? ["SAMPLE AFFILIATOR (tidak dihitung resi penjualan)", ...storedSamples(work).map((x) => `${sampleNames.get(x.itemId) ?? "Produk"} × ${x.qty} → ${SAMPLE_PLATFORMS[x.platform] ?? x.platform} · ${sampleStores.find((t) => t.id === x.storeId)?.name ?? "toko"}`)] : [];
+  const extraLines = [...bLines, ...(await receiptReportLines(r.divisionId, r.date)), ...sampleLines, ...(resultStatus ? resultLines(resultStatus) : [])];
   const [rItems, rv] = await Promise.all([resultItems(r.divisionId), resultValues(work, r.division.reportTemplate)]);
   // Tahap "Stok jadi": hanya barang milik divisi ini, dikelompokkan produk induk → paket → series
   const places = await resultPlaces(rItems);
@@ -116,6 +120,8 @@ export default async function ReportDetail({ params, searchParams }: { params: P
     ? await (async () => { const pv = await previousLpg(r.id, r.date); return { cur: storedLpg(work), prev: pv ? { penuh: pv.penuh, aktif: pv.aktif, kosong: pv.kosong } : null, total: await lpgTotalAset() }; })()
     : null;
   const usageRows = r.status === "DRAFT" ? [] : await usageCheck(r.id).catch(() => []);
+  // Sample affiliator (Packing/Giftbox): semua produk jadi aktif yang bisa dikirim sebagai sample
+  const sampleItems = isSampleTemplate(template) ? (await prisma.item.findMany({ where: { active: true, type: "BARANG_JADI" }, select: { id: true, name: true }, orderBy: { name: "asc" } })) : [];
   const mixDefault = template === "GIFTBOX" ? await mostStockedVariant() : null;
 
   return (
@@ -182,6 +188,9 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   rejects={storedRejects(r.work)}
                   rejectStageLabel={stageOfTemplate(template) ? REJECT_STAGE_LABEL[stageOfTemplate(template)!] : null}
                   lpg={lpgProps}
+                  sampleItems={sampleItems}
+                  sampleStores={sampleStores}
+                  samples={storedSamples(work)}
                 />
               </Modal>
             )}

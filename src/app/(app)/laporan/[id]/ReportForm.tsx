@@ -37,6 +37,7 @@ import { readReopen, reportReopenKey, writeReopen } from "@/lib/reopen";
 import { setUploading } from "@/lib/appVersion";
 import { REJECT_REASONS } from "@/lib/rejectShared";
 import { lpgFlow } from "@/lib/lpgShared";
+import { SAMPLE_PLATFORMS } from "@/lib/sampleShared";
 
 /** Baris pesanan yang sedang dikirim (Stok → Pembelian) untuk barang divisi ini */
 export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean; vendor: string; itemName: string; unit: string };
@@ -80,6 +81,10 @@ type Props = {
   rejectStageLabel: string | null;
   /** LPG tabung 5 kg (hanya format Produksi/Oven): isian tersimpan, status shift sebelumnya (prefill), total aset */
   lpg: { cur: { penuh: number; aktif: number; kosong: number; isiUlang: number } | null; prev: { penuh: number; aktif: number; kosong: number } | null; total: number } | null;
+  /** Sample affiliator (hanya Packing/Giftbox): produk jadi yang bisa dipilih + isian tersimpan */
+  sampleItems: { id: string; name: string }[];
+  sampleStores: { id: string; name: string }[];
+  samples: { itemId: string; qty: number; platform: string; storeId: string }[];
 };
 
 type Step = { key: string; label: string };
@@ -104,6 +109,7 @@ export function ReportForm(p: Props) {
     const b = p.lpg?.cur ?? (p.lpg?.prev ? { ...p.lpg.prev, isiUlang: 0 } : null);
     return { penuh: b ? String(b.penuh) : "", aktif: b ? String(b.aktif) : "", kosong: b ? String(b.kosong) : "", isiUlang: b ? String(b.isiUlang) : "0" };
   });
+  const [samples, setSamples] = useState(() => p.samples.map((x, i) => ({ key: i, itemId: x.itemId, qty: String(x.qty), platform: x.platform, storeId: x.storeId })));
   const [checks, setChecks] = useState(() => p.checklist.map((c) => c.done));
 
   const setGrid = (s: GridSection, rows: GridRow[]) => setWork((w) => ({ ...w, [s.key]: rows }));
@@ -120,6 +126,7 @@ export function ReportForm(p: Props) {
     ...(stock.length > 0 ? [{ key: "stok", label: "Stok akhir" }] : []),
     ...(p.rejectItems.length > 0 ? [{ key: "reject", label: "Reject" }] : []),
     ...(p.lpg ? [{ key: "lpg", label: "LPG" }] : []),
+    ...(p.sampleItems.length > 0 ? [{ key: "sample", label: "Sample" }] : []),
     { key: "catatan", label: "Catatan & kirim" },
   ];
   // Halaman sempat dimuat ulang (mis. HP menutup browser saat kamera dibuka): lanjut di langkah terakhir
@@ -618,6 +625,39 @@ export function ReportForm(p: Props) {
           </section>
         );
       })()}
+      {p.sampleItems.length > 0 && (
+        <section data-step="sample" className={`card space-y-3 p-4 ${show("sample")}`}>
+          <input type="hidden" name="sm.present" value="1" />
+          <h3 className="font-semibold text-slate-800">Sample affiliator</h3>
+          <p className="text-xs text-slate-500">Produk yang dikirim sebagai sample untuk affiliator (TikTok Shop / Shopee). Bukan resi penjualan; stok keluar dan nilainya jadi beban promosi. Kosongkan bila tidak ada.</p>
+          {samples.map((x, i) => {
+            const patch = (pp: Partial<typeof x>) => setSamples((xs) => xs.map((y, j) => (j === i ? { ...y, ...pp } : y)));
+            return (
+              <div key={x.key} className="space-y-1.5 rounded-lg border border-slate-200 p-2">
+                <div className="flex items-center gap-1.5">
+                  <select name="sm.item" value={x.itemId} onChange={(e) => patch({ itemId: e.target.value })} className="input min-w-0 flex-1 px-2 text-sm" aria-label={`Produk sample ${i + 1}`}>
+                    <option value="">— pilih produk & varian —</option>
+                    {p.sampleItems.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                  <input name="sm.qty" inputMode="numeric" value={x.qty} onChange={(e) => patch({ qty: e.target.value.replace(/\D/g, "") })} className="input w-16 px-1.5 text-right tabular-nums" placeholder="0" aria-label={`Jumlah sample ${i + 1}`} />
+                  <button type="button" className="grid h-9 w-7 shrink-0 place-items-center rounded-md text-rose-600 hover:bg-rose-50" onClick={() => setSamples((xs) => xs.filter((_, j) => j !== i))} aria-label={`Hapus sample ${i + 1}`}>✕</button>
+                </div>
+                <div className="flex gap-1.5">
+                  <select name="sm.platform" value={x.platform} onChange={(e) => patch({ platform: e.target.value })} className="input min-w-0 flex-1 px-2 text-sm" aria-label={`Platform sample ${i + 1}`}>
+                    <option value="">— platform —</option>
+                    {Object.entries(SAMPLE_PLATFORMS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                  <select name="sm.store" value={x.storeId} onChange={(e) => patch({ storeId: e.target.value })} className="input min-w-0 flex-1 px-2 text-sm" aria-label={`Toko sample ${i + 1}`}>
+                    <option value="">— toko —</option>
+                    {p.sampleStores.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                </div>
+              </div>
+            );
+          })}
+          <button type="button" className="btn-secondary w-full" onClick={() => setSamples((xs) => [...xs, { key: Date.now() + xs.length, itemId: "", qty: "", platform: "", storeId: "" }])}>+ Sample</button>
+        </section>
+      )}
 
       <section data-step="catatan" className={`card space-y-3 p-4 ${show("catatan")}`}>
         <label className="block"><span className="label">Catatan / kendala (opsional)</span><textarea name="complaints" defaultValue={p.complaints} className="input" rows={3} /></label>

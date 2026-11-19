@@ -2653,3 +2653,27 @@ model BoronganClaim {
 
   @@index([pointId, status])
 }
+
+/// Sample produk untuk affiliator (program marketplace TikTok Shop / Shopee) yang dikirim dari Packing/Giftbox, per platform + toko kita.
+/// Bukan resi penjualan; stok keluar dan nilainya jadi Beban Promosi & Sample (6-1840), bukan HPP penjualan.
+model AffiliateSample {
+  id         String   @id @default(cuid())
+  reportId   String
+  divisionId String
+  date       DateTime @db.Date
+  itemId     String
+  qty        Decimal  @db.Decimal(14, 3)
+  /// TIKTOK / SHOPEE
+  platform   String
+  /// Toko kita (master Store), mis. Main Gypsum / Dunia Lukis
+  storeId    String
+  /// Stok sudah keluar & dibebankan (sakelar hasil kerja → stok menyala saat laporan dikirim)
+  posted     Boolean  @default(false)
+  ref        String?
+  unitCost   BigInt   @default(0)
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  @@index([reportId])
+  @@index([platform, storeId, date])
+}

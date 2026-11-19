@@ -95,6 +95,7 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
             {!member && <Link href="/laporan/monitoring" className="btn-secondary">Resi &amp; patung</Link>}
             {user.can("production.target") && user.can("audit.view") && <Link href="/laporan/kebocoran" className="btn-secondary">Kebocoran & Efisiensi</Link>}
             {(user.can("material.manage") || user.can("audit.view")) && <Link href="/laporan/standar" className="btn-secondary">Standar pemakaian</Link>}
+            {user.can("audit.view") && <Link href="/laporan/sample" className="btn-secondary">Sample affiliator</Link>}
             {user.can("material.manage") && <Link href="/laporan/bahan" className="btn-secondary">Bahan & checklist divisi</Link>}
           </>
         }
