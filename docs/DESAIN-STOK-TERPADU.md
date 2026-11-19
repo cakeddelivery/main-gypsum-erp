@@ -54,7 +54,7 @@ Resi: **"dibuat dari nol" = produk disiapkan (prepare) saat pesanan masuk**, buk
 
 **Standar pemakaian** — dua sumber, dipakai bersama:
 - **A. Standar proses (historis, AUTO bergulir 30 hari)** dari neraca shift yang selisihnya kecil (agar kebocoran tidak meracuni standar):
-  - gram gypsum / patung basah (Cetak; air tidak dilacak) = Σ(sak terpakai × gram per sak) / Σ(patung cetak bagus + reject), per varian bila datanya cukup (berat per sak: isian Master barang, `hppFactor`, menunggu konfirmasi Owner);
+  - gram gypsum / patung basah (Cetak; air tidak dilacak) = Σ(sak terpakai × gram per sak) / Σ(patung cetak bagus + reject), per varian bila datanya cukup (1 sak gypsum = 18 kg = 18.000 g, keputusan Owner; disimpan di `hppFactor` barang gypsum);
   - rendemen = Σ kering / Σ basah masuk oven;
   - LPG per patung kering: tabung habis × 5 kg / Σ kering; **Rp per patung kering = (tabung habis × harga isi ulang rata-rata) ÷ patung kering**;
   - biaya per unit: Rp gypsum per patung basah, Rp LPG per patung kering (menyatu dengan HPP bertingkat `hpp.ts`).
@@ -62,6 +62,12 @@ Resi: **"dibuat dari nol" = produk disiapkan (prepare) saat pesanan masuk**, buk
 - **B. Standar BOM untuk SEMUA bahan pendukung** (keputusan Owner): standar = **resep BOM (#122) × output** shift itu (`bomStockQty` × jumlah produk/Single Pack/paket yang dihasilkan), dibandingkan **pemakaian aktual dari neraca** = awal + masuk − sisa hitung. Cakupan: plastik OPP, cotton bud, piring, background, klip, cat plastik, klip 2x3, cat 5 warna, pot cat, dus 12/24, dus giftbox, solasi, bubble wrap, plastik wrap, label thermal, stiker, color guide, kuas, sabuk label, magnet, pallet, dst. di setiap divisi dan produk. Berlaku juga di **titik borongan**: pemakaian titik (HSB) vs stok koordinator (neraca stok titik: awal + kiriman − sisa hitung/Koreksi stok).
   - Syarat: tiap bahan pendukung harus punya **hitungan sisa di laporan divisi pemiliknya** (`Item.divisionId`, tersedia di blok stok akhir bahan). Bahan aktif yang **tidak dihitung** pada shift berproduksi ditandai **"belum dihitung"** di halaman Kebocoran (tidak bisa dialert) dan di laporan (peringatan, bukan penghalang kirim).
   - Rasio aktual/standar per bahan per shift = `pemakaian aktual ÷ (BOM × output)`; > 1,15 → alert (§5). Output nol tetapi pemakaian > 0 → alert "pemakaian tanpa hasil".
+
+### 4C. Siklus tabung LPG (sinkron dengan pembelian isi ulang)
+Alur: **penuh (gudang) → terpasang (Oven) → kosong → isi ulang (pembelian/transaksi Rp) → penuh**. Barang "LPG tabung 5 kg" dengan lokasi/status: penuh, terpasang, kosong.
+- Laporan Oven: "tabung kosong diganti shift ini" (+ stok penuh & terpasang hitung fisik) → tabung penuh −n, tabung kosong +n.
+- Isi ulang = pembelian/transaksi (web atau bot Transaksi) yang **ditautkan ke barang LPG**: tabung kosong −n, penuh +n; harga per tabung diambil dari transaksi itu (harga rata-rata).
+- Neraca tabung per hari/minggu: tabung habis dilaporkan vs isi ulang dibeli; alert bila isi ulang dibeli > tabung habis, tabung habis tanpa pembelian, atau tabung kosong menumpuk.
 
 ## 5. Alert anomali (push + lonceng + rekap harian) dan ambang
 Penerima: Owner, Supervisor, Finance. Dedupe per (jenis, divisi, barang, tanggal). Ambang bawaan bisa diubah Owner.
@@ -77,6 +83,7 @@ Penerima: Owner, Supervisor, Finance. Dedupe per (jenis, divisi, barang, tanggal
 | Barang masuk tanpa pembelian | BMK belum ditautkan > 3 hari (sudah ada di Cek Konsistensi) | Sedang |
 | Pembelian tanpa barang masuk | pesanan Dikirim > 7 hari belum diterima | Sedang |
 | Hasil tidak terposting | laporan terkirim tetapi sakelar mati / `workPostedVersion = 0` | Tinggi |
+| Tabung LPG tidak sinkron | tabung habis (laporan) ≠ isi ulang (pembelian) per hari/minggu melewati toleransi 1 tabung | Sedang |
 | LPG anomali | tabung habis per patung kering > standar +15%, atau tabung habis tanpa hasil | Tinggi |
 | Laporan ganda/hilang | shift berorang tanpa laporan (aturan #128) | Rendah |
 
@@ -106,4 +113,4 @@ Tiap PR kecil, tes, `npm test` 2×, staging dicoba Owner sebelum merge.
 Risiko: (1) beban ketik karyawan naik — mitigasi: angka diturunkan otomatis, input hanya stok akhir fisik + reject; (2) standar AUTO dari data buruk — mitigasi: median, filter pencilan, mode MANUAL; (3) posting ganda saat cut-over — guard tanggal T + ref unik per versi; (4) laporan lama diedit setelah T — revisi tetap aman lewat versi; (5) alert terlalu banyak — dedupe + ambang bisa diubah + hanya Tinggi yang push.
 **Keputusan Owner 19 Nov:** bahan Cetak = gypsum saja (air tidak dilacak); LPG per tabung 5 kg; ambang 15% disetujui; alert bahan pendukung berlaku untuk semua divisi/produk/titik borongan.
 **Keputusan Owner (lanjutan):** 1 gudang Reject per tahap; nilai reject langsung jadi beban (tanpa menunggu persetujuan); LPG per tabung. **Bawaan sementara:** penerima alert Owner/Supervisor/Finance.
-**Masih terbuka:** (a) berat per sak gypsum (gram) untuk standar gram/patung; (b) tanggal mulai (cut-over) T — Owner baru perlu menjawab setelah penjelasan di §6.
+**Keputusan akhir:** 1 sak = 18.000 g; **tanggal mulai T = 1 Desember 2026** (setting `stok_terpadu_mulai`, bisa diundur); desain disetujui sebagai arah, implementasi P1→P6.
