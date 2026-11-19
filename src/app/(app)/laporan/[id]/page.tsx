@@ -17,7 +17,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { canFollowUp, canSeeDivision, reportDivision } from "@/lib/reportScope";
 import { ModalForm } from "@/components/ModalForm";
-import { saveFollowUp } from "../actions";
+import { moveReport, saveFollowUp } from "../actions";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { DownloadJpg } from "@/components/DownloadJpg";
@@ -102,6 +102,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const receiptViews = receipts.map((x) => ({ id: x.id, number: x.number, itemName: x.item.name, unit: x.item.unit, qty: Number(x.qty), supplierName: x.supplierName, hasPhoto: !!x.photoPath, linked: !!x.purchaseId }));
   const materials = items.map((i) => ({ id: i.id, name: i.name, unit: i.unit }));
   // Giftbox Mix: bawaan patung ke-5 = karakter patung kering dengan stok terbanyak
+  const moveShifts = reportDivision(user) === null && r.division.shiftCount > 1 ? (await prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, take: r.division.shiftCount })) : [];
   const mixDefault = template === "GIFTBOX" ? await mostStockedVariant() : null;
 
   return (
@@ -111,6 +112,28 @@ export default async function ReportDetail({ params, searchParams }: { params: P
         subtitle={`${r.shift.name} · ${fmtDay(r.date)}`}
         actions={
           <>
+            {reportDivision(user) === null && user.can("report.create") && r.division.shiftCount > 1 && (
+              <Modal trigger="Pindahkan ke shift lain" triggerClass="btn-secondary" title="Pindahkan laporan ke shift lain" subtitle={`${r.division.name} · ${r.shift.name} · ${fmtDay(r.date)}`}>
+                <ModalForm action={moveReport} className="space-y-3">
+                  <input type="hidden" name="id" value={r.id} />
+                  <p className="text-sm text-slate-600">Untuk laporan yang salah shift (mis. dikirim karyawan shift lain). Stok yang sudah diposting dari laporan ini tetap bertanggal shift lama.</p>
+                  <label className="block"><span className="text-xs font-medium text-slate-600">Pindah ke</span>
+                    <select name="toShiftId" className="input" required defaultValue="">
+                      <option value="" disabled>— pilih shift —</option>
+                      {moveShifts.filter((s) => s.id !== r.shiftId).map((s) => <option key={s.id} value={s.id}>{s.name} ({s.startTime}–{s.endTime})</option>)}
+                    </select>
+                  </label>
+                  <label className="block"><span className="text-xs font-medium text-slate-600">Bila shift tujuan sudah punya laporan</span>
+                    <select name="mode" className="input" defaultValue="pindah">
+                      <option value="pindah">Tolak (jangan ubah apa pun)</option>
+                      <option value="tukar">Tukar: kedua laporan saling bertukar shift</option>
+                    </select>
+                  </label>
+                  <label className="block"><span className="text-xs font-medium text-slate-600">Alasan</span><input name="reason" className="input" required minLength={3} placeholder="mis. dikirim karyawan Shift 1" /></label>
+                  <Submit>Pindahkan</Submit>
+                </ModalForm>
+              </Modal>
+            )}
             {canEdit && (
               <Modal
                 full

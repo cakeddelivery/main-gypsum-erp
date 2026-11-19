@@ -13,6 +13,7 @@ import { sendTelegram, telegramConfigured, esc } from "@/lib/telegram";
 import { STAGE_LABEL } from "@/lib/stock";
 import { applyShiftStockCount } from "@/lib/shiftReportStock";
 import { postShiftWork } from "@/lib/shiftReportFlow";
+import { assertMemberOwnsReport, memberReportSlot, moveReportShift } from "@/lib/reportShift";
 import { sendShiftReportJpg } from "@/lib/shiftReportJpg";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { receiptReportLines } from "@/lib/boronganReceipt";
@@ -40,15 +41,23 @@ async function stockRows(divisionId: string, prev: StockCountRow[] = []): Promis
 
 /** "+ Kirim laporan": buat draf (atau buka yang sudah ada) lalu langsung buka form isiannya di popup */
 export const openReport = action("report.create", async (fd, user) => {
-  const date = str(fd, "date");
+  let date = str(fd, "date");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Tanggal tidak valid");
-  const shiftId = str(fd, "shiftId");
+  let shiftId = str(fd, "shiftId");
   const divisionId = str(fd, "divisionId");
   guardDivision(user, divisionId);
+  // Anggota divisi 2 shift: tanggal & shift laporan OTOMATIS dari absennya (tidak bisa memilih shift lain);
+  // Supervisor/Owner/Admin boleh memilih manual (pembuatan laporan baru dicatat di audit).
+  const member = reportDivision(user) !== null && user.employeeId;
+  if (member) {
+    const slot = await memberReportSlot(user.employeeId!, divisionId);
+    if (slot) ({ date, shiftId } = { date: slot.date, shiftId: slot.shiftId });
+  }
   const division = await prisma.division.findUniqueOrThrow({ where: { id: divisionId } });
   const allowed = (await prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, take: Math.max(1, division.shiftCount) })).map((s) => s.id);
   if (!allowed.includes(shiftId)) throw new Error(`${division.name} hanya punya ${division.shiftCount} shift`);
   const checklist = await divisionChecklist(division);
+  const existed = await prisma.shiftReport.findUnique({ where: { date_shiftId_divisionId: { date: dateOnly(date), shiftId, divisionId } }, select: { id: true } });
   const r = await prisma.shiftReport.upsert({
     where: { date_shiftId_divisionId: { date: dateOnly(date), shiftId, divisionId } },
     create: {
@@ -63,6 +72,7 @@ export const openReport = action("report.create", async (fd, user) => {
     },
     update: {},
   });
+  if (!member && !existed) await audit(user, "LAPORAN_SHIFT_MANUAL", "ShiftReport", r.id, { shiftId, tanggal: date });
   // Draf lama mengikuti checklist divisi terbaru (jawaban dengan label sama dipertahankan)
   await refreshDraftChecklists({ id: r.id });
   // go=masuk: popup Barang masuk; go=terima: popup Penerimaan borongan (dari notifikasi); selain itu form isian laporan
@@ -71,8 +81,10 @@ export const openReport = action("report.create", async (fd, user) => {
 });
 
 async function guardReport(id: string, user: User) {
-  const r = await prisma.shiftReport.findUniqueOrThrow({ where: { id }, include: { division: true } });
+  const r = await prisma.shiftReport.findUniqueOrThrow({ where: { id }, include: { division: true, shift: true } });
   guardDivision(user, r.divisionId);
+  // Anggota divisi 2 shift hanya mengisi laporan shift & tanggal absennya sendiri
+  if (reportDivision(user) !== null && user.employeeId) await assertMemberOwnsReport(user.employeeId, r);
   return r;
 }
 
@@ -379,3 +391,12 @@ export const saveFollowUp = action(
   },
   ["/laporan", "/"],
 );
+
+/** Supervisor/Owner/Admin: pindahkan laporan yang salah shift ke shift lain (atau tukar dengan laporan shift tujuan) */
+export const moveReport = action("report.create", async (fd, user) => {
+  if (reportDivision(user) !== null) throw new ForbiddenError();
+  const id = str(fd, "id");
+  const r = await moveReportShift(id, str(fd, "toShiftId"), str(fd, "reason"), user, fd.get("mode") === "tukar" ? "tukar" : "pindah");
+  revalidatePath("/laporan");
+  return r.swapped ? `Laporan ditukar: sekarang ${r.to}` : `Laporan dipindah dari ${r.from} ke ${r.to}`;
+});

@@ -45,7 +45,8 @@
     "setup:kit-tugas": "tsx scripts/kit-tugas-borongan.ts",
     "setup:produk-hpp": "tsx scripts/setup-produk-hpp.ts",
     "setup:shift-oven": "tsx scripts/setup-shift-oven.ts",
-    "cek:absen": "tsx scripts/cek-absen.ts"
+    "cek:absen": "tsx scripts/cek-absen.ts",
+    "perbaiki:shift-laporan": "tsx scripts/perbaiki-shift-laporan.ts"
   },
   "author": "",
   "license": "ISC",
