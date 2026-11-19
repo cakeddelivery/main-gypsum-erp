@@ -17,6 +17,20 @@ export async function flowEnabled(db: Tx | typeof prisma = prisma) {
   return (await db.setting.findUnique({ where: { key: FLOW_SETTING } }))?.value === "true";
 }
 
+/** Tanggal mulai stok terpadu (cut-over): laporan bertanggal sebelumnya TIDAK ikut diposting ke stok. Kosong = tanpa batas */
+export const CUTOVER_SETTING = "stok_terpadu_mulai";
+export async function cutoverDate(db: Tx | typeof prisma = prisma): Promise<string | null> {
+  const v = (await db.setting.findUnique({ where: { key: CUTOVER_SETTING } }))?.value?.trim();
+  return v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+}
+/** Sakelar menyala DAN tanggal (laporan / hari ini) sudah sampai tanggal mulai: dasar semua posting laporan shift ke stok */
+export async function flowEnabledOn(date: Date | string, db: Tx | typeof prisma = prisma) {
+  if (!(await flowEnabled(db))) return false;
+  const t = await cutoverDate(db);
+  const d = typeof date === "string" ? date : date.toISOString().slice(0, 10);
+  return !t || d >= t;
+}
+
 const VARIANT_ENUM: Record<string, ProductVariant> = { Hewan: "HEWAN", Cowok: "COWOK", Transportasi: "TRANSPORTASI", Cewek: "CEWEK" };
 
 async function ensureItem(tx: Tx, sku: string, data: { name: string; type: "BARANG_DALAM_PROSES" | "BARANG_JADI"; unit: string }) {
@@ -72,8 +86,9 @@ export type FlowResult = { posted: number; skipped?: string };
  * Revisi: posting versi lama dibalik, lalu versi baru diposting. Hanya berjalan bila setting FLOW_SETTING menyala.
  */
 export async function postShiftWork(reportId: string, actor: Actor, now: Date = new Date()): Promise<FlowResult> {
-  if (!(await flowEnabled())) return { posted: 0, skipped: "nonaktif" };
   const r = await prisma.shiftReport.findUniqueOrThrow({ where: { id: reportId }, include: { shift: true, division: true } });
+  if (!(await flowEnabled())) return { posted: 0, skipped: "nonaktif" };
+  if (!(await flowEnabledOn(r.date))) return { posted: 0, skipped: "sebelum tanggal mulai stok terpadu" };
   const template = r.division.reportTemplate;
   if (!isTemplate(template)) return { posted: 0, skipped: "laporan umum" };
   const steps = plannedFlow(template, r.work as WorkData);
