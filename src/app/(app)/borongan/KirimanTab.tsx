@@ -2,6 +2,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { addDays, fmtDay, dateOnly, todayStr } from "@/lib/time";
 import { Paged } from "@/components/Paged";
+import { Tabs } from "@/components/ui";
 import { bomStockQty } from "@/lib/unitcost";
 import { stockBalances } from "@/lib/stock";
 import { canTask, type Scope } from "@/lib/borongan";
@@ -69,7 +70,7 @@ async function kirimGroups(): Promise<KirimGroupOpt[]> {
 /** Supervisor/Owner mengerjakan atas nama peran aslinya: label (backup) + konfirmasi + catatan di modal */
 const bk = (scope: Scope, who: string) => (scope.backup ? { label: " (backup)", confirm: `Anda mengerjakan atas nama ${who}. Lanjutkan?`, note: <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Mode backup: Anda mengerjakan atas nama <b>{who}</b>. Peran asli tidak berubah; tindakan tercatat atas nama Anda di riwayat aktivitas.</p> } : { label: "", confirm: undefined, note: null });
 
-export async function KirimanTab({ scope, userId }: { scope: Scope; userId: string }) {
+export async function KirimanTab({ scope, userId, filter }: { scope: Scope; userId: string; /** Filter tampilan (?f=): menunggu | setoran | ditahan | berjalan | riwayat */ filter?: string }) {
   // Koordinator: hanya bagian titiknya, dan baru tampil setelah bahan dibagi ke pekerja di titik itu (disaring di server)
   const all = scopeShipments(scope, (await openShipments()).filter((s) => visible(scope, s)));
   const complete = canCompleteAssembling(scope);
@@ -105,6 +106,16 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
   const shipCreators = new Map((await prisma.boronganShipment.findMany({ where: { id: { in: running.map((r) => r.id) } }, select: { id: true, createdById: true } })).map((x) => [x.id, x.createdById]));
   const draftCreators = new Map((await prisma.boronganShipment.findMany({ where: { id: { in: waiting.map((w) => w.id) } }, select: { id: true, createdById: true } })).map((x) => [x.id, x.createdById]));
 
+  // Filter status: satu daftar per tab agar halaman tidak panjang (tab kosong disembunyikan, Berjalan selalu ada)
+  const filters = [
+    { key: "menunggu", label: "Menunggu bahan", count: waiting.length },
+    { key: "setoran", label: "Setoran dihitung", count: toReceive.length },
+    { key: "ditahan", label: "Upah ditahan", count: held.length },
+    { key: "berjalan", label: "Berjalan", count: running.length },
+    ...(coordinator ? [{ key: "riwayat", label: "Riwayat", count: done.length }] : []),
+  ].filter((t) => t.count > 0 || t.key === "berjalan");
+  const active = filters.some((t) => t.key === filter) ? filter! : (filters.find((t) => t.count > 0)?.key ?? "berjalan");
+
   return (
     <div className="space-y-4">
       {(kering && asmGroup) || groups.length > 0 ? (
@@ -123,7 +134,9 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
         </div>
       ) : null}
 
-      {waiting.length > 0 && (
+      {filters.length > 1 && <Tabs current={active} tabs={filters.map((t) => ({ key: t.key, label: t.label, count: t.count, href: `/borongan?tab=kiriman&f=${t.key}` }))} />}
+
+      {active === "menunggu" && waiting.length > 0 && (
         <section className="space-y-2">
           <h2 className="text-sm font-bold uppercase tracking-wide text-amber-700">Menunggu bahan pendukung</h2>
           {waiting.map((s) => (
@@ -145,7 +158,7 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
         </section>
       )}
 
-      {toReceive.length > 0 && (
+      {active === "setoran" && toReceive.length > 0 && (
         <section className="space-y-2">
           <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Setoran menunggu dihitung</h2>
           {toReceive.map(({ s, p }) => (
@@ -162,7 +175,7 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
         </section>
       )}
 
-      {held.length > 0 && (
+      {active === "ditahan" && held.length > 0 && (
         <section className="space-y-2">
           <h2 className="text-sm font-bold uppercase tracking-wide text-rose-700">Upah ditahan (hitungan kurang)</h2>
           {held.map(({ s, p }) => (
@@ -179,6 +192,7 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
         </section>
       )}
 
+      {active === "berjalan" && (
       <section className="space-y-2">
         <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Kiriman berjalan</h2>
         {!running.length && <Empty title="Belum ada kiriman berjalan" hint={ship ? "Tekan + Kirim Assembling / + Kirim Cat untuk mencatat kiriman baru." : undefined} />}
@@ -251,8 +265,9 @@ export async function KirimanTab({ scope, userId }: { scope: Scope; userId: stri
           );
         })}
       </section>
+      )}
 
-      {coordinator && (
+      {coordinator && active === "riwayat" && (
         <section className="space-y-2">
           <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Riwayat kiriman</h2>
           {!done.length ? <p className="text-sm text-slate-500">Belum ada kiriman yang selesai.</p> : (

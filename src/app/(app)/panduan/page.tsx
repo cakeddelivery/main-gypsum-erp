@@ -39,8 +39,7 @@ export default async function PanduanPage({ searchParams }: { searchParams: Prom
         subtitle={guide.subtitle}
         actions={
           <div className="flex flex-wrap gap-2">
-            <DownloadJpg targetId="panduan-sheet" filename={`panduan-${id}.jpg`} label="🖼️ Unduh JPG" className="btn-secondary" />
-            <a href={`/cetak/panduan?g=${id}&print=1`} target="_blank" rel="noopener" className="btn-secondary">📄 Unduh PDF / Cetak</a>
+            <DownloadJpg targetId="panduan-sheet" filename={`panduan-${id}.jpg`} label="👁 Lihat dokumen" className="btn-secondary" pdfHref={`/cetak/panduan?g=${id}&print=1`} />
             {allowed.length > 1 && <a href="/cetak/panduan?g=semua&print=1" target="_blank" rel="noopener" className="btn-primary">📚 Unduh semua (PDF)</a>}
           </div>
         }

@@ -33,7 +33,7 @@ export default async function AbsensiPage({ searchParams }: { searchParams: Prom
   const canLocation = user.can("attendance.location");
   const isSelf = !!user.employeeId && user.can("attendance.self");
   const approver = canDecideLeave(user.role);
-  const pendingLeave = approver ? await prisma.leaveRequest.count({ where: { status: "MENUNGGU" } }) : undefined;
+  const pendingLeave = approver ? (await prisma.leaveRequest.count({ where: { status: "MENUNGGU" } })) + (await prisma.dayOffRequest.count({ where: { status: "MENUNGGU" } })) : undefined;
   const tabs = [
     ...(isSelf ? [{ key: "saya", label: "Hari ini", href: "/absensi?tab=saya" }, { key: "riwayat", label: "Riwayat", href: "/absensi?tab=riwayat" }] : []),
     ...(isSelf || approver ? [{ key: "izin", label: "Izin & Sakit", href: "/absensi?tab=izin", count: pendingLeave || undefined }] : []),
@@ -148,7 +148,8 @@ async function Schedule({ date, divFilter, lockedId }: { date: string; divFilter
   const days = Array.from({ length: 7 }, (_, i) => addDays(start, i));
   const rows = await prisma.employee.findMany({ where: { status: { not: "NONAKTIF" }, ...divFilter }, include: { division: true, user: { select: { role: true } } }, orderBy: { name: "asc" } });
   const groups = scheduleGroups(rows.map((e) => ({ ...e, role: e.user?.role ?? null })));
-  const [sched, activeShifts] = await Promise.all([
+  const [dayOffs, sched, activeShifts] = await Promise.all([
+    prisma.dayOffRequest.findMany({ where: { weekStart: dateOnly(start), status: { in: ["MENUNGGU", "DISETUJUI"] }, dates: { isEmpty: false }, employeeId: { in: rows.map((e) => e.id) } }, include: { employee: { select: { name: true } } }, orderBy: { createdAt: "asc" } }),
     prisma.shiftSchedule.findMany({ where: { date: { gte: dateOnly(days[0]), lte: dateOnly(days[6]) }, employeeId: { in: rows.map((e) => e.id) } } }),
     prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, select: { id: true } }),
   ]);
@@ -164,6 +165,12 @@ async function Schedule({ date, divFilter, lockedId }: { date: string; divFilter
         <span className="text-sm font-medium">{fmtDay(dateOnly(days[0]))} – {fmtDay(dateOnly(days[6]))}</span>
         <a className="btn-secondary btn-sm" href={`/absensi?tab=jadwal&date=${addDays(start, 7)}`}>Minggu depan →</a>
       </div>
+      {dayOffs.length > 0 && (
+        <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+          <b>Pengajuan libur minggu ini:</b>{" "}
+          {dayOffs.map((r, i) => <span key={r.id}>{i > 0 && " · "}{r.employee.name} ({r.dates.map((d) => d.slice(8)).join(", ")}) <Badge tone={r.status === "DISETUJUI" ? "green" : "amber"}>{r.status === "DISETUJUI" ? "libur" : "menunggu"}</Badge></span>)}
+        </div>
+      )}
       <ScheduleTable
         days={days.map((d) => ({ date: d, label: `${fmtDay(dateOnly(d)).split(",")[0]} ${d.slice(8)}` }))}
         groups={view}

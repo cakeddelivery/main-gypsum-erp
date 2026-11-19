@@ -19,7 +19,7 @@ export const SHIFT_NOTE_PREFIX = "Shift disesuaikan otomatis";
 export const isAutoNote = (note: string | null | undefined) => note === AUTO_NOTE || note === LIBUR_NOTE;
 
 export type DayAtt = { status: AttendanceStatus; checkIn: Date | null; note: string | null };
-export type DayInput = { scheduled: boolean; weekPlanned: boolean; leave: "IZIN" | "SAKIT" | null; att: DayAtt | null };
+export type DayInput = { scheduled: boolean; weekPlanned: boolean; leave: "IZIN" | "SAKIT" | null; att: DayAtt | null; /** libur disetujui lewat pengajuan libur minggu depan */ dayOff?: boolean };
 export type Target = { status: AttendanceStatus; note: string | null };
 
 /**
@@ -31,6 +31,7 @@ export function targetStatus(d: DayInput): Target | null {
   if (d.att && !isAutoNote(d.att.note)) return null;
   if (d.leave) return { status: d.leave, note: "Pengajuan disetujui" };
   if (d.scheduled) return { status: "ALPA", note: AUTO_NOTE };
+  if (d.dayOff) return { status: "LIBUR", note: LIBUR_NOTE };
   if (d.weekPlanned) return { status: "LIBUR", note: LIBUR_NOTE };
   return { status: "ALPA", note: AUTO_NOTE };
 }
