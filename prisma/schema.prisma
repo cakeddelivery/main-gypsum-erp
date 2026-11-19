@@ -298,6 +298,7 @@ model Employee {
   user            User?
   attendances     Attendance[]
   leaveRequests   LeaveRequest[]
+  dayOffRequests  DayOffRequest[]
   schedules       ShiftSchedule[]
   production      ProductionEntry[]
   targets         ProductionTarget[]
@@ -360,6 +361,33 @@ model LeaveRequest {
 
   @@index([employeeId, status])
   @@index([status, createdAt])
+}
+
+/// Pengajuan libur untuk MINGGU DEPAN (Senin–Minggu), paling lambat Jumat minggu ini 23:59 WIB. Disetujui → jadwal hari itu dihapus (libur).
+model DayOffRequest {
+  id           String      @id @default(cuid())
+  employeeId   String
+  employee     Employee    @relation(fields: [employeeId], references: [id])
+  userId       String?
+  /// Senin minggu yang diminta liburnya
+  weekStart    DateTime    @db.Date
+  /// Tanggal-tanggal libur (YYYY-MM-DD) di dalam minggu itu
+  dates        String[]
+  reason       String?
+  status       LeaveStatus @default(MENUNGGU)
+  decidedBy    String?
+  decidedAt    DateTime?
+  rejectReason String?
+  createdAt    DateTime    @default(now())
+
+  @@index([employeeId, weekStart])
+  @@index([status, createdAt])
+}
+
+/// Penanda pengingat yang sudah dikirim (dedupe job per menit): kunci = jenis:karyawan:tanggal
+model ReminderLog {
+  key       String   @id
+  createdAt DateTime @default(now())
 }
 
 model Attendance {
