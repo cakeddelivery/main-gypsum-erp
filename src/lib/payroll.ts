@@ -6,6 +6,7 @@ import { nextNumber } from "./numbering";
 import { audit } from "./audit";
 import { addDays, dateOnly, dateStr, jakartaDateTime, todayStr } from "./time";
 import { withField } from "./fieldError";
+import { alpaCut } from "./salaryProjection";
 
 type Tx = Prisma.TransactionClient;
 type Actor = { id: string; name: string };
@@ -147,8 +148,7 @@ export function alpaInfo(detail: unknown): AlpaDetail | null {
 
 /** Potongan Alpa gaji bulanan: gaji pokok ÷ 30 × hari Alpa, dibulatkan ke rupiah, tidak melebihi gaji pokok */
 export function alpaDeduction(baseSalary: number, alpaDays: number) {
-  if (baseSalary <= 0 || alpaDays <= 0) return 0;
-  return Math.min(baseSalary, Math.round((baseSalary / 30) * alpaDays));
+  return alpaCut(baseSalary, alpaDays);
 }
 
 export type MonthlyCalcInput = {
