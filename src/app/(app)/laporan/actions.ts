@@ -14,6 +14,10 @@ import { STAGE_LABEL } from "@/lib/stock";
 import { applyShiftStockCount } from "@/lib/shiftReportStock";
 import { postShiftWork } from "@/lib/shiftReportFlow";
 import { assertMemberOwnsReport, memberReportSlot, moveReportShift } from "@/lib/reportShift";
+import { REJECT_KEY, REJECT_REASONS, applyReportRejects, parseRejects, storedRejects } from "@/lib/productionReject";
+import { boronganBalanceLines, saveShiftBalance } from "@/lib/shiftBalance";
+import { LPG_KEY, applyLpg, parseLpg, storedLpg as storedLpgFor } from "@/lib/lpg";
+import { SAMPLE_KEY, SAMPLE_PLATFORMS, applyReportSamples, isSampleTemplate, parseSamples, storedSamples } from "@/lib/affiliateSample";
 import { sendShiftReportJpg } from "@/lib/shiftReportJpg";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { receiptReportLines } from "@/lib/boronganReceipt";
@@ -114,6 +118,19 @@ async function saveReportData(fd: FormData, user: User) {
     const work: Record<string, unknown> = isTemplate(template) ? parseWork(template, get, await reportCatalogs(template)) : {};
     const rc = parseResultCount((await resultItems(r.divisionId)).map((i) => i.id), get);
     if (rc) work[RESULT_KEY] = rc;
+    // Reject per tahap (jenis + jumlah + alasan); tanpa penanda form → reject lama dipertahankan
+    if (fd.has("rj.present")) work[REJECT_KEY] = parseRejects((k) => fd.getAll(k).map(String));
+    else if ((r.work as Record<string, unknown>)?.[REJECT_KEY]) work[REJECT_KEY] = (r.work as Record<string, unknown>)[REJECT_KEY];
+    // LPG (format Produksi/Oven): jumlah tabung penuh/aktif/kosong + isi ulang; tanpa penanda form → data lama dipertahankan
+    if (template === "PRODUKSI") {
+      if (fd.has("lpg.present")) { const l = parseLpg(get); if (l) work[LPG_KEY] = l; }
+      else if ((r.work as Record<string, unknown>)?.[LPG_KEY]) work[LPG_KEY] = (r.work as Record<string, unknown>)[LPG_KEY];
+    }
+    // Sample affiliator (Packing/Giftbox): produk + jumlah + platform + toko; tanpa penanda form → data lama dipertahankan
+    if (isSampleTemplate(template)) {
+      if (fd.has("sm.present")) work[SAMPLE_KEY] = parseSamples((k) => fd.getAll(k).map(String));
+      else if ((r.work as Record<string, unknown>)?.[SAMPLE_KEY]) work[SAMPLE_KEY] = (r.work as Record<string, unknown>)[SAMPLE_KEY];
+    }
     const stock = (await stockRows(r.divisionId, r.stockCount as StockCountRow[])).map((row) => (fd.has(`s.${row.itemId}`) ? { ...row, qty: num(str(fd, `s.${row.itemId}`)) } : row));
     await prisma.shiftReport.update({
       where: { id },
@@ -205,10 +222,22 @@ async function sendReportData(id: string, user: User): Promise<string> {
     await autoRequestsFromReport(id, user).catch((e) => console.error("Permintaan stok otomatis gagal:", e));
     // Hasil kerja → stok setengah jadi / barang jadi (bila diaktifkan Owner)
     const flowRes = await postShiftWork(id, user);
+    // Reject per tahap: dicatat per jenis & alasan; stok keluar + Beban Reject Produksi bila sakelar menyala
+    const rejectRes = await applyReportRejects(id, user);
     // Stok akhir setengah jadi / produk jadi milik divisi (sesudah hasil kerja diposting): selisih ditandai; disamakan bila sakelar menyala
     const resultRes = await applyResultCount(id, user);
     const resultStatus = await resultCountStatus(id);
+    // Neraca stok per barang (awal + masuk − keluar = sistem vs hitung fisik) disimpan sebagai snapshot; tidak menahan pengiriman bila gagal
+    const balance = await saveShiftBalance(id).catch((e) => (console.error("Neraca shift gagal:", e), []));
+    // Status tabung LPG + isi ulang menunggu transaksi Finance; tidak menahan pengiriman bila gagal
+    const lpgRes = r.division.reportTemplate === "PRODUKSI" ? await applyLpg(id, r.picName).catch((e) => (console.error("LPG gagal:", e), null)) : null;
+    // Sample affiliator: dicatat terpisah dari resi penjualan; stok keluar + Beban Promosi & Sample bila sakelar menyala
+    const sampleRes = await applyReportSamples(id, user);
+    const sampleItems = new Map((await prisma.item.findMany({ where: { id: { in: storedSamples(r.work).map((x) => x.itemId) } }, select: { id: true, name: true } })).map((i) => [i.id, i.name]));
+    const sampleStoreNames = new Map((await prisma.store.findMany({ select: { id: true, name: true } })).map((x) => [x.id, x.name]));
     const receipts = await prisma.shiftReceipt.findMany({ where: { reportId: id }, include: { item: true }, orderBy: { number: "asc" } });
+    const rejectIds = storedRejects(r.work).map((x) => x.itemId);
+    const itemNames = new Map((await prisma.item.findMany({ where: { id: { in: rejectIds } }, select: { id: true, name: true, unit: true } })).map((i) => [i.id, `${i.name}`]));
     const template = r.division.reportTemplate;
     const checklist = toEntries(r.checklist) as ChecklistEntry[];
     const stock = await withCurrentLimits(r.stockCount as StockCountRow[]);
@@ -222,8 +251,12 @@ async function sendReportData(id: string, user: User): Promise<string> {
         ...(tgt ? [tgt.reached ? targetLine(tgt) : `<b>${targetLine(tgt)}</b>`] : []),
         "",
         ...workLines(template, work).map(esc),
+        ...lpgLines(r.work, lpgRes).map(esc),
+        ...sampleLines(r.work, sampleItems, sampleStoreNames).map(esc),
         ...(await boronganLines(template, r.date, r.divisionId)).map(esc),
         ...(await receiptReportLines(r.divisionId, r.date)).map((l) => (l.includes("⚠") ? `<b>${esc(l)}</b>` : esc(l))),
+        ...rejectLines(r.work, itemNames).map(esc),
+        ...boronganBalanceLines(balance).map(esc),
         ...(resultStatus ? resultLines(resultStatus).map((l) => (l.includes("⚠") ? `<b>${esc(l)}</b>` : esc(l))) : []),
         ...(receipts.length ? ["", `<b>Barang masuk (${receipts.length})</b>`, ...receipts.map((x) => `• ${esc(x.item.name)}: ${Number(x.qty).toLocaleString("id-ID")} ${esc(x.item.unit)}${x.supplierName ? ` · ${esc(x.supplierName)}` : ""}${x.purchaseId ? "" : " (belum dicatat di Pembelian)"}`)] : []),
         "",
@@ -263,7 +296,7 @@ async function sendReportData(id: string, user: User): Promise<string> {
       prisma.reportSend.create({ data: { reportId: id, sentBy: user.name, channel, status, error } }),
       prisma.shiftReport.update({ where: { id }, data: { status: status === "GAGAL" ? r.status : "TERKIRIM" } }),
     ]);
-    await audit(user, "LAPORAN_DIKIRIM", "ShiftReport", id, { status, channel, stockAdjusted: stockRes.adjusted, stockSkipped: stockRes.skipped ?? null, workPosted: flowRes.posted, resultAdjusted: resultRes.adjusted });
+    await audit(user, "LAPORAN_DIKIRIM", "ShiftReport", id, { status, channel, stockAdjusted: stockRes.adjusted, stockSkipped: stockRes.skipped ?? null, workPosted: flowRes.posted, rejectRows: rejectRes.rows, rejectPosted: rejectRes.posted, sampleRows: sampleRes.rows, samplePosted: sampleRes.posted, resultAdjusted: resultRes.adjusted });
     // JPG laporan ke penerima & grup Telegram (latar belakang; tidak menahan tombol Kirim)
     if (channel === "TELEGRAM" && status !== "GAGAL") {
       const summary = isTemplate(template) ? summaryOf(template, r.work as Parameters<typeof workLines>[1]).map((s) => `${s.label}: ${s.value.toLocaleString("id-ID")}${s.unit ? ` ${s.unit}` : ""}`).join(" | ") : "";
@@ -273,6 +306,27 @@ async function sendReportData(id: string, user: User): Promise<string> {
     const msg = status === "SEBAGIAN" ? "Terkirim sebagian, cek riwayat" : "Laporan terkirim";
     return stockRes.skipped ? `${msg}. ${stockRes.skipped}` : msg;
   }
+}
+
+/** Baris teks reject laporan untuk pesan Telegram */
+function rejectLines(work: unknown, names: Map<string, string>): string[] {
+  const list = storedRejects(work);
+  if (!list.length) return [];
+  return ["REJECT", ...list.map((x) => `• ${names.get(x.itemId) ?? "Barang"}: ${x.qty.toLocaleString("id-ID")} — ${REJECT_REASONS[x.reason] ?? x.reason}${x.note ? ` (${x.note})` : ""}`)];
+}
+
+/** Baris LPG untuk pesan Telegram */
+function lpgLines(work: unknown, res: Awaited<ReturnType<typeof applyLpg>>): string[] {
+  const l = storedLpgFor(work);
+  if (!l) return [];
+  return [`LPG tabung 5 kg: penuh ${l.penuh} · aktif ${l.aktif} · kosong ${l.kosong}${l.isiUlang ? ` · isi ulang diterima ${l.isiUlang}` : ""}${res && res.habis > 0 ? ` · tabung habis ${res.habis}` : ""}${res && res.total !== res.totalAset ? ` ⚠ total ${res.total} ≠ aset ${res.totalAset}` : ""}`];
+}
+
+/** Baris sample affiliator untuk pesan Telegram (bukan resi penjualan) */
+function sampleLines(work: unknown, names: Map<string, string>, stores: Map<string, string>): string[] {
+  const list = storedSamples(work);
+  if (!list.length) return [];
+  return [`SAMPLE AFFILIATOR (${list.reduce((a, x) => a + x.qty, 0)} pcs, tidak dihitung resi penjualan)`, ...list.map((x) => `• ${names.get(x.itemId) ?? "Produk"} × ${x.qty} — ${SAMPLE_PLATFORMS[x.platform] ?? x.platform} · ${stores.get(x.storeId) ?? "toko"}`)];
 }
 
 /** Barang masuk hari ini (dari supplier/toko), dicatat sebelum stok akhir; foto nota opsional */

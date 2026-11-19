@@ -63,12 +63,33 @@ export default async function ProductDetail({ params }: { params: Promise<{ id: 
         <Stat label="Overhead" value={idr(cost.overhead)} />
         <Stat label="HPP / unit (realtime)" value={idr(cost.hpp)} tone="blue" hint={<span className="flex items-center gap-2"><TrendBadge t={cost.trend} title="Dibanding HPP dengan harga beli sebelumnya" />{cost.trend.dir !== "TETAP" && <span className="text-xs text-slate-400">sebelumnya {idr(cost.prevHpp)}</span>}</span>} />
       </div>
+      <Card title="HPP bertingkat (tidak ada yang dihitung dua kali)">
+        {(() => {
+          const e = cost.embedded;
+          const fromSemi = e.material + e.labor + e.overhead;
+          const direct = Math.max(0, cost.material - fromSemi);
+          const cols: [string, number, string?][] = [
+            ["Bahan langsung", direct],
+            ["Packaging", cost.packaging],
+            ["Upah borongan (resep ini)", cost.labor, "otomatis dari Tugas & Tarif"],
+            ["Overhead (resep ini)", cost.overhead, "otomatis dari alokasi biaya bulanan"],
+            ["Dari setengah jadi", fromSemi, fromSemi ? `sudah termasuk bahan ${idr(e.material)} · upah ${idr(e.labor)} · overhead ${idr(e.overhead)}` : undefined],
+          ];
+          return (
+            <div className="grid grid-cols-2 gap-2 keep-cols sm:grid-cols-3 lg:grid-cols-6">
+              {cols.map(([k, v, h]) => <div key={k} className="rounded-lg bg-slate-50 p-2.5 dark:bg-slate-800/50"><div className="text-xs font-semibold text-slate-500">{k}</div><div className="font-bold tabular-nums">{idr(v)}</div>{h && <div className="text-[11px] leading-tight text-slate-500">{h}</div>}</div>)}
+              <div className="rounded-lg bg-indigo-50 p-2.5 dark:bg-indigo-950/40"><div className="text-xs font-semibold text-indigo-700">Total HPP</div><div className="font-extrabold tabular-nums text-indigo-900 dark:text-indigo-200">{idr(cost.hpp)}</div></div>
+            </div>
+          );
+        })()}
+        <p className="mt-2 text-xs text-slate-500">Upah borongan dan overhead yang sudah dihitung di setengah jadi tidak boleh dipilih lagi di resep produk ini (sistem menolak).</p>
+      </Card>
       <div className="grid gap-5 lg:grid-cols-2 [&>*]:min-w-0">
         <Card title="Resep HPP Produk" actions={manage && (
           <Modal trigger={cost.lines.length + cost.recipeLabor.length + cost.recipeOverhead.length ? "Ubah Resep HPP" : "Susun Resep HPP"} triggerClass="btn-primary btn-sm" title={`Penyusun Resep HPP · ${p.name}`} wide>
             <ModalForm action={saveProductRecipe} className="space-y-3">
               <input type="hidden" name="productId" value={p.id} />
-              <RecipeEditor components={opts.components} tasks={opts.tasks} overheads={opts.overheads} initial={initial} product={{ fees, affiliatePct: Number(p.affiliatePct), adsPct: Number(p.adsPct), itemsPerOrder: Number(p.itemsPerOrder) || 1, legacy: cost.legacy }} />
+              <RecipeEditor components={opts.components} tasks={opts.tasks} overheads={opts.overheads} coverage={opts.coverage} isOwner={user.role === "OWNER"} initial={initial} product={{ fees, affiliatePct: Number(p.affiliatePct), adsPct: Number(p.adsPct), itemsPerOrder: Number(p.itemsPerOrder) || 1, legacy: cost.legacy }} />
               <Submit>Simpan Resep HPP Produk</Submit>
             </ModalForm>
           </Modal>

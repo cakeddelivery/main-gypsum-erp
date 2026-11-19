@@ -25,6 +25,10 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
   if (can("stock.view")) {
     tasks.push(negativeStock().then((l) => void (l.length && out.push({ key: "negstock", label: "Stok minus (pemakaian melebihi stok tercatat)", count: l.length, href: "/stok?filter=minus", tone: "red" }))));
   }
+  // Anomali stok & produksi: hanya Owner, Supervisor, Finance (izin target produksi + lihat audit)
+  if (can("production.target") && can("audit.view")) {
+    tasks.push(import("./stockAlerts").then((m) => m.openAnomalyCount()).then((c) => void (c && out.push({ key: "stok-anomali", label: "Peringatan stok & produksi (kebocoran)", count: c, href: "/laporan/kebocoran", tone: "red" }))).catch(() => {}));
+  }
   if (can("employee.manage")) {
     tasks.push(prisma.employeeRegistration.count({ where: { status: "MENUNGGU" } }).then((c) => void (c && out.push({ key: "registration", label: "Pendaftaran karyawan menunggu verifikasi", count: c, href: "/karyawan/pendaftaran", tone: "blue" }))));
   }

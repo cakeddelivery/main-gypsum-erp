@@ -4,7 +4,7 @@ import { prisma } from "./db";
 import { postProductionStock, reverseProductionStock, STAGES } from "./stock";
 import { REJECT_REASONS } from "./reject";
 import { audit } from "./audit";
-import { dateOnly } from "./time";
+import { dateOnly, todayStr } from "./time";
 
 export const entrySchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Tanggal wajib"),
@@ -36,8 +36,10 @@ export async function recordProductionEntry(input: EntryInput, user: Actor) {
   if (user.role === "OPERATOR" && data.employeeId !== user.employeeId) throw new EntryForbidden();
   if (user.role === "KAPTEN_DIVISI" && user.divisionId && data.divisionId !== user.divisionId) throw new EntryForbidden();
   // Laporan shift jadi sumber hasil tahap ini: input manual hanya Owner (koreksi), agar stok tidak dobel
-  const { FLOW_STAGES, flowEnabled } = await import("./shiftReportFlow");
-  if (user.role !== "OWNER" && (FLOW_STAGES as readonly string[]).includes(data.stage) && (await flowEnabled())) {
+  // Mulai tanggal cut-over stok terpadu SEMUA tahap dikunci untuk non-Owner (laporan shift satu-satunya tempat mencatat)
+  const { FLOW_STAGES, flowEnabled, flowEnabledOn } = await import("./shiftReportFlow");
+  const locked = (await flowEnabledOn(todayStr())) || ((FLOW_STAGES as readonly string[]).includes(data.stage) && (await flowEnabled()));
+  if (user.role !== "OWNER" && locked) {
     throw new Error("Hasil tahap ini sekarang dicatat otomatis dari Laporan Shift. Input manual hanya untuk Owner (koreksi).");
   }
   const emp = await prisma.employee.findUniqueOrThrow({ where: { id: data.employeeId } });

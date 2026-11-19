@@ -882,6 +882,159 @@ model ShiftReport {
   @@unique([date, shiftId, divisionId])
 }
 
+/// Reject produksi per tahap yang dilaporkan di laporan shift (jenis barang + jumlah + alasan).
+/// Saat laporan dikirim dan sakelar hasil kerja → stok menyala, stok keluar dan nilainya langsung jadi Beban Reject Produksi (6-1830).
+model ProductionReject {
+  id         String   @id @default(cuid())
+  reportId   String
+  divisionId String
+  /// CETAK / OVEN / ASSEMBLING / GIFTBOX / PACKING
+  stage      String
+  itemId     String
+  qty        Decimal  @db.Decimal(14, 3)
+  /// RETAK / PECAH / GOSONG / CACAT_CAT / SALAH_CETAK / RUSAK_ALAT / LAINNYA
+  reason     String
+  note       String?
+  /// Sudah dipotong dari stok & dibebankan (sakelar menyala saat laporan dikirim)
+  posted     Boolean  @default(false)
+  /// Ref mutasi stok (RJK:<laporan>:<versi>)
+  ref        String?
+  unitCost   BigInt   @default(0)
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  @@index([reportId])
+  @@index([divisionId, stage])
+}
+
+/// Neraca stok per barang per shift (snapshot saat laporan dikirim/direvisi): awal + masuk − keluar − reject = sistem, dibandingkan hitung fisik.
+/// Selisih negatif = kebocoran/hilang. Sumber halaman Kebocoran & alert (tahap berikutnya).
+model ShiftBalance {
+  id            String   @id @default(cuid())
+  reportId      String
+  divisionId    String
+  itemId        String
+  opening       Decimal  @db.Decimal(14, 3)
+  inProduksi    Decimal  @default(0) @db.Decimal(14, 3)
+  inMasuk       Decimal  @default(0) @db.Decimal(14, 3)
+  inBorongan    Decimal  @default(0) @db.Decimal(14, 3)
+  inLain        Decimal  @default(0) @db.Decimal(14, 3)
+  outPakai      Decimal  @default(0) @db.Decimal(14, 3)
+  outBorongan   Decimal  @default(0) @db.Decimal(14, 3)
+  outJual       Decimal  @default(0) @db.Decimal(14, 3)
+  outReject     Decimal  @default(0) @db.Decimal(14, 3)
+  outLain       Decimal  @default(0) @db.Decimal(14, 3)
+  systemClosing Decimal  @db.Decimal(14, 3)
+  counted       Decimal? @db.Decimal(14, 3)
+  diff          Decimal? @db.Decimal(14, 3)
+  unitCost      BigInt   @default(0)
+  picName       String?
+  computedAt    DateTime @default(now())
+
+  @@unique([reportId, itemId])
+  @@index([divisionId, computedAt])
+}
+
+/// Status tabung LPG 5 kg yang dilaporkan di laporan shift Oven (penuh / aktif terpasang / kosong). Total harus sama dengan total aset tabung.
+model LpgState {
+  id         String   @id @default(cuid())
+  reportId   String   @unique
+  date       DateTime @db.Date
+  penuh      Int
+  aktif      Int
+  kosong     Int
+  /// Tabung isi ulang yang diterima shift ini (kosong → penuh)
+  isiUlang   Int      @default(0)
+  /// Turunan dari shift sebelumnya: tabung dipasang (penuh → aktif) & tabung habis (aktif → kosong)
+  dipasang   Int      @default(0)
+  habis      Int      @default(0)
+  total      Int
+  picName    String?
+  createdAt  DateTime @default(now())
+
+  @@index([date])
+}
+
+/// Isi ulang tabung LPG (fisik dari laporan Oven) menunggu/dipasangkan ke transaksi pembelian Finance (sering dicatat malam/esok hari).
+/// Tanggal fisik dipakai untuk stok, tanggal transaksi asli untuk keuangan.
+model LpgRefill {
+  id             String    @id @default(cuid())
+  reportId       String    @unique
+  physicalDate   DateTime  @db.Date
+  tabung         Int
+  /// MENUNGGU / DIPASANGKAN
+  status         String    @default("MENUNGGU")
+  transactionId  String?   @unique
+  amount         BigInt?
+  pricePerTabung BigInt?
+  pairedAt       DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([status, physicalDate])
+}
+
+/// Standar pemakaian proses (mis. gram gypsum per patung basah, rendemen basah→kering): AUTO = median 30 hari dari laporan shift,
+/// MANUAL = ditetapkan Owner (menimpa AUTO). Standar bahan pendukung dihitung langsung dari resep BOM × hasil shift (tidak disimpan).
+model UsageStandard {
+  key         String    @id
+  label       String
+  unit        String
+  /// AUTO / MANUAL
+  mode        String    @default("AUTO")
+  autoValue   Decimal?  @db.Decimal(14, 4)
+  manualValue Decimal?  @db.Decimal(14, 4)
+  sampleCount Int       @default(0)
+  computedAt  DateTime?
+  pinnedBy    String?
+  updatedAt   DateTime  @updatedAt
+}
+
+/// Reject bahan pendukung di titik borongan (mis. cat cair tumpah, plastik klip rusak untuk Cat Plastik/Cat Giftbox, plastik OPP untuk Assembling).
+/// Stok titik berkurang dan nilainya dibebankan; dicatat per bahan + alasan untuk pemantauan.
+model BoronganMaterialReject {
+  id        String   @id @default(cuid())
+  pointId   String
+  itemId    String
+  qty       Decimal  @db.Decimal(14, 3)
+  /// ROBEK / RUSAK / TUMPAH / KOTOR / SALAH_WARNA / LAINNYA
+  reason    String
+  note      String?
+  unitCost  BigInt   @default(0)
+  createdBy String
+  createdById String?
+  createdAt DateTime @default(now())
+
+  @@index([pointId, createdAt])
+  @@index([itemId])
+}
+
+/// Anomali stok/produksi yang terdeteksi (dedupe per jenis + ruang lingkup + tanggal). Dasar lonceng, push, rekap harian, dan halaman Kebocoran & Efisiensi.
+model StockAnomaly {
+  id         String    @id @default(cuid())
+  /// Kunci dedupe: jenis|ruang lingkup|tanggal
+  key        String    @unique
+  type       String
+  /// RENDAH / SEDANG / TINGGI
+  severity   String
+  title      String
+  detail     String?
+  /// Nilai rupiah yang terlibat (perkiraan kebocoran/tertahan)
+  value      BigInt    @default(0)
+  divisionId String?
+  itemId     String?
+  reportId   String?
+  date       DateTime  @db.Date
+  /// BARU / DILIHAT / DIJELASKAN
+  status     String    @default("BARU")
+  note       String?
+  noteBy     String?
+  pushedAt   DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([status, date])
+  @@index([type, date])
+}
+
 /// Barang masuk dari supplier/toko yang dilaporkan divisi di laporan shift (sebelum stok akhir dihitung).
 /// Belum ditautkan = sudah ada fisik di gudang tapi belum dicatat di Pembelian: stock opname menganggapnya sudah ada
 /// (tidak jadi pemakaian/HPP). Saat ditautkan ke Pembelian, stok masuk bertanggal waktu barang masuk (tidak dobel).
@@ -1271,6 +1424,8 @@ model RecipeLabor {
   task      PieceTask? @relation(fields: [taskId], references: [id])
   name      String
   rate      BigInt
+  /// true = tarif diketik manual (override Owner / pekerjaan tanpa Tugas & Tarif); false = otomatis dari Tugas & Tarif (taskId) dan selalu mengikuti tarif terbaru
+  override  Boolean    @default(false)
 }
 
 /// Overhead dalam resep: beban per pcs overhead master × faktor
@@ -2497,4 +2652,28 @@ model BoronganClaim {
   results       BoronganResult[]
 
   @@index([pointId, status])
+}
+
+/// Sample produk untuk affiliator (program marketplace TikTok Shop / Shopee) yang dikirim dari Packing/Giftbox, per platform + toko kita.
+/// Bukan resi penjualan; stok keluar dan nilainya jadi Beban Promosi & Sample (6-1840), bukan HPP penjualan.
+model AffiliateSample {
+  id         String   @id @default(cuid())
+  reportId   String
+  divisionId String
+  date       DateTime @db.Date
+  itemId     String
+  qty        Decimal  @db.Decimal(14, 3)
+  /// TIKTOK / SHOPEE
+  platform   String
+  /// Toko kita (master Store), mis. Main Gypsum / Dunia Lukis
+  storeId    String
+  /// Stok sudah keluar & dibebankan (sakelar hasil kerja → stok menyala saat laporan dikirim)
+  posted     Boolean  @default(false)
+  ref        String?
+  unitCost   BigInt   @default(0)
+  createdBy  String
+  createdAt  DateTime @default(now())
+
+  @@index([reportId])
+  @@index([platform, storeId, date])
 }

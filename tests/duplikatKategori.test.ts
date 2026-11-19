@@ -267,7 +267,8 @@ describe("Saran kategori (tanpa AI) & kategori baru", () => {
   });
 
   it("bot: draft tanpa kategori menampilkan usulan; Owner menyetujui → draft memakai kategori baru", async () => {
-    const uniq = Math.random().toString(36).replace(/[^a-z]/g, "").slice(0, 6);
+    // 8 huruf acak murni (versi lama membuang angka sehingga bisa terlalu pendek/kosong dan terdeteksi mirip kategori lain → flaky)
+    const uniq = Array.from({ length: 8 }, () => "abcdefghijklmnopqrstuvwxyz"[Math.floor(Math.random() * 26)]).join("");
     await say(`bayar sumbangan ${uniq} pengajian ${rnd(41_000)} dari seabank`);
     const t = await prisma.financeTransaction.findFirstOrThrow({ orderBy: { createdAt: "desc" } });
     expect(t.categoryId).toBeNull();

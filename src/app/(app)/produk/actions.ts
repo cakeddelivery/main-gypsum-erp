@@ -8,6 +8,7 @@ import { saveItemRecord } from "@/lib/items";
 import { itemCategories } from "@/lib/itemCategories";
 import { toRecipeQty } from "@/lib/itemCatalog";
 import { recipeUnit } from "@/lib/unitcost";
+import { recipeDuplicateErrors } from "@/lib/recipeRules";
 import { monthlyOutputFromReports, salaryBreakdown } from "@/lib/salaryOverhead";
 import { OVERHEAD_CATEGORIES, monthlyDepreciation, parseFees, type FeeConfig } from "@/lib/pricing";
 import type { Prisma, ProductVariant } from "@prisma/client";
@@ -95,17 +96,32 @@ async function parseRecipe(fd: FormData): Promise<RecipeInput> {
   const labor = names.map((name, i) => {
     const t = master.find((x) => x.id === tasks[i]);
     const custom = Number((rates[i] ?? "").replace(/\./g, "")) || 0;
-    return { taskId: t?.id ?? null, name: t?.name ?? name, rate: custom > 0 ? custom : Number(t?.ratePerPcs ?? 0) };
+    // override = tarif diketik berbeda dari Tugas & Tarif, atau pekerjaan tanpa tugas
+    return { taskId: t?.id ?? null, name: t?.name ?? name, rate: custom > 0 ? custom : Number(t?.ratePerPcs ?? 0), override: !t || (custom > 0 && custom !== Number(t.ratePerPcs)) };
   }).filter((l) => l.name && l.rate > 0);
   const factors = all("oh_factor");
   const oh = all("oh_id").map((id, i) => ({ overheadId: id, factor: n(factors[i]) })).filter((o) => o.overheadId && o.factor > 0);
   return { comp, labor, oh };
 }
 
+/** Tolak resep yang upah/overhead-nya dobel dengan tahap sebelumnya; override tarif/faktor hanya Owner */
+async function guardRecipe(r: RecipeInput, user: { role: string }) {
+  const errors = await recipeDuplicateErrors(prisma, r);
+  if (errors.length) throw new Error(errors.join(" "));
+  if (user.role !== "OWNER") {
+    const task = new Map((await prisma.pieceTask.findMany({ where: { id: { in: r.labor.map((l) => l.taskId).filter(Boolean) as string[] } }, select: { id: true, ratePerPcs: true } })).map((t) => [t.id, Number(t.ratePerPcs)]));
+    for (const l of r.labor) {
+      if (!l.taskId) throw new Error(`Upah "${l.name}": pilih dari Tugas & Tarif. Tarif manual hanya bisa ditetapkan Owner.`);
+      if (l.rate !== task.get(l.taskId)) throw new Error(`Upah "${l.name}": tarif mengikuti Tugas & Tarif otomatis. Mengubah tarif di resep hanya bisa oleh Owner.`);
+    }
+    if (r.oh.some((o) => o.factor !== 1)) throw new Error("Faktor overhead selain 1 hanya bisa ditetapkan Owner.");
+  }
+}
+
 async function writeRecipe(tx: Prisma.TransactionClient, owner: { itemId: string } | { productId: string }, r: RecipeInput) {
   await tx.recipeLabor.deleteMany({ where: owner });
   await tx.recipeOverhead.deleteMany({ where: owner });
-  if (r.labor.length) await tx.recipeLabor.createMany({ data: r.labor.map((l) => ({ ...owner, ...l, rate: BigInt(l.rate) })) });
+  if (r.labor.length) await tx.recipeLabor.createMany({ data: r.labor.map((l) => ({ ...owner, taskId: l.taskId, name: l.name, rate: BigInt(l.rate), override: l.override })) });
   if (r.oh.length) await tx.recipeOverhead.createMany({ data: r.oh.map((o) => ({ ...owner, ...o })) });
   if ("itemId" in owner) {
     await tx.itemRecipeLine.deleteMany({ where: owner });
@@ -122,6 +138,7 @@ export const saveProductRecipe = action(
   async (fd, user) => {
     const productId = str(fd, "productId");
     const r = await parseRecipe(fd);
+    await guardRecipe(r, user);
     const extraPackaging = Math.max(0, int(fd, "extraPackaging"));
     const targetMargin = pct(fd, "targetMargin", 30);
     await prisma.$transaction(async (tx) => {
@@ -156,6 +173,7 @@ export const saveSemi = action(
   async (fd, user) => {
     const id = optStr(fd, "id");
     const r = await parseRecipe(fd);
+    await guardRecipe(r, user);
     if (id) for (const l of r.comp) if (await createsCycle(prisma, id, l.componentId)) throw new Error("Komponen tidak boleh memakai barang ini sendiri (resep melingkar)");
     const base = { name: str(fd, "name"), type: "BARANG_DALAM_PROSES" as const, category: (await itemCategories()).BARANG_DALAM_PROSES[0].name, unit: str(fd, "unit") || "pcs", hppFactor: 1, note: optStr(fd, "note") };
     let itemId = id;

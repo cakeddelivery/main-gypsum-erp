@@ -3,7 +3,7 @@ import { prisma } from "./db";
 import { fmtDay } from "./time";
 import { locationSettings, qtyAt, recordMovement } from "./stock";
 import { VARIANTS, shiftEndAt, type WorkData } from "./shiftReport";
-import { flowEnabled, flowItem } from "./shiftReportFlow";
+import { flowEnabled, flowEnabledOn, flowItem } from "./shiftReportFlow";
 
 type Actor = { id: string; name: string };
 type Tx = Prisma.TransactionClient;
@@ -33,7 +33,7 @@ export async function resultItems(divisionId: string, db: Tx | typeof prisma = p
  * Hitungan tersimpan per id barang. Laporan lama menyimpan per karakter ("Hewan": n) untuk patung kering (Produksi)
  * atau produk jadi (Assembling): diterjemahkan ke barangnya.
  */
-async function storedCounts(work: WorkData, template: string | null, tx: Tx): Promise<Map<string, number>> {
+export async function storedCounts(work: WorkData, template: string | null, tx: Tx): Promise<Map<string, number>> {
   const raw = work[RESULT_KEY];
   const v = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, number | null>) : {};
   const out = new Map<string, number>();
@@ -113,6 +113,7 @@ export function resultLines(s: NonNullable<Awaited<ReturnType<typeof resultCount
 export async function applyResultCount(reportId: string, actor: Actor, now: Date = new Date()): Promise<{ adjusted: number; skipped?: string }> {
   if (!(await flowEnabled())) return { adjusted: 0, skipped: "nonaktif" };
   const r = await prisma.shiftReport.findUniqueOrThrow({ where: { id: reportId }, include: { shift: true, division: true } });
+  if (!(await flowEnabledOn(r.date))) return { adjusted: 0, skipped: "sebelum tanggal mulai stok terpadu" };
   const counts = await prisma.$transaction((tx) => storedCounts(r.work as WorkData, r.division.reportTemplate, tx));
   if (!counts.size && !r.resultApplied) return { adjusted: 0 };
   const locs = await locationSettings(prisma);

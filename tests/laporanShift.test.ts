@@ -116,3 +116,29 @@ describe("Shift laporan mengikuti absen", () => {
     expect((await prisma.shiftReport.findUniqueOrThrow({ where: { id: wrong2.id } })).shiftId).toBe(s2);
   });
 });
+
+import { expectedSlots } from "@/lib/reportExpected";
+import { deleteEmptyExtraDrafts, findExtraDrafts } from "@/lib/reportShift";
+describe("Laporan diharapkan hanya untuk shift yang ada karyawannya", () => {
+  it("divisi 2 shift berisi 1 orang → 1 laporan diharapkan; draf kosong shift lain dihapus, draf berisi hanya dilaporkan", async () => {
+    const D5 = "2035-04-10";
+    const div = await prisma.division.create({ data: { code: `OV${tag}`, name: `Oven Satu ${tag}`, shiftCount: 2, reportTemplate: "PRODUKSI" } });
+    const e = await prisma.employee.create({ data: { code: `OV-${tag}`, name: `Marcello ${tag}`, divisionId: div.id, joinDate: dateOnly("2034-01-01") } });
+    await prisma.shiftSchedule.create({ data: { employeeId: e.id, date: dateOnly(D5), shiftId: s2 } });
+    await absen(e.id, D5, s2, "15:58");
+    const mine = (await expectedSlots(D5, div.id));
+    expect(mine.map((x) => [x.shift, x.sent])).toEqual([["Shift 2", false]]);
+    // draf kosong Shift 1 (tanpa orang) + draf Shift 1 hari lain yang berisi data
+    const empty = await prisma.shiftReport.create({ data: { date: dateOnly(D5), shiftId: s1, divisionId: div.id, picName: "x", status: "DRAFT", createdBy: "x", checklist: [{ label: "a", done: false }] } });
+    const D6 = "2035-04-11";
+    const filled = await prisma.shiftReport.create({ data: { date: dateOnly(D6), shiftId: s1, divisionId: div.id, picName: "x", status: "DRAFT", createdBy: "x", checklist: [{ label: "a", done: true }] } });
+    const real = await prisma.shiftReport.create({ data: { date: dateOnly(D5), shiftId: s2, divisionId: div.id, picName: "marcello", status: "DRAFT", createdBy: "m" } });
+    const extra = (await findExtraDrafts(4000, jakartaDateTime(D6, "20:00"))).filter((x) => [empty.id, filled.id, real.id].includes(x.id));
+    expect(extra.map((x) => [x.id === empty.id ? "empty" : x.id === filled.id ? "filled" : "real", x.empty])).toEqual([["empty", true], ["filled", false]]);
+    expect(await deleteEmptyExtraDrafts(extra, actor)).toBe(1);
+    expect(await prisma.shiftReport.count({ where: { id: { in: [empty.id, filled.id, real.id] } } })).toBe(2);
+    // Setelah laporan Shift 2 terkirim → 1/1 terkirim
+    await prisma.shiftReport.update({ where: { id: real.id }, data: { status: "TERKIRIM" } });
+    expect((await expectedSlots(D5, div.id)).map((x) => x.sent)).toEqual([true]);
+  });
+});

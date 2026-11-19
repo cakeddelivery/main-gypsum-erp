@@ -9,6 +9,12 @@ import { refreshDraftChecklists } from "@/lib/shiftReportChecklist";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { withCurrentLimits } from "@/lib/shiftReportStock";
 import { flowEnabled } from "@/lib/shiftReportFlow";
+import { REJECT_STAGE_LABEL, stageOfTemplate } from "@/lib/rejectShared";
+import { storedRejects } from "@/lib/productionReject";
+import { computeShiftBalance } from "@/lib/shiftBalance";
+import { lpgTotalAset, previousLpg, storedLpg } from "@/lib/lpg";
+import { usageCheck } from "@/lib/usageStandard";
+import { isSampleTemplate, storedSamples, SAMPLE_PLATFORMS } from "@/lib/affiliateSample";
 import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
 import { resultPlaces } from "@/lib/resultCountGroups";
 import { divisionPendingReturns } from "@/lib/borongan";
@@ -87,10 +93,15 @@ export default async function ReportDetail({ params, searchParams }: { params: P
     return { lineId: l.id, itemId: l.itemId, remaining, cod: p.cod, vendor: p.vendor, itemName: l.item.name, unit: l.item.unit, label: `${p.number} · ${p.vendor} · sisa ${remaining.toLocaleString("id-ID")} ${l.item.unit}${p.cod ? " · COD" : ""}` };
   }));
   const banks = [...bankRows].sort((a, b) => (a.code === "KAS" ? -1 : b.code === "KAS" ? 1 : 0)).map((b) => ({ id: b.id, name: b.name }));
-  const extraLines = [...bLines, ...(await receiptReportLines(r.divisionId, r.date)), ...(resultStatus ? resultLines(resultStatus) : [])];
+  const sampleNames = new Map((await prisma.item.findMany({ where: { id: { in: storedSamples(work).map((x) => x.itemId) } }, select: { id: true, name: true } })).map((i) => [i.id, i.name]));
+  const sampleStores = isSampleTemplate(template) || storedSamples(work).length ? await prisma.store.findMany({ where: { active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [];
+  const sampleLines = storedSamples(work).length ? ["SAMPLE AFFILIATOR (tidak dihitung resi penjualan)", ...storedSamples(work).map((x) => `${sampleNames.get(x.itemId) ?? "Produk"} × ${x.qty} → ${SAMPLE_PLATFORMS[x.platform] ?? x.platform} · ${sampleStores.find((t) => t.id === x.storeId)?.name ?? "toko"}`)] : [];
+  const extraLines = [...bLines, ...(await receiptReportLines(r.divisionId, r.date)), ...sampleLines, ...(resultStatus ? resultLines(resultStatus) : [])];
   const [rItems, rv] = await Promise.all([resultItems(r.divisionId), resultValues(work, r.division.reportTemplate)]);
   // Tahap "Stok jadi": hanya barang milik divisi ini, dikelompokkan produk induk → paket → series
   const places = await resultPlaces(rItems);
+  // Reject: barang setengah jadi / jadi milik divisi (hanya divisi berformat laporan)
+  const rejectItems = stageOfTemplate(template) ? rItems.map((i) => ({ id: i.id, name: i.name, unit: i.unit })) : [];
   const receiptLines = receipts.map((x) => `${x.item.name}: ${Number(x.qty).toLocaleString("id-ID")} ${x.item.unit}${x.supplierName ? ` · ${x.supplierName}` : ""}${x.purchaseId ? "" : " (belum dicatat di Pembelian)"}`);
   const flow = flowOn && template ? flowLines(plannedFlow(template, work)) : [];
   const fname = `laporan-${r.division.code}-${r.shift.code}-${day}`;
@@ -103,6 +114,14 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const materials = items.map((i) => ({ id: i.id, name: i.name, unit: i.unit }));
   // Giftbox Mix: bawaan patung ke-5 = karakter patung kering dengan stok terbanyak
   const moveShifts = reportDivision(user) === null && r.division.shiftCount > 1 ? (await prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, take: r.division.shiftCount })) : [];
+  const balanceRows = r.status === "DRAFT" ? [] : await computeShiftBalance(r.id).catch(() => []);
+  const f3 = (n: number) => Number(n.toFixed(3)).toLocaleString("id-ID");
+  const lpgProps = template === "PRODUKSI"
+    ? await (async () => { const pv = await previousLpg(r.id, r.date); return { cur: storedLpg(work), prev: pv ? { penuh: pv.penuh, aktif: pv.aktif, kosong: pv.kosong } : null, total: await lpgTotalAset() }; })()
+    : null;
+  const usageRows = r.status === "DRAFT" ? [] : await usageCheck(r.id).catch(() => []);
+  // Sample affiliator (Packing/Giftbox): semua produk jadi aktif yang bisa dikirim sebagai sample
+  const sampleItems = isSampleTemplate(template) ? (await prisma.item.findMany({ where: { active: true, type: "BARANG_JADI" }, select: { id: true, name: true }, orderBy: { name: "asc" } })) : [];
   const mixDefault = template === "GIFTBOX" ? await mostStockedVariant() : null;
 
   return (
@@ -165,6 +184,13 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   resultCount={[...rItems].sort((a, b) => (places.get(a.id)?.order ?? 0) - (places.get(b.id)?.order ?? 0)).map((i) => { const pl = places.get(i.id); return { key: i.id, label: i.name, unit: i.unit, qty: rv[i.id] ?? null, group: pl?.group, sub: pl?.sub, col: pl?.col }; })}
                   flow={flowOn && template ? flow : null}
                   sent={r.workPostedVersion > 0 || r.status !== "DRAFT"}
+                  rejectItems={rejectItems}
+                  rejects={storedRejects(r.work)}
+                  rejectStageLabel={stageOfTemplate(template) ? REJECT_STAGE_LABEL[stageOfTemplate(template)!] : null}
+                  lpg={lpgProps}
+                  sampleItems={sampleItems}
+                  sampleStores={sampleStores}
+                  samples={storedSamples(work)}
                 />
               </Modal>
             )}
@@ -285,6 +311,47 @@ export default async function ReportDetail({ params, searchParams }: { params: P
             </details>
           )}
         </div>
+      )}
+      {balanceRows.length > 0 && (
+        <Card title="Neraca stok shift">
+          <p className="mb-2 text-xs text-slate-500">Awal + masuk − keluar = sistem; dibandingkan hitung fisik di laporan. Selisih negatif = kemungkinan hilang/bocor. Borongan (KRM/AMB) tampil otomatis.</p>
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead><tr><th>Barang</th><th className="num">Awal</th><th className="num">Masuk</th><th className="num">Borongan masuk</th><th className="num">Pakai/jual</th><th className="num">Borongan keluar</th><th className="num">Reject</th><th className="num">Sistem</th><th className="num">Fisik</th><th className="num">Selisih</th></tr></thead>
+              <tbody>
+                {balanceRows.map((x) => (
+                  <tr key={x.itemId}>
+                    <td className="!whitespace-normal">{x.name}</td>
+                    <td className="num">{f3(x.opening)}</td><td className="num">{f3(x.produksi + x.masuk + x.inLain)}</td><td className="num">{f3(x.inBorongan)}</td>
+                    <td className="num">{f3(x.pakai + x.jual + x.outLain)}</td><td className="num">{f3(x.outBorongan)}</td><td className="num">{f3(x.reject)}</td>
+                    <td className="num font-semibold">{f3(x.systemClosing)}</td><td className="num">{x.counted == null ? "-" : f3(x.counted)}</td>
+                    <td className={`num font-semibold ${x.diff == null || x.diff === 0 ? "text-slate-400" : x.diff < 0 ? "text-rose-700" : "text-emerald-700"}`}>{x.diff == null ? "-" : `${x.diff > 0 ? "+" : ""}${f3(x.diff)}`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+      {usageRows.length > 0 && (
+        <Card title="Pemakaian vs standar">
+          <p className="mb-2 text-xs text-slate-500">Standar = resep × hasil shift; aktual = awal + masuk − sisa hitung di stock opname laporan. Merah = lebih dari 15% di atas standar.</p>
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead><tr><th>Bahan</th><th className="num">Standar</th><th className="num">Aktual</th><th className="num">Selisih</th></tr></thead>
+              <tbody>
+                {usageRows.map((x) => (
+                  <tr key={x.itemId}>
+                    <td className="!whitespace-normal">{x.name}{x.over && <> <Badge tone="red">lebih</Badge></>}</td>
+                    <td className="num">{Number(x.standard.toFixed(2)).toLocaleString("id-ID")} {x.unit}</td>
+                    <td className="num">{Number(x.actual.toFixed(2)).toLocaleString("id-ID")}</td>
+                    <td className={`num font-semibold ${x.over ? "text-rose-700" : "text-slate-500"}`}>{x.overPct == null ? "-" : `${x.overPct > 0 ? "+" : ""}${x.overPct}%`}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       )}
     </div>
   );
