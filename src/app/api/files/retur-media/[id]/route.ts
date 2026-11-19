@@ -12,5 +12,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const { id } = await params;
   const m = await prisma.returnMedia.findUnique({ where: { id } });
   if (!m?.storageKey || m.status === "DELETED" || m.status === "UPLOADING") return new Response("Not found", { status: 404 });
-  return serveMedia(req, m.storageKey, m.mime);
+  const res = await serveMedia(req, m.storageKey, m.mime);
+  // ?unduh=1 → unduh sebagai berkas (video unboxing untuk bukti klaim)
+  if (new URL(req.url).searchParams.get("unduh") === "1" && m.kind === "VIDEO") {
+    const r = await prisma.returnCase.findUnique({ where: { id: m.returnId }, select: { number: true, trackingNo: true } });
+    const ext = m.mime === "video/mp4" ? "mp4" : m.mime === "video/quicktime" ? "mov" : "webm";
+    const name = `${r?.number ?? "retur"}-${(r?.trackingNo ?? "video").replace(/[^A-Za-z0-9_-]/g, "")}.${ext}`;
+    const headers = new Headers(res.headers);
+    headers.set("Content-Disposition", `attachment; filename="${name}"`);
+    return new Response(res.body, { status: res.status, headers });
+  }
+  return res;
 }

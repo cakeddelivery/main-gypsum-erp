@@ -5,6 +5,7 @@ import { nextNumber } from "./numbering";
 import { audit } from "./audit";
 import { locationSettings, recordMovement, reverseMovementsByRef, StockError } from "./stock";
 import { recipeMaterialCost } from "./hpp";
+import { packComponents, pieceInspection, type PieceInput } from "./returnPieces";
 import { skuKey, type CatalogEntry, type LabelLine } from "./returnLabel";
 
 type Tx = Prisma.TransactionClient;
@@ -158,7 +159,7 @@ export async function updateReturn(id: string, input: ReturnInput, actor: Actor)
   });
 }
 
-export type InspectRow = { lineId: string; goodQty: number; damagedQty: number; note?: string | null };
+export type InspectRow = { lineId: string; goodQty: number; damagedQty: number; note?: string | null; /** Per pcs/karakter (paket Single Pack) */ pieces?: PieceInput[] };
 
 /** Nilai hasil periksa (murni): barang baik kembali ke persediaan; rusak + tidak ada di paket = kerugian */
 export function inspectionValues(lines: { qty: number; goodQty: number; damagedQty: number; unitCost: number }[]) {
@@ -199,23 +200,58 @@ export async function inspectReturn(id: string, rows: InspectRow[], actor: Actor
     const { finished } = await locationSettings(tx);
     if (!finished) throw new StockError("Lokasi gudang barang jadi belum diatur di Pengaturan");
     if (r.status === "DIPERIKSA") await undoInspection(tx, r, actor, "Periksa ulang", now);
-    const lines = await Promise.all(r.lines.map(async (l) => {
+    // Baris paket Single Pack diperiksa per pcs; selain itu per barang seperti biasa
+    const wipLoc = (await locationSettings(tx)).wip ?? finished;
+    const costOf = async (item: { id: string; avgCost: bigint | number }) => (Number(item.avgCost) > 0 ? Number(item.avgCost) : recipeMaterialCost(item.id));
+    const comps = new Map(await Promise.all(r.lines.map(async (l) => [l.id, await packComponents(tx, l.itemId!)] as const)));
+    const legacy = r.lines.filter((l) => !comps.get(l.id)!.length);
+    const lines = await Promise.all(legacy.map(async (l) => {
       const row = rows.find((x) => x.lineId === l.id) ?? { lineId: l.id, goodQty: 0, damagedQty: 0 };
-      const avg = Number(l.item!.avgCost);
-      const unitCost = avg > 0 ? avg : await recipeMaterialCost(l.itemId!);
+      const unitCost = await costOf(l.item!);
       return { l, row, unitCost, qty: l.qty, goodQty: Math.round(row.goodQty), damagedQty: Math.round(row.damagedQty) };
     }));
     const v = inspectionValues(lines);
+    let goodBdp = 0;
     const gen = r.inspectRef ? Number(r.inspectRef.split("-P").pop()) + 1 || 2 : 1;
     const ref = `${r.number}-P${gen}`;
     for (const x of lines) {
       if (x.goodQty > 0) await recordMovement(tx, { type: "PENERIMAAN", itemId: x.l.itemId!, qty: x.goodQty, toLocationId: finished, unitCost: x.unitCost, ref, note: `Retur barang baik ${r.trackingNo}`, date: now }, actor);
-      await tx.returnLine.update({ where: { id: x.l.id }, data: { goodQty: x.goodQty, damagedQty: x.damagedQty, unitCost: BigInt(Math.round(x.unitCost)), note: clean(x.row.note, 200) } });
+      await tx.returnLine.update({ where: { id: x.l.id }, data: { goodQty: x.goodQty, damagedQty: x.damagedQty, unitCost: BigInt(Math.round(x.unitCost)), note: clean(x.row.note, 200), pieceMode: false, goodValue: 0n, lossValue: 0n } });
+      await tx.returnPiece.deleteMany({ where: { lineId: x.l.id } });
+    }
+    for (const l of r.lines.filter((x) => comps.get(x.id)!.length)) {
+      const cs = comps.get(l.id)!;
+      const row = rows.find((x) => x.lineId === l.id);
+      const items = await tx.item.findMany({ where: { id: { in: cs.map((c) => c.itemId) } }, select: { id: true, avgCost: true } });
+      const detail = await Promise.all(cs.map(async (c) => {
+        const given = row?.pieces?.find((p) => p.itemId === c.itemId);
+        return { ...c, goodQty: given ? Math.round(given.goodQty) : c.perPack * l.qty, damagedQty: given ? Math.round(given.damagedQty) : 0, unitCost: await costOf(items.find((i) => i.id === c.itemId)!) };
+      }));
+      const pv = pieceInspection(l.qty, detail);
+      let lineGood = pv.good;
+      let unitCost = Math.round(pv.capPcs ? (pv.good + pv.loss) / pv.capPcs : 0);
+      if (pv.allGood) {
+        // Semua pcs baik: paket utuh kembali ke stok paket
+        const packCost = await costOf(l.item!);
+        await recordMovement(tx, { type: "PENERIMAAN", itemId: l.itemId!, qty: l.qty, toLocationId: finished, unitCost: packCost, ref, note: `Retur paket utuh ${r.trackingNo}`, date: now }, actor);
+        lineGood = Math.round(packCost * l.qty);
+        v.good += lineGood;
+        unitCost = Math.round(packCost);
+      } else {
+        for (const d of detail) if (d.goodQty > 0) await recordMovement(tx, { type: "PENERIMAAN", itemId: d.itemId, qty: d.goodQty, toLocationId: wipLoc!, unitCost: d.unitCost, ref, note: `Retur pcs baik ${r.trackingNo}`, date: now }, actor);
+        goodBdp += pv.good;
+        v.good += pv.good;
+        v.loss += pv.loss;
+      }
+      await tx.returnPiece.deleteMany({ where: { lineId: l.id } });
+      await tx.returnPiece.createMany({ data: detail.map((d) => ({ lineId: l.id, itemId: d.itemId, perPack: d.perPack, goodQty: d.goodQty, damagedQty: d.damagedQty, unitCost: BigInt(Math.round(d.unitCost)) })) });
+      await tx.returnLine.update({ where: { id: l.id }, data: { pieceMode: true, goodQty: pv.goodPcs, damagedQty: pv.damagedPcs, unitCost: BigInt(unitCost), goodValue: BigInt(lineGood), lossValue: BigInt(pv.allGood ? 0 : pv.loss), note: clean(row?.note, 200) } });
     }
     let journalId: string | null = null;
     if (v.good + v.loss > 0) {
       const jl: LineInput[] = [];
-      if (v.good > 0) jl.push({ accountCode: COA.PERSEDIAAN_JADI, debit: v.good, memo: "Barang retur baik kembali ke gudang" });
+      if (v.good - goodBdp > 0) jl.push({ accountCode: COA.PERSEDIAAN_JADI, debit: v.good - goodBdp, memo: "Barang retur baik kembali ke gudang" });
+      if (goodBdp > 0) jl.push({ accountCode: COA.PERSEDIAAN_BDP, debit: goodBdp, memo: "Single Pack retur baik kembali ke stok" });
       if (v.loss > 0) jl.push({ accountCode: COA_RETUR_RUSAK, debit: v.loss, memo: "Barang retur rusak / tidak ada di paket" });
       jl.push({ accountCode: COA.HPP, credit: v.good + v.loss, memo: "Koreksi HPP barang retur" });
       const j = await postJournal(tx, { date: now, storeId: r.storeId, description: `Hasil periksa retur ${r.number} resi ${r.trackingNo}`.slice(0, 150), source: RETURN_SOURCE, sourceId: `${r.number}:PERIKSA`, actor, lines: jl });

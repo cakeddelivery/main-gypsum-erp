@@ -7,6 +7,7 @@ import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDate, fmtDateTime, todayStr, dateStr } from "@/lib/time";
 import { RETURN_STATUS, returnSetting, returnStatusOf } from "@/lib/returns";
+import { packComponents } from "@/lib/returnPieces";
 import { marketplaceLabel } from "@/lib/returnLabel";
 import { fmtBytes } from "@/lib/mediaStore";
 import { Badge, Card, Field, PageHeader } from "@/components/ui";
@@ -25,7 +26,7 @@ export default async function ReturDetail({ params, searchParams }: { params: Pr
   const user = await requirePerm("retur.manage");
   const { id } = await params;
   const sp = await searchParams;
-  const r = await prisma.returnCase.findUnique({ where: { id }, include: { lines: { include: { item: { select: { name: true, unit: true } } }, orderBy: { sortOrder: "asc" } }, media: { orderBy: { createdAt: "asc" } } } });
+  const r = await prisma.returnCase.findUnique({ where: { id }, include: { lines: { include: { item: { select: { name: true, unit: true } }, pieces: { include: { item: { select: { name: true } } } } }, orderBy: { sortOrder: "asc" } }, media: { orderBy: { createdAt: "asc" } } } });
   if (!r) notFound();
   const st = returnStatusOf(r);
   const open = !r.cancelledAt && r.status !== "SELESAI";
@@ -40,6 +41,8 @@ export default async function ReturDetail({ params, searchParams }: { params: Pr
   const frames = r.media.filter((m) => (m.kind === "FRAME" || m.kind === "THUMB") && m.status === "READY");
   const damage = r.media.filter((m) => m.kind === "DAMAGE" && m.status === "READY");
   const inspected = r.status !== "DITERIMA";
+  // Paket Single Pack diperiksa per pcs (rincian per karakter); selain itu per barang
+  const comps = new Map(await Promise.all(r.lines.map(async (l) => [l.id, l.itemId ? await packComponents(prisma, l.itemId) : []] as const)));
   const info: [string, React.ReactNode][] = [
     ["Diterima", fmtDate(r.receivedAt)], ["Marketplace", marketplaceLabel(r.marketplace)], ["Kurir", r.courier ?? "-"], ["No. resi", <span key="r" className="font-mono">{r.trackingNo}</span>],
     ["No. pesanan", r.orderNo ?? "-"], ["Tujuan", [r.city, r.province].filter(Boolean).join(", ") || "-"], ["Alasan", r.reason ?? "-"], ["Dicatat", `${r.createdBy} · ${fmtDateTime(r.createdAt)}`],
@@ -87,6 +90,7 @@ export default async function ReturDetail({ params, searchParams }: { params: Pr
                   : v.status === "PROCESSING" ? <p className="rounded-lg bg-slate-50 p-3 text-sm">⏳ Video sedang dikompres di server…</p>
                   : v.status === "DELETED" ? <p className="rounded-lg bg-slate-50 p-3 text-sm text-slate-600">Video dihapus otomatis ({keepDays} hari setelah selesai). Potongan gambar tetap tersimpan.</p>
                   : <p className="rounded-lg bg-rose-50 p-3 text-sm text-rose-700">Video gagal: {v.error ?? "unggahan tidak selesai"}</p>}
+                {v.status === "READY" && <a href={`${media(v.id)}?unduh=1`} className="btn-secondary btn-sm inline-flex" download>⬇ Unduh video ({fmtBytes(v.size)})</a>}
                 <p className="text-xs text-slate-500">Direkam {v.recordedAt ? fmtDateTime(v.recordedAt) : "-"} oleh {v.createdBy}{v.error && v.status === "READY" ? ` · ${v.error}` : ""}</p>
               </div>
             ))}
@@ -117,10 +121,29 @@ export default async function ReturDetail({ params, searchParams }: { params: Pr
               <div key={l.id} className="rounded-lg border border-slate-200 p-3">
                 <input type="hidden" name="lineId" value={l.id} />
                 <p className="text-sm font-medium">{l.item?.name ?? <span className="text-rose-600">Belum dipetakan: {l.labelSku ?? l.labelName}</span>} <span className="text-slate-500">× {l.qty} di label</span></p>
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  <Field label="Baik"><input name="goodQty" type="number" min={0} max={l.qty} defaultValue={inspected ? l.goodQty : l.qty} className="input" required /></Field>
-                  <Field label="Rusak"><input name="damagedQty" type="number" min={0} max={l.qty} defaultValue={inspected ? l.damagedQty : 0} className="input" required /></Field>
-                </div>
+                {comps.get(l.id)!.length ? (
+                  <div className="mt-2 space-y-2">
+                    <input type="hidden" name="goodQty" value="0" /><input type="hidden" name="damagedQty" value="0" />
+                    <p className="rounded-md bg-sky-50 px-2 py-1 text-xs text-sky-800">Paket {comps.get(l.id)!.reduce((a, c) => a + c.perPack, 0)} pcs × {l.qty} = <b>{comps.get(l.id)!.reduce((a, c) => a + c.perPack, 0) * l.qty} pcs</b>. Isi jumlah dalam <b>PCS</b> per karakter; baik + rusak tidak boleh melebihi isi.</p>
+                    {comps.get(l.id)!.map((c) => {
+                      const cap = c.perPack * l.qty;
+                      const old = l.pieces.find((p) => p.itemId === c.itemId);
+                      return (
+                        <div key={c.itemId} className="grid grid-cols-[1fr_5.5rem_5.5rem] items-end gap-2">
+                          <span className="pb-2 text-sm">{c.name.replace(/^single pack\s*/i, "") || c.name} <span className="text-xs text-slate-500">(isi {cap} pcs)</span></span>
+                          <Field label="Baik (pcs)"><input name={`pc:${l.id}:${c.itemId}:baik`} type="number" inputMode="numeric" min={0} max={cap} defaultValue={inspected && old ? old.goodQty : cap} className="input" required /></Field>
+                          <Field label="Rusak (pcs)"><input name={`pc:${l.id}:${c.itemId}:rusak`} type="number" inputMode="numeric" min={0} max={cap} defaultValue={inspected && old ? old.damagedQty : 0} className="input" required /></Field>
+                        </div>
+                      );
+                    })}
+                    <p className="text-xs text-slate-500">Semua pcs baik → paket utuh kembali ke stok paket. Bila ada yang rusak/tidak ada → pcs baik masuk stok Single Pack; rusak + tidak ada = kerugian per harga pokok pcs.</p>
+                  </div>
+                ) : (
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <Field label="Baik"><input name="goodQty" type="number" min={0} max={l.qty} defaultValue={inspected ? l.goodQty : l.qty} className="input" required /></Field>
+                    <Field label="Rusak"><input name="damagedQty" type="number" min={0} max={l.qty} defaultValue={inspected ? l.damagedQty : 0} className="input" required /></Field>
+                  </div>
+                )}
                 <div className="mt-2 grid gap-2 sm:grid-cols-2">
                   <Field label="Catatan kerusakan"><input name="lineNote" defaultValue={l.note ?? ""} className="input" placeholder="mis. pecah 2, cat luntur" /></Field>
                   <Field label="Foto rusak (opsional)"><input type="file" name={`damage:${l.id}`} accept="image/*" capture="environment" multiple className="block w-full min-w-0 max-w-full text-base" /></Field>
@@ -133,19 +156,38 @@ export default async function ReturDetail({ params, searchParams }: { params: Pr
       ) : undefined}>
         <div className="table-wrap">
           <table className="tbl">
-            <thead><tr><th>Label (SKU · variasi)</th><th>Produk ERP</th><th className="num">Qty</th><th className="num">Baik</th><th className="num">Rusak</th><th className="num">Tidak ada</th><th className="num">Harga pokok</th></tr></thead>
+            <thead><tr><th>Label (SKU · variasi)</th><th>Produk ERP</th><th className="num">Qty</th><th className="num">Baik</th><th className="num">Rusak</th><th className="num">Tidak ada</th><th className="num">Harga pokok</th><th className="num">Kerugian</th></tr></thead>
             <tbody>
-              {r.lines.map((l) => (
-                <tr key={l.id}>
-                  <td className="text-xs"><span className="font-mono">{l.labelSku ?? "-"}</span>{l.labelVariation ? ` · ${l.labelVariation}` : ""}{l.labelName ? <div className="text-slate-500">{l.labelName}</div> : null}</td>
-                  <td>{l.item?.name ?? <Badge tone="amber">belum dipetakan</Badge>}{l.note ? <div className="text-xs text-slate-500">{l.note}</div> : null}</td>
-                  <td className="num">{l.qty}</td>
-                  <td className="num">{inspected ? l.goodQty : "-"}</td>
-                  <td className="num">{inspected ? l.damagedQty : "-"}</td>
-                  <td className="num">{inspected ? l.qty - l.goodQty - l.damagedQty : "-"}</td>
-                  <td className="num">{inspected ? idr(Number(l.unitCost)) : "-"}</td>
-                </tr>
-              ))}
+              {r.lines.map((l) => {
+                const cap = l.pieceMode ? l.pieces.reduce((a, p) => a + p.perPack, 0) * l.qty : l.qty;
+                const unit = l.pieceMode ? " pcs" : "";
+                return (
+                  <Fragment key={l.id}>
+                    <tr>
+                      <td className="text-xs"><span className="font-mono">{l.labelSku ?? "-"}</span>{l.labelVariation ? ` · ${l.labelVariation}` : ""}{l.labelName ? <div className="text-slate-500">{l.labelName}</div> : null}</td>
+                      <td>{l.item?.name ?? <Badge tone="amber">belum dipetakan</Badge>}{l.note ? <div className="text-xs text-slate-500">{l.note}</div> : null}</td>
+                      <td className="num">{l.qty}{l.pieceMode ? <div className="text-xs text-slate-500">{cap} pcs</div> : null}</td>
+                      <td className="num">{inspected ? `${l.goodQty}${unit}` : "-"}</td>
+                      <td className="num">{inspected ? `${l.damagedQty}${unit}` : "-"}</td>
+                      <td className="num">{inspected ? `${cap - l.goodQty - l.damagedQty}${unit}` : "-"}</td>
+                      <td className="num">{inspected ? `${idr(Number(l.unitCost))}${l.pieceMode ? "/pcs" : ""}` : "-"}</td>
+                      <td className="num">{inspected ? idr(l.pieceMode ? Number(l.lossValue) : (l.qty - l.goodQty) * Number(l.unitCost)) : "-"}</td>
+                    </tr>
+                    {inspected && l.pieceMode && l.pieces.map((p) => (
+                      <tr key={p.id} className="text-xs text-slate-600">
+                        <td />
+                        <td className="pl-5">↳ {p.item.name}</td>
+                        <td className="num">{p.perPack * l.qty}</td>
+                        <td className="num">{p.goodQty}</td>
+                        <td className="num">{p.damagedQty}</td>
+                        <td className="num">{p.perPack * l.qty - p.goodQty - p.damagedQty}</td>
+                        <td className="num">{idr(Number(p.unitCost))}/pcs</td>
+                        <td className="num">{idr((p.perPack * l.qty - p.goodQty) * Number(p.unitCost))}</td>
+                      </tr>
+                    ))}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>

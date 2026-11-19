@@ -114,7 +114,19 @@ export const inspectAction = action(
     const good = fd.getAll("goodQty").map((x) => Number(x) || 0);
     const bad = fd.getAll("damagedQty").map((x) => Number(x) || 0);
     const notes = fd.getAll("lineNote").map(String);
-    const r = await inspectReturn(id, lineIds.map((lineId, i) => ({ lineId, goodQty: good[i], damagedQty: bad[i], note: notes[i] })), user);
+    // Paket Single Pack: isian per pcs/karakter bernama pc:<baris>:<barang>:baik|rusak
+    const pieces = (lineId: string) => {
+      const out = new Map<string, { itemId: string; goodQty: number; damagedQty: number }>();
+      for (const [k, v] of fd.entries()) {
+        const m = /^pc:([^:]+):([^:]+):(baik|rusak)$/.exec(k);
+        if (!m || m[1] !== lineId) continue;
+        const cur = out.get(m[2]) ?? { itemId: m[2], goodQty: 0, damagedQty: 0 };
+        if (m[3] === "baik") cur.goodQty = Number(v) || 0; else cur.damagedQty = Number(v) || 0;
+        out.set(m[2], cur);
+      }
+      return out.size ? [...out.values()] : undefined;
+    };
+    const r = await inspectReturn(id, lineIds.map((lineId, i) => ({ lineId, goodQty: good[i] ?? 0, damagedQty: bad[i] ?? 0, note: notes[i], pieces: pieces(lineId) })), user);
     const photos = await saveDamagePhotos(fd, id, user.name);
     return `${r.number} diperiksa: barang baik Rp ${Number(r.goodValue).toLocaleString("id-ID")} kembali ke stok, kerugian Rp ${Number(r.lossValue).toLocaleString("id-ID")}${photos ? `, ${photos} foto` : ""}`;
   },

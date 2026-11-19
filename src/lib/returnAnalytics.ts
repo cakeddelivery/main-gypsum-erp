@@ -128,7 +128,7 @@ export function monthsBetween(from: string, to: string) {
 /** Ambil data dari database untuk rentang [start, end) */
 export async function loadReturnAnalytics(start: Date, end: Date) {
   const [returns, complaints, salesRows] = await Promise.all([
-    prisma.returnCase.findMany({ where: { cancelledAt: null, receivedAt: { gte: start, lt: end } }, include: { lines: { include: { item: { select: { name: true } } } } } }),
+    prisma.returnCase.findMany({ where: { cancelledAt: null, receivedAt: { gte: start, lt: end } }, include: { lines: { include: { item: { select: { name: true } }, pieces: { select: { perPack: true } } } } } }),
     // Data rekening pembeli sengaja tidak diambil
     prisma.complaint.findMany({
       where: { cancelledAt: null, status: { not: "DITOLAK" }, date: { gte: start, lt: end } },
@@ -146,8 +146,10 @@ export async function loadReturnAnalytics(start: Date, end: Date) {
       goods: Number(r.lossValue), refund: 0, shipping: Number(r.shippingCost), claim: Number(r.claimPaidAmount),
       lines: r.lines.map((l) => {
         const inspected = r.status !== "DITERIMA";
-        const bad = inspected ? l.qty - l.goodQty : 0;
-        return { itemId: l.itemId, itemName: l.item?.name ?? null, sku: l.labelSku, variation: l.labelVariation, qty: l.qty, bad, loss: bad * Number(l.unitCost) };
+        // Mode pcs: qty & rusak dalam pcs, kerugian dari nilai per pcs yang sudah dihitung saat periksa
+        const cap = l.pieceMode ? l.pieces.reduce((a, p) => a + p.perPack, 0) * l.qty : l.qty;
+        const bad = inspected ? cap - l.goodQty : 0;
+        return { itemId: l.itemId, itemName: l.item?.name ?? null, sku: l.labelSku, variation: l.labelVariation, qty: cap, bad, loss: l.pieceMode ? Number(l.lossValue) : bad * Number(l.unitCost) };
       }),
     })),
     ...complaints.map((c): AEvent => {

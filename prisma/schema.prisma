@@ -1041,6 +1041,7 @@ model Item {
   shiftReceipts        ShiftReceipt[]
   boronganReceiptLines BoronganReceiptLine[]
   returnLines          ReturnLine[]
+  returnPieces         ReturnPiece[]          @relation("ReturnPieceItem")
   complaintLines       ComplaintLine[]
   skuMaps              MarketplaceSkuMap[]
 }
@@ -2076,9 +2077,9 @@ model ReturnCase {
 }
 
 model ReturnLine {
-  id             String     @id @default(cuid())
+  id             String        @id @default(cuid())
   returnId       String
-  ret            ReturnCase @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  ret            ReturnCase    @relation(fields: [returnId], references: [id], onDelete: Cascade)
   /// SKU, variasi & nama persis seperti di label marketplace
   labelSku       String?
   labelVariation String?
@@ -2087,13 +2088,37 @@ model ReturnLine {
   qty            Int
   /// Barang jadi ERP (hasil pemetaan SKU, dikonfirmasi pengguna)
   itemId         String?
-  item           Item?      @relation(fields: [itemId], references: [id])
-  goodQty        Int        @default(0)
-  damagedQty     Int        @default(0)
+  item           Item?         @relation(fields: [itemId], references: [id])
+  goodQty        Int           @default(0)
+  damagedQty     Int           @default(0)
   /// Harga pokok per unit saat diperiksa
-  unitCost       BigInt     @default(0)
+  unitCost       BigInt        @default(0)
   note           String?
-  sortOrder      Int        @default(0)
+  sortOrder      Int           @default(0)
+  /// Diperiksa per PCS (paket berisi Single Pack): goodQty/damagedQty = total pcs, rincian di `pieces`
+  pieceMode      Boolean       @default(false)
+  /// Nilai baik & kerugian baris ini (hanya mode pcs; mode paket = qty × unitCost)
+  goodValue      BigInt        @default(0)
+  lossValue      BigInt        @default(0)
+  pieces         ReturnPiece[]
+}
+
+/// Rincian hasil periksa per pcs/karakter (Single Pack Hewan, Cowok, …) untuk satu baris retur
+model ReturnPiece {
+  id         String     @id @default(cuid())
+  lineId     String
+  line       ReturnLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  /// Barang Single Pack (komponen paket)
+  itemId     String
+  item       Item       @relation("ReturnPieceItem", fields: [itemId], references: [id])
+  /// Isi per 1 paket (pcs)
+  perPack    Int
+  goodQty    Int        @default(0)
+  damagedQty Int        @default(0)
+  /// Harga pokok per pcs saat diperiksa
+  unitCost   BigInt     @default(0)
+
+  @@index([lineId])
 }
 
 enum ReturnMediaKind {
