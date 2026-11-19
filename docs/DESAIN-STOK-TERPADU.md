@@ -1,0 +1,98 @@
+# Desain teknis: stok terpadu lewat Laporan Shift (draf untuk Owner)
+
+Status: DESAIN, belum ada kode. Dasar: `docs/AUDIT-ALUR-STOK.md`, `src/lib/shiftReport*.ts`, `shiftReportFlow.ts`, `shiftResultCount.ts`, `stock.ts`, `boronganFlow.ts`, `hpp.ts`.
+Semua perubahan data bersifat **aditif** (tabel/kolom baru), tidak mengubah data lama.
+
+## 0. Prinsip
+1. **Laporan shift = satu-satunya tempat karyawan mencatat produksi & stok.** Menu Produksi manual hanya untuk koreksi Owner (tahap manual sudah ditutup oleh `FLOW_STAGES` bila sakelar menyala).
+2. Setiap barang punya **status + lokasi** yang tercatat **sekali**: bahan baku → patung basah → patung kering → Single Pack / produk jadi → terjual / reject. Lokasi: gudang bahan, setengah jadi, barang jadi, driver, titik borongan, **Reject** (baru).
+3. Tidak ada angka yang "hilang diam-diam": setiap pengurangan stok punya jenis (dipakai, dikirim, terjual, reject, selisih hitung).
+4. Selisih hitung fisik vs sistem = **kebocoran**, dicatat per barang/divisi/shift/PIC.
+
+## 1. Alur data per divisi (apa yang dicatat di laporan shift)
+Semua angka masuk lewat `postShiftWork` (ref `LPH:<laporan>:<versi>`), bertanggal jam selesai shift. Hasil borongan tetap bersumber dari mutasi borongan (KRM/BGI/HSB/PND), **tidak diposting dua kali** (lihat §6).
+
+| Divisi | Dipakai (keluar) | Dihasilkan (masuk) | Reject (per jenis + jumlah + alasan) | Hitung fisik akhir |
+|---|---|---|---|---|
+| **Cetak** | bubuk gypsum (sak), bahan lain (pewarna/pelicin bila ada) | patung cetak/basah per varian (Hewan, Cowok, Cewek, Transportasi) | patung basah retak/pecah/cetakan rusak per varian | gypsum (sak), patung basah per varian |
+| **Oven** | patung basah masuk oven per varian, **LPG (kg atau tabung)** | patung kering per varian | patung gosong/retak/pecah per varian | patung kering per varian, tabung LPG |
+| **Assembling** | patung kering, bahan (background, klip, cat, plastik…) | Single Pack / produk setengah jadi per varian; **baris otomatis "Keluar ke borongan / Masuk dari borongan"** dari KRM/AMB | rusak saat assembling per varian | Single Pack per varian, bahan |
+| **Giftbox** | patung kering (5/box), dus, bahan kemas | Giftbox per SKU | rusak per SKU | giftbox, bahan kemas |
+| **Packing** | Single Pack/produk jadi per varian, dus, bubblewrap, label, dll. | paket terkemas / resi terkirim | rusak/salah kirim per jenis | produk jadi, dus |
+
+Borongan di laporan (otomatis, hanya tampil): KRM = keluar dari gudang ke driver/titik; HSB = pemakaian bahan di titik; AMB/PND = setoran masuk gudang; reject setoran = penyesuaian bertanda. Sehingga stok akhir laporan = stok aplikasi tanpa input manual ganda (menyelesaikan tugas "sinkron stok setengah jadi ↔ laporan shift": Oven 3000 → KRM 2000 → sisa 1000).
+
+Resi: dari stok jadi (Packing: keluar produk jadi per resi) atau dari nol (bahan → produk langsung): **pertanyaan terbuka untuk Owner** (§8). Usulan: tiap resi di laporan Packing mencatat `sumber = STOK | DARI_NOL`; dari-nol menurunkan Single Pack/patung kering sesuai resep.
+
+## 2. Form laporan shift yang berubah (field baru)
+- **Semua divisi**: blok "Reject" — baris dinamis (jenis barang · jumlah · alasan dari daftar: retak, pecah, gosong, cacat cat, salah cetak, lainnya + catatan). Wajib bila selisih stok akhir > 0 yang tidak terjelaskan (peringatan, bukan penghalang kirim).
+- **Cetak**: gypsum terpakai dihitung dari stok awal + barang masuk − stok akhir fisik (sak), bukan diketik; patung cetak per varian (sudah ada) + reject per varian.
+- **Oven**: "patung basah masuk oven" (otomatis dari stok basah dipilih), kering per varian (ada), **LPG**: stok tabung awal/akhir (kg/tabung) → terpakai otomatis.
+- **Assembling/Packing/Giftbox**: konsumsi kering/Single Pack/bahan kemas tampil sebagai **hasil perhitungan resep** (bisa diedit dengan alasan bila berbeda).
+- **Neraca** (read-only di laporan): per barang: awal + masuk − keluar − reject = sistem; hitung fisik; selisih. Selisih besar diberi tanda.
+- PIC otomatis dari akun (sudah) dan **shift dari absen** (#126).
+
+## 3. Model data (aditif)
+- `ShiftMovementLine` (reportId, itemId, kind ∈ {PRODUKSI, PAKAI, MASUK, KELUAR, REJECT, BORONGAN_KELUAR, BORONGAN_MASUK, TERIMA, JUAL}, qty, ref, note): jejak per laporan, diturunkan dari mutasi `StockMovement` (bukan sumber baru) agar neraca bisa dijelaskan.
+- `ProductionReject` (id, reportId, divisionId, stage ∈ {CETAK, OVEN, ASSEMBLING, GIFTBOX, PACKING}, itemId, qty, reasonCode, note, createdBy) + **lokasi stok `loc_reject`** (setting baru, satu gudang Reject atau satu per tahap). Reject = `TRANSFER` stok dari gudang tahap ke Reject (stok tetap tercatat, bukan hilang) + opsional jurnal beban "Barang Reject" bila nilai dihapusbukukan.
+- `ShiftBalance` (reportId, itemId, opening, inQty, outQty, rejectQty, systemClosing, countedClosing, diff, diffValue, picName, computedAt): snapshot neraca saat laporan dikirim/direvisi; sumber halaman Kebocoran & alert.
+- `UsageStandard` (id, outputItemId, inputItemId, basis ∈ {PER_OUTPUT, PER_PAKET, RENDEMEN, BIAYA_PER_UNIT}, mode ∈ {AUTO, MANUAL}, value, sampleDays, sampleCount, toleranceAuto?, updatedAt, pinnedBy): standar pemakaian.
+- `StockAnomaly` (id, type, severity, divisionId?, itemId?, reportId?, shiftId?, date, expected, actual, pct, status ∈ {BARU, DILIHAT, DIJELASKAN}, note, noteBy, pushedAt): dedupe alert + riwayat penjelasan.
+- Setting: `stok_terpadu_mulai` (tanggal cut-over), `laporan_shift_ke_stok` (sudah), `anomali_ambang_persen` (bawaan 15), `loc_reject`.
+- Migrasi: hanya CREATE TABLE/ADD COLUMN; tidak ada backfill wajib (neraca historis dihitung ulang on-demand dari `StockMovement`).
+
+## 4. Rumus
+**Neraca per barang per shift** (barang di gudang tahap L, jendela W = jam selesai shift sebelumnya → jam selesai shift ini):
+- `awal` = hitung fisik akhir shift sebelumnya (bila ada & diterapkan), jika tidak stok sistem pada awal W.
+- `masuk` = Σ mutasi ke L dalam W (HASIL_PRODUKSI, PENERIMAAN, TRANSFER masuk/PND/AMB, retur baik).
+- `keluar` = Σ mutasi keluar dari L dalam W kecuali reject (KONSUMSI_PRODUKSI, PENGELUARAN jual, TRANSFER KRM/BGI).
+- `reject` = Σ transfer ke `loc_reject`.
+- `sistemAkhir = awal + masuk − keluar − reject`; `selisih = fisikAkhir − sistemAkhir` (negatif = kebocoran/hilang, positif = salah catat/belum dicatat); `nilaiSelisih = selisih × HPP`.
+- Hitung fisik diterapkan sebagai PENYESUAIAN (`LPS:` — sudah ada) sehingga stok aplikasi = stok akhir laporan.
+
+**Standar pemakaian (AUTO, bergulir 30 hari)**, dihitung dari neraca shift yang selisihnya kecil (agar kebocoran tidak meracuni standar):
+- gram gypsum / patung cetak = Σ(sak terpakai × gram per sak) / Σ(patung cetak bagus + reject), per varian bila datanya cukup;
+- rendemen = Σ kering / Σ basah masuk oven;
+- LPG (kg & Rp) / patung kering = Σ LPG terpakai / Σ kering; Rp memakai harga rata-rata LPG;
+- bahan kemas / paket = Σ pakai / Σ paket per jenis (dus 12/24 dst.);
+- biaya per unit: Rp gypsum per patung cetak, Rp LPG per patung kering, Rp bahan per Single Pack (menyatu dengan HPP bertingkat `hpp.ts`).
+Pemilihan nilai: **median** sampel (tahan pencilan) dengan minimal 10 shift; di bawah itu "belum cukup data" (tidak ada alert). Owner bisa **menetapkan manual** (mode MANUAL menimpa AUTO, ada tombol "kembali otomatis").
+
+## 5. Alert anomali (push + lonceng + rekap harian) dan ambang
+Penerima: Owner, Supervisor, Finance. Dedupe per (jenis, divisi, barang, tanggal). Ambang bawaan bisa diubah Owner.
+| Alert | Syarat (bawaan) | Tingkat |
+|---|---|---|
+| Pemakaian > standar | aktual > standar ±15% pada satu shift, atau rata-rata 3 shift berturut-turut > 10% | Sedang/Tinggi |
+| Selisih neraca | \|selisih\| ≥ 10 unit dan ≥ 10% stok sistem (sama `bigDiff`), atau nilai ≥ Rp ambang | Tinggi |
+| Reject di atas normal | reject% shift > rata-rata 30 hari + 50% (min 5 unit) | Sedang |
+| Reject tanpa alasan | ada reject dengan alasan kosong | Rendah |
+| Stok minus | stok sistem < 0 untuk barang apa pun | Tinggi |
+| Barang masuk tanpa pembelian | BMK belum ditautkan > 3 hari (sudah ada di Cek Konsistensi) | Sedang |
+| Pembelian tanpa barang masuk | pesanan Dikirim > 7 hari belum diterima | Sedang |
+| Hasil tidak terposting | laporan terkirim tetapi sakelar mati / `workPostedVersion = 0` | Tinggi |
+| LPG anomali | LPG/patung kering > standar +15% atau tabung habis tanpa hasil | Tinggi |
+| Laporan ganda/hilang | shift berorang tanpa laporan (aturan #128) | Rendah |
+
+**Halaman "Kebocoran & Efisiensi"** (asisten Owner, bahasa awam): ringkasan minggu ini ("Gypsum terpakai 8% lebih banyak dari biasanya = sekitar Rp X"), tren 30 hari per divisi/varian, daftar kebocoran terbesar (barang · shift · PIC · nilai), reject per tahap + alasan teratas, kartu "standar sekarang" dengan tombol tetapkan manual, dan penjelasan 1 kalimat tiap alert. Hanya baca + tombol "Sudah dijelaskan" dengan catatan.
+
+## 6. Cut-over (tanpa dobel posting)
+1. Tetapkan `stok_terpadu_mulai = T` (mis. awal bulan). Sebelum T: tidak ada perubahan perilaku.
+2. **H-1**: opname awal SEMUA barang (bahan, basah, kering, Single Pack, jadi, LPG) memakai alat Stok awal riil yang sudah ada (`AWAL-`), dibackup dulu (`npm run backup`).
+3. **T 00:00**: nyalakan `laporan_shift_ke_stok`; `postShiftWork`/`applyResultCount` hanya memproses laporan **bertanggal ≥ T** (guard baru) sehingga laporan lama tidak ikut terposting.
+4. Menu Produksi manual: tahap `PANEN_*`, `ASSEMBLING`, `PACKING`, `BARANG_JADI` ditutup untuk non-Owner (mekanisme `FLOW_STAGES` sudah ada).
+5. Hasil borongan tetap dari HSB/PND; laporan hanya menampilkan (tidak memposting) → tanpa dobel. Uji: tes "Oven 3000 → KRM 2000 → laporan Assembling" memastikan stok sama dari dua sisi.
+6. Pratinjau paralel 7 hari sebelum T memakai `npm run cek:selisih-stok` (sudah ada) untuk melihat celah sebelum sakelar dinyalakan.
+7. Rollback: matikan sakelar; mutasi `LPH:`/`LPS:` dapat dibalik per laporan (`reverseVersion`, sudah ada).
+
+## 7. Rencana PR bertahap
+- **P1 – Reject & lokasi Reject**: setting `loc_reject`, tabel `ProductionReject`, blok Reject di form + posting transfer; tes. (Risiko rendah, aditif.)
+- **P2 – Neraca per shift**: `ShiftBalance`, mesin neraca (membaca `StockMovement`), tampilan di detail laporan; baris borongan otomatis di laporan (menutup tugas lama sinkron stok).
+- **P3 – Oven/Cetak lengkap**: gypsum terhitung dari stok, patung basah masuk oven, LPG tabung/kg; resep konsumsi Assembling/Packing/Giftbox.
+- **P4 – Standar pemakaian**: `UsageStandard` AUTO/MANUAL + halaman pengaturan.
+- **P5 – Alert & halaman Kebocoran & Efisiensi**: `StockAnomaly`, push + lonceng + rekap harian, dedupe.
+- **P6 – Cut-over**: guard tanggal T, kunci Produksi manual, dokumentasi/panduan operasional, pratinjau paralel.
+Tiap PR kecil, tes, `npm test` 2×, staging dicoba Owner sebelum merge.
+
+## 8. Risiko & pertanyaan untuk Owner
+Risiko: (1) beban ketik karyawan naik — mitigasi: angka diturunkan otomatis, input hanya stok akhir fisik + reject; (2) standar AUTO dari data buruk — mitigasi: median, filter pencilan, mode MANUAL; (3) posting ganda saat cut-over — guard tanggal T + ref unik per versi; (4) laporan lama diedit setelah T — revisi tetap aman lewat versi; (5) alert terlalu banyak — dedupe + ambang bisa diubah + hanya Tinggi yang push.
+Pertanyaan: (a) arti persis "resi dibuat dari nol"; (b) satu gudang Reject atau per tahap; (c) apakah reject dihapusbukukan jadi beban otomatis atau menunggu Owner; (d) tanggal cut-over T; (e) ambang 15% sudah sesuai; (f) LPG dihitung per tabung atau kg; (g) siapa penerima alert selain Owner/Supervisor/Finance.
