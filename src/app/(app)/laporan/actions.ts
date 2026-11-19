@@ -16,6 +16,7 @@ import { postShiftWork } from "@/lib/shiftReportFlow";
 import { assertMemberOwnsReport, memberReportSlot, moveReportShift } from "@/lib/reportShift";
 import { REJECT_KEY, REJECT_REASONS, applyReportRejects, parseRejects, storedRejects } from "@/lib/productionReject";
 import { boronganBalanceLines, saveShiftBalance } from "@/lib/shiftBalance";
+import { LPG_KEY, applyLpg, parseLpg, storedLpg as storedLpgFor } from "@/lib/lpg";
 import { sendShiftReportJpg } from "@/lib/shiftReportJpg";
 import { boronganLines } from "@/lib/shiftReportBorongan";
 import { receiptReportLines } from "@/lib/boronganReceipt";
@@ -119,6 +120,11 @@ async function saveReportData(fd: FormData, user: User) {
     // Reject per tahap (jenis + jumlah + alasan); tanpa penanda form → reject lama dipertahankan
     if (fd.has("rj.present")) work[REJECT_KEY] = parseRejects((k) => fd.getAll(k).map(String));
     else if ((r.work as Record<string, unknown>)?.[REJECT_KEY]) work[REJECT_KEY] = (r.work as Record<string, unknown>)[REJECT_KEY];
+    // LPG (format Produksi/Oven): jumlah tabung penuh/aktif/kosong + isi ulang; tanpa penanda form → data lama dipertahankan
+    if (template === "PRODUKSI") {
+      if (fd.has("lpg.present")) { const l = parseLpg(get); if (l) work[LPG_KEY] = l; }
+      else if ((r.work as Record<string, unknown>)?.[LPG_KEY]) work[LPG_KEY] = (r.work as Record<string, unknown>)[LPG_KEY];
+    }
     const stock = (await stockRows(r.divisionId, r.stockCount as StockCountRow[])).map((row) => (fd.has(`s.${row.itemId}`) ? { ...row, qty: num(str(fd, `s.${row.itemId}`)) } : row));
     await prisma.shiftReport.update({
       where: { id },
@@ -217,6 +223,8 @@ async function sendReportData(id: string, user: User): Promise<string> {
     const resultStatus = await resultCountStatus(id);
     // Neraca stok per barang (awal + masuk − keluar = sistem vs hitung fisik) disimpan sebagai snapshot; tidak menahan pengiriman bila gagal
     const balance = await saveShiftBalance(id).catch((e) => (console.error("Neraca shift gagal:", e), []));
+    // Status tabung LPG + isi ulang menunggu transaksi Finance; tidak menahan pengiriman bila gagal
+    const lpgRes = r.division.reportTemplate === "PRODUKSI" ? await applyLpg(id, r.picName).catch((e) => (console.error("LPG gagal:", e), null)) : null;
     const receipts = await prisma.shiftReceipt.findMany({ where: { reportId: id }, include: { item: true }, orderBy: { number: "asc" } });
     const rejectIds = storedRejects(r.work).map((x) => x.itemId);
     const itemNames = new Map((await prisma.item.findMany({ where: { id: { in: rejectIds } }, select: { id: true, name: true, unit: true } })).map((i) => [i.id, `${i.name}`]));
@@ -233,6 +241,7 @@ async function sendReportData(id: string, user: User): Promise<string> {
         ...(tgt ? [tgt.reached ? targetLine(tgt) : `<b>${targetLine(tgt)}</b>`] : []),
         "",
         ...workLines(template, work).map(esc),
+        ...lpgLines(r.work, lpgRes).map(esc),
         ...(await boronganLines(template, r.date, r.divisionId)).map(esc),
         ...(await receiptReportLines(r.divisionId, r.date)).map((l) => (l.includes("⚠") ? `<b>${esc(l)}</b>` : esc(l))),
         ...rejectLines(r.work, itemNames).map(esc),
@@ -293,6 +302,13 @@ function rejectLines(work: unknown, names: Map<string, string>): string[] {
   const list = storedRejects(work);
   if (!list.length) return [];
   return ["REJECT", ...list.map((x) => `• ${names.get(x.itemId) ?? "Barang"}: ${x.qty.toLocaleString("id-ID")} — ${REJECT_REASONS[x.reason] ?? x.reason}${x.note ? ` (${x.note})` : ""}`)];
+}
+
+/** Baris LPG untuk pesan Telegram */
+function lpgLines(work: unknown, res: Awaited<ReturnType<typeof applyLpg>>): string[] {
+  const l = storedLpgFor(work);
+  if (!l) return [];
+  return [`LPG tabung 5 kg: penuh ${l.penuh} · aktif ${l.aktif} · kosong ${l.kosong}${l.isiUlang ? ` · isi ulang diterima ${l.isiUlang}` : ""}${res && res.habis > 0 ? ` · tabung habis ${res.habis}` : ""}${res && res.total !== res.totalAset ? ` ⚠ total ${res.total} ≠ aset ${res.totalAset}` : ""}`];
 }
 
 /** Barang masuk hari ini (dari supplier/toko), dicatat sebelum stok akhir; foto nota opsional */

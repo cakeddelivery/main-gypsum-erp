@@ -12,6 +12,7 @@ import { flowEnabled } from "@/lib/shiftReportFlow";
 import { REJECT_STAGE_LABEL, stageOfTemplate } from "@/lib/rejectShared";
 import { storedRejects } from "@/lib/productionReject";
 import { computeShiftBalance } from "@/lib/shiftBalance";
+import { lpgTotalAset, previousLpg, storedLpg } from "@/lib/lpg";
 import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
 import { resultPlaces } from "@/lib/resultCountGroups";
 import { divisionPendingReturns } from "@/lib/borongan";
@@ -110,6 +111,9 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const moveShifts = reportDivision(user) === null && r.division.shiftCount > 1 ? (await prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, take: r.division.shiftCount })) : [];
   const balanceRows = r.status === "DRAFT" ? [] : await computeShiftBalance(r.id).catch(() => []);
   const f3 = (n: number) => Number(n.toFixed(3)).toLocaleString("id-ID");
+  const lpgProps = template === "PRODUKSI"
+    ? await (async () => { const pv = await previousLpg(r.id, r.date); return { cur: storedLpg(work), prev: pv ? { penuh: pv.penuh, aktif: pv.aktif, kosong: pv.kosong } : null, total: await lpgTotalAset() }; })()
+    : null;
   const mixDefault = template === "GIFTBOX" ? await mostStockedVariant() : null;
 
   return (
@@ -175,6 +179,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   rejectItems={rejectItems}
                   rejects={storedRejects(r.work)}
                   rejectStageLabel={stageOfTemplate(template) ? REJECT_STAGE_LABEL[stageOfTemplate(template)!] : null}
+                  lpg={lpgProps}
                 />
               </Modal>
             )}
