@@ -1,6 +1,6 @@
 # Desain teknis: stok terpadu lewat Laporan Shift (draf untuk Owner)
 
-Status: DESAIN (rev. 2 setelah jawaban Owner 19 Nov), belum ada kode. Dasar: `docs/AUDIT-ALUR-STOK.md`, `src/lib/shiftReport*.ts`, `shiftReportFlow.ts`, `shiftResultCount.ts`, `stock.ts`, `boronganFlow.ts`, `hpp.ts`.
+Status: DESAIN (rev. 5 setelah jawaban Owner 19 Nov), belum ada kode. Dasar: `docs/AUDIT-ALUR-STOK.md`, `src/lib/shiftReport*.ts`, `shiftReportFlow.ts`, `shiftResultCount.ts`, `stock.ts`, `boronganFlow.ts`, `hpp.ts`.
 Semua perubahan data bersifat **aditif** (tabel/kolom baru), tidak mengubah data lama.
 
 ## 0. Prinsip
@@ -8,6 +8,12 @@ Semua perubahan data bersifat **aditif** (tabel/kolom baru), tidak mengubah data
 2. Setiap barang punya **status + lokasi** yang tercatat **sekali**: bahan baku → patung basah → patung kering → Single Pack / produk jadi → terjual / reject. Lokasi: gudang bahan, setengah jadi, barang jadi, driver, titik borongan, **Reject** (baru).
 3. Tidak ada angka yang "hilang diam-diam": setiap pengurangan stok punya jenis (dipakai, dikirim, terjual, reject, selisih hitung).
 4. Selisih hitung fisik vs sistem = **kebocoran**, dicatat per barang/divisi/shift/PIC.
+
+## 0b. Kriteria penerimaan (prinsip akhir Owner, berlaku untuk semua PR P1–P6 dan tes)
+1. **Mudah diisi**: laporan shift sesedikit mungkin input — hanya hasil, reject, dan hitungan sisa fisik. Selebihnya otomatis (prefill dari shift sebelumnya, kiriman/setoran borongan, barang masuk, resep). Di HP: tiap langkah 1 layar, angka besar, tidak ada ketik ulang data yang sudah diketahui sistem.
+2. **Terintegrasi tanpa putus**: setiap barang punya jejak masuk → dipakai/dipindah → keluar. Pemeriksaan otomatis **"rantai putus"** (P5, juga Cek Konsistensi): kiriman tanpa penerimaan, setoran tanpa terima, barang masuk tanpa pembelian (dan sebaliknya), hasil Cetak yang tidak pernah masuk Oven, patung kering tanpa pemakai, resi tanpa barang keluar, retur tanpa periksa, isi ulang LPG tanpa transaksi (dan sebaliknya) — alert bila lewat batas waktu wajar.
+3. **Semua barang terpantau**: setiap barang aktif (bahan baku, bahan pendukung, setengah jadi, produk jadi, aset LPG) wajib punya divisi pemilik dan dihitung di laporan divisi itu; yang tidak pernah dihitung tampil di daftar **"belum terpantau"** (P2: daftar; P5: alert).
+4. **Barang tidak bergerak & prakiraan habis** (P5): alert slow/dead stock — bahan baku 30 hari, produk jadi 30 hari, setengah jadi 14 hari tanpa keluar (bisa diatur Owner), dengan **nilai uang yang tertahan**; sebaliknya **prakiraan habis dalam N hari** dari kecepatan pakai (selain limit tetap).
 
 ## 1. Alur data per divisi (apa yang dicatat di laporan shift)
 Semua angka masuk lewat `postShiftWork` (ref `LPH:<laporan>:<versi>`), bertanggal jam selesai shift. Hasil borongan tetap bersumber dari mutasi borongan (KRM/BGI/HSB/PND), **tidak diposting dua kali** (lihat §6).
@@ -63,11 +69,15 @@ Resi: **"dibuat dari nol" = produk disiapkan (prepare) saat pesanan masuk**, buk
   - Syarat: tiap bahan pendukung harus punya **hitungan sisa di laporan divisi pemiliknya** (`Item.divisionId`, tersedia di blok stok akhir bahan). Bahan aktif yang **tidak dihitung** pada shift berproduksi ditandai **"belum dihitung"** di halaman Kebocoran (tidak bisa dialert) dan di laporan (peringatan, bukan penghalang kirim).
   - Rasio aktual/standar per bahan per shift = `pemakaian aktual ÷ (BOM × output)`; > 1,15 → alert (§5). Output nol tetapi pemakaian > 0 → alert "pemakaian tanpa hasil".
 
-### 4C. Siklus tabung LPG (sinkron dengan pembelian isi ulang)
-Alur: **penuh (gudang) → terpasang (Oven) → kosong → isi ulang (pembelian/transaksi Rp) → penuh**. Barang "LPG tabung 5 kg" dengan lokasi/status: penuh, terpasang, kosong.
-- Laporan Oven: "tabung kosong diganti shift ini" (+ stok penuh & terpasang hitung fisik) → tabung penuh −n, tabung kosong +n.
-- Isi ulang = pembelian/transaksi (web atau bot Transaksi) yang **ditautkan ke barang LPG**: tabung kosong −n, penuh +n; harga per tabung diambil dari transaksi itu (harga rata-rata).
-- Neraca tabung per hari/minggu: tabung habis dilaporkan vs isi ulang dibeli; alert bila isi ulang dibeli > tabung habis, tabung habis tanpa pembelian, atau tabung kosong menumpuk.
+### 4C. LPG: tabung 5 kg, 3 status (keputusan & data Owner)
+- **Aset**: total **3 tabung 5 kg** (biasanya 2 AKTIF terpasang bersamaan + 1 CADANGAN penuh). Stok awal tabung = 3 (opname 30 Nov). Total aset tersimpan di pengaturan (berubah hanya lewat pembelian tabung baru).
+- **Laporan Oven tiap shift** mencatat jumlah tabung per status (fakta fisik): **PENUH** (cadangan), **AKTIF/terpasang**, **KOSONG** (menunggu isi ulang). Tanpa kolom perkiraan sisa tabung aktif. Total = penuh + aktif + kosong harus tetap sama dengan total aset; bila beda tanpa pembelian tabung baru → alert **"tabung hilang/bertambah"**.
+- **Pemakaian** dihitung saat tabung pindah AKTIF → KOSONG: `tabung habis = kosong akhir − kosong awal + isi ulang yang dikirim ke toko`.
+- **Isi ulang** = pembelian/transaksi (web/bot) dengan **jumlah tabung ≥ 1** yang memindahkan KOSONG → PENUH. Wajar membeli 2 tabung walau baru 1 yang kosong → semua perbandingan memakai **rentang hari**, bukan per shift.
+- **Toleran pencatatan terlambat**: Finance sering mencatat isi ulang malam/keesokan harinya. Bila laporan Oven menunjukkan tabung KOSONG → PENUH tanpa transaksi, sistem membuat **"isi ulang menunggu dicatat Finance"** (pola sama dengan barang masuk BMK menunggu Pembelian), bukan error. Transaksi isi ulang dari Finance kemudian **dipasangkan otomatis** (tanggal terdekat + jumlah tabung); **tanggal transaksi asli untuk keuangan, tanggal fisik untuk stok**. Pola sama dipastikan konsisten untuk pembelian bahan lain yang terlambat dicatat (BMK ↔ Pembelian).
+- **Alert**: "isi ulang belum dicatat Finance" hanya bila lewat **2 hari** (bisa diatur); "tabung habis vs isi ulang dibeli" dinilai **per 7 hari bergulir**; "tabung hilang" bila penuh+aktif+kosong ≠ total aset.
+- **Biaya**: Rp per patung kering = Σ harga isi ulang (rentang 7/30 hari) ÷ Σ patung kering pada rentang yang sama (lebih akurat daripada per shift).
+- Data: barang "LPG tabung 5 kg" (aset) + `LpgState` (reportId, penuh, aktif, kosong) + `LpgRefill` (tanggal fisik, jumlah, status MENUNGGU/DIPASANGKAN, transaksi/pembelian tertaut) — aditif.
 
 ## 5. Alert anomali (push + lonceng + rekap harian) dan ambang
 Penerima: Owner, Supervisor, Finance. Dedupe per (jenis, divisi, barang, tanggal). Ambang bawaan bisa diubah Owner.
@@ -83,7 +93,13 @@ Penerima: Owner, Supervisor, Finance. Dedupe per (jenis, divisi, barang, tanggal
 | Barang masuk tanpa pembelian | BMK belum ditautkan > 3 hari (sudah ada di Cek Konsistensi) | Sedang |
 | Pembelian tanpa barang masuk | pesanan Dikirim > 7 hari belum diterima | Sedang |
 | Hasil tidak terposting | laporan terkirim tetapi sakelar mati / `workPostedVersion = 0` | Tinggi |
-| Tabung LPG tidak sinkron | tabung habis (laporan) ≠ isi ulang (pembelian) per hari/minggu melewati toleransi 1 tabung | Sedang |
+| Tabung LPG tidak sinkron | tabung habis vs isi ulang dibeli per 7 hari bergulir melewati toleransi 1 tabung | Sedang |
+| Isi ulang belum dicatat Finance | isi ulang fisik menunggu transaksi > 2 hari (bisa diatur) | Rendah |
+| Tabung hilang/bertambah | penuh + aktif + kosong ≠ total aset | Tinggi |
+| **Rantai putus** | kiriman tanpa penerimaan, setoran tanpa terima, hasil Cetak tak masuk Oven, patung kering tanpa pemakai, resi tanpa barang keluar, retur belum diperiksa — lewat batas waktu wajar | Sedang |
+| **Barang tidak bergerak** | bahan baku/produk jadi 30 hari, setengah jadi 14 hari tanpa keluar (atur Owner); tampilkan nilai Rp tertahan | Rendah/Sedang |
+| **Prakiraan habis** | stok ÷ kecepatan pakai 14 hari < N hari (bawaan 7) walau di atas limit | Sedang |
+| **Barang belum terpantau** | barang aktif tanpa divisi pemilik atau tidak pernah dihitung di laporan 30 hari | Rendah |
 | LPG anomali | tabung habis per patung kering > standar +15%, atau tabung habis tanpa hasil | Tinggi |
 | Laporan ganda/hilang | shift berorang tanpa laporan (aturan #128) | Rendah |
 
@@ -102,10 +118,10 @@ Bahasa awam: "cut-over" adalah **hari pertama stok aplikasi dihitung dari lapora
 
 ## 7. Rencana PR bertahap
 - **P1 – Reject & lokasi Reject**: setting `loc_reject_<tahap>`, tabel `ProductionReject`, blok Reject di form + posting transfer; tes. (Risiko rendah, aditif.)
-- **P2 – Neraca per shift**: `ShiftBalance`, mesin neraca (membaca `StockMovement`), tampilan di detail laporan; baris borongan otomatis di laporan (menutup tugas lama sinkron stok).
-- **P3 – Oven/Cetak lengkap**: gypsum terhitung dari stok, patung basah masuk oven, LPG tabung/kg; resep konsumsi Assembling/Packing/Giftbox.
+- **P2 – Neraca per shift**: `ShiftBalance`, mesin neraca (membaca `StockMovement`), tampilan di detail laporan; baris borongan otomatis di laporan (menutup tugas lama sinkron stok). Susulan P2b: daftar **"belum terpantau"** (barang aktif tanpa divisi pemilik/tanpa hitungan) dan prefill hitungan awal dari shift sebelumnya.
+- **P3 – Oven/Cetak lengkap**: gypsum terhitung dari stok (1 sak = 18 kg), patung basah masuk oven, **LPG 3 status tabung** + isi ulang menunggu Finance (§4C); resep konsumsi Assembling/Packing/Giftbox.
 - **P4 – Standar pemakaian**: `UsageStandard` AUTO/MANUAL + halaman pengaturan.
-- **P5 – Alert & halaman Kebocoran & Efisiensi**: `StockAnomaly`, push + lonceng + rekap harian, dedupe.
+- **P5 – Alert & halaman Kebocoran & Efisiensi**: `StockAnomaly`, push + lonceng + rekap harian, dedupe; termasuk rantai putus, barang tidak bergerak/prakiraan habis, belum terpantau, LPG.
 - **P6 – Cut-over**: guard tanggal T, kunci Produksi manual, dokumentasi/panduan operasional, pratinjau paralel.
 Tiap PR kecil, tes, `npm test` 2×, staging dicoba Owner sebelum merge.
 
