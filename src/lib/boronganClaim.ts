@@ -26,7 +26,7 @@ type Actor = { id: string; name: string };
 export const isAssemblingTask = (name: string) => /^assembling\b/i.test(name.trim());
 
 /** Setoran yang siap diklaim di titik: diterima divisi, belum dibayar, tidak ditahan, belum masuk klaim */
-const claimable = (pointId: string): Prisma.BoronganResultWhereInput => ({ pointId, settlementId: null, held: false, claimId: null });
+export const claimable = (pointId: string): Prisma.BoronganResultWhereInput => ({ pointId, settlementId: null, held: false, claimId: null });
 
 /** Jumlah setoran Assembling (pengambilan AMB berbeda) yang belum diklaim di titik */
 export async function assemblingCount(db: DB, pointId: string) {
@@ -100,7 +100,7 @@ async function claimNumber(tx: Tx, code: string, day: string) {
 
 const resultInclude = { worker: { select: { id: true, name: true } }, coordinator: { select: { id: true, name: true } }, driver: { select: { id: true, name: true } }, task: { select: { name: true } } } as const;
 
-async function createClaimTx(tx: Tx, pointId: string, actor: { id: string | null; name: string }, auto: boolean) {
+export async function createClaimTx(tx: Tx, pointId: string, actor: { id: string | null; name: string }, auto: boolean) {
   await tx.$queryRaw`SELECT id FROM "BoronganPoint" WHERE id = ${pointId} FOR UPDATE`;
   const point = await tx.boronganPoint.findUniqueOrThrow({ where: { id: pointId } });
   const results = await tx.boronganResult.findMany({ where: claimable(pointId), include: resultInclude });
