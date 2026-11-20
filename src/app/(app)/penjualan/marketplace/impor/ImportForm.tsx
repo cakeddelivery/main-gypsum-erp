@@ -5,7 +5,7 @@ import { previewMarketplaceAction, saveMarketplaceAction, type PreviewResult } f
 import { toast } from "@/components/Toaster";
 
 type Store = { id: string; name: string };
-const KIND = { ORDER: "Pesanan", INCOME: "Penghasilan" } as const;
+const KIND = { ORDER: "Pesanan", INCOME: "Penghasilan", BALANCE: "Buku Saldo Penjual", ADSBILL: "Saldo iklan" } as const;
 const CH = { SHP: "Shopee", TTS: "TikTok" } as const;
 const nf = (v: number) => v.toLocaleString("id-ID");
 
@@ -28,7 +28,7 @@ export function ImportForm({ stores, canManage }: { stores: Store[]; canManage: 
   };
   const pick = (list: FileList | null) => {
     if (!list) return;
-    const add = [...list].filter((f) => /\.xlsx$/i.test(f.name)).map((file) => ({ file, storeId: stores[0]?.id ?? "" }));
+    const add = [...list].filter((f) => /\.(xlsx|csv)$/i.test(f.name)).map((file) => ({ file, storeId: stores[0]?.id ?? "" }));
     setFiles((cur) => [...cur, ...add].slice(0, 4));
     setRes(null);
     setSaved(null);
@@ -62,9 +62,9 @@ export function ImportForm({ stores, canManage }: { stores: Store[]; canManage: 
           pick(e.dataTransfer.files);
         }}
       >
-        <p>Tarik file .xlsx ke sini, atau</p>
+        <p>Tarik file .xlsx / .csv ke sini, atau</p>
         <button type="button" className="btn-secondary mt-2" onClick={() => inp.current?.click()}>Pilih file Excel</button>
-        <input ref={inp} type="file" accept=".xlsx" multiple hidden onChange={(e) => { pick(e.target.files); e.target.value = ""; }} />
+        <input ref={inp} type="file" accept=".xlsx,.csv" multiple hidden onChange={(e) => { pick(e.target.files); e.target.value = ""; }} />
         <p className="mt-2 text-xs text-slate-400">1–4 file sekaligus. File pesanan dan penghasilan Shopee/TikTok boleh dicampur; jenisnya dikenali otomatis.</p>
       </div>
 
@@ -100,7 +100,7 @@ export function ImportForm({ stores, canManage }: { stores: Store[]; canManage: 
             <div key={i} className="card space-y-2 p-3 text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 <b className="break-all">{f.fileName}</b>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs">{CH[f.channel as "SHP" | "TTS"]} · {KIND[f.kind as "ORDER" | "INCOME"]}</span>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs">{CH[f.channel as "SHP" | "TTS"]} · {KIND[f.kind as keyof typeof KIND] ?? f.kind}</span>
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs">{f.storeName}</span>
                 {f.periodFrom && <span className="text-xs text-slate-500">{f.periodFrom} s/d {f.periodTo}</span>}
               </div>

@@ -24,7 +24,7 @@ export type PreviewResult = { ok: boolean; error?: string; fileErrors?: { fileNa
 async function readFiles(fd: FormData): Promise<{ files: ImportFile[]; fileErrors: { fileName: string; error: string }[] }> {
   const raw = fd.getAll("file").filter((f): f is File => f instanceof File && f.size > 0);
   const stores = fd.getAll("storeId").map(String);
-  if (!raw.length) throw new MarketplaceImportError("Pilih minimal satu file Excel (.xlsx)");
+  if (!raw.length) throw new MarketplaceImportError("Pilih minimal satu file (Excel .xlsx atau CSV saldo iklan)");
   if (raw.length > MAX_FILES) throw new MarketplaceImportError(`Maksimal ${MAX_FILES} file sekaligus`);
   const files: ImportFile[] = [];
   const fileErrors: { fileName: string; error: string }[] = [];

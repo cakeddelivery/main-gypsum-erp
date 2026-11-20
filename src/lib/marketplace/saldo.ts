@@ -97,7 +97,7 @@ export async function loadAllocation(s: StoreLite, ch: string, storeCount: numbe
   const bks = banks ?? (await marketplaceBanks());
   const [incomes, rec, fileWd] = await Promise.all([
     // Setiap baris penyelesaian (event) = satu lot: cair positif, refund/iklan/penyesuaian negatif
-    prisma.marketplaceIncomeEvent.findMany({ where: { income: { storeId: s.id, channel: ch }, releasedAt: { not: null } }, select: { id: true, incomeId: true, released: true, releasedAt: true }, orderBy: [{ releasedAt: "asc" }, { id: "asc" }] }),
+    prisma.marketplaceIncomeEvent.findMany({ where: { income: { storeId: s.id, channel: ch, kind: { not: "ADSUSE" } }, releasedAt: { not: null } }, select: { id: true, incomeId: true, released: true, releasedAt: true }, orderBy: [{ releasedAt: "asc" }, { id: "asc" }] }),
     recordedWithdraws(s, ch, bks, storeCount, new Date(0), FAR),
     prisma.marketplaceWithdrawal.findMany({ where: { storeId: s.id, channel: ch, txType: { contains: "withdraw", mode: "insensitive" } } }),
   ]);
@@ -208,4 +208,30 @@ export async function sendMarketplaceWdReminder(now: Date) {
     tag: "mp-withdraw",
   });
   return { notifikasi: 1, perangkat: r.sent, status: worst };
+}
+
+/**
+ * Saldo menurut Shopee (Buku Saldo Penjual: "Saldo Akhir" baris terbaru) dibanding estimasi ERP.
+ * Estimasi ERP = saldo awal (saldo akhir baris tertua − jumlahnya) + Σ cair/penyesuaian/isi saldo iklan − Σ withdraw pada rentang yang sama.
+ */
+export async function bookBalance(storeId: string, channel = "SHP") {
+  const where = { storeId, channel, balanceAfter: { not: null } };
+  const [last, first] = await Promise.all([
+    prisma.marketplaceBalanceTx.findFirst({ where, orderBy: [{ date: "desc" }, { pos: "asc" }] }),
+    prisma.marketplaceBalanceTx.findFirst({ where, orderBy: [{ date: "asc" }, { pos: "desc" }] }),
+  ]);
+  if (!last || !first) return null;
+  const opening = n(first.balanceAfter) - n(first.amount);
+  const from = dayStart(wib(first.date)), to = dayEnd(wib(last.date));
+  const stores = await prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, select: { id: true, name: true, code: true } });
+  const s = stores.find((x) => x.id === storeId);
+  if (!s) return null;
+  const [ev, alloc] = await Promise.all([
+    prisma.marketplaceIncomeEvent.aggregate({ where: { income: { storeId, channel, kind: { in: ["ORDER", "ADJUST", "TOPUP"] } }, releasedAt: { gte: from, lt: to } }, _sum: { released: true } }),
+    loadAllocation(s, channel, stores.length),
+  ]);
+  const wd = alloc.withdraws.filter((w) => new Date(`${w.date}T00:00:00+07:00`) >= from && new Date(`${w.date}T00:00:00+07:00`) < to).reduce((a, w) => a + w.amount, 0);
+  const shopee = n(last.balanceAfter);
+  const erp = opening + n(ev._sum.released) - wd;
+  return { asOf: wib(last.date), from: wib(first.date), opening, shopee, erp, diff: shopee - erp, events: n(ev._sum.released), withdraws: wd };
 }

@@ -184,7 +184,7 @@ describe("Marketplace: pembaca 4 format", () => {
   });
   it("format tak dikenal ditolak dengan pesan jelas", async () => {
     await expect(parseMarketplaceFile(await makeXlsx([{ name: "Sheet1", rows: [["a", "b"]] }]))).rejects.toThrow(FormatError);
-    await expect(parseMarketplaceFile(Buffer.from("bukan excel"))).rejects.toThrow(/bukan Excel/);
+    await expect(parseMarketplaceFile(Buffer.from("bukan excel"))).rejects.toThrow(/tidak dikenali/);
   });
 });
 

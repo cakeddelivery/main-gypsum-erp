@@ -3082,3 +3082,33 @@ model MarketplaceIncomeEvent {
   @@index([importId])
   @@index([releasedAt])
 }
+
+/// Buku Saldo Penjual Shopee (file "my_balance_transaction_report"): satu baris = satu mutasi saldo. Dipakai untuk
+/// mencocokkan saldo menurut Shopee dengan estimasi ERP; tidak membuat jurnal/transaksi.
+model MarketplaceBalanceTx {
+  id           String   @id @default(cuid())
+  storeId      String
+  channel      String
+  /// Kunci stabil baris (hash isi + urutan kembar)
+  txKey        String
+  date         DateTime
+  /// Tipe Transaksi & Deskripsi apa adanya
+  type         String
+  description  String?
+  orderNo      String?
+  /// Bertanda: masuk positif, keluar negatif
+  amount       BigInt
+  status       String?
+  /// Saldo akhir setelah baris ini (menurut Shopee)
+  balanceAfter BigInt?
+  /// Urutan baris dalam file (0 = paling atas / terbaru)
+  pos          Int      @default(0)
+  /// PENGHASILAN / PENARIKAN / TOPUP_IKLAN / PENYESUAIAN / AFFILIATE_SAMPEL / LAINNYA
+  category     String
+  importId     String
+
+  @@unique([storeId, channel, txKey])
+  @@index([storeId, channel, date])
+  @@index([orderNo])
+  @@index([importId])
+}

@@ -57,7 +57,7 @@ const normSeller = (x: string) => x.trim().toLowerCase().replace(/\s+/g, "");
 async function storeGuards(db: Tx | typeof prisma, f: ImportFile, channel: string): Promise<{ error?: string; remember?: string; info?: string }> {
   const seller = f.parsed.info.seller?.trim();
   let remember: string | undefined, info: string | undefined;
-  if (f.parsed.kind === "INCOME" && seller) {
+  if (f.parsed.kind !== "ORDER" && seller) {
     const stored = (await db.setting.findUnique({ where: { key: sellerKey(f.storeId, channel) } }))?.value;
     if (stored && stored !== normSeller(seller)) {
       const st = await db.store.findUnique({ where: { id: f.storeId }, select: { name: true } });
@@ -137,6 +137,18 @@ export async function previewImport(files: ImportFile[]): Promise<Preview> {
         if (g.isNew) p.baru += g.fresh.length;
         else p.diperbarui += g.fresh.length;
         if (!g.isNew && g.fresh.length) p.changes["baris penyelesaian tambahan"] = (p.changes["baris penyelesaian tambahan"] ?? 0) + g.fresh.length;
+      }
+      if (f.parsed.kind === "BALANCE") {
+        // Buku Saldo: yang dihitung = mutasi saldo (baris), bukan event turunan
+        const txs = f.parsed.balanceTx ?? [];
+        const have = new Set<string>();
+        for (const part of chunk(txs.map((t) => t.txKey))) for (const e of await prisma.marketplaceBalanceTx.findMany({ where: { storeId: f.storeId, channel, txKey: { in: part } }, select: { txKey: true } })) have.add(e.txKey);
+        p.total = txs.length;
+        p.baru = txs.filter((t) => !have.has(t.txKey)).length;
+        p.dilewati = txs.length - p.baru;
+        p.diperbarui = 0;
+        p.withdrawals = f.parsed.withdrawals.length;
+        p.adsRows = 0;
       }
       const orderRefs = rows.filter((r) => r.kind === "ORDER").map((r) => r.refNo);
       const have = new Set<string>();
@@ -357,7 +369,14 @@ export async function commitImport(actor: Actor, files: ImportFile[]) {
     const r = await prisma.$transaction(
       async (tx) => {
         const imp = await tx.marketplaceImport.create({ data: { createdBy: actor.name, storeId: f.storeId, channel, kind: f.parsed.kind, fileName: f.fileName.slice(0, 200), periodFrom: f.parsed.periodFrom, periodTo: f.parsed.periodTo } });
-        const stats = f.parsed.kind === "ORDER" ? await commitOrders(tx, f, channel, imp.id) : await commitIncome(tx, f, channel, imp.id);
+        let stats: { baru: number; diperbarui: number; dilewati: number; withdrawals?: number } = f.parsed.kind === "ORDER" ? await commitOrders(tx, f, channel, imp.id) : await commitIncome(tx, f, channel, imp.id);
+        if (f.parsed.kind === "BALANCE") {
+          // Buku Saldo Penjual: simpan setiap mutasi (idempoten per kunci); hitungan batch = mutasi baru
+          const txs = f.parsed.balanceTx ?? [];
+          let made = 0;
+          for (const part of chunk(txs, 1000)) made += (await tx.marketplaceBalanceTx.createMany({ data: part.map((t) => ({ storeId: f.storeId, channel, txKey: t.txKey, date: t.date, type: t.type, description: t.description, orderNo: t.orderNo, amount: BigInt(t.amount), status: t.status, balanceAfter: t.balanceAfter === null ? null : BigInt(t.balanceAfter), pos: t.pos, category: t.category, importId: imp.id })), skipDuplicates: true })).count;
+          stats = { baru: made, diperbarui: 0, dilewati: txs.length - made, withdrawals: stats.withdrawals ?? 0 };
+        }
         // Impor ulang yang identik tidak meninggalkan batch kosong (tidak ada yang perlu dibatalkan)
         if (!stats.baru && !stats.diperbarui && !("withdrawals" in stats && stats.withdrawals)) {
           await tx.marketplaceImport.delete({ where: { id: imp.id } });
@@ -365,7 +384,7 @@ export async function commitImport(actor: Actor, files: ImportFile[]) {
         }
         // Angka pembanding untuk cek integritas: Σ cair baris ORDER di file vs total ringkasan file
         const fileTotal = f.parsed.incomes.filter((i) => i.kind === "ORDER").reduce((a, i) => a + i.released, 0);
-        const extra = { total: f.parsed.kind === "ORDER" ? f.parsed.orders.length : f.parsed.incomes.length, lines: f.parsed.orders.reduce((a, o) => a + o.lines.length, 0), ...(f.parsed.kind === "INCOME" ? { fileTotal, summaryTotal: f.parsed.info.summaryTotal ?? null, summaryLabel: f.parsed.info.summaryLabel ?? null, seller: f.parsed.info.seller ?? null } : {}) };
+        const extra = { total: f.parsed.kind === "ORDER" ? f.parsed.orders.length : f.parsed.kind === "BALANCE" ? (f.parsed.balanceTx?.length ?? 0) : f.parsed.incomes.length, lines: f.parsed.orders.reduce((a, o) => a + o.lines.length, 0), ...(f.parsed.kind !== "ORDER" ? { fileTotal, summaryTotal: f.parsed.info.summaryTotal ?? null, summaryLabel: f.parsed.info.summaryLabel ?? null, seller: f.parsed.info.seller ?? null } : {}) };
         await tx.marketplaceImport.update({ where: { id: imp.id }, data: { stats: { ...stats, ...extra } } });
         await linkIncome(tx, f.storeId, channel);
         if (guard.remember) await tx.setting.upsert({ where: { key: sellerKey(f.storeId, channel) }, create: { key: sellerKey(f.storeId, channel), value: guard.remember }, update: { value: guard.remember } });
@@ -408,6 +427,7 @@ export async function undoImport(actor: Actor, importId: string) {
       await recomputeIncomes(tx, affected);
       const dIncome = { count: dEv.count };
       const dWd = await tx.marketplaceWithdrawal.deleteMany({ where: { importId } });
+      await tx.marketplaceBalanceTx.deleteMany({ where: { importId } });
       await tx.marketplaceImport.update({ where: { id: importId }, data: { undoneAt: new Date(), undoneBy: actor.name, stats: { ...(imp.stats as object), dibatalkan: { pesanan: dOrders.count, penghasilan: dIncome.count, penarikan: dWd.count, dikembalikan: imp.changes.length } } } });
       await tx.marketplaceChange.updateMany({ where: { importId }, data: { undone: true } }); // riwayat ringkas tetap ada
       await linkIncome(tx, imp.storeId, imp.channel);

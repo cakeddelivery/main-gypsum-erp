@@ -4,7 +4,7 @@ import { COA } from "../accounting";
 import { WITHDRAW_INCOME_SOURCE } from "../finance";
 import { sumFees } from "./feeMap";
 import { feeOverrides } from "./potongan";
-import { loadAllocation } from "./saldo";
+import { bookBalance, loadAllocation } from "./saldo";
 import { marketplaceBanks } from "./bank";
 import { dayEnd, dayStart } from "./report";
 import { monthBounds } from "./dashboard";
@@ -87,6 +87,23 @@ export async function integrityCheck(f: { month: string; storeId?: string }) {
       const a = await loadAllocation(s, ch, stores.length, banks);
       const tdf = a.pairs.filter((p) => p.status === "TIDAK_DI_FILE").length;
       checks.push({ key: "f", label: "Saldo ≥ 0 & withdraw cocok antara ERP dan file", ok: a.fifo.over === 0 && a.notInErp.length === 0 && tdf === 0, detail: `saldo berjalan ${idr(a.fifo.balance)}${a.fifo.over ? ` · withdraw melebihi cair ${idr(a.fifo.over)}` : ""} · ${a.notInErp.length} penarikan di file belum tercatat di ERP · ${tdf} withdraw ERP tanpa padanan di file`, items: [...a.notInErp.slice(0, 10).map((p) => `file: ${p.refId} ${idr(p.fileAmount ?? 0)}`), ...a.pairs.filter((p) => p.status === "TIDAK_DI_FILE").slice(0, 10).map((p) => `ERP: ${p.refId} ${idr(p.erpAmount ?? 0)}`)] });
+      if (ch === "SHP") {
+        // h. Buku Saldo Shopee vs file Penghasilan, per pesanan (angka cair harus sama)
+        const bt = await prisma.marketplaceBalanceTx.findMany({ where: { storeId: s.id, channel: ch, category: "PENGHASILAN", date: rel, orderNo: { not: null } }, select: { orderNo: true, amount: true } });
+        if (bt.length) {
+          const book = new Map<string, number>();
+          for (const x of bt) book.set(x.orderNo!, (book.get(x.orderNo!) ?? 0) + n(x.amount));
+          const evs = await prisma.marketplaceIncomeEvent.findMany({ where: { income: { storeId: s.id, channel: ch, kind: "ORDER", refNo: { in: [...book.keys()] } } }, select: { released: true, income: { select: { refNo: true } } } });
+          const inc = new Map<string, number>();
+          for (const e of evs) inc.set(e.income.refNo, (inc.get(e.income.refNo) ?? 0) + n(e.released));
+          const hm: string[] = [];
+          for (const [no, v] of book) if (Math.abs(v - (inc.get(no) ?? 0)) > TOL) hm.push(`${no}: buku saldo ${idr(v)} vs penghasilan ${inc.has(no) ? idr(inc.get(no)!) : "(belum diimpor)"}`);
+          checks.push({ key: "h", label: "Buku Saldo Shopee = file Penghasilan per pesanan", ok: hm.length === 0, detail: hm.length ? `${hm.length} dari ${book.size} pesanan berbeda` : `${book.size} pesanan cocok`, items: hm.slice(0, 20) });
+        }
+        // i. Saldo menurut Shopee vs estimasi ERP
+        const bb = await bookBalance(s.id, ch);
+        if (bb) checks.push({ key: "i", label: "Saldo menurut Shopee = estimasi ERP", ok: Math.abs(bb.diff) <= TOL, detail: `per ${bb.asOf}: Shopee ${idr(bb.shopee)} vs ERP ${idr(bb.erp)} (selisih ${idr(bb.diff)})`, items: Math.abs(bb.diff) > TOL ? [`saldo awal ${idr(bb.opening)} (${bb.from}) + cair/penyesuaian/isi saldo iklan ${idr(bb.events)} − withdraw ${idr(bb.withdraws)}`] : [] });
+      }
       groups.push({ storeId: s.id, store: s.name, channel: ch, checks });
     }
   }

@@ -56,6 +56,17 @@ export default async function PotonganPage({ searchParams }: { searchParams: Pro
             )}
             <p className="mt-2 text-xs text-slate-500">Selisih = cair − (harga jual + potongan yang sudah dipetakan). Kolom “Belum dipetakan” tidak ikut dijumlah sampai dipetakan. Selisih bukan nol berarti ada komponen di file yang belum tertangkap (mis. selisih ongkir); periksa kolom biayanya.</p>
           </Card>
+          {(rep.adsInfo.topup > 0 || rep.adsInfo.usage > 0 || rep.adsInfo.walletBalance !== 0) && (
+            <Card title="Iklan Shopee (saldo iklan)">
+              <dl className="grid grid-cols-2 gap-y-1 text-sm">
+                <dt className="text-slate-500">Biaya iklan aktual (pemakaian)</dt><dd className="text-right font-medium">{idr(rep.adsInfo.usage)}</dd>
+                <dt className="text-slate-500">Isi saldo iklan dari saldo penjual</dt><dd className="text-right">{idr(rep.adsInfo.topup)}</dd>
+                <dt className="text-slate-500">└ termasuk PPN 11% (perkiraan)</dt><dd className="text-right">{idr(rep.adsInfo.ppn)}</dd>
+                <dt className="text-slate-500">Saldo iklan tersisa (isi saldo − pemakaian)</dt><dd className="text-right">{idr(rep.adsInfo.walletBalance)}</dd>
+              </dl>
+              <p className="mt-2 text-xs text-slate-500">Biaya iklan di tabel di atas memakai pemakaian aktual dari file “saldo iklan” (adwords_bill). Isi saldo hanya mengurangi saldo penjual, bukan biaya.</p>
+            </Card>
+          )}
           <Card title="Angka aktual vs pengaturan harga" actions={canManage && rep.enough ? (
             <ActionForm action={applyActualFeesAction} confirm="Pakai angka aktual sebagai pengaturan biaya marketplace? Ini hanya mengubah saran harga (Produk › Biaya), bukan transaksi.">{hidden}<Submit className="btn-secondary" pendingText="Menyimpan…">Pakai angka aktual</Submit></ActionForm>
           ) : undefined}>

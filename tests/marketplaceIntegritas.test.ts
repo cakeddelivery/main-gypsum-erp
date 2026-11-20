@@ -84,7 +84,7 @@ describe("Satu pesanan, banyak baris penyelesaian (cair lalu refund)", () => {
 
 describe("Shopee: sheet Adjustment & total ringkasan", () => {
   const head = ["No.", "Lihat berdasarkan", "No. Pesanan", "Tanggal Dana Dilepaskan", "Total Penghasilan", "Harga Produk", "Biaya Administrasi"];
-  it("Adjustment dibaca sebagai ADJUST; total ringkasan (Total Penghasilan atau Pendapatan − Pengeluaran) terbaca", async () => {
+  it("Adjustment hanya informasi; total ringkasan (Total Penghasilan atau Pendapatan − Pengeluaran) terbaca", async () => {
     const mk = (summary: (string | number)[][]) => makeXlsx([
       { name: "Summary", rows: [["Username (Penjual)", "toko_int"], ...summary] },
       { name: "Adjustment", rows: [["Laporan"], ["No. Pesanan", "Tanggal", "Jumlah", "Alasan"], [`7${num}A`, "2038-03-10 10:00", -5000, "Kompensasi"], [`7${num}B`, "2038-03-11 10:00", 1500, "Koreksi"]] },
@@ -92,8 +92,8 @@ describe("Shopee: sheet Adjustment & total ringkasan", () => {
     ]);
     const a = await parseMarketplaceFile(await mk([["Total Penghasilan", "9.000"]]));
     expect(a.info).toMatchObject({ seller: "toko_int", summaryTotal: 9000 });
-    expect(a.incomes.filter((i) => i.kind === "ADJUST").map((i) => i.released)).toEqual([-5000, 1500]);
-    expect(a.info.note).toMatch(/2 penyesuaian/);
+    expect(a.incomes.filter((i) => i.kind === "ADJUST")).toHaveLength(0); // penyesuaian saldo dibaca dari Buku Saldo Penjual (hindari hitung ganda)
+    expect(a.info.note).toMatch(/Adjustment.*tidak dihitung/);
     const b = await parseMarketplaceFile(await mk([["Total Pendapatan", 115732698], ["Total Pengeluaran", -23497134]]));
     expect(b.info.summaryTotal).toBe(92235564);
   });

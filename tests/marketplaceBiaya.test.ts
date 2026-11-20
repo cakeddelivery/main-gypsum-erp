@@ -336,14 +336,16 @@ describe("Shopee Transaksi Saldo Penjual", () => {
     const st = await storeDL();
     const parsed = await parseMarketplaceFile(await makeXlsx([{ name: "Transaction Report", rows }]));
     expect(parsed).toMatchObject({ platform: "SHOPEE", kind: "INCOME" });
-    expect(parsed.incomes.map((i) => i.released)).toEqual([-50000, -30000]);
+    expect(parsed.incomes.map((i) => [i.kind, i.released])).toEqual([["TOPUP", -50000], ["TOPUP", -30000]]); // isi saldo iklan = mengurangi saldo, bukan biaya
     expect(parsed.withdrawals).toHaveLength(1);
-    expect(parsed.info.note).toMatch(/2 iklan, 1 penarikan dana, 1 transaksi lain/);
+    expect(parsed.info.note).toMatch(/2 isi saldo iklan, 1 penarikan dana, 1 transaksi lain/);
     const [r] = await commitImport(actor, [{ fileName: `saldo.${tag}.xlsx`, storeId: st.id, parsed }]);
     cleanups.push(() => undoImport(actor, r.importId));
     const [r2] = await commitImport(actor, [{ fileName: `saldo.${tag}.b.xlsx`, storeId: st.id, parsed }]);
     expect(r2).toMatchObject({ baru: 0, dilewati: 2 }); // periode tumpang tindih: tidak dobel
-    expect((await potonganReport({ storeId: st.id, channel: "SHP", from: "2036-07-01", to: "2036-07-31" })).byCategory.IKLAN).toBe(-80000);
+    const pr = await potonganReport({ storeId: st.id, channel: "SHP", from: "2036-07-01", to: "2036-07-31" });
+    expect(pr.byCategory.IKLAN).toBeUndefined(); // biaya iklan aktual datang dari file saldo iklan, bukan isi saldo
+    expect(pr.adsInfo.topup).toBe(80000);
     // pencocokan penarikan Shopee: nominal sama & tanggal berdekatan
     const coa = await prisma.coaAccount.findFirstOrThrow();
     const bank = await prisma.bankAccount.create({ data: { code: `MPS${tag}`, name: `Saldo Shopee DL ${tag}`, coaAccountId: coa.id, marketplace: true, aliases: "shopee" } });
