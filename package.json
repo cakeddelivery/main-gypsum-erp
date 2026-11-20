@@ -14,6 +14,7 @@
     "setup:divisi-produk": "tsx scripts/divisi-produk.ts",
     "katalog:produk": "tsx scripts/katalog-produk.ts",
     "single-pack:tautkan": "tsx scripts/tautkan-single-pack.ts",
+    "single-pack:cek": "tsx scripts/cek-single-pack.ts",
     "cek:password": "tsx scripts/cek-password.ts",
     "test": "bash tests/global-reset.sh && vitest run",
     "e2e:form": "node tests/e2e/form-gagal.e2e.cjs",
