@@ -11,6 +11,7 @@ export const FEE_CATEGORIES = {
   ONGKIR: { label: "Ongkir (selisih)", counted: true },
   AFFILIATE: { label: "Affiliate / komisi kreator", counted: true },
   AFFILIATE_SAMPEL: { label: "Ongkir sampel affiliate", counted: true },
+  PESANAN_HILANG: { label: "Pesanan hilang (kompensasi)", counted: true },
   IKLAN: { label: "Iklan", counted: true },
   ASURANSI: { label: "Asuransi (premi)", counted: true },
   LAYANAN: { label: "Layanan Live / video", counted: true },
@@ -57,6 +58,7 @@ const TIKTOK: Rule[] = [
 ];
 const COMMON: Rule[] = [
   [/sample|sampel/, "AFFILIATE_SAMPEL"],
+  [/kompensasi|pesanan hilang|barang hilang/, "PESANAN_HILANG"],
   [/komisi ams|afiliasi|affiliate|komisi kreator/, "AFFILIATE"],
   [/komisi platform|komisi dinamis|biaya administrasi|biaya transaksi/, "ADMIN"],
   [/pre-?order|shopee live|layanan video|live xtra/, "LAYANAN"],

@@ -14,6 +14,7 @@ import { FEE_CATEGORIES, normCol } from "@/lib/marketplace/feeMap";
 import { applyActuals, applyProductAffiliate } from "@/lib/marketplace/potongan";
 import { WD_REMINDER_KEY } from "@/lib/marketplace/saldo";
 import { SYNC_HOUR_KEY, SYNC_START_KEY } from "@/lib/marketplace/sync";
+import { SECTORS, loadTargets, saveTargets, targetKey } from "@/lib/marketplace/pengeluaran";
 
 const MAX_FILES = 4;
 const MAX_BYTES = 12 * 1024 * 1024;
@@ -216,6 +217,29 @@ export const saveSyncAction = action(
     await prisma.setting.upsert({ where: { key: SYNC_HOUR_KEY }, create: { key: SYNC_HOUR_KEY, value: String(hour) }, update: { value: String(hour) } });
     await audit(user, "MARKETPLACE_SYNC_ATUR", "Setting", SYNC_START_KEY, { start: start || null, hour });
     return start ? `Data marketplace wajib diperbarui tiap hari mulai ${start} (pengingat pukul ${String(hour).padStart(2, "0")}.00)` : "Tuntutan pembaruan harian dimatikan";
+  },
+  ["/penjualan"],
+);
+
+/** Target % biaya per sektor (kosong = pakai bawaan dari pengaturan Produk › Biaya atau rata-rata 3 bulan + 20%) */
+export const saveCostTargetsAction = action(
+  "sales.manage",
+  async (fd, user) => {
+    const channel = str(fd, "channel");
+    if (channel !== "SHP" && channel !== "TTS") throw new InvoiceError("Kanal tidak valid");
+    const cur = await loadTargets();
+    for (const s of SECTORS) {
+      const raw = str(fd, `t:${s.key}`).replace(",", ".");
+      const k = targetKey(channel, s.key);
+      if (raw === "") delete cur[k];
+      else {
+        const v = Number(raw);
+        if (!Number.isFinite(v) || v < 0 || v > 100) throw new InvoiceError(`Target ${s.label}: isi angka 0–100`);
+        cur[k] = v;
+      }
+    }
+    await saveTargets(user, cur);
+    return "Target biaya tersimpan";
   },
   ["/penjualan"],
 );
