@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { defaultCategory, looksLikeFee } from "./feeMap";
 import { readXlsx, XlsxError, type Cell, type Sheet } from "./xlsx";
 
@@ -56,7 +57,7 @@ export type ParsedFile = {
   periodFrom: Date | null;
   periodTo: Date | null;
   /** Info tampilan (mis. username penjual dari sheet Summary Shopee) */
-  info: { seller?: string; rows: number };
+  info: { seller?: string; rows: number; /** Keterangan tambahan untuk pratinjau (mis. ringkasan Saldo Penjual) */ note?: string };
 };
 
 export class FormatError extends Error {}
@@ -320,6 +321,65 @@ function parseTiktokIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
   return { platform: "TIKTOK", kind: "INCOME", orders: [], incomes, withdrawals, periodFrom: from, periodTo: to, info: { rows } };
 }
 
+// ---------- 5) Shopee "Transaksi Saldo Penjual" (format toleran: dideteksi dari header kolom) ----------
+const BAL_DATE = ["tanggal", "tanggal transaksi", "waktu", "waktu transaksi", "date", "transaction date", "tanggal & waktu", "tanggal dan waktu"];
+const BAL_AMOUNT = ["jumlah", "amount", "nominal", "jumlah transaksi", "mutasi", "total"];
+const BAL_IN = ["uang masuk", "pemasukan", "kredit", "masuk", "credit"];
+const BAL_OUT = ["uang keluar", "pengeluaran", "debit", "keluar"];
+const BAL_TYPE = ["jenis transaksi", "tipe transaksi", "jenis", "tipe", "deskripsi", "keterangan", "description", "transaction type", "type", "catatan"];
+
+function findBalanceHeader(sheet: Sheet) {
+  for (let r = 0; r < Math.min(sheet.rows.length, 40); r++) {
+    const row = (sheet.rows[r] ?? []).map(norm);
+    const idx = (names: string[]) => names.map((n) => row.indexOf(n)).find((i) => i >= 0) ?? -1;
+    const date = idx(BAL_DATE), amount = idx(BAL_AMOUNT), inn = idx(BAL_IN), out = idx(BAL_OUT);
+    const types = row.map((c, i) => (BAL_TYPE.includes(c) ? i : -1)).filter((i) => i >= 0);
+    if (date >= 0 && types.length && (amount >= 0 || (inn >= 0 && out >= 0))) return { r, date, amount, inn, out, types, order: idx(["no. pesanan", "order id", "id pesanan"]) };
+  }
+  return null;
+}
+
+const ADS_RE = /iklan|shopee ads|\bads\b/;
+const WD_RE = /penarikan|withdraw|tarik dana/;
+
+function parseShopeeBalance(sheet: Sheet, h: NonNullable<ReturnType<typeof findBalanceHeader>>): ParsedFile {
+  const incomes: ParsedIncome[] = [];
+  const withdrawals: ParsedWithdrawal[] = [];
+  const seen = new Map<string, number>();
+  let others = 0, othersTotal = 0, rows = 0;
+  for (const r of sheet.rows.slice(h.r + 1)) {
+    const date = parseDate(r?.[h.date]);
+    if (!date) continue;
+    const amount = h.amount >= 0 ? parseNum(r[h.amount]) : parseNum(r[h.inn]) - Math.abs(parseNum(r[h.out]));
+    if (!amount) continue;
+    rows++;
+    const text = h.types.map((i) => str(r[i]) ?? "").join(" | ");
+    const low = text.toLowerCase();
+    // kunci stabil agar unggah ulang periode tumpang tindih tidak dobel (baris identik dibedakan nomor urutnya)
+    const base = `${date.toISOString()}|${Math.round(amount)}|${low.slice(0, 80)}`;
+    const nth = (seen.get(base) ?? 0) + 1;
+    seen.set(base, nth);
+    const ref = `SB${createHash("sha1").update(`${base}|${nth}`).digest("hex").slice(0, 14)}`;
+    if (WD_RE.test(low)) withdrawals.push({ txType: "Withdrawal", refId: ref, requestedAt: date, doneAt: date, amount: Math.abs(Math.round(amount)), status: "Berhasil" });
+    else if (ADS_RE.test(low)) incomes.push({ kind: "ADS", refNo: ref, orderedAt: date, releasedAt: date, released: -Math.abs(Math.round(amount)), productAmt: 0, refundAmt: 0, fees: 0, feeDetail: {} });
+    else {
+      others++;
+      othersTotal += Math.round(amount);
+    }
+  }
+  const { from, to } = minMax([...incomes.map((x) => x.releasedAt), ...withdrawals.map((w) => w.requestedAt)]);
+  const note = `Saldo Penjual: ${incomes.length} iklan, ${withdrawals.length} penarikan dana, ${others} transaksi lain (info saja${others ? `, total Rp ${othersTotal.toLocaleString("id-ID")}` : ""})`;
+  return { platform: "SHOPEE", kind: "INCOME", orders: [], incomes, withdrawals, periodFrom: from, periodTo: to, info: { rows, note } };
+}
+
+/** Header yang terbaca (untuk pesan galat bila format tak dikenali) */
+function describeSheets(sheets: Sheet[]) {
+  return sheets.slice(0, 4).map((s) => {
+    const row = (s.rows.find((r) => (r ?? []).filter((c) => c !== null && String(c).trim() !== "").length >= 3) ?? []).filter((c) => c !== null && String(c).trim() !== "").slice(0, 10).map((c) => String(c).trim().slice(0, 30));
+    return `sheet “${s.name}”: ${row.join(" | ") || "(kosong)"}`;
+  }).join("; ");
+}
+
 /** Kenali & baca satu file; format tak dikenal → FormatError berpesan jelas */
 export async function parseMarketplaceFile(buf: Buffer | Uint8Array): Promise<ParsedFile> {
   let sheets: Sheet[];
@@ -337,5 +397,9 @@ export async function parseMarketplaceFile(buf: Buffer | Uint8Array): Promise<Pa
   if (osl) return parseTiktokOrders(osl);
   const det = sheetOf(sheets, "detail pesanan");
   if (det) return parseTiktokIncome(sheets, det);
-  throw new FormatError("Format file tidak dikenali. Gunakan file Excel asli dari Shopee (Order.all / Income sudah dilepas) atau TikTok Shop (Semua pesanan / income).");
+  for (const sh of sheets) {
+    const bh = findBalanceHeader(sh);
+    if (bh) return parseShopeeBalance(sh, bh);
+  }
+  throw new FormatError(`Format file tidak dikenali. Gunakan file Excel asli dari Shopee (Order.all / Income sudah dilepas / Transaksi Saldo Penjual) atau TikTok Shop (Semua pesanan / income). Yang terbaca: ${describeSheets(sheets)}`);
 }

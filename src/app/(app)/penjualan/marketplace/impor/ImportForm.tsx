@@ -104,6 +104,7 @@ export function ImportForm({ stores, canManage }: { stores: Store[]; canManage: 
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs">{f.storeName}</span>
                 {f.periodFrom && <span className="text-xs text-slate-500">{f.periodFrom} s/d {f.periodTo}</span>}
               </div>
+              {f.note && <p className="rounded bg-slate-50 px-2 py-1 text-xs text-slate-600">{f.note}</p>}
               {f.seller && <p className="text-xs text-slate-500">Penjual di file: {f.seller}</p>}
               <p>{nf(f.total)} {f.kind === "ORDER" ? "pesanan" : "baris"}: <b>{nf(f.baru)}</b> baru, <b>{nf(f.diperbarui)}</b> diperbarui, {nf(f.dilewati)} dilewati{f.adsRows ? ` · ${f.adsRows} potongan iklan/penyesuaian` : ""}{f.withdrawals ? ` · ${f.withdrawals} penarikan` : ""}</p>
               {Object.keys(f.changes).length > 0 && <p className="rounded bg-sky-50 px-2 py-1 text-xs text-sky-800">Perubahan pada pesanan yang sudah ada: {Object.entries(f.changes).map(([k, v]) => `${k}: ${nf(v)}`).join(" · ")}</p>}

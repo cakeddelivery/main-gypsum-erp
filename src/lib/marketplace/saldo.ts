@@ -74,25 +74,33 @@ export async function saldoPanel(opts: { storeId?: string } = {}) {
 
 export type WdMatch = { status: "COCOK" | "BELUM_DI_ERP" | "TIDAK_DI_FILE"; refId: string; fileAmount: number | null; erpAmount: number | null; date: Date | null; txId?: string };
 
-/** Cocokkan "Riwayat penarikan" TikTok (Withdrawal + ID referensi) dengan withdrawRef transaksi Keuangan */
-export async function matchTiktokWithdrawals(opts: { storeId: string; from: string; to: string }): Promise<WdMatch[]> {
+/**
+ * Cocokkan penarikan di file (TikTok "Riwayat penarikan" / Shopee "Transaksi Saldo Penjual") dengan withdraw di Keuangan.
+ * TikTok: ID referensi = withdrawRef. Shopee: tidak ada ID bersama → nominal sama & tanggal berselisih ≤ 2 hari (satu lawan satu).
+ */
+export async function matchWithdrawals(opts: { storeId: string; channel: "SHP" | "TTS"; from: string; to: string }): Promise<WdMatch[]> {
   const stores = await prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, select: { id: true, name: true, code: true } });
   const s = stores.find((x) => x.id === opts.storeId);
   if (!s) return [];
-  const file = await prisma.marketplaceWithdrawal.findMany({ where: { storeId: s.id, channel: "TTS", txType: { contains: "withdraw", mode: "insensitive" }, requestedAt: { gte: dayStart(opts.from), lt: dayEnd(opts.to) } } });
+  const file = await prisma.marketplaceWithdrawal.findMany({ where: { storeId: s.id, channel: opts.channel, txType: { contains: "withdraw", mode: "insensitive" }, requestedAt: { gte: dayStart(opts.from), lt: dayEnd(opts.to) } } });
   const banks = await marketplaceBanks();
-  const erp = (await recordedWithdraws(s, "TTS", banks, stores.length, dayStart(opts.from), dayEnd(opts.to))).rows;
-  const erpByRef = new Map(erp.filter((e) => e.withdrawRef).map((e) => [ref(e.withdrawRef), e]));
-  const seen = new Set<string>();
+  const erp = (await recordedWithdraws(s, opts.channel, banks, stores.length, dayStart(opts.from), dayEnd(opts.to))).rows;
+  const used = new Set<string>();
   const out: WdMatch[] = [];
+  const DAY = 86400000;
   for (const w of file) {
-    const e = erpByRef.get(ref(w.refId));
-    if (e) seen.add(ref(w.refId));
-    out.push({ status: e ? "COCOK" : "BELUM_DI_ERP", refId: w.refId, fileAmount: Math.abs(n(w.amount)), erpAmount: e?.amount ?? null, date: w.requestedAt, txId: e?.id });
+    const amount = Math.abs(n(w.amount));
+    const e = opts.channel === "TTS"
+      ? erp.find((x) => x.withdrawRef && ref(x.withdrawRef) === ref(w.refId) && !used.has(x.id))
+      : erp.find((x) => !used.has(x.id) && x.amount === amount && w.requestedAt && Math.abs(x.date.getTime() - w.requestedAt.getTime()) <= 2 * DAY);
+    if (e) used.add(e.id);
+    out.push({ status: e ? "COCOK" : "BELUM_DI_ERP", refId: opts.channel === "TTS" ? w.refId : `Saldo Penjual ${w.requestedAt ? dateStrWib(w.requestedAt) : ""}`, fileAmount: amount, erpAmount: e?.amount ?? null, date: w.requestedAt, txId: e?.id });
   }
-  for (const e of erp) if (e.withdrawRef && !seen.has(ref(e.withdrawRef))) out.push({ status: "TIDAK_DI_FILE", refId: e.withdrawRef, fileAmount: null, erpAmount: e.amount, date: e.date, txId: e.id });
+  for (const e of erp) if (!used.has(e.id) && (opts.channel === "SHP" || e.withdrawRef)) out.push({ status: "TIDAK_DI_FILE", refId: e.withdrawRef ?? `Keuangan ${dateStrWib(e.date)}`, fileAmount: null, erpAmount: e.amount, date: e.date, txId: e.id });
   return out.sort((a, b) => (b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0));
 }
+export const matchTiktokWithdrawals = (o: { storeId: string; from: string; to: string }) => matchWithdrawals({ ...o, channel: "TTS" });
+const dateStrWib = (d: Date) => new Date(d.getTime() + 7 * 3600000).toISOString().slice(0, 10);
 
 export const WD_REMINDER_KEY = "marketplace_wd_reminder_hour";
 export const wdReminderHour = async () => {

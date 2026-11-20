@@ -38,6 +38,8 @@ export type FilePreview = {
   incomeNoOrder: number;
   /** Rincian perubahan pada pesanan yang sudah ada, mis. {"Dikirim → Selesai": 120, "resi baru": 15, "Piutang → Cair": 340} */
   changes: Record<string, number>;
+  /** Keterangan tambahan (mis. ringkasan Saldo Penjual) */
+  note?: string;
 };
 export type Preview = { files: FilePreview[]; totals: { baru: number; diperbarui: number; dilewati: number; perluDicek: number } };
 
@@ -59,7 +61,7 @@ export async function previewImport(files: ImportFile[]): Promise<Preview> {
     const store = await checkStore(f.storeId);
     const channel = CHANNEL_OF[f.parsed.platform];
     const p: FilePreview = {
-      fileName: f.fileName, storeName: store.name, platform: f.parsed.platform, kind: f.parsed.kind, channel, periodFrom: f.parsed.periodFrom, periodTo: f.parsed.periodTo, seller: f.parsed.info.seller,
+      fileName: f.fileName, storeName: store.name, platform: f.parsed.platform, kind: f.parsed.kind, channel, periodFrom: f.parsed.periodFrom, periodTo: f.parsed.periodTo, seller: f.parsed.info.seller, note: f.parsed.info.note,
       total: 0, baru: 0, diperbarui: 0, dilewati: 0, withdrawals: 0, adsRows: 0, unmapped: [], incomeNoOrder: 0, changes: {},
     };
     if (f.parsed.kind === "ORDER") {

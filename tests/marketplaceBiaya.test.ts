@@ -6,7 +6,7 @@ import { categoryOf, defaultCategory, sumFees } from "@/lib/marketplace/feeMap";
 import { commitImport, undoImport } from "@/lib/marketplace/import";
 import type { ParsedFile, ParsedIncome, ParsedOrder } from "@/lib/marketplace/parse";
 import { affiliateReport, applyActuals, feeVsSettings, potonganReport } from "@/lib/marketplace/potongan";
-import { allocateFifo, matchTiktokWithdrawals, saldoNeedsAttention, saldoPanel, saldoStatus } from "@/lib/marketplace/saldo";
+import { allocateFifo, matchTiktokWithdrawals, matchWithdrawals, saldoNeedsAttention, saldoPanel, saldoStatus } from "@/lib/marketplace/saldo";
 
 /** Tanggal jauh (2036) agar tidak bercampur data tes lain */
 const tag = Date.now().toString(36).slice(-4).toUpperCase();
@@ -241,5 +241,39 @@ describe("Potongan, aktual vs pengaturan, affiliate, withdraw", () => {
     const after = (await saldoPanel({ storeId: st.id })).find((x) => x.channel === "SHP")!;
     expect(after).toMatchObject({ estimate: 20000, status: "NORMAL", ageDays: 0, todayCount: 1 });
     expect(after.coverage[0].covers?.from).not.toBe(after.coverage[0].covers?.to); // menutup lebih dari satu hari
+  });
+});
+
+describe("Shopee Transaksi Saldo Penjual", () => {
+  const head = ["Tanggal", "Jenis Transaksi", "Deskripsi", "Jumlah", "Saldo Akhir"];
+  const rows = [["Laporan Transaksi Saldo Penjual"], [], head,
+    ["2036-07-02 09:00", "Pengeluaran", "Isi Ulang Saldo Iklan Otomatis", -50000, 0],
+    ["2036-07-03 10:00", "Pengeluaran", "Pembayaran Iklan", -30000, 0],
+    ["2036-07-04 11:00", "Penarikan", "Penarikan Dana ke rekening", -100000, 0],
+    ["2036-07-04 12:00", "Pemasukan", "Penghasilan dari Pesanan", 20000, 0]];
+  it("terbaca toleran: iklan → ADS (IKLAN), penarikan → withdraw, sisanya info; unggah ulang tidak dobel; masuk Potongan, saldo & pencocokan", async () => {
+    const st = await storeDL();
+    const parsed = await parseMarketplaceFile(await makeXlsx([{ name: "Transaction Report", rows }]));
+    expect(parsed).toMatchObject({ platform: "SHOPEE", kind: "INCOME" });
+    expect(parsed.incomes.map((i) => i.released)).toEqual([-50000, -30000]);
+    expect(parsed.withdrawals).toHaveLength(1);
+    expect(parsed.info.note).toMatch(/2 iklan, 1 penarikan dana, 1 transaksi lain/);
+    const [r] = await commitImport(actor, [{ fileName: `saldo.${tag}.xlsx`, storeId: st.id, parsed }]);
+    cleanups.push(() => undoImport(actor, r.importId));
+    const [r2] = await commitImport(actor, [{ fileName: `saldo.${tag}.b.xlsx`, storeId: st.id, parsed }]);
+    expect(r2).toMatchObject({ baru: 0, dilewati: 2 }); // periode tumpang tindih: tidak dobel
+    expect((await potonganReport({ storeId: st.id, channel: "SHP", from: "2036-07-01", to: "2036-07-31" })).byCategory.IKLAN).toBe(-80000);
+    // pencocokan penarikan Shopee: nominal sama & tanggal berdekatan
+    const coa = await prisma.coaAccount.findFirstOrThrow();
+    const bank = await prisma.bankAccount.create({ data: { code: `MPS${tag}`, name: `Saldo Shopee DL ${tag}`, coaAccountId: coa.id, marketplace: true, aliases: "shopee" } });
+    cleanups.push(() => prisma.bankAccount.delete({ where: { id: bank.id } }));
+    const tx = await prisma.financeTransaction.create({ data: { number: `TX-MPT-${tag}-S`, source: "MANUAL", direction: "TRANSFER", amount: 100000n, date: at("2036-07-04"), accountId: bank.id, status: "DIBUKUKAN", fingerprint: `fp-${tag}-S`, createdBy: "t", storeId: st.id } });
+    cleanups.push(() => prisma.financeTransaction.delete({ where: { id: tx.id } }));
+    const m = await matchWithdrawals({ storeId: st.id, channel: "SHP", from: "2036-07-01", to: "2036-07-31" });
+    expect(m).toHaveLength(1);
+    expect(m[0]).toMatchObject({ status: "COCOK", fileAmount: 100000, erpAmount: 100000 });
+  });
+  it("format tak dikenali: pesan memuat header yang terbaca", async () => {
+    await expect(parseMarketplaceFile(await makeXlsx([{ name: "Lembar1", rows: [["Kolom X", "Kolom Y", "Kolom Z"], [1, 2, 3]] }]))).rejects.toThrow(/Kolom X \| Kolom Y \| Kolom Z/);
   });
 });

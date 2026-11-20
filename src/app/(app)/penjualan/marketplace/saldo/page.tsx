@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
 import { fmtDateTime } from "@/lib/time";
 import { CHANNEL_LABEL } from "@/lib/marketplace/rules";
-import { matchTiktokWithdrawals, saldoPanel, wdReminderHour } from "@/lib/marketplace/saldo";
+import { matchWithdrawals, saldoPanel, wdReminderHour } from "@/lib/marketplace/saldo";
 import { Badge, Card, Empty, Field, FilterBar, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { saveWdHourAction } from "../actions";
@@ -20,8 +20,8 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
   const sp = await searchParams;
   const { from, to } = await periodOf(sp);
   const [stores, rows, hour] = await Promise.all([prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } }), saldoPanel({ storeId: sp.toko || undefined }), wdReminderHour()]);
-  const ttStores = [...new Set(rows.filter((r) => r.channel === "TTS").map((r) => r.storeId))];
-  const matches = (await Promise.all(ttStores.map(async (id) => ({ id, name: stores.find((s) => s.id === id)?.name ?? "", list: await matchTiktokWithdrawals({ storeId: id, from, to }) })))).filter((m) => m.list.length);
+  const pairs = [...new Map(rows.map((r) => [`${r.storeId}|${r.channel}`, r])).values()];
+  const matches = (await Promise.all(pairs.map(async (r) => ({ key: r.storeId + r.channel, name: `${r.store} · ${CHANNEL_LABEL[r.channel]}`, list: await matchWithdrawals({ storeId: r.storeId, channel: r.channel as "SHP" | "TTS", from, to }) })))).filter((m) => m.list.length);
   return (
     <div className="space-y-4">
       <PageHeader title="Saldo Marketplace" subtitle="Cair (impor) − potongan iklan − withdraw tercatat di Keuangan = saldo belum ditarik · hanya laporan" actions={<Link href="/finance" className="btn-secondary">Keuangan</Link>} />
@@ -50,9 +50,9 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
         </Card>
       )}
       {matches.map((m) => (
-        <Card key={m.id} title={`Penarikan TikTok · ${m.name}`}>
+        <Card key={m.key} title={`Penarikan di file vs Keuangan · ${m.name}`}>
           <div className="table-wrap"><table className="tbl">
-            <thead><tr><th>ID referensi</th><th>Tanggal</th><th className="num">Di file</th><th className="num">Di ERP</th><th>Status</th></tr></thead>
+            <thead><tr><th>Referensi</th><th>Tanggal</th><th className="num">Di file</th><th className="num">Di ERP</th><th>Status</th></tr></thead>
             <tbody>{m.list.map((w) => <tr key={w.refId + w.status}><td className="font-mono text-xs">{w.refId}</td><td>{fmtDateTime(w.date)}</td><td className="num">{w.fileAmount === null ? "-" : idr(w.fileAmount)}</td><td className="num">{w.erpAmount === null ? "-" : idr(w.erpAmount)}</td><td><Badge tone={TONE[w.status]}>{LABEL[w.status]}</Badge></td></tr>)}</tbody>
           </table></div>
         </Card>
