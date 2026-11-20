@@ -8,6 +8,9 @@ import { audit } from "@/lib/audit";
 import { createInvoice, InvoiceError } from "@/lib/invoice";
 import { commitImport, previewImport, undoImport, MarketplaceImportError, type ImportFile, type Preview } from "@/lib/marketplace/import";
 import { FormatError, parseMarketplaceFile } from "@/lib/marketplace/parse";
+import { integrityCheck } from "@/lib/marketplace/integrity";
+import { latestMonth } from "@/lib/marketplace/dashboard";
+import { finishJob, runningJob, startJob, stepJob } from "@/lib/marketplace/job";
 import { detectFiles, type Detected } from "@/lib/marketplace/slots";
 import { resolveSkuKeys } from "@/lib/marketplace/sku";
 import { dateStr } from "@/lib/time";
@@ -69,6 +72,61 @@ export async function detectSlotsAction(fd: FormData): Promise<{ ok: boolean; er
   } catch (e) {
     return { ok: false, error: friendly(e) };
   }
+}
+
+/** Progres impor: mulai → simpan file satu per satu → selesai (dipanggil dari halaman Impor) */
+export async function startImportJobAction(total: number, label: string): Promise<{ ok: boolean; id?: string; error?: string }> {
+  try {
+    const user = await assertPerm("sales.manage");
+    const running = await runningJob();
+    if (running) return { ok: false, error: `Masih ada impor berjalan oleh ${running.by}. Tunggu sampai selesai.` };
+    return { ok: true, id: (await startJob(user, total, label)).id };
+  } catch (e) {
+    return { ok: false, error: friendly(e) };
+  }
+}
+
+export async function saveOneFileAction(fd: FormData): Promise<{ ok: boolean; error?: string; baru?: number; diperbarui?: number; dilewati?: number; importId?: string }> {
+  const jobId = str(fd, "jobId");
+  try {
+    const user = await assertPerm("sales.manage");
+    const { files, fileErrors } = await readFiles(fd);
+    if (fileErrors.length || files.length !== 1) return { ok: false, error: fileErrors[0]?.error ?? "File tidak bisa dibaca" };
+    const [r] = await commitImport(user, files);
+    revalidatePath("/penjualan", "layout");
+    if (jobId) await stepJob(jobId, Number(str(fd, "done")) || 0, `${files[0].fileName} ✓`);
+    return { ok: true, baru: r.baru, diperbarui: r.diperbarui, dilewati: r.dilewati, importId: r.importId };
+  } catch (e) {
+    return { ok: false, error: e instanceof MarketplaceImportError ? e.message : friendly(e) };
+  }
+}
+
+/** Tutup proses impor + hitung ulang cek integritas bulan terbaru (hasilnya ditampilkan di ringkasan akhir) */
+export async function finishImportJobAction(id: string, ok: boolean, message: string): Promise<{ ok: boolean; failed?: number; total?: number; month?: string }> {
+  try {
+    await assertPerm("sales.manage");
+    let res: { failed?: number; total?: number; month?: string } = {};
+    if (ok) {
+      try {
+        const month = await latestMonth();
+        const c = await integrityCheck({ month });
+        res = { failed: c.failed, total: c.total, month };
+      } catch {
+        /* cek integritas gagal dihitung: impor tetap sah */
+      }
+    }
+    await finishJob(id, ok, message);
+    revalidatePath("/penjualan", "layout");
+    return { ok: true, ...res };
+  } catch {
+    return { ok: true }; // banner basi hilang sendiri setelah 15 menit
+  }
+}
+
+export async function importRunningAction(): Promise<{ running: Awaited<ReturnType<typeof runningJob>> extends infer T ? (T extends null ? null : { by: string; total: number; done: number; label: string | null }) : never }> {
+  await assertPerm("sales.view");
+  const r = await runningJob();
+  return { running: r ? { by: r.by, total: r.total, done: r.done, label: r.label } : null };
 }
 
 const ser = (p: Preview): SerPreview => ({ totals: p.totals, files: p.files.map((f) => ({ ...f, periodFrom: f.periodFrom ? dateStr(f.periodFrom) : null, periodTo: f.periodTo ? dateStr(f.periodTo) : null })) });

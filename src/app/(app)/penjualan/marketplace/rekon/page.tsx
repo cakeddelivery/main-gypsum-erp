@@ -6,6 +6,7 @@ import { CHANNEL_LABEL } from "@/lib/marketplace/rules";
 import { reconcile } from "@/lib/marketplace/report";
 import { integrityCheck, channelLabel } from "@/lib/marketplace/integrity";
 import { Badge, Card, Empty, Field, FilterBar, PageHeader } from "@/components/ui";
+import { ImportBannerServer } from "@/components/ImportBannerServer";
 import { MpNav } from "../MpNav";
 
 export const metadata = { title: "Rekonsiliasi Marketplace" };
@@ -24,6 +25,7 @@ export default async function RekonPage({ searchParams }: { searchParams: Promis
     <div className="space-y-4">
       <PageHeader title="Rekonsiliasi" subtitle="Uang cair (file penghasilan) dibanding withdraw yang sudah dicatat di Keuangan · hanya laporan, tidak membuat transaksi" />
       <MpNav current="rekon" />
+      <ImportBannerServer />
       <FilterBar>
         <Field label="Toko"><select name="toko" defaultValue={sp.toko ?? ""} className="input"><option value="">Semua</option>{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
         <Field label="Dari"><input type="date" name="dari" defaultValue={from} className="input" /></Field>

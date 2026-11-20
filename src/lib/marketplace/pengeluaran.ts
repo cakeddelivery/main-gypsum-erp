@@ -15,7 +15,7 @@ export const SECTORS: SectorDef[] = [
   { key: "ADMIN", label: "Admin / komisi platform", cats: ["ADMIN"] },
   { key: "PROSES", label: "Biaya proses pesanan", cats: ["PROSES"] },
   { key: "ONGKIR_PROGRAM", label: "Program ongkir (Xtra / logistik)", cats: ["ONGKIR_PROGRAM"] },
-  { key: "ONGKIR", label: "Selisih ongkir", cats: ["ONGKIR"] },
+  { key: "ONGKIR", label: "Selisih ongkir (berat/dimensi/alamat)", cats: ["ONGKIR"] },
   { key: "AFFILIATE", label: "Affiliate (komisi)", cats: ["AFFILIATE"] },
   { key: "AFFILIATE_SAMPEL", label: "Ongkir sampel affiliate", cats: ["AFFILIATE_SAMPEL"] },
   { key: "IKLAN", label: "Iklan (pemakaian aktual)", cats: ["IKLAN"] },
@@ -138,4 +138,37 @@ export async function lostOrdersWithoutCompensation(f: { month: string; storeId?
   const got = new Set(comp.map((c) => c.refNo));
   const left = lost.filter((l) => !got.has(l.orderNo));
   return { count: left.length, value: left.reduce((a, l) => a + n(l.total), 0), orders: left.slice(0, 10).map((l) => l.orderNo) };
+}
+
+/** Rincian "Selisih ongkir (berat/dimensi/alamat)" dari sheet Shipping Fee Discrepancy: Rp per alasan + produk yang sering kena */
+export async function shipDiscrepancyReport(f: { month: string; storeId?: string; channel: string }) {
+  const { from, to } = monthBounds(f.month);
+  const rows = await prisma.marketplaceShipDiscrepancy.findMany({
+    where: { channel: f.channel, ...(f.storeId ? { storeId: f.storeId } : {}), date: { gte: new Date(`${from}T00:00:00+07:00`), lt: new Date(new Date(`${to}T00:00:00+07:00`).getTime() + 86400000) } },
+    select: { storeId: true, orderNo: true, diff: true, reason: true },
+  });
+  if (!rows.length) return null;
+  const byReason = new Map<string, { count: number; value: number }>();
+  for (const r of rows) {
+    const k = (r.reason ?? "Tanpa alasan").slice(0, 120);
+    const e = byReason.get(k) ?? { count: 0, value: 0 };
+    e.count++; e.value += n(r.diff);
+    byReason.set(k, e);
+  }
+  // produk yang sering kena (alasan berat/dimensi): berat/dimensi di master perlu dikoreksi
+  const heavy = rows.filter((r) => /berat|dimensi|weight|dimension/i.test(r.reason ?? ""));
+  const lines = heavy.length ? await prisma.marketplaceOrderLine.findMany({ where: { order: { channel: f.channel, orderNo: { in: heavy.map((h) => h.orderNo) } } }, select: { sku: true, name: true, order: { select: { orderNo: true } } } }) : [];
+  const bySku = new Map<string, { name: string; orders: Set<string> }>();
+  for (const l of lines) {
+    const k = l.sku ?? l.name ?? "?";
+    const e = bySku.get(k) ?? { name: l.name ?? "", orders: new Set<string>() };
+    e.orders.add(l.order.orderNo);
+    bySku.set(k, e);
+  }
+  return {
+    count: rows.length,
+    value: rows.reduce((a, r) => a + n(r.diff), 0),
+    reasons: [...byReason.entries()].map(([reason, v]) => ({ reason, ...v })).sort((a, b) => b.value - a.value),
+    products: [...bySku.entries()].map(([sku, v]) => ({ sku, name: v.name, orders: v.orders.size })).sort((a, b) => b.orders - a.orders).slice(0, 8),
+  };
 }

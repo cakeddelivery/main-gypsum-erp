@@ -40,6 +40,11 @@ export type FilePreview = {
   changes: Record<string, number>;
   /** Keterangan tambahan (mis. ringkasan Saldo Penjual) */
   note?: string;
+  /** Sheet dibaca / dilewati (dengan alasan) dan kolom yang sengaja tidak disimpan (data pribadi) */
+  sheets?: { read: string[]; skipped: { name: string; reason: string }[] };
+  personalCols?: string[];
+  /** Data tambahan dari sheet lain: selisih ongkir & Seller Fee (jumlah baris, yang baru) */
+  extras?: { shipDisc: number; shipDiscBaru: number; sellerFee: number; sellerFeeBaru: number };
   /** Galat yang menahan penyimpanan (mis. toko tidak cocok dengan file) */
   error?: string;
 };
@@ -93,7 +98,7 @@ export async function previewImport(files: ImportFile[]): Promise<Preview> {
     const store = await checkStore(f.storeId);
     const channel = CHANNEL_OF[f.parsed.platform];
     const p: FilePreview = {
-      fileName: f.fileName, storeName: store.name, platform: f.parsed.platform, kind: f.parsed.kind, channel, periodFrom: f.parsed.periodFrom, periodTo: f.parsed.periodTo, seller: f.parsed.info.seller, note: f.parsed.info.note,
+      fileName: f.fileName, storeName: store.name, platform: f.parsed.platform, kind: f.parsed.kind, channel, periodFrom: f.parsed.periodFrom, periodTo: f.parsed.periodTo, seller: f.parsed.info.seller, note: f.parsed.info.note, sheets: f.parsed.info.sheets, personalCols: f.parsed.info.personalCols,
       total: 0, baru: 0, diperbarui: 0, dilewati: 0, withdrawals: 0, adsRows: 0, unmapped: [], incomeNoOrder: 0, changes: {},
     };
     const g = await storeGuards(prisma, f, channel);
@@ -153,6 +158,13 @@ export async function previewImport(files: ImportFile[]): Promise<Preview> {
       const orderRefs = rows.filter((r) => r.kind === "ORDER").map((r) => r.refNo);
       const have = new Set<string>();
       for (const part of chunk(orderRefs)) for (const e of await prisma.marketplaceOrder.findMany({ where: { storeId: f.storeId, channel, orderNo: { in: part } }, select: { orderNo: true } })) have.add(e.orderNo);
+      const sd = f.parsed.shipDiscrepancies ?? [], sf = f.parsed.sellerFees ?? [];
+      if (sd.length || sf.length) {
+        const haveD = new Set<string>(), haveF = new Set<string>();
+        for (const part of chunk(sd.map((x) => x.orderNo))) for (const e of await prisma.marketplaceShipDiscrepancy.findMany({ where: { storeId: f.storeId, channel, orderNo: { in: part } }, select: { orderNo: true } })) haveD.add(e.orderNo);
+        for (const part of chunk(sf.map((x) => x.orderNo))) for (const e of await prisma.marketplaceSellerFee.findMany({ where: { storeId: f.storeId, channel, orderNo: { in: part } }, select: { orderNo: true } })) haveF.add(e.orderNo);
+        p.extras = { shipDisc: sd.length, shipDiscBaru: sd.filter((x) => !haveD.has(x.orderNo)).length, sellerFee: sf.length, sellerFeeBaru: sf.filter((x) => !haveF.has(x.orderNo)).length };
+      }
       p.incomeNoOrder = orderRefs.filter((r) => !have.has(r) && !inUpload.has(`${f.storeId}|${channel}|${r}`)).length;
       let cair = 0;
       for (const part of chunk(orderRefs)) cair += await prisma.marketplaceOrder.count({ where: { storeId: f.storeId, channel, orderNo: { in: part }, incomeId: null, status: { not: "BATAL" } } });
@@ -178,7 +190,7 @@ const orderData = (o: ParsedOrder, status: string, importId: string) => ({
   rawStatus: o.rawStatus, rawSubstatus: o.rawSubstatus, rawReturn: o.rawReturn, cancelReason: o.cancelReason, status, trackingNo: o.trackingNo, shipOption: o.shipOption, courier: o.courier, paymentMethod: o.paymentMethod,
   city: o.city, province: o.province, creatorHandle: o.creatorHandle, orderedAt: o.orderedAt, paidAt: o.paidAt, completedAt: o.completedAt,
   subtotal: BigInt(Math.round(o.subtotal)), discount: BigInt(Math.round(o.discount)), shippingPaid: BigInt(Math.round(o.shippingPaid)), total: BigInt(Math.round(o.total)), refundAmount: BigInt(Math.round(o.refundAmount)), returnQty: o.returnQty,
-  sig: orderSig(o, status), lastImportId: importId,
+  sig: orderSig(o, status), lastImportId: importId, ...(o.extra?.length ? { extra: o.extra as Prisma.InputJsonValue } : {}),
 });
 const lineRows = (orderId: string, channel: string, o: ParsedOrder) => o.lines.map((l, i) => ({ id: randomUUID(), orderId, sku: l.sku, variation: l.variation, skuKey: lineKey(channel, l.sku, l.variation), name: l.name, qty: l.qty, unitPrice: BigInt(Math.round(l.unitPrice)), amount: BigInt(Math.round(l.amount)), returnQty: l.returnQty, sortOrder: i }));
 const incomeData = (r: ParsedIncome, importId: string) => ({
@@ -231,6 +243,13 @@ async function commitOrders(tx: Tx, f: ImportFile, channel: string, importId: st
       await tx.marketplaceOrderLine.createMany({ data: lineRows(e.id, channel, o) });
     }
     upd++;
+  }
+  // Pesanan lama yang belum punya kolom lengkap (diimpor sebelum fitur ini): lengkapi saja, tanpa mengubah status/angka
+  const withExtra = orders.filter((o) => o.extra?.length && exist.has(o.orderNo));
+  for (const part of chunk(withExtra, 500)) {
+    const need = await tx.marketplaceOrder.findMany({ where: { storeId: f.storeId, channel, orderNo: { in: part.map((o) => o.orderNo) }, extra: { equals: Prisma.DbNull } }, select: { id: true, orderNo: true } });
+    const byNo = new Map(part.map((o) => [o.orderNo, o]));
+    for (const n of need) await tx.marketplaceOrder.update({ where: { id: n.id }, data: { extra: byNo.get(n.orderNo)!.extra as Prisma.InputJsonValue } });
   }
   for (const part of chunk(news, 500)) {
     const ids = part.map(() => randomUUID());
@@ -377,15 +396,20 @@ export async function commitImport(actor: Actor, files: ImportFile[]) {
           for (const part of chunk(txs, 1000)) made += (await tx.marketplaceBalanceTx.createMany({ data: part.map((t) => ({ storeId: f.storeId, channel, txKey: t.txKey, date: t.date, type: t.type, description: t.description, orderNo: t.orderNo, amount: BigInt(t.amount), status: t.status, balanceAfter: t.balanceAfter === null ? null : BigInt(t.balanceAfter), pos: t.pos, category: t.category, importId: imp.id })), skipDuplicates: true })).count;
           stats = { baru: made, diperbarui: 0, dilewati: txs.length - made, withdrawals: stats.withdrawals ?? 0 };
         }
+        // Selisih ongkir & Seller Fee (sheet lain di file Penghasilan Shopee): hanya yang baru
+        let extraMade = 0;
+        const sd = f.parsed.shipDiscrepancies ?? [], sf = f.parsed.sellerFees ?? [];
+        for (const part of chunk(sd, 1000)) extraMade += (await tx.marketplaceShipDiscrepancy.createMany({ data: part.map((x) => ({ storeId: f.storeId, channel, orderNo: x.orderNo, estimate: BigInt(x.estimate), paid: BigInt(x.paid), diff: BigInt(x.diff), reason: x.reason, date: x.date, importId: imp.id })), skipDuplicates: true })).count;
+        for (const part of chunk(sf, 1000)) extraMade += (await tx.marketplaceSellerFee.createMany({ data: part.map((x) => ({ storeId: f.storeId, channel, orderNo: x.orderNo, platformFee: BigInt(x.platformFee), xtra: BigInt(x.xtra), service: BigInt(x.service), promo: BigInt(x.promo), other: BigInt(x.other), importId: imp.id })), skipDuplicates: true })).count;
         // Impor ulang yang identik tidak meninggalkan batch kosong (tidak ada yang perlu dibatalkan)
-        if (!stats.baru && !stats.diperbarui && !("withdrawals" in stats && stats.withdrawals)) {
+        if (!stats.baru && !stats.diperbarui && !extraMade && !("withdrawals" in stats && stats.withdrawals)) {
           await tx.marketplaceImport.delete({ where: { id: imp.id } });
           return { importId: "", fileName: f.fileName, ...stats };
         }
         // Angka pembanding untuk cek integritas: Σ cair baris ORDER di file vs total ringkasan file
         // Ringkasan TikTok = Σ SEMUA baris Detail pesanan (pesanan + iklan GMV + penyesuaian); Shopee "Total Penghasilan" = baris Order saja
         const fileTotal = f.parsed.incomes.filter((i) => f.parsed.platform === "TIKTOK" || i.kind === "ORDER").reduce((a, i) => a + i.released, 0);
-        const extra = { total: f.parsed.kind === "ORDER" ? f.parsed.orders.length : f.parsed.kind === "BALANCE" ? (f.parsed.balanceTx?.length ?? 0) : f.parsed.incomes.length, lines: f.parsed.orders.reduce((a, o) => a + o.lines.length, 0), ...(f.parsed.kind !== "ORDER" ? { fileTotal, summaryTotal: f.parsed.info.summaryTotal ?? null, summaryLabel: f.parsed.info.summaryLabel ?? null, seller: f.parsed.info.seller ?? null } : {}) };
+        const extra = { total: f.parsed.kind === "ORDER" ? f.parsed.orders.length : f.parsed.kind === "BALANCE" ? (f.parsed.balanceTx?.length ?? 0) : f.parsed.incomes.length, lines: f.parsed.orders.reduce((a, o) => a + o.lines.length, 0), ...(f.parsed.kind !== "ORDER" ? { fileTotal, summaryTotal: f.parsed.info.summaryTotal ?? null, summaryLabel: f.parsed.info.summaryLabel ?? null, seller: f.parsed.info.seller ?? null, summaryRows: f.parsed.info.summaryRows ?? null, sheets: f.parsed.info.sheets ?? null, shipDisc: sd.length, sellerFee: sf.length } : {}) };
         await tx.marketplaceImport.update({ where: { id: imp.id }, data: { stats: { ...stats, ...extra } } });
         await linkIncome(tx, f.storeId, channel);
         if (guard.remember) await tx.setting.upsert({ where: { key: sellerKey(f.storeId, channel) }, create: { key: sellerKey(f.storeId, channel), value: guard.remember }, update: { value: guard.remember } });
@@ -429,6 +453,8 @@ export async function undoImport(actor: Actor, importId: string) {
       const dIncome = { count: dEv.count };
       const dWd = await tx.marketplaceWithdrawal.deleteMany({ where: { importId } });
       await tx.marketplaceBalanceTx.deleteMany({ where: { importId } });
+      await tx.marketplaceShipDiscrepancy.deleteMany({ where: { importId } });
+      await tx.marketplaceSellerFee.deleteMany({ where: { importId } });
       await tx.marketplaceImport.update({ where: { id: importId }, data: { undoneAt: new Date(), undoneBy: actor.name, stats: { ...(imp.stats as object), dibatalkan: { pesanan: dOrders.count, penghasilan: dIncome.count, penarikan: dWd.count, dikembalikan: imp.changes.length } } } });
       await tx.marketplaceChange.updateMany({ where: { importId }, data: { undone: true } }); // riwayat ringkas tetap ada
       await linkIncome(tx, imp.storeId, imp.channel);

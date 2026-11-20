@@ -10,6 +10,7 @@ import { Badge, Card, Empty, Field, FilterBar, PageHeader, Stat } from "@/compon
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { BarsChart, TrendChart } from "@/components/Charts";
 import { saveSyncAction } from "./marketplace/actions";
+import { ImportBannerServer } from "@/components/ImportBannerServer";
 import { MpNav } from "./marketplace/MpNav";
 
 export const metadata = { title: "Penjualan · Dashboard Marketplace" };
@@ -41,6 +42,7 @@ export default async function PenjualanDashboard({ searchParams }: { searchParam
         actions={<><Link href="/penjualan/offline" className="btn-secondary">Penjualan</Link><Link href="/penjualan/invoice" className="btn-secondary">Invoice</Link><Link href="/penjualan/marketplace/impor" className="btn-primary">Impor data</Link></>}
       />
       <MpNav current="dashboard" />
+      <ImportBannerServer />
       <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Angka marketplace = data operasional dari file; tidak masuk jurnal. Pendapatan akuntansi dicatat dari withdraw — jangan dijumlahkan dengan laporan Laba.</p>
 
       {(sync.active || canManage) && (
