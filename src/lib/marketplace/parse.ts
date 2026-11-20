@@ -84,6 +84,8 @@ export function parseDate(c: Cell | undefined): Date | null {
   const s = String(c).trim();
   let m = /^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/.exec(s);
   if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] ?? 0), +(m[5] ?? 0), +(m[6] ?? 0)) - WIB);
+  m = /^(\d{4})\/(\d{2})\/(\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/.exec(s);
+  if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] ?? 0), +(m[5] ?? 0), +(m[6] ?? 0)) - WIB);
   m = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/.exec(s);
   if (m) return new Date(Date.UTC(+m[3], +m[2] - 1, +m[1], +(m[4] ?? 0), +(m[5] ?? 0), +(m[6] ?? 0)) - WIB);
   return null;
@@ -171,7 +173,7 @@ function parseShopeeIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
   const h = headerMap(sh.rows[hr]);
   const I = {
     no: need(h, "no. pesanan"), created: need(h, "waktu pesanan dibuat"), rel: need(h, "tanggal dana dilepaskan"), total: need(h, "total penghasilan"),
-    prod: need(h, "harga produk"), refund: need(h, "jumlah pengembalian dana ke pembeli"),
+    view: need(h, "lihat berdasarkan"), prod: need(h, "harga produk"), refund: need(h, "jumlah pengembalian dana ke pembeli"),
   };
   if (I.no < 0 || I.total < 0) throw new FormatError("Header sheet Penghasilan tidak sesuai format Shopee “Income”");
   const feeCols = [...h.entries()].filter(([k]) => /^(biaya|premi|pph)/.test(k));
@@ -180,6 +182,8 @@ function parseShopeeIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
   for (const r of sh.rows.slice(hr + 1)) {
     const no = str(r?.[I.no]);
     if (!no || !/\d/.test(no)) continue;
+    // File asli memuat dua jenis baris: "Order" (satu per pesanan) dan "Sku" (rincian per produk). Hanya "Order" dihitung agar tidak dobel.
+    if (I.view >= 0 && norm(r[I.view]) !== "order") continue;
     rows++;
     const feeDetail: Record<string, number> = {};
     let fees = 0;
@@ -302,7 +306,10 @@ function parseTiktokIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
       }
     }
   }
-  const { from, to } = minMax(incomes.filter((x) => x.kind === "ORDER").map((x) => x.releasedAt ?? x.orderedAt));
+  const dates = (rows: ParsedIncome[]) => minMax(rows.flatMap((x) => [x.releasedAt, x.orderedAt]));
+  const byOrder = dates(incomes.filter((x) => x.kind === "ORDER"));
+  const any = byOrder.from ? byOrder : dates(incomes);
+  const { from, to } = any.from ? any : minMax(withdrawals.flatMap((w) => [w.requestedAt, w.doneAt]));
   return { platform: "TIKTOK", kind: "INCOME", orders: [], incomes, withdrawals, periodFrom: from, periodTo: to, info: { rows } };
 }
 

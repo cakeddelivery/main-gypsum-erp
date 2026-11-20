@@ -29,7 +29,7 @@ const shopeeOrderFile = () => makeXlsx([{ name: "orders", rows: [SHP_HEAD, ...SH
 const INC_HEAD = ["No.", "Lihat berdasarkan", "No. Pesanan", "No. Pengajuan", "Waktu Pesanan Dibuat", "Tanggal Dana Dilepaskan", "Metode Pelepasan Dana", "Total Penghasilan", "Harga Produk", "Jumlah Pengembalian Dana ke Pembeli", "Biaya Administrasi", "Biaya Proses Pesanan", "Biaya Transaksi", "Premi", "PPh 22"];
 const shopeeIncomeFile = (released = 80000) => makeXlsx([
   { name: "Summary", rows: [["Username (Penjual)", "toko_uji"], ["Periode", "2026-08-01 - 2026-08-31"]] },
-  { name: "Penghasilan", rows: [["", "", "Info Pesanan"], ["", "", "Rincian Biaya"], INC_HEAD, [1, "Pesanan", `A${tag}1`, null, "2026-08-05 10:00", "2026-08-12 08:00", "Saldo", released, 88000, 0, "-4000", "-1500", "-2500", "-0", "-0"]] },
+  { name: "Penghasilan", rows: [["", "", "Info Pesanan"], ["", "", "Rincian Biaya"], INC_HEAD, [1, "Order", `A${tag}1`, null, "2026-08-05 10:00", "2026-08-12 08:00", "Saldo", released, 88000, 0, "-4000", "-1500", "-2500", "-0", "-0"], [2, "Sku", `A${tag}1`, null, "2026-08-05 10:00", "2026-08-12 08:00", "Saldo", released, 88000, 0, "-4000", "-1500", "-2500", "-0", "-0"]] },
 ]);
 
 const TT_HEAD = ["Order ID", "Order Status", "Order Substatus", "Cancelation/Return Type", "SKU ID", "Seller SKU", "Product Name", "Variation", "Quantity", "Sku Quantity of return", "SKU Unit Original Price", "SKU Subtotal Before Discount", "SKU Subtotal After Discount", "SKU Seller Discount", "Order Refund Amount", "Order Amount", "Created Time", "Paid Time", "Shipped Time", "Delivered Time", "Cancelled Time", "Cancel By", "Cancel Reason", "Tracking ID", "Delivery Option", "Shipping Provider Name", "Recipient", "Phone #", "Province", "Regency and City", "Payment Method", "Purchase Channel", "Creator Handle"];
@@ -40,7 +40,7 @@ const TT_ORDERS = [
   ttRow({ "Order ID": `5781${num}02`, "Order Status": "Dibatalkan", "Cancelation/Return Type": "Cancel", "Seller SKU": `SP${tag}`, "Quantity": 1, "SKU Unit Original Price": 9900, "SKU Subtotal After Discount": 9900, "Order Amount": 9900, "Created Time": "06/08/2026 08:00:00", "Province": "DKI Jakarta", "Regency and City": "Kota Jakarta Barat" }),
   ttRow({ "Order ID": `5781${num}03`, "Order Status": "Selesai", "Cancelation/Return Type": "Return", "Seller SKU": `SP${tag}`, "Quantity": 1, "Sku Quantity of return": 1, "SKU Unit Original Price": 9900, "SKU Subtotal After Discount": 9900, "Order Refund Amount": 9900, "Order Amount": 9900, "Created Time": "07/08/2026 08:00:00", "Tracking ID": `TTRES${tag}3`, "Province": "Jawa Barat", "Regency and City": "Kab. Bekasi" }),
 ];
-const tiktokOrderFile = () => makeXlsx([{ name: "OrderSKUList", rows: [TT_HEAD, TT_HEAD.map((h) => `Deskripsi ${h}`), ...TT_ORDERS] }]);
+const tiktokOrderFile = (rowPerCell = false) => makeXlsx([{ name: "OrderSKUList", rows: [TT_HEAD, TT_HEAD.map((h) => `Deskripsi ${h}`), ...TT_ORDERS] }], { rowPerCell });
 
 const TI_HEAD = ["ID Pesanan/Penyesuaian", "Jenis transaksi", "Waktu pemesanan", "Waktu pembayaran pesanan", "Jumlah penyelesaian pembayaran", "Total Pendapatan", "Total Biaya", "Biaya komisi platform", "Biaya layanan"];
 const tiktokIncomeFile = () => makeXlsx([
@@ -142,12 +142,24 @@ describe("Marketplace: pembaca 4 format", () => {
     expect(JSON.stringify(p)).not.toContain(NAMA_RAHASIA);
     expect(JSON.stringify(p)).not.toContain(HP_RAHASIA);
   });
+  it("TikTok Order dengan <row> berulang per sel (file asli): sel digabung, bukan ditimpa", async () => {
+    const p = await parseMarketplaceFile(await tiktokOrderFile(true));
+    expect(p.orders).toHaveLength(3);
+    expect(p.orders.find((o) => o.orderNo === `5781${num}01`)!.lines).toHaveLength(2);
+    expect(p.orders.find((o) => o.orderNo === `5781${num}01`)!.total).toBe(58000);
+  });
+  it("Shopee Income: baris rincian \"Sku\" tidak dihitung dobel", async () => {
+    const p = await parseMarketplaceFile(await shopeeIncomeFile());
+    expect(p.incomes).toHaveLength(1);
+    expect(p.incomes.reduce((a, i) => a + i.released, 0)).toBe(80000);
+  });
   it("TikTok Income: pesanan, iklan GMV, penyesuaian, dan riwayat penarikan (tanpa rekening)", async () => {
     const p = await parseMarketplaceFile(await tiktokIncomeFile());
     expect(p).toMatchObject({ platform: "TIKTOK", kind: "INCOME" });
     expect(p.incomes.map((i) => i.kind)).toEqual(["ORDER", "ADS", "ADJUST"]);
     expect(p.incomes[0]).toMatchObject({ released: 50000, fees: 8000 });
     expect(p.withdrawals).toHaveLength(1);
+    expect(p.periodFrom).not.toBeNull();
     expect(JSON.stringify(p)).not.toContain("BCA");
   });
   it("format tak dikenal ditolak dengan pesan jelas", async () => {

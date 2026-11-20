@@ -73,9 +73,13 @@ export async function readXlsx(buf: Buffer | ArrayBuffer | Uint8Array): Promise<
         }
         cells[idx] = v;
       }
-      rows[rowNo - 1] = Array.from(cells, (x) => x ?? null);
+      // Beberapa file (TikTok) menulis satu <row> per sel dengan nomor baris yang sama: gabungkan, jangan timpa
+      const cur = (rows[rowNo - 1] ??= []);
+      cells.forEach((v, ci) => {
+        if (v !== undefined) cur[ci] = v;
+      });
     }
-    out.push({ name, rows: Array.from(rows, (x) => x ?? []) });
+    out.push({ name, rows: Array.from(rows, (x) => (x ? Array.from(x, (v) => v ?? null) : [])) });
   }
   return out;
 }
