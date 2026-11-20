@@ -31,6 +31,8 @@ export async function flowEnabledOn(date: Date | string, db: Tx | typeof prisma 
   return !t || d >= t;
 }
 
+import { SATUAN_ORDER } from "./singlePackFix";
+
 const VARIANT_ENUM: Record<string, ProductVariant> = { Hewan: "HEWAN", Cowok: "COWOK", Transportasi: "TRANSPORTASI", Cewek: "CEWEK" };
 
 async function ensureItem(tx: Tx, sku: string, data: { name: string; type: "BARANG_DALAM_PROSES" | "BARANG_JADI"; unit: string }) {
@@ -57,7 +59,7 @@ export async function flowItem(tx: Tx, s: Pick<FlowStep, "kind" | "key">): Promi
     await tx.product.update({ where: { id: p.id }, data: { finishedItemId: itemId } });
     return itemId;
   }
-  const p = await tx.product.findFirst({ where: { type: "SATUAN", variant: VARIANT_ENUM[s.key], active: true, finishedItemId: { not: null } }, orderBy: { sku: "asc" } });
+  const p = await tx.product.findFirst({ where: { type: "SATUAN", variant: VARIANT_ENUM[s.key], active: true, finishedItemId: { not: null } }, orderBy: SATUAN_ORDER });
   if (p?.finishedItemId) return p.finishedItemId;
   return ensureItem(tx, `BJ-SAT-${s.key.toUpperCase()}`, { name: `Patung satuan ${s.key}`, type: "BARANG_JADI", unit: "pcs" });
 }
