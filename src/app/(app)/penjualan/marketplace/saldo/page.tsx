@@ -19,29 +19,34 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
   const user = await requirePerm("sales.view");
   const sp = await searchParams;
   const { from, to } = await periodOf(sp);
-  const [stores, rows, hour] = await Promise.all([prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } }), saldoPanel({ from, to, storeId: sp.toko || undefined }), wdReminderHour()]);
+  const [stores, rows, hour] = await Promise.all([prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } }), saldoPanel({ storeId: sp.toko || undefined }), wdReminderHour()]);
   const ttStores = [...new Set(rows.filter((r) => r.channel === "TTS").map((r) => r.storeId))];
   const matches = (await Promise.all(ttStores.map(async (id) => ({ id, name: stores.find((s) => s.id === id)?.name ?? "", list: await matchTiktokWithdrawals({ storeId: id, from, to }) })))).filter((m) => m.list.length);
   return (
     <div className="space-y-4">
-      <PageHeader title="Saldo Marketplace" subtitle="Cair (impor) − withdraw tercatat di Keuangan − potongan iklan = estimasi saldo belum ditarik · hanya laporan" actions={<Link href="/finance" className="btn-secondary">Keuangan</Link>} />
+      <PageHeader title="Saldo Marketplace" subtitle="Cair (impor) − potongan iklan − withdraw tercatat di Keuangan = saldo belum ditarik · hanya laporan" actions={<Link href="/finance" className="btn-secondary">Keuangan</Link>} />
       <MpNav current="saldo" />
       <FilterBar>
         <Field label="Toko"><select name="toko" defaultValue={sp.toko ?? ""} className="input"><option value="">Semua</option>{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
         <Field label="Dari"><input type="date" name="dari" defaultValue={from} className="input" /></Field>
         <Field label="Sampai"><input type="date" name="sampai" defaultValue={to} className="input" /></Field>
       </FilterBar>
-      {rows.length === 0 ? <Empty title="Belum ada data cair pada periode ini" hint="Unggah file penghasilan di menu Impor." /> : (
-        <Card>
+      {rows.length === 0 ? <Empty title="Belum ada data cair" hint="Unggah file penghasilan di menu Impor." /> : (
+        <Card title="Saldo berjalan (sejak data pertama)">
           <div className="table-wrap"><table className="tbl">
-            <thead><tr><th>Toko</th><th>Kanal</th><th className="num">Cair</th><th className="num">Iklan/penyesuaian</th><th className="num">Withdraw tercatat</th><th className="num">Estimasi saldo</th><th>Hari ini</th></tr></thead>
+            <thead><tr><th>Toko</th><th>Kanal</th><th className="num">Cair bersih</th><th className="num">Withdraw tercatat</th><th className="num">Belum ditarik</th><th>Status</th></tr></thead>
             <tbody>{rows.map((r) => (
               <tr key={r.storeId + r.channel}>
-                <td>{r.store}</td><td>{CHANNEL_LABEL[r.channel]}</td><td className="num">{idr(r.cair)}</td><td className="num">{idr(r.ads + r.adjust)}</td><td className="num">{idr(r.recorded)}</td><td className="num font-medium">{idr(r.estimate)}</td>
-                <td>{r.todayCount ? <Badge tone="green">{r.todayCount} withdraw · {idr(r.todayAmount)}</Badge> : r.estimate > 0 ? <Badge tone="amber">Belum dicatat</Badge> : <Badge tone="gray">-</Badge>}{r.noBank && <div className="text-xs text-amber-700">Rekening saldo marketplace belum ada di Keuangan</div>}</td>
+                <td>{r.store}</td><td>{CHANNEL_LABEL[r.channel]}</td><td className="num">{idr(r.cair)}</td><td className="num">{idr(r.recorded)}</td><td className="num font-medium">{idr(r.estimate)}</td>
+                <td>
+                  {r.status === "KOSONG" ? <Badge tone="gray">Sudah ditarik</Badge> : r.status === "NORMAL" ? <Badge tone="green">Normal · dari hari ini</Badge> : r.status === "PERINGATAN" ? <Badge tone="amber">Peringatan · sejak {r.since} ({r.ageDays} hari)</Badge> : <Badge tone="red">Merah · sejak {r.since} ({r.ageDays} hari)</Badge>}
+                  {r.todayCount > 0 && <div className="text-xs text-slate-500">Hari ini: {r.todayCount} withdraw · {idr(r.todayAmount)}</div>}
+                  {r.coverage.slice(0, 3).map((c) => <div key={c.date + c.amount} className="text-xs text-slate-500">Withdraw {c.date} ({idr(c.amount)}) {c.covers ? `menutup cair ${c.covers.from === c.covers.to ? c.covers.from : `${c.covers.from} s/d ${c.covers.to}`}` : "belum ada cair yang ditutup"}</div>)}
+                  {r.noBank && <div className="text-xs text-amber-700">Rekening saldo marketplace belum ada di Keuangan</div>}
+                </td>
               </tr>))}</tbody>
           </table></div>
-          <p className="mt-2 text-xs text-slate-500">Withdraw dicatat di Keuangan seperti biasa; halaman ini tidak membuat transaksi.</p>
+          <p className="mt-2 text-xs text-slate-500">Withdraw boleh digabung beberapa hari: tiap withdraw menutup cair yang paling lama lebih dulu. Normal = saldo hanya dari hari ini · Peringatan = ada cair 1–3 hari belum ditarik · Merah = lebih dari 3 hari. Withdraw dicatat di Keuangan seperti biasa; halaman ini tidak membuat transaksi.</p>
         </Card>
       )}
       {matches.map((m) => (

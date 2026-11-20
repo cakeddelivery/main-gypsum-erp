@@ -4,7 +4,7 @@ import { categoryOf, defaultCategory, sumFees } from "@/lib/marketplace/feeMap";
 import { commitImport, undoImport } from "@/lib/marketplace/import";
 import type { ParsedFile, ParsedIncome, ParsedOrder } from "@/lib/marketplace/parse";
 import { affiliateReport, applyActuals, feeVsSettings, potonganReport } from "@/lib/marketplace/potongan";
-import { matchTiktokWithdrawals, missingWithdrawToday, saldoPanel } from "@/lib/marketplace/saldo";
+import { allocateFifo, matchTiktokWithdrawals, saldoNeedsAttention, saldoPanel, saldoStatus } from "@/lib/marketplace/saldo";
 
 /** Tanggal jauh (2036) agar tidak bercampur data tes lain */
 const tag = Date.now().toString(36).slice(-4).toUpperCase();
@@ -16,6 +16,14 @@ afterAll(async () => {
   for (const c of cleanups.reverse()) await c().catch(() => {});
 });
 
+async function storeDL() {
+  const org = await prisma.organization.findFirstOrThrow();
+  const ex = await prisma.store.findUnique({ where: { code: "DL" } });
+  if (ex) return ex;
+  const made = await prisma.store.create({ data: { code: "DL", name: "Dunia Lukis", organizationId: org.id } });
+  cleanups.unshift(() => prisma.store.delete({ where: { id: made.id } })); // dijalankan paling akhir
+  return made;
+}
 async function store() {
   const org = await prisma.organization.findFirstOrThrow();
   return (await prisma.store.findUnique({ where: { code: "MG" } })) ?? (await prisma.store.create({ data: { code: "MG", name: "Main Gypsum", organizationId: org.id } }));
@@ -122,9 +130,9 @@ describe("Potongan, aktual vs pengaturan, affiliate, withdraw", () => {
   });
 
   it("withdraw: cocok / belum di ERP / tidak ada di file; saldo & pengingat tidak membuat transaksi", async () => {
-    const st = await store();
+    const st = await storeDL();
     const coa = await prisma.coaAccount.findFirstOrThrow();
-    const bank = await prisma.bankAccount.create({ data: { code: `MPB${tag}`, name: `Saldo TikTok MG ${tag}`, coaAccountId: coa.id, marketplace: true, aliases: "tiktok" } });
+    const bank = await prisma.bankAccount.create({ data: { code: `MPB${tag}`, name: `Saldo TikTok DL ${tag}`, coaAccountId: coa.id, marketplace: true, aliases: "tiktok" } });
     cleanups.push(() => prisma.bankAccount.delete({ where: { id: bank.id } }));
     const mkTx = (n: number, ref: string, amount: number, date: string) => prisma.financeTransaction.create({ data: { number: `TX-MPT-${tag}-${n}`, source: "MANUAL", direction: "TRANSFER", amount: BigInt(amount), date: at(date), accountId: bank.id, status: "DIBUKUKAN", fingerprint: `fp-${tag}-${n}`, createdBy: "t", withdrawRef: ref, storeId: st.id } });
     const t1 = await mkTx(1, `WD-A${tag}`, 50000, "2036-05-10");
@@ -140,17 +148,52 @@ describe("Potongan, aktual vs pengaturan, affiliate, withdraw", () => {
     expect(by(`WD-B${tag}`)).toMatchObject({ status: "BELUM_DI_ERP", erpAmount: null });
     expect(by(`WD-C${tag}`)).toMatchObject({ status: "TIDAK_DI_FILE", fileAmount: null, erpAmount: 7000 });
     const [tx0, j0] = await Promise.all([prisma.financeTransaction.count(), prisma.journal.count()]);
-    const panel = (await saldoPanel({ from: "2036-05-01", to: "2036-05-31", storeId: st.id })).find((x) => x.channel === "TTS")!;
-    expect(panel).toMatchObject({ cair: 60000, ads: -3000, recorded: 57000, estimate: 0 });
+    const panel = (await saldoPanel({ storeId: st.id })).find((x) => x.channel === "TTS")!;
+    // cair bersih 60.000 − iklan 3.000 = 57.000, withdraw tercatat 50.000 + 7.000 = 57.000 → saldo 0
+    expect(panel).toMatchObject({ cair: 57000, recorded: 57000, estimate: 0, status: "KOSONG" });
     expect(await Promise.all([prisma.financeTransaction.count(), prisma.journal.count()])).toEqual([tx0, j0]);
   });
 
-  it("pengingat: ada saldo belum ditarik & belum ada withdraw tercatat hari ini → masuk daftar pengingat", async () => {
-    const st = await store();
-    const now = new Date();
-    const [r] = await commitImport(actor, [{ fileName: `ttinc.ingat.${tag}.xlsx`, storeId: st.id, parsed: file("SHOPEE", "INCOME", { incomes: [inc(`R${num}1`, { released: 5000, productAmt: 5000, releasedAt: now, orderedAt: now })] }) }]);
+  it("saldo berjalan FIFO: satu withdraw menutup cair beberapa hari; umur saldo menentukan status", () => {
+    // cair 19 & 20 Nov, 21 Nov tidak withdraw per hari tapi 1x withdraw gabungan untuk 2 hari
+    const cair = [{ date: "2036-11-19", amount: 40000 }, { date: "2036-11-20", amount: 30000 }, { date: "2036-11-21", amount: 20000 }];
+    const r = allocateFifo(cair, [{ date: "2036-11-21", amount: 70000 }]);
+    expect(r.coverage).toEqual([{ date: "2036-11-21", amount: 70000, covers: { from: "2036-11-19", to: "2036-11-20" } }]);
+    expect(r.balance).toBe(20000);
+    expect(r.oldest).toBe("2036-11-21"); // yang tersisa hanya cair 21 Nov
+    expect(saldoStatus(r.balance, r.oldest, "2036-11-21")).toEqual({ status: "NORMAL", ageDays: 0 });
+    // withdraw sebagian: menutup 19 Nov penuh + sebagian 20 Nov
+    const p = allocateFifo(cair, [{ date: "2036-11-20", amount: 50000 }]);
+    expect(p.coverage[0].covers).toEqual({ from: "2036-11-19", to: "2036-11-20" });
+    expect(p.remaining).toEqual([{ date: "2036-11-20", amount: 20000 }, { date: "2036-11-21", amount: 20000 }]);
+    expect(saldoStatus(p.balance, p.oldest, "2036-11-21")).toEqual({ status: "PERINGATAN", ageDays: 1 });
+    expect(saldoStatus(40000, "2036-11-17", "2036-11-21").status).toBe("MERAH"); // 4 hari > 3
+    expect(saldoStatus(40000, "2036-11-18", "2036-11-21").status).toBe("PERINGATAN"); // tepat 3 hari
+    expect(saldoStatus(0, null, "2036-11-21").status).toBe("KOSONG");
+    // potongan iklan (negatif) mengurangi saldo seperti withdraw tanpa tampil sebagai withdraw
+    const a = allocateFifo([{ date: "2036-11-19", amount: 10000 }, { date: "2036-11-20", amount: -3000 }], []);
+    expect(a.balance).toBe(7000);
+    expect(a.coverage).toEqual([]);
+  });
+
+  it("withdraw gabungan 2 hari di database: saldo menutup cair tertua, pengingat memakai umur saldo", async () => {
+    const st = await storeDL();
+    const coa = await prisma.coaAccount.findFirstOrThrow();
+    const bank = await prisma.bankAccount.create({ data: { code: `MPG${tag}`, name: `Saldo Shopee DL ${tag}`, coaAccountId: coa.id, marketplace: true, aliases: "shopee" } });
+    cleanups.push(() => prisma.bankAccount.delete({ where: { id: bank.id } }));
+    const day = (back: number) => new Date(Date.now() - back * 86400000);
+    const incomes = [inc(`G${num}1`, { released: 40000, productAmt: 40000, releasedAt: day(2) }), inc(`G${num}2`, { released: 30000, productAmt: 30000, releasedAt: day(1) }), inc(`G${num}3`, { released: 20000, productAmt: 20000, releasedAt: day(0) })];
+    const [r] = await commitImport(actor, [{ fileName: `shp.gabung.${tag}.xlsx`, storeId: st.id, parsed: file("SHOPEE", "INCOME", { incomes }) }]);
     cleanups.push(() => undoImport(actor, r.importId));
-    const missing = await missingWithdrawToday(now);
-    expect(missing.some((m) => m.storeId === st.id && m.channel === "SHP")).toBe(true);
+    const before = (await saldoPanel({ storeId: st.id })).find((x) => x.channel === "SHP")!;
+    // belum ada withdraw sama sekali: saldo tertua 2 hari lalu → peringatan; masuk daftar pengingat
+    expect(before).toMatchObject({ estimate: 90000, status: "PERINGATAN", ageDays: 2 });
+    expect((await saldoNeedsAttention()).some((m) => m.storeId === st.id && m.channel === "SHP")).toBe(true);
+    // withdraw 1x untuk cair 2 hari (70.000): menutup 2 hari lalu + kemarin
+    const tx = await prisma.financeTransaction.create({ data: { number: `TX-MPT-${tag}-G`, source: "MANUAL", direction: "TRANSFER", amount: 70000n, date: new Date(), accountId: bank.id, status: "DIBUKUKAN", fingerprint: `fp-${tag}-G`, createdBy: "t", storeId: st.id } });
+    cleanups.push(() => prisma.financeTransaction.delete({ where: { id: tx.id } }));
+    const after = (await saldoPanel({ storeId: st.id })).find((x) => x.channel === "SHP")!;
+    expect(after).toMatchObject({ estimate: 20000, status: "NORMAL", ageDays: 0, todayCount: 1 });
+    expect(after.coverage[0].covers?.from).not.toBe(after.coverage[0].covers?.to); // menutup lebih dari satu hari
   });
 });
