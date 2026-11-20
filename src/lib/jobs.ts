@@ -286,6 +286,15 @@ export async function runDueJobs(now: Date = new Date()) {
       if (r && (r as { perangkat?: number }).perangkat) results.pengingatShift = r;
     }
   }
+  // Pengingat withdraw marketplace belum dicatat (jam diatur di Penjualan › Marketplace › Saldo; bawaan 15.00)
+  {
+    const { wdReminderHour, sendMarketplaceWdReminder } = await import("./marketplace/saldo");
+    if (minutes >= (await wdReminderHour()) * 60 && !(await ranToday("job_mp_wd_last", date))) {
+      await markRan("job_mp_wd_last", date);
+      const { pushConfigured } = await import("./push");
+      if (pushConfigured()) results.mpWithdraw = await logFailure("MP_WITHDRAW", date, () => sendMarketplaceWdReminder(now));
+    }
+  }
   if (minutes >= 19 * 60 && !(await ranToday("job_order_bahan_last", date))) {
     await markRan("job_order_bahan_last", date);
     const { sendMaterialOrderReminder } = await import("./shiftReportStock");
