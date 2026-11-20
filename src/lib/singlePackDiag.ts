@@ -20,7 +20,7 @@ export type SinglePackItemDiag = {
   stock: { location: string; qty: number }[]; movements: number; lastMove: string | null;
   usedBy: string[];
 };
-export type SinglePackDiag = { variant: ProductVariant; flowItemId: string | null; flowNote: string; items: SinglePackItemDiag[] };
+export type SinglePackDiag = { variant: ProductVariant; flowItemId: string | null; flowNote: string; items: SinglePackItemDiag[]; inactive: string[] };
 
 /** Diagnosa READ-ONLY barang Single Pack per series (tidak membuat / mengubah apa pun) */
 export async function diagnoseSinglePack(db: Db = prisma): Promise<SinglePackDiag[]> {
@@ -35,9 +35,12 @@ export async function diagnoseSinglePack(db: Db = prisma): Promise<SinglePackDia
     const flowNote = fp ? `barang jadi produk ${fp.sku}` : legacy ? `barang ${legacy.sku} (tanpa produk)` : "belum ada (akan dibuat BJ-SAT-" + variant + " saat laporan diposting)";
     const extra = new Set<string>([
       ...(flowItemId ? [flowItemId] : []),
-      ...(await db.product.findMany({ where: { type: "SATUAN", variant, finishedItemId: { not: null } }, select: { finishedItemId: true } })).map((p) => p.finishedItemId!),
+      ...(await db.product.findMany({ where: { type: "SATUAN", variant, active: true, finishedItemId: { not: null } }, select: { finishedItemId: true } })).map((p) => p.finishedItemId!),
     ]);
-    const cands = all.filter((i) => extra.has(i.id) || isSinglePackCandidate(variant, i)).sort((a, b) => a.sku.localeCompare(b.sku));
+    const allCands = all.filter((i) => extra.has(i.id) || isSinglePackCandidate(variant, i)).sort((a, b) => a.sku.localeCompare(b.sku));
+    // Barang nonaktif yang tidak lagi dipakai (mis. BJ-SAT-<series> setelah single-pack:satukan) cukup diringkas
+    const cands = allCands.filter((i) => i.active || extra.has(i.id));
+    const inactive = allCands.filter((i) => !cands.includes(i)).map((i) => `${i.sku} "${i.name}"`);
     const items: SinglePackItemDiag[] = [];
     for (const it of cands) {
       const [ins, outs, movements, last, prods, bom, recipeComp, recipeOwn, tasks, reports] = await Promise.all([
@@ -71,7 +74,7 @@ export async function diagnoseSinglePack(db: Db = prisma): Promise<SinglePackDia
         usedBy,
       });
     }
-    out.push({ variant, flowItemId, flowNote, items });
+    out.push({ variant, flowItemId, flowNote, items, inactive });
   }
   return out;
 }
@@ -80,7 +83,7 @@ export async function diagnoseSinglePack(db: Db = prisma): Promise<SinglePackDia
 export function diagLines(d: SinglePackDiag[]): string[] {
   const L: string[] = [];
   for (const v of d) {
-    L.push("", `== ${v.variant} == flowItem: ${v.flowNote} · ${v.items.length} barang kandidat${v.items.length > 1 ? "  ⚠ LEBIH DARI SATU" : ""}`);
+    L.push("", `== ${v.variant} == flowItem: ${v.flowNote} · ${v.items.length} barang kandidat${v.items.length > 1 ? "  ⚠ LEBIH DARI SATU" : ""}${v.inactive.length ? ` (+ nonaktif tak dipakai: ${v.inactive.join(", ")})` : ""}`);
     for (const i of v.items) {
       L.push(`  ${i.sku} "${i.name}" · ${i.type} · ${i.unit} · divisi ${i.division ?? "-"} · ${i.active ? "aktif" : "NONAKTIF"}`);
       L.push(`     stok: ${i.stock.length ? i.stock.map((s) => `${s.location} ${s.qty.toLocaleString("id-ID")}`).join(", ") : "0"} · ${i.movements} mutasi${i.lastMove ? ` (terakhir ${i.lastMove})` : ""}`);
