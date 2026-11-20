@@ -295,6 +295,16 @@ export async function runDueJobs(now: Date = new Date()) {
       if (pushConfigured()) results.mpWithdraw = await logFailure("MP_WITHDRAW", date, () => sendMarketplaceWdReminder(now));
     }
   }
+  // Pengingat hari bayar upah borongan per titik (sehari sebelum hari bayar, jam diatur per titik; bawaan 08.00): push ke
+  // koordinator/pencatat titik + Finance + Owner. Sekali per titik per tanggal (dicek di dalam).
+  {
+    const { pushConfigured } = await import("./push");
+    if (pushConfigured()) {
+      const { sendPaydayReminders } = await import("./boronganPayday");
+      const r = await logFailure("BORONGAN_HARI_BAYAR", date, () => sendPaydayReminders(now));
+      if (r && (r as { titik?: string[] }).titik?.length) results.boronganHariBayar = r;
+    }
+  }
   if (minutes >= 19 * 60 && !(await ranToday("job_order_bahan_last", date))) {
     await markRan("job_order_bahan_last", date);
     const { sendMaterialOrderReminder } = await import("./shiftReportStock");

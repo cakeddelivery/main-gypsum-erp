@@ -4,7 +4,7 @@ import { audit } from "./audit";
 import { addDays, dateOnly, dateStr, todayStr } from "./time";
 import { recordMovement, reverseMovementsByRef } from "./stock";
 import { bomStockQty } from "./unitcost";
-import { BoronganError, canTask, coordinatorFor, postResultTx, unpostResultTx, warehouseFor, type Scope } from "./borongan";
+import { BoronganError, canTask, coordinatorCovers, coordinatorFor, coordinatorPointSelect, coordinatorsAt, postResultTx, unpostResultTx, warehouseFor, type Scope } from "./borongan";
 import { taskGroupName } from "./boronganKirim";
 import { pointConfig, taskKits } from "./boronganSetup";
 import { sendPush, type PushPayload } from "./push";
@@ -139,8 +139,21 @@ export const fullAccess = (scope: Scope) => !!scope.owner || !!scope.backup;
 export const canDistribute = (scope: Scope, s: { mode: ShipmentMode; taskIds: string[] }) => fullAccess(scope) || (s.mode === "DRIVER" ? !!scope.driver : divisionCovers(scope, s.taskIds));
 export const canPickup = canDistribute;
 export const isCoordinatorOf = (scope: Scope, pointId: string) => !scope.all && !scope.driver && !scope.division && !!scope.personId && scope.pointIds.includes(pointId);
-/** Lapor hasil: koordinator titik; titik tanpa koordinator (Beringin) oleh tim divisi; Owner selalu boleh */
-export const canReport = (scope: Scope, s: { taskIds: string[] }, pointId: string, hasCoordinator: boolean) => fullAccess(scope) || isCoordinatorOf(scope, pointId) || (!hasCoordinator && divisionCovers(scope, s.taskIds));
+/**
+ * Lapor hasil: koordinator titik; titik tanpa koordinator oleh tim divisi; Owner selalu boleh.
+ * `coordinatorOnly` = titik punya koordinator yang menerima fee: hanya koordinator itu yang mencatat. Titik tanpa fee
+ * koordinator (mis. Beringin dengan pencatat Mita): koordinator pencatat DAN tim divisi (cadangan) boleh mencatat.
+ */
+export const canReport = (scope: Scope, s: { taskIds: string[] }, pointId: string, coordinatorOnly: boolean) => fullAccess(scope) || isCoordinatorOf(scope, pointId) || (!coordinatorOnly && divisionCovers(scope, s.taskIds));
+
+/** Lapor hasil hanya oleh koordinator: titik punya koordinator aktif DAN bukan titik tanpa fee koordinator (pencatat saja) */
+export async function coordinatorOnly(db: Tx | typeof prisma, pointId: string) {
+  const [n, point] = await Promise.all([
+    db.boronganPerson.count({ where: coordinatorsAt(pointId) }),
+    db.boronganPoint.findUnique({ where: { id: pointId }, select: { noCoordinator: true } }),
+  ]);
+  return n > 0 && !point?.noCoordinator;
+}
 /**
  * Terima setoran: patung Assembling diterima tim PACKING; pekerjaan lain oleh divisi tugasnya (Cat Plastik: Assembling,
  * Cat Giftbox: Giftbox); Owner selalu boleh.
@@ -177,7 +190,8 @@ export type ShipmentView = {
   /** Ditutup administratif (tanpa stok/upah): catatan penutupan, null = tidak */
   closed?: string | null;
   group: string;
-  points: { id: string; name: string; coordinator: boolean }[];
+  /** coordinator = ada koordinator aktif; coordinatorOnly = lapor hasil hanya oleh koordinator (bukan titik tanpa fee koordinator) */
+  points: { id: string; name: string; coordinator: boolean; coordinatorOnly?: boolean }[];
   tasks: { id: string; name: string; short: string; qty: number; divisionId: string | null }[];
   lines: { itemId: string; name: string; unit: string; qty: number; support: boolean }[];
   cells: CellView[];
@@ -197,8 +211,8 @@ export async function buildViews(rows: ShipmentRow[]): Promise<ShipmentView[]> {
   const pointIds = [...new Set(rows.flatMap((s) => s.pointIds))];
   const itemIds = [...new Set(rows.flatMap((s) => s.lines.map((l) => l.itemId)))];
   const [points, coords, items] = await Promise.all([
-    prisma.boronganPoint.findMany({ where: { id: { in: pointIds } }, select: { id: true, name: true, code: true } }),
-    prisma.boronganPerson.findMany({ where: { role: "KOORDINATOR", active: true, pointId: { in: pointIds } }, select: { pointId: true } }),
+    prisma.boronganPoint.findMany({ where: { id: { in: pointIds } }, select: { id: true, name: true, code: true, noCoordinator: true } }),
+    prisma.boronganPerson.findMany({ where: coordinatorsAt(pointIds), select: coordinatorPointSelect }),
     prisma.item.findMany({ where: { id: { in: itemIds } }, select: { id: true, name: true, unit: true } }),
   ]);
   return rows.map((s) => {
@@ -219,7 +233,10 @@ export async function buildViews(rows: ShipmentRow[]): Promise<ShipmentView[]> {
       id: s.id, number: s.number, date: dateStr(s.date), mode: s.mode, driver: s.driver?.name ?? null, state, note: s.note, createdBy: s.createdBy, cancelled: !!s.cancelledAt, waitingSupport: s.waitingSupport,
       closed: s.closedAt ? `${s.closeNote ?? "Ditutup administratif"} (${s.closedBy ?? "-"}, ${dateStr(s.closedAt)})` : null,
       group: s.tasks[0] ? taskGroupName(s.tasks[0].task.name) : "",
-      points: s.pointIds.map((id) => ({ id, name: points.find((p) => p.id === id)?.name ?? "?", coordinator: coords.some((c) => c.pointId === id) })),
+      points: s.pointIds.map((id) => {
+        const coordinator = coords.some((c) => coordinatorCovers(c, id));
+        return { id, name: points.find((p) => p.id === id)?.name ?? "?", coordinator, coordinatorOnly: coordinator && !points.find((p) => p.id === id)?.noCoordinator };
+      }),
       tasks: byColumn(s.tasks, (t) => t.task.name).map((t) => ({ id: t.taskId, name: t.task.name, short: shortTaskName(t.task.name), qty: t.qty, divisionId: t.task.divisionId })),
       lines: s.lines.map((l) => ({ itemId: l.itemId, name: items.find((i) => i.id === l.itemId)?.name ?? "?", unit: items.find((i) => i.id === l.itemId)?.unit ?? "", qty: Number(l.qty), support: l.support })),
       cells,
@@ -604,8 +621,8 @@ async function saveWorkReportTx(shipmentId: string, pointId: string, rows: Repor
     const s = await tx.boronganShipment.findUniqueOrThrow({ where: { id: shipmentId }, include: { tasks: true, allots: { where: { pointId } } } });
     if (s.cancelledAt) throw new BoronganError(`${s.number} sudah dibatalkan`);
     if (!s.pointIds.includes(pointId)) throw new BoronganError("Titik ini bukan tujuan kiriman");
-    const hasCoordinator = (await tx.boronganPerson.count({ where: { role: "KOORDINATOR", active: true, pointId } })) > 0;
-    if (!canReport(scope, { taskIds: s.tasks.map((t) => t.taskId) }, pointId, hasCoordinator)) throw new BoronganError(hasCoordinator ? "Laporan hasil dicatat koordinator titik" : "Laporan hasil titik ini dicatat tim divisi / Supervisor");
+    const only = await coordinatorOnly(tx, pointId);
+    if (!canReport(scope, { taskIds: s.tasks.map((t) => t.taskId) }, pointId, only)) throw new BoronganError(only ? "Laporan hasil dicatat koordinator titik" : "Laporan hasil titik ini dicatat koordinator pencatat / tim divisi / Supervisor");
     if (!s.allots.length) throw new BoronganError("Kiriman ini belum dibagi ke pekerja di titik ini");
     const lines: ReportInput[] = [];
     for (const a of s.allots) {
@@ -646,7 +663,7 @@ async function notify(userIds: (string | null | undefined)[], payload: PushPaylo
   if (ids.length) await sendPush(ids, payload).catch(() => {});
 }
 async function coordinatorUsers(pointIds: string[]) {
-  return (await prisma.boronganPerson.findMany({ where: { role: "KOORDINATOR", active: true, pointId: { in: pointIds }, userId: { not: null } }, select: { userId: true } })).map((p) => p.userId);
+  return (await prisma.boronganPerson.findMany({ where: { ...coordinatorsAt(pointIds), userId: { not: null } }, select: { userId: true } })).map((p) => p.userId);
 }
 
 export async function createPickup(shipmentId: string, rows: PickupInput[], actor: Actor, scope: Scope, day: string = todayStr()) {

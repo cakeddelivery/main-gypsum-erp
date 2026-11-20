@@ -79,11 +79,22 @@ export function isDivisionMemberRole(role?: string) {
 
 export { assignDefaultTaskDivisions, defaultTaskTemplate } from "./taskDivision";
 
-/** Pengelola melihat semua titik; Kapten Assembling & anggota divisi: titik yang mengerjakan tugas divisinya; koordinator hanya titiknya */
+/** Koordinator aktif yang memegang titik ini (titik utama ATAU titik tambahan, mis. Mita: BMR + Beringin) */
+export function coordinatorsAt(pointIds: string | string[]): Prisma.BoronganPersonWhereInput {
+  const ids = Array.isArray(pointIds) ? pointIds : [pointIds];
+  return { role: "KOORDINATOR", active: true, OR: [{ pointId: { in: ids } }, { extraPoints: { some: { pointId: { in: ids } } } }] };
+}
+/** Pilih untuk coordinatorCovers / coordinatorPoints */
+export const coordinatorPointSelect = { pointId: true, extraPoints: { select: { pointId: true } } } as const;
+/** Semua titik yang dipegang koordinator (utama + tambahan) */
+export const coordinatorPoints = (c: { pointId: string | null; extraPoints?: { pointId: string }[] }) => [...new Set([c.pointId, ...(c.extraPoints ?? []).map((e) => e.pointId)].filter((x): x is string => !!x))];
+export const coordinatorCovers = (c: { pointId: string | null; extraPoints?: { pointId: string }[] }, pointId: string) => coordinatorPoints(c).includes(pointId);
+
+/** Pengelola melihat semua titik; Kapten Assembling & anggota divisi: titik yang mengerjakan tugas divisinya; koordinator hanya titiknya (utama + tambahan) */
 export async function boronganScope(db: DB, user: ScopeUser): Promise<Scope> {
   if (user.can("borongan.manage")) return { all: true, owner: user.role === "OWNER", backup: true, pointIds: [], personId: null, taskIds: null };
-  const coord = await db.boronganPerson.findFirst({ where: { userId: user.id, role: "KOORDINATOR", active: true } });
-  if (coord) return { all: false, pointIds: coord.pointId ? [coord.pointId] : [], personId: coord.id, taskIds: null };
+  const coord = await db.boronganPerson.findFirst({ where: { userId: user.id, role: "KOORDINATOR", active: true }, include: { extraPoints: { select: { pointId: true } } } });
+  if (coord) return { all: false, pointIds: coordinatorPoints(coord), personId: coord.id, taskIds: null };
   const drv = await db.boronganPerson.findFirst({ where: { userId: user.id, role: "DRIVER", active: true } });
   if (drv) {
     const points = await db.boronganPoint.findMany({ where: { active: true, viaDriver: true }, select: { id: true } });
@@ -334,15 +345,19 @@ async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: S
  */
 export async function coordinatorFor(db: DB, worker: { coordinatorId?: string | null; pointId: string | null; noCoordinator?: boolean }) {
   if (worker.noCoordinator) return null;
+  const point = worker.pointId ? await db.boronganPoint.findUnique({ where: { id: worker.pointId }, select: { noCoordinator: true } }) : null;
   if (worker.coordinatorId) {
-    const c = await db.boronganPerson.findFirst({ where: { id: worker.coordinatorId, role: "KOORDINATOR", active: true } });
-    if (c) return c;
+    const c = await db.boronganPerson.findFirst({ where: { id: worker.coordinatorId, role: "KOORDINATOR", active: true }, include: { extraPoints: { select: { pointId: true } } } });
+    if (c) {
+      const covers = !!worker.pointId && coordinatorCovers(c, worker.pointId);
+      // Koordinator yang memegang titik pekerja: fee hanya bila titik itu ber-fee (Mita di Beringin = pencatat, tanpa fee).
+      // Koordinator titik lain (pilihan pekerja): fee bila ia memegang setidaknya satu titik ber-fee.
+      if (covers ? !point?.noCoordinator : (await db.boronganPoint.count({ where: { id: { in: coordinatorPoints(c) }, noCoordinator: false } })) > 0) return c;
+    }
   }
-  if (!worker.pointId) return null;
-  // Titik disetel tanpa koordinator → upah koordinator ke pekerja
-  const point = await db.boronganPoint.findUnique({ where: { id: worker.pointId }, select: { noCoordinator: true } });
-  if (point?.noCoordinator) return null;
-  return db.boronganPerson.findFirst({ where: { role: "KOORDINATOR", pointId: worker.pointId, active: true }, orderBy: { createdAt: "asc" } });
+  // Titik disetel tanpa fee koordinator → upah koordinator ke pekerja
+  if (!worker.pointId || point?.noCoordinator) return null;
+  return db.boronganPerson.findFirst({ where: coordinatorsAt(worker.pointId), orderBy: { createdAt: "asc" } });
 }
 
 type ResultTask = Prisma.PieceTaskGetPayload<{ include: { inputs: { include: { item: true } }; outputItem: true } }>;
@@ -546,7 +561,7 @@ export async function cancelSettlement(id: string, reason: string, actor: Actor,
 
 // ---------------- ORANG ----------------
 
-export type PersonInput = { id?: string | null; name: string; phone?: string | null; role: BoronganRole; pointId?: string | null; active?: boolean; note?: string | null; taskIds?: string[]; coordinatorId?: string | null };
+export type PersonInput = { id?: string | null; name: string; phone?: string | null; role: BoronganRole; pointId?: string | null; active?: boolean; note?: string | null; taskIds?: string[]; coordinatorId?: string | null; /** Koordinator: titik tambahan (selain titik utama); undefined = tidak diubah */ extraPointIds?: string[] };
 
 /** Koordinator hanya boleh menambah/mengubah pekerja di titiknya sendiri */
 export async function savePerson(input: PersonInput, actor: Actor, scope: Scope) {
@@ -583,12 +598,32 @@ export async function savePerson(input: PersonInput, actor: Actor, scope: Scope)
     const p = await prisma.boronganPerson.update({ where: { id: input.id }, data });
     // Akun login ikut nonaktif bila orangnya nonaktif atau perannya berubah (koordinator ↔ driver ↔ pekerja)
     if (cur.userId && (!data.active || data.role !== cur.role)) await prisma.user.update({ where: { id: cur.userId }, data: { active: false } });
-    await audit(actor, "ORANG_BORONGAN_DIUBAH", "BoronganPerson", p.id, data);
+    const extra = await syncExtraPoints(p, input, actor, scope);
+    await audit(actor, "ORANG_BORONGAN_DIUBAH", "BoronganPerson", p.id, { ...data, ...(extra ? { titikTambahan: extra } : {}) });
     return p;
   }
   const p = await prisma.boronganPerson.create({ data });
-  await audit(actor, "ORANG_BORONGAN_DITAMBAH", "BoronganPerson", p.id, data);
+  const extra = await syncExtraPoints(p, input, actor, scope);
+  await audit(actor, "ORANG_BORONGAN_DITAMBAH", "BoronganPerson", p.id, { ...data, ...(extra ? { titikTambahan: extra } : {}) });
   return p;
+}
+
+/**
+ * Titik tambahan koordinator (pengelola saja): disamakan dengan pilihan form. Bukan koordinator → semua titik tambahan dilepas.
+ * Hanya penugasan (bukan data transaksi); riwayat setoran/klaim tetap per titik. Kembalikan daftar titik tambahan bila diubah.
+ */
+async function syncExtraPoints(p: { id: string; role: BoronganRole; pointId: string | null }, input: PersonInput, actor: Actor, scope: Scope) {
+  if (input.extraPointIds === undefined && p.role === "KOORDINATOR") return null;
+  if (!scope.all) return null;
+  const want = p.role === "KOORDINATOR" ? [...new Set(input.extraPointIds ?? [])].filter((id) => id !== p.pointId) : [];
+  if (want.length && (await prisma.boronganPoint.count({ where: { id: { in: want } } })) !== want.length) throw new BoronganError("Titik tambahan tidak dikenal");
+  const cur = await prisma.boronganCoordinatorPoint.findMany({ where: { personId: p.id } });
+  const drop = cur.filter((c) => !want.includes(c.pointId)).map((c) => c.id);
+  const add = want.filter((id) => !cur.some((c) => c.pointId === id));
+  if (!drop.length && !add.length) return null;
+  if (drop.length) await prisma.boronganCoordinatorPoint.deleteMany({ where: { id: { in: drop } } });
+  for (const pointId of add) await prisma.boronganCoordinatorPoint.create({ data: { personId: p.id, pointId, createdBy: actor.name } });
+  return want;
 }
 
 /** Hapus orang; yang sudah punya riwayat setoran dinonaktifkan saja */

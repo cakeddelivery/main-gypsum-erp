@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { letterhead } from "@/lib/letterhead";
-import { boronganScope } from "@/lib/borongan";
+import { boronganScope, coordinatorsAt } from "@/lib/borongan";
 import { canRequestClaim } from "@/lib/boronganClaim";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { canSeeClaim } from "../access";
@@ -20,7 +20,7 @@ export default async function PratinjauKlaim({ searchParams }: { searchParams: P
   const d = await claimDoc({ pointId: sp.titik, workerId: sp.pekerja || null });
   if (!d) notFound();
   const scope = await boronganScope(prisma, user);
-  const hasCoordinator = (await prisma.boronganPerson.count({ where: { role: "KOORDINATOR", active: true, pointId: d.pointId } })) > 0;
+  const hasCoordinator = (await prisma.boronganPerson.count({ where: coordinatorsAt(d.pointId) })) > 0;
   const canAsk = canRequestClaim(scope, d.pointId, hasCoordinator) && d.full.totals.all > 0;
   const q = new URLSearchParams({ titik: d.pointId, ...(d.worker ? { pekerja: d.worker.id } : {}) });
   return (

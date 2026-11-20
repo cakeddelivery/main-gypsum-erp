@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { fmtDateTime } from "@/lib/time";
-import type { Scope } from "@/lib/borongan";
+import { coordinatorCovers, coordinatorPointSelect, type Scope } from "@/lib/borongan";
 import { canRequestClaim, pointWageSummary } from "@/lib/boronganClaim";
 import { isCoordinatorOf } from "@/lib/boronganFlow";
 import { Badge, Empty, Field } from "@/components/ui";
@@ -16,8 +16,8 @@ const rp = (n: number | bigint) => `Rp${Number(n).toLocaleString("id-ID")}`;
 /** Titik yang upahnya boleh dilihat akun ini di tab Klaim Upah */
 async function visiblePoints(scope: Scope, canPay: boolean) {
   const points = await prisma.boronganPoint.findMany({ where: { active: true }, orderBy: { code: "asc" }, select: { id: true, name: true, code: true } });
-  const coords = await prisma.boronganPerson.findMany({ where: { role: "KOORDINATOR", active: true }, select: { pointId: true } });
-  const has = (id: string) => coords.some((c) => c.pointId === id);
+  const coords = await prisma.boronganPerson.findMany({ where: { role: "KOORDINATOR", active: true }, select: coordinatorPointSelect });
+  const has = (id: string) => coords.some((c) => coordinatorCovers(c, id));
   return points
     .map((p) => ({ ...p, hasCoordinator: has(p.id) }))
     .filter((p) => scope.all || canPay || isCoordinatorOf(scope, p.id) || canRequestClaim(scope, p.id, p.hasCoordinator));

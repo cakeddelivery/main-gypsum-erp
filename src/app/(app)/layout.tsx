@@ -28,7 +28,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, select: { id: true, name: true, startTime: true, endTime: true } }),
       ]).then(([divisions, shifts]) => ({ today: todayStr(), divisions, shifts, auto: scope !== null }))
     : null;
-  const [alerts, reads] = await Promise.all([cachedAlerts([...user.perms].sort(), alertDivision(user)), prisma.alertRead.findMany({ where: { userId: user.id } })]);
+  const [base, payday, reads] = await Promise.all([
+    cachedAlerts([...user.perms].sort(), alertDivision(user)),
+    // Pengingat hari bayar upah borongan (per pengguna: koordinator hanya titiknya; Finance/Owner semua)
+    import("@/lib/boronganPayday").then((m) => m.paydayAlerts(user)).catch(() => []),
+    prisma.alertRead.findMany({ where: { userId: user.id } }),
+  ]);
+  const alerts = [...payday, ...base];
   // Dibaca = sudah dibuka/ditandai dan jumlahnya tidak bertambah sejak itu
   const items = alerts.map((a) => ({ ...a, read: (reads.find((r) => r.key === a.key)?.count ?? -1) >= a.count }));
   const division = user.employee?.division.name ?? null;

@@ -203,7 +203,7 @@ export async function KirimanTab({ scope, userId, filter }: { scope: Scope; user
           const bagi = canDistribute(scope, { mode: s.mode, taskIds: ids }) && (!hasAmb || fullAccess(scope));
           const ambil = canPickup(scope, { mode: s.mode, taskIds: ids }) && s.cells.some((c) => !c.done);
           const bWho = s.mode === "DRIVER" ? "Driver" : "tim divisi";
-          const lapor = s.points.filter((p) => s.cells.some((c) => c.pointId === p.id) && canReport(scope, { taskIds: ids }, p.id, p.coordinator));
+          const lapor = s.points.filter((p) => s.cells.some((c) => c.pointId === p.id) && canReport(scope, { taskIds: ids }, p.id, p.coordinatorOnly ?? p.coordinator));
           const activePickups = s.pickups.filter((p) => p.status !== "DIBATALKAN");
           const allotted = s.totals.allotted;
           return (

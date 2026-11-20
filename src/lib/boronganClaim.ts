@@ -1,7 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { audit } from "./audit";
-import { BoronganError, settleResultsTx, type Scope } from "./borongan";
+import { BoronganError, coordinatorsAt, settleResultsTx, type Scope } from "./borongan";
 import { taskGroupName } from "./boronganKirim";
 import { isCoordinatorOf } from "./boronganFlow";
 import { todayStr } from "./time";
@@ -119,7 +119,7 @@ async function notifyApprovers(title: string, body: string, tag: string) {
 }
 
 export async function requestClaim(pointId: string, actor: Actor, scope: Scope) {
-  const hasCoordinator = (await prisma.boronganPerson.count({ where: { role: "KOORDINATOR", active: true, pointId } })) > 0;
+  const hasCoordinator = (await prisma.boronganPerson.count({ where: coordinatorsAt(pointId) })) > 0;
   if (!canRequestClaim(scope, pointId, hasCoordinator)) throw new BoronganError(hasCoordinator ? "Klaim upah diajukan koordinator titik" : "Klaim upah titik ini diajukan tim Assembling / Supervisor");
   const { claim, point } = await prisma.$transaction((tx) => createClaimTx(tx, pointId, actor, false));
   await notifyApprovers(`Klaim upah ${point.name} menunggu`, `${claim.number} · Rp${Number(claim.total).toLocaleString("id-ID")}`, `klaim-${claim.id}`);
@@ -147,7 +147,7 @@ export async function autoClaims(pointIds: string[]) {
 
 /** Push ke koordinator titik & pengaju klaim */
 async function notifyClaimant(c: { pointId: string; requestedById: string | null }, title: string, body: string, tag: string) {
-  const coords = await prisma.boronganPerson.findMany({ where: { role: "KOORDINATOR", active: true, pointId: c.pointId, userId: { not: null } }, select: { userId: true } });
+  const coords = await prisma.boronganPerson.findMany({ where: { ...coordinatorsAt(c.pointId), userId: { not: null } }, select: { userId: true } });
   const ids = [...new Set([...coords.map((x) => x.userId!), ...(c.requestedById ? [c.requestedById] : [])])];
   if (ids.length) await sendPush(ids, { title, body, url: "/borongan?tab=klaim", tag }).catch(() => {});
 }
