@@ -27,7 +27,7 @@ Stok riil = stok akhir laporan shift TERKIRIM tanggal itu (bukan hitung fisik te
 1. `npm run backup`.
 2. Borongan: `npm run borongan:tutup-semua` (pratinjau) → `npm run borongan:tutup-semua -- --jalankan`.
    Kiriman yang belum selesai ditandai SELESAI administratif: tanpa mutasi stok (sisa di titik sudah tercermin di laporan shift),
-   tanpa upah/klaim/jurnal baru. `--klaim-sisa` (opsional, keputusan Owner) mengajukan klaim upah setoran yang belum diklaim.
+   tanpa upah/klaim/jurnal baru. Setoran yang belum diklaim dianggap sudah beres (keputusan Owner) — hanya tampil di pratinjau.
 3. Pastikan semua divisi sudah MENGIRIM laporan tanggal itu (Assembling ikut laporan divisinya).
 4. `npm run stok:cutover-laporan -- --tanggal 2026-11-20` (pratinjau: stok sistem → laporan → selisih qty & nilai, laporan sumber,
    barang "tidak dihitung", laporan wajib belum terkirim) → `... --jalankan` (ditolak bila ada laporan wajib belum terkirim, kecuali `--paksa`).

@@ -2,7 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { audit } from "./audit";
 import { shipmentViews, type ShipmentView } from "./boronganFlow";
-import { claimBreakdown, claimable, createClaimTx } from "./boronganClaim";
+import { claimBreakdown, claimable } from "./boronganClaim";
 
 type Tx = Prisma.TransactionClient;
 type Actor = { id: string; name: string };
@@ -13,7 +13,7 @@ export type ClosePoint = {
   shipments: string[]; cells: CloseCell[];
   /** Setoran diambil driver tetapi belum diterima divisi (upah belum dibukukan) */
   pendingPickups: string[];
-  /** Upah setoran yang sudah dibukukan tapi belum diklaim (bisa diklaim dengan --klaim-sisa) */
+  /** Upah setoran yang sudah dibukukan tapi belum diklaim — keputusan Owner: dianggap SUDAH BERES (hanya info) */
   unclaimed: { count: number; total: number };
   openClaims: { count: number; total: number };
 };
@@ -61,10 +61,9 @@ export async function planCloseAll(): Promise<ClosePlan> {
 
 /**
  * Tutup administratif: kiriman ditandai SELESAI (closedAt) — TANPA mutasi stok, TANPA membuat/menghapus upah, klaim, atau jurnal.
- * `klaimSisa`: upah setoran yang sudah dibukukan tapi belum diklaim diajukan sebagai klaim MENUNGGU lewat mekanisme klaim
- * yang ada (hanya setoran yang belum masuk klaim mana pun → tidak dobel). Pembayaran tetap lewat persetujuan Finance/Owner.
+ * Keputusan Owner (cut-over 20 Nov): setoran yang belum diklaim dianggap sudah beres, jadi tidak ada klaim baru.
  */
-export async function applyCloseAll(tx: Tx, plan: ClosePlan, actor: Actor, opts: { note: string; klaimSisa?: boolean; now?: Date }) {
+export async function applyCloseAll(tx: Tx, plan: ClosePlan, actor: Actor, opts: { note: string; now?: Date }) {
   const now = opts.now ?? new Date();
   let closed = 0;
   for (const s of plan.shipments) {
@@ -73,17 +72,7 @@ export async function applyCloseAll(tx: Tx, plan: ClosePlan, actor: Actor, opts:
     await audit(actor, "BORONGAN_TUTUP_ADMINISTRATIF", "BoronganShipment", s.id, { nomor: s.number, statusSebelum: s.state, statusSesudah: "SELESAI", catatan: opts.note, stok: "tidak diubah", upah: "tidak diubah" }, tx);
     closed++;
   }
-  const claims: string[] = [];
-  if (opts.klaimSisa) {
-    for (const p of plan.points) {
-      if (p.unclaimed.total <= 0) continue;
-      const left = await tx.boronganResult.count({ where: claimable(p.pointId) });
-      if (!left) continue;
-      const { claim } = await createClaimTx(tx, p.pointId, actor, false);
-      claims.push(`${claim.number} ${p.point} Rp${Number(claim.total).toLocaleString("id-ID")}`);
-    }
-  }
-  return { closed, claims };
+  return { closed };
 }
 
 export function closeLines(plan: ClosePlan): string[] {
@@ -92,7 +81,7 @@ export function closeLines(plan: ClosePlan): string[] {
     L.push("", `== ${p.point} · koordinator: ${p.coordinator} ==`, `   kiriman: ${p.shipments.join(", ") || "-"}`);
     for (const c of p.cells) L.push(`   ${c.shipment} · ${c.worker} · ${c.task}: kirim ${c.kirim}, lapor bagus ${c.lapor}, diambil ${c.ambil}, reject ${c.reject}, sisa di pekerja ${c.sisa}`);
     if (p.pendingPickups.length) L.push(`   setoran diambil BELUM DITERIMA (upah belum dibukukan, tidak diubah): ${p.pendingPickups.join("; ")}`);
-    L.push(`   upah setoran belum diklaim: ${p.unclaimed.count} setoran · Rp${p.unclaimed.total.toLocaleString("id-ID")}${p.unclaimed.count ? " (keputusan Owner; --klaim-sisa untuk mengajukan klaim)" : ""}`);
+    L.push(`   upah setoran belum diklaim: ${p.unclaimed.count} setoran · Rp${p.unclaimed.total.toLocaleString("id-ID")}${p.unclaimed.count ? " (info saja: dianggap sudah beres, tidak diklaim)" : ""}`);
     if (p.openClaims.count) L.push(`   klaim upah menunggu persetujuan: ${p.openClaims.count} · Rp${p.openClaims.total.toLocaleString("id-ID")} (dibiarkan)`);
   }
   if (plan.legacyHandovers) L.push("", `Serah terima alur lama berstatus DIKIRIM: ${plan.legacyHandovers} (hanya dilaporkan, tidak diubah)`);

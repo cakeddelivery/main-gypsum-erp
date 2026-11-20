@@ -36,7 +36,7 @@ describe("borongan:tutup-semua", () => {
     expect(p.cells).toEqual([expect.objectContaining({ kirim: 10, ambil: 0, sisa: 10 })]);
     expect(p.unclaimed.count).toBe(1);
     expect(p.unclaimed.total).toBeGreaterThan(0);
-    expect(closeLines(plan).join("\n")).toMatch(/belum diklaim: 1 setoran/);
+    expect(closeLines(plan).join("\n")).toMatch(/belum diklaim: 1 setoran.*dianggap sudah beres/);
     expect((await shipmentView(ids.shipment))!.state).toBe("DI_PEKERJA");
   });
 
@@ -44,7 +44,7 @@ describe("borongan:tutup-semua", () => {
     const before = await Promise.all([prisma.stockMovement.count(), prisma.boronganClaim.count(), prisma.journal.count()]);
     const plan = mine(await planCloseAll());
     const r = await prisma.$transaction((tx) => applyCloseAll(tx, plan, actor, { note: "Tutup administratif cut-over uji" }));
-    expect(r).toEqual({ closed: 1, claims: [] });
+    expect(r).toEqual({ closed: 1 });
     const v = (await shipmentView(ids.shipment))!;
     expect(v.state).toBe("SELESAI");
     expect(v.closed).toMatch(/cut-over uji/);
@@ -54,16 +54,5 @@ describe("borongan:tutup-semua", () => {
     expect(await prisma.auditLog.count({ where: { entityId: ids.shipment, action: "BORONGAN_TUTUP_ADMINISTRATIF" } })).toBe(1);
     // diulang: sudah ditutup, tidak dobel
     expect((await planCloseAll()).shipments.some((s) => s.id === ids.shipment)).toBe(false);
-  });
-
-  it("--klaim-sisa: setoran belum diklaim diajukan sekali lewat mekanisme klaim (tidak dobel)", async () => {
-    const plan = mine(await planCloseAll());
-    const r = await prisma.$transaction((tx) => applyCloseAll(tx, plan, actor, { note: "x", klaimSisa: true }));
-    expect(r.claims).toHaveLength(1);
-    const res = await prisma.boronganResult.findUniqueOrThrow({ where: { id: ids.result } });
-    expect(res.claimId).not.toBeNull();
-    expect((await prisma.boronganClaim.findUniqueOrThrow({ where: { id: res.claimId! } })).status).toBe("MENUNGGU");
-    const again = await prisma.$transaction((tx) => applyCloseAll(tx, plan, actor, { note: "x", klaimSisa: true }));
-    expect(again.claims).toHaveLength(0);
   });
 });

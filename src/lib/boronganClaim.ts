@@ -100,7 +100,7 @@ async function claimNumber(tx: Tx, code: string, day: string) {
 
 const resultInclude = { worker: { select: { id: true, name: true } }, coordinator: { select: { id: true, name: true } }, driver: { select: { id: true, name: true } }, task: { select: { name: true } } } as const;
 
-export async function createClaimTx(tx: Tx, pointId: string, actor: { id: string | null; name: string }, auto: boolean) {
+async function createClaimTx(tx: Tx, pointId: string, actor: { id: string | null; name: string }, auto: boolean) {
   await tx.$queryRaw`SELECT id FROM "BoronganPoint" WHERE id = ${pointId} FOR UPDATE`;
   const point = await tx.boronganPoint.findUniqueOrThrow({ where: { id: pointId } });
   const results = await tx.boronganResult.findMany({ where: claimable(pointId), include: resultInclude });
