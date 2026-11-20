@@ -52,7 +52,7 @@ export const saldoIklan = (storeCode: string) => ({ MG: "1-1221", DL: "1-1222" }
 /** Kategori biaya → akun beban */
 const EXPENSE: Partial<Record<FeeCategory, string>> = {
   ADMIN: "6-1510", PROSES: "6-1520", ONGKIR_PROGRAM: "6-1530", ONGKIR: "6-1540", AFFILIATE: "6-1550", AFFILIATE_SAMPEL: "6-1560", VOUCHER: "6-1570",
-  ASURANSI: "6-1580", LAYANAN: "6-1590", PAJAK: "6-1600", PENYESUAIAN: "6-1630", LAINNYA: "6-1630", REFUND: "4-1190",
+  ASURANSI: "6-1580", LAYANAN: "6-1590", PAJAK: "6-1600", PENYESUAIAN: "6-1630", LAINNYA: "6-1630", REFUND: "4-1190", PESANAN_HILANG: "6-1850",
 };
 const expenseOf = (cat: FeeCategory | typeof UNMAPPED, channel: string) => (cat === "IKLAN" ? (channel === "SHP" ? "6-1610" : "6-1611") : cat === UNMAPPED ? "6-1630" : (EXPENSE[cat] ?? "6-1630"));
 

@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { commitImport, undoImport } from "@/lib/marketplace/import";
 import type { ParsedFile, ParsedIncome } from "@/lib/marketplace/parse";
-import { adsLines, glTrialBalance, linesFromNet, rebuildGl, suggestOpening } from "@/lib/marketplace/gl";
+import { adjLines, adsLines, glTrialBalance, linesFromNet, rebuildGl, suggestOpening } from "@/lib/marketplace/gl";
 
 const tag = Date.now().toString(36).slice(-4).toUpperCase();
 const num = Date.now().toString().slice(-6);
@@ -40,6 +40,17 @@ describe("Buku bayangan marketplace (simulasi)", () => {
     expect(by("6-1620")).toBe(1100);
     expect(by("6-1610")).toBe(5500);
     expect(l.reduce((a, x) => a + x.debit - x.credit, 0)).toBe(0);
+  });
+
+  it("penyesuaian: kompensasi pesanan hilang → 6-1850 (kredit), sampel affiliate → 6-1560, lain → 6-1630; kategori hilang di pesanan biasa juga 6-1850", () => {
+    const e = (released: number, desc: string) => ({ releasedAt: new Date(), released, productAmt: 0, feeDetail: { [desc]: released }, kind: "ADJUST" });
+    const l = adjLines([e(45000, "Kompensasi atas pesanan hilang"), e(-4000, "Adjustment for Affiliate Free Sample Shipping"), e(-1000, "Penyesuaian saldo lainnya")], "1-1212", "SHP", new Map());
+    const by = (a: string) => { const x = l.find((y) => y.account === a); return x ? x.debit - x.credit : 0; };
+    expect(by("6-1850")).toBe(-45000);
+    expect(by("6-1560")).toBe(4000);
+    expect(by("6-1630")).toBe(1000);
+    expect(by("1-1212")).toBe(40000);
+    expect(l.find((x) => x.account === "6-1640")).toBeUndefined();
   });
 
   it("diturunkan dari data impor: cair pesanan, iklan, GMV Pay TikTok, saldo pembuka; tidak menyentuh jurnal nyata; bisa dibangun ulang", async () => {
@@ -86,7 +97,7 @@ describe("Buku bayangan marketplace (simulasi)", () => {
     // neraca saldo bayangan: seimbang; saldo penjual Shopee = pembuka + cair − isi saldo iklan
     const tb = await glTrialBalance({ storeId: st.id, channel: "SHP", to: new Date("2042-12-31") });
     expect(tb.totalDebit).toBe(tb.totalCredit);
-    expect(tb.rows.find((x) => x.code === "1-1212")!.balance).toBe(200000 + 130000 - 11100);
+    expect(mine.filter((j) => j.channel === "SHP").reduce((a, j) => a + by(j, "1-1212"), 0)).toBe(200000 + 130000 - 11100); // data uji lain di DB bersama tidak ikut dihitung
 
     // dibangun ulang = hasil sama (idempoten), jurnal nyata tidak berubah
     const r2 = await rebuildGl();
