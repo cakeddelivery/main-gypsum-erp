@@ -10,6 +10,7 @@ export const FEE_CATEGORIES = {
   ONGKIR_PROGRAM: { label: "Program ongkir (Xtra / layanan logistik)", counted: true },
   ONGKIR: { label: "Ongkir (selisih)", counted: true },
   AFFILIATE: { label: "Affiliate / komisi kreator", counted: true },
+  AFFILIATE_SAMPEL: { label: "Ongkir sampel affiliate", counted: true },
   IKLAN: { label: "Iklan", counted: true },
   ASURANSI: { label: "Asuransi (premi)", counted: true },
   LAYANAN: { label: "Layanan Live / video", counted: true },
@@ -55,6 +56,7 @@ const TIKTOK: Rule[] = [
   [/subtotal|diskon penjual|diskon platform|pengembalian dana/, "INFO"],
 ];
 const COMMON: Rule[] = [
+  [/sample|sampel/, "AFFILIATE_SAMPEL"],
   [/komisi ams|afiliasi|affiliate|komisi kreator/, "AFFILIATE"],
   [/komisi platform|komisi dinamis|biaya administrasi|biaya transaksi/, "ADMIN"],
   [/pre-?order|shopee live|layanan video|live xtra/, "LAYANAN"],

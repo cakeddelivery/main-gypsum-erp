@@ -65,3 +65,23 @@ export async function autoLinkReturn(kind: "RETUR" | "KOMPLAIN", id: string) {
     return null;
   }
 }
+
+/**
+ * Cegah catatan dobel: satu pesanan tidak boleh punya dua retur (atau dua komplain) aktif kecuali dikonfirmasi.
+ * Pesanan dikenali dari no. pesanan, atau dari resi lewat pesanan marketplace yang sudah diimpor.
+ */
+export async function duplicateFor(kind: "RETUR" | "KOMPLAIN", input: { trackingNo?: string | null; orderNo?: string | null }): Promise<string | null> {
+  const tracking = up(input.trackingNo);
+  const orderNos = new Set<string>();
+  if (input.orderNo) orderNos.add(up(input.orderNo));
+  if (tracking) {
+    const o = await prisma.marketplaceOrder.findFirst({ where: { trackingNo: tracking }, select: { orderNo: true } });
+    if (o) orderNos.add(o.orderNo);
+  }
+  const nos = [...orderNos].filter(Boolean);
+  if (!nos.length) return null;
+  const hit = kind === "RETUR"
+    ? await prisma.returnCase.findFirst({ where: { cancelledAt: null, orderNo: { in: nos } }, select: { number: true } })
+    : await prisma.complaint.findFirst({ where: { cancelledAt: null, orderNo: { in: nos } }, select: { number: true } });
+  return hit?.number ?? null;
+}

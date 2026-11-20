@@ -2,6 +2,8 @@
 import { useRef, useState } from "react";
 import { classifyCodes, COURIERS, MARKETPLACES, PROVINCES, type LabelRead } from "@/lib/returnLabel";
 import { readLabelAction } from "./actions";
+import { OrderLookup } from "./OrderLookup";
+import type { OrderHit } from "@/lib/marketplace/lookup";
 
 type Opt = { id: string; name: string };
 type Row = { k: number; labelSku: string; labelVariation: string; labelName: string; qty: string; itemId: string };
@@ -69,15 +71,24 @@ export async function detectCodes(file: File): Promise<string[]> {
  * (marketplace, kurir, no. pesanan, kota/kab, provinsi, produk) → hasil ditampilkan untuk dikonfirmasi.
  * Foto label tidak disimpan. Nama, alamat, dan no. HP pembeli tidak diambil.
  */
-export function ReturnFields({ items, today, defaults }: { items: Opt[]; today: string; defaults?: ReturnDefaults }) {
+export function ReturnFields({ items, today, defaults, prefill }: { items: Opt[]; today: string; defaults?: ReturnDefaults; prefill?: OrderHit | null }) {
   const [v, setV] = useState<ReturnDefaults>(defaults ?? {});
   const [ver, setVer] = useState(0);
   const [rows, setRows] = useState<Row[]>((defaults?.lines?.length ? defaults.lines : [{ labelSku: "", labelVariation: "", labelName: "", qty: "1", itemId: "" }]).map((l, i) => ({ ...l, k: i })));
+  const [autoQ, setAutoQ] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ tone: "ok" | "warn"; text: string } | null>(null);
   const [labelRead, setLabelRead] = useState<{ source: string; codes: string[] } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const set = (i: number, patch: Partial<Row>) => setRows((x) => x.map((y, j) => (j === i ? { ...y, ...patch } : y)));
+
+  /** Isi form dari pesanan marketplace yang dipilih (pengguna tinggal isi alasan/kondisi) */
+  function fromOrder(h: OrderHit) {
+    setV((o) => ({ ...o, trackingNo: h.trackingNo ?? o.trackingNo, orderNo: h.orderNo, marketplace: h.marketplace, courier: h.courier ?? o.courier, city: h.city ?? o.city, province: h.province ?? o.province }));
+    const ls = h.lines.filter((l) => !l.extra);
+    if (ls.length) setRows(ls.map((l, i) => ({ k: Date.now() + i, labelSku: l.sku ?? "", labelVariation: l.variation ?? "", labelName: l.name ?? "", qty: String(l.qty), itemId: l.itemId && items.some((x) => x.id === l.itemId) ? l.itemId : "" })));
+    setVer((n) => n + 1);
+  }
 
   async function onPhoto(file: File | undefined) {
     if (!file) return;
@@ -104,6 +115,7 @@ export function ReturnFields({ items, today, defaults }: { items: Opt[]; today: 
     setV({ ...next, trackingNo: g.trackingNo ?? x.trackingNo ?? next.trackingNo, orderNo: g.orderNo ?? x.orderNo ?? next.orderNo, courier: g.courier ?? x.courier ?? next.courier, marketplace: g.marketplace ?? x.marketplace ?? next.marketplace, city: x.city ?? next.city, province: x.province ?? next.province });
     if (x.lines.length) setRows(x.lines.map((l, i) => ({ k: Date.now() + i, labelSku: l.sku ?? "", labelVariation: l.variation ?? "", labelName: l.name ?? "", qty: String(l.qty), itemId: r.matches?.[i] ?? "" })));
     setVer((n) => n + 1);
+    setAutoQ([g.trackingNo ?? x.trackingNo, g.orderNo ?? x.orderNo].filter(Boolean).join(" "));
     setLabelRead({ source: r.source ?? "MANUAL", codes });
     const unmapped = x.lines.filter((_, i) => !r.matches?.[i]).length;
     setMsg({
@@ -114,6 +126,7 @@ export function ReturnFields({ items, today, defaults }: { items: Opt[]; today: 
 
   return (
     <div className="space-y-4">
+      <OrderLookup kind="RETUR" onPick={fromOrder} prefill={prefill} autoQuery={autoQ} />
       <div className="rounded-xl border border-dashed border-brand-300 bg-brand-50/50 p-3">
         <p className="text-sm font-medium">1. Foto label resi</p>
         <p className="mt-0.5 text-xs text-slate-600">Foto hanya dibaca lalu dibuang (tidak disimpan). Nama, alamat & no. HP pembeli tidak diambil.</p>

@@ -5,6 +5,8 @@ import { ISSUE_TYPES } from "@/lib/complaintShared";
 import { BankSelect } from "@/components/BankSelect";
 import { readLabelAction } from "../actions";
 import { detectCodes, shrink } from "../ReturnFields";
+import { OrderLookup } from "../OrderLookup";
+import type { OrderHit } from "@/lib/marketplace/lookup";
 
 type Opt = { id: string; name: string; stock?: number };
 type Row = { k: number; labelSku: string; labelName: string; itemId: string; qty: string; sendQty: string };
@@ -14,17 +16,27 @@ type Head = { trackingNo?: string | null; orderNo?: string | null; marketplace?:
  * Form komplain: foto label (opsional, sama seperti retur) → jenis masalah → barang & jumlah bermasalah → bukti dari
  * pembeli → solusi Refund (nominal + rekening/e-wallet pembeli) atau Kirim ganti (jumlah pengganti, bisa dibarengkan).
  */
-export function ComplaintFields({ items, today }: { items: Opt[]; today: string }) {
+export function ComplaintFields({ items, today, prefill }: { items: Opt[]; today: string; prefill?: OrderHit | null }) {
   const [v, setV] = useState<Head>({});
   const [ver, setVer] = useState(0);
   const [rows, setRows] = useState<Row[]>([{ k: 0, labelSku: "", labelName: "", itemId: "", qty: "1", sendQty: "1" }]);
   const [solution, setSolution] = useState("REFUND");
   const [amount, setAmount] = useState("");
+  const [autoQ, setAutoQ] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [labelRead, setLabelRead] = useState<{ source: string; codes: string[] } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const set = (i: number, p: Partial<Row>) => setRows((x) => x.map((y, j) => (j === i ? { ...y, ...p } : y)));
+
+  /** Isi form dari pesanan marketplace; ubah qty menjadi jumlah yang BERMASALAH saja */
+  function fromOrder(h: OrderHit) {
+    setV((o) => ({ ...o, trackingNo: h.trackingNo ?? o.trackingNo, orderNo: h.orderNo, marketplace: h.marketplace, courier: h.courier ?? o.courier, city: h.city ?? o.city, province: h.province ?? o.province }));
+    const ls = h.lines.filter((l) => !l.extra);
+    if (ls.length) setRows(ls.map((l, i) => ({ k: Date.now() + i, labelSku: l.sku ?? "", labelName: [l.variation, l.name].filter(Boolean).join(" · "), itemId: l.itemId && items.some((x) => x.id === l.itemId) ? l.itemId : "", qty: String(l.qty), sendQty: String(l.qty) })));
+    setVer((n) => n + 1);
+    setMsg("Terisi dari pesanan marketplace. Ubah jumlah barang menjadi jumlah yang BERMASALAH saja.");
+  }
 
   async function onPhoto(file: File | undefined) {
     if (!file) return;
@@ -41,12 +53,14 @@ export function ComplaintFields({ items, today }: { items: Opt[]; today: string 
     setV((o) => ({ ...o, trackingNo: g.trackingNo ?? x?.trackingNo ?? o.trackingNo, orderNo: g.orderNo ?? x?.orderNo ?? o.orderNo, marketplace: g.marketplace ?? x?.marketplace ?? o.marketplace, courier: g.courier ?? x?.courier ?? o.courier, city: x?.city ?? o.city, province: x?.province ?? o.province }));
     if (x?.lines.length) setRows(x.lines.map((l, i) => ({ k: Date.now() + i, labelSku: l.sku ?? "", labelName: [l.variation, l.name].filter(Boolean).join(" · "), itemId: r.matches?.[i] ?? "", qty: String(l.qty), sendQty: String(l.qty) })));
     setVer((n) => n + 1);
+    setAutoQ([g.trackingNo ?? x?.trackingNo, g.orderNo ?? x?.orderNo].filter(Boolean).join(" "));
     setLabelRead({ source: r.ok ? r.source ?? "MANUAL" : "MANUAL", codes });
     setMsg(r.ok ? "Label terbaca. Ubah jumlah barang menjadi jumlah yang BERMASALAH saja." : `Label belum terbaca (${r.error ?? "gagal"}); isi manual.`);
   }
 
   return (
     <div className="space-y-4">
+      <OrderLookup kind="KOMPLAIN" onPick={fromOrder} prefill={prefill} autoQuery={autoQ} />
       <div className="rounded-xl border border-dashed border-brand-300 bg-brand-50/50 p-3">
         <p className="text-sm font-medium">Foto label resi (opsional)</p>
         <p className="mt-0.5 text-xs text-slate-600">Atau ketik no. resi / no. pesanan di bawah. Foto tidak disimpan.</p>

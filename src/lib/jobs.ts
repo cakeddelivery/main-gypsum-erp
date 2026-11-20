@@ -286,6 +286,22 @@ export async function runDueJobs(now: Date = new Date()) {
       if (r && (r as { perangkat?: number }).perangkat) results.pengingatShift = r;
     }
   }
+  // Pembaruan data marketplace harian: Supervisor pada jam yang diatur, Owner (cadangan) 2 jam kemudian bila masih belum diperbarui
+  {
+    const { syncConfig, sendMarketplaceSyncReminder } = await import("./marketplace/sync");
+    const cfg = await syncConfig();
+    if (cfg.start) {
+      const { pushConfigured } = await import("./push");
+      if (minutes >= cfg.hour * 60 && !(await ranToday("job_mp_sync_sup", date))) {
+        await markRan("job_mp_sync_sup", date);
+        if (pushConfigured()) results.mpSyncSup = await logFailure("MP_SYNC_SUP", date, () => sendMarketplaceSyncReminder(now, "SUPERVISOR"));
+      }
+      if (minutes >= (cfg.hour + 2) * 60 && !(await ranToday("job_mp_sync_own", date))) {
+        await markRan("job_mp_sync_own", date);
+        if (pushConfigured()) results.mpSyncOwner = await logFailure("MP_SYNC_OWNER", date, () => sendMarketplaceSyncReminder(now, "OWNER"));
+      }
+    }
+  }
   // Pengingat withdraw marketplace belum dicatat (jam diatur di Penjualan › Marketplace › Saldo; bawaan 15.00)
   {
     const { wdReminderHour, sendMarketplaceWdReminder } = await import("./marketplace/saldo");

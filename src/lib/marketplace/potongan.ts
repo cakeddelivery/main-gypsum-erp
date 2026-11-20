@@ -17,25 +17,44 @@ export type PotonganFilter = { storeId?: string; channel: string; from: string; 
 export async function potonganReport(f: PotonganFilter) {
   const platform = platformOf(f.channel);
   const rel = { gte: dayStart(f.from), lt: dayEnd(f.to) };
-  const base = { channel: f.channel, ...(f.storeId ? { storeId: f.storeId } : {}), releasedAt: rel };
-  const [orders, ads, adj, overrides] = await Promise.all([
-    prisma.marketplaceIncome.findMany({ where: { ...base, kind: "ORDER" }, select: { released: true, productAmt: true, feeDetail: true } }),
-    prisma.marketplaceIncome.aggregate({ where: { ...base, kind: "ADS" }, _sum: { released: true } }),
-    prisma.marketplaceIncome.aggregate({ where: { ...base, kind: "ADJUST" }, _sum: { released: true } }),
+  const inc = (kind: string) => ({ income: { channel: f.channel, kind, ...(f.storeId ? { storeId: f.storeId } : {}) }, releasedAt: rel });
+  const storeW = f.storeId ? { storeId: f.storeId } : {};
+  const [orders, ads, adjEv, adsUse, walletAll, topup, overrides] = await Promise.all([
+    // per baris penyelesaian pada tanggalnya (refund setelah cair ikut masuk periodenya sendiri)
+    prisma.marketplaceIncomeEvent.findMany({ where: inc("ORDER"), select: { incomeId: true, released: true, productAmt: true, feeDetail: true } }),
+    prisma.marketplaceIncomeEvent.aggregate({ where: inc("ADS"), _sum: { released: true } }),
+    prisma.marketplaceIncomeEvent.findMany({ where: inc("ADJUST"), select: { released: true, feeDetail: true } }),
+    prisma.marketplaceIncomeEvent.findMany({ where: inc("ADSUSE"), select: { released: true, feeDetail: true } }),
+    prisma.marketplaceIncomeEvent.aggregate({ where: { income: { channel: f.channel, kind: "ADSUSE", ...storeW } }, _sum: { released: true } }),
+    prisma.marketplaceIncomeEvent.aggregate({ where: inc("TOPUP"), _sum: { released: true } }),
     feeOverrides(),
   ]);
   const gross = orders.reduce((a, o) => a + n(o.productAmt), 0);
   const released = orders.reduce((a, o) => a + n(o.released), 0);
   const t = sumFees(platform, orders.map((o) => (o.feeDetail ?? {}) as Record<string, number>), overrides);
-  const adsV = n(ads._sum.released);
-  const adjV = n(adj._sum.released);
+  // Iklan: TikTok GMV Pay (ADS) + Shopee pemakaian saldo iklan aktual (ADSUSE tanpa isi saldo). Isi saldo (TOPUP) hanya memengaruhi saldo, bukan biaya.
+  const isWalletIn = (d: unknown) => Object.keys((d ?? {}) as object).some((k) => /isi saldo|top.?up/i.test(k));
+  const usage = adsUse.filter((e) => !isWalletIn(e.feeDetail)).reduce((a, e) => a + n(e.released), 0);
+  const walletIn = adsUse.filter((e) => isWalletIn(e.feeDetail)).reduce((a, e) => a + n(e.released), 0);
+  const adsV = n(ads._sum.released) + usage;
+  // Penyesuaian dikelompokkan menurut deskripsinya (mis. ongkir sampel affiliate); yang tak dikenal = Penyesuaian
   const byCategory = { ...t.byCategory };
+  let adjV = 0;
+  for (const e of adjEv) {
+    const key = Object.keys((e.feeDetail ?? {}) as object)[0] ?? "";
+    let cat = key ? categoryOf(platform, key, overrides) : "BELUM";
+    if (cat === "BELUM" || cat === "ABAIKAN") cat = "PENYESUAIAN";
+    byCategory[cat] = (byCategory[cat] ?? 0) + n(e.released);
+    adjV += n(e.released);
+  }
   if (adsV) byCategory.IKLAN = (byCategory.IKLAN ?? 0) + adsV;
-  if (adjV) byCategory.PENYESUAIAN = (byCategory.PENYESUAIAN ?? 0) + adjV;
-  const explained = gross + t.counted + adsV + adjV;
+  const topupOut = Math.abs(n(topup._sum.released));
+  const adsInfo = { topup: topupOut, ppn: Math.round(topupOut - topupOut / 1.11), usage: -usage, walletIn, walletBalance: n(walletAll._sum.released) };
+  // Selisih hanya untuk penyelesaian pesanan: cair − (harga jual + potongan yang sudah dipetakan). Iklan/penyesuaian berdiri sendiri.
+  const explained = gross + t.counted;
   return {
-    platform, orders: orders.length, gross, released, byCategory, byColumn: t.byColumn, unmapped: t.unmapped,
-    ads: adsV, adjust: adjV,
+    platform, orders: new Set(orders.map((o) => o.incomeId)).size, events: orders.length, gross, released, byCategory, byColumn: t.byColumn, unmapped: t.unmapped,
+    ads: adsV, adjust: adjV, adsInfo,
     /** cair − (harga jual + semua potongan): selisih yang belum terjelaskan oleh kolom biaya */
     residual: released - explained,
     rows: Object.entries(byCategory).filter(([, v]) => v).map(([c, v]) => ({ category: c, label: FEE_CATEGORIES[c as keyof typeof FEE_CATEGORIES]?.label ?? c, counted: c in FEE_CATEGORIES ? isCounted(c as FeeCategory, platform) : true, value: v, pct: gross ? (Math.abs(v) / gross) * 100 : 0 })).sort((a, b) => Math.abs(b.value) - Math.abs(a.value)),

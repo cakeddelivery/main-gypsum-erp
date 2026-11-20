@@ -47,7 +47,7 @@ export default async function PenjualanDetail({ params }: { params: Promise<{ id
         title={`Penjualan ${s.number}`}
         subtitle={<>{s.customerName} · {fmtDate(s.date)} · <Badge tone={st.tone}>{st.label}</Badge></>}
         actions={<>
-          <Link href="/penjualan" className="btn-secondary">Kembali</Link>
+          <Link href="/penjualan/offline" className="btn-secondary">Kembali</Link>
           {!s.cancelledAt && <DownloadJpg targetId="nota" filename={`nota-${s.number}`} label="👁 Lihat nota" />}
           {canManage && !s.cancelledAt && (
             <ActionForm action={invoiceFromSaleAction}>

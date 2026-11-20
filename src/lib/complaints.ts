@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./db";
-import { autoLinkReturn } from "./marketplace/link";
+import { autoLinkReturn, duplicateFor } from "./marketplace/link";
 import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } from "./accounting";
 import { nextNumber } from "./numbering";
 import { audit } from "./audit";
@@ -46,6 +46,8 @@ export type ComplaintInput = {
   labelRead?: Prisma.InputJsonValue | null;
   /// Ongkir kirim ganti / lain yang ditanggung toko (opsional, untuk analitik)
   shippingCost?: number;
+  /// Konfirmasi: pesanan ini memang punya komplain kedua
+  confirmDup?: boolean;
   lines: ComplaintLineInput[];
 };
 
@@ -73,6 +75,10 @@ export function validateComplaint(input: ComplaintInput) {
 export async function createComplaint(input: ComplaintInput, actor: Actor) {
   const lines = validateComplaint(input);
   const refund = input.solution === "REFUND";
+  if (!input.confirmDup) {
+    const dup = await duplicateFor("KOMPLAIN", { trackingNo: input.trackingNo, orderNo: input.orderNo });
+    if (dup) throw new StockError(`Pesanan ini sudah punya komplain ${dup}. Bila memang komplain kedua, centang “Ini komplain kedua untuk pesanan yang sama”.`);
+  }
   return prisma.$transaction(async (tx) => {
     const ids = [...new Set(lines.map((l) => l.itemId).filter(Boolean) as string[])];
     const items = await tx.item.findMany({ where: { id: { in: ids } }, select: { id: true, type: true, name: true } });

@@ -30,7 +30,7 @@ export default async function PelangganPage({ searchParams }: { searchParams: Pr
         const rest = Number(x?._sum.total ?? 0) - Number(x?._sum.paid ?? 0);
         return {
           ...r,
-          href: canSales ? `/penjualan?customer=${r.id}&from=2000-01-01` : undefined,
+          href: canSales ? `/penjualan/offline?customer=${r.id}&from=2000-01-01` : undefined,
           extra: x ? <span className="text-xs">{idr(x._sum.total ?? 0)} ({x._count} nota){rest > 0 && <span className="block text-amber-700">sisa {idr(rest)}</span>}</span> : <span className="text-xs text-slate-400">—</span>,
         };
       })}

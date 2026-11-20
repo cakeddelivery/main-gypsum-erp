@@ -14,13 +14,14 @@ import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { Paged } from "@/components/Paged";
 import { DownloadCsv } from "@/components/DownloadCsv";
+import { lookupOrderById } from "@/lib/marketplace/lookup";
 import { ReturnFields } from "./ReturnFields";
 import { saveReturn } from "./actions";
 import { ReturTabs } from "./ReturTabs";
 
 export const metadata = { title: "Retur" };
 
-type SP = { tab?: string; q?: string };
+type SP = { tab?: string; q?: string; dari?: string };
 const TABS: { key: string; label: string; where: Prisma.ReturnCaseWhereInput }[] = [
   { key: "aktif", label: "Belum selesai", where: { cancelledAt: null, status: { not: "SELESAI" } } },
   { key: "DITERIMA", label: "Diterima", where: { cancelledAt: null, status: "DITERIMA" } },
@@ -42,6 +43,7 @@ export default async function ReturPage({ searchParams }: { searchParams: Promis
   };
   const p = jakartaParts();
   const monthStart = jakartaDateTime(`${p.year}-${String(p.month).padStart(2, "0")}-01`, "00:00");
+  const prefill = sp.dari ? await lookupOrderById(sp.dari) : null;
   const [rows, counts, month, items] = await Promise.all([
     prisma.returnCase.findMany({
       where, orderBy: [{ receivedAt: "desc" }, { number: "desc" }], take: 300,
@@ -59,9 +61,9 @@ export default async function ReturPage({ searchParams }: { searchParams: Promis
         subtitle="Paket retur dari pembeli marketplace: scan label resi, rekam video unboxing, periksa barang (baik kembali ke stok, rusak jadi kerugian), lalu klaim."
         actions={<>
           <DownloadCsv filename={`retur-${todayStr()}`} rows={[["No.", "Diterima", "Marketplace", "Kurir", "Resi", "No. pesanan", "Kota/Kab", "Provinsi", "Alasan", "Barang", "Nilai baik", "Kerugian", "Klaim cair", "Status"], ...rows.map((r) => [r.number, fmtDate(r.receivedAt), marketplaceLabel(r.marketplace), r.courier ?? "", r.trackingNo, r.orderNo ?? "", r.city ?? "", r.province ?? "", r.reason ?? "", r.lines.map((l) => `${l.item?.name ?? l.labelSku ?? l.labelName} × ${l.qty}`).join("; "), Number(r.goodValue), Number(r.lossValue), Number(r.claimPaidAmount), returnStatusOf(r).label])]} />
-          <Modal trigger="+ Retur baru" title="Retur baru" full>
+          <Modal trigger="+ Retur baru" title="Retur baru" full defaultOpen={!!prefill}>
             <ModalForm action={saveReturn}>
-              <ReturnFields items={items} today={todayStr()} />
+              <ReturnFields items={items} today={todayStr()} prefill={prefill} />
               <div className="mt-4"><Submit>Simpan & rekam video</Submit></div>
             </ModalForm>
           </Modal>

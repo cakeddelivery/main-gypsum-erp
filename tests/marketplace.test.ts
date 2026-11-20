@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { makeXlsx } from "./fixtures/xlsxMake";
 import { FormatError, parseMarketplaceFile, parseNum } from "@/lib/marketplace/parse";
-import { lineKey, mapStatus, normSku, shownStatus } from "@/lib/marketplace/rules";
+import { lineKey, mapStatus, normSku, regionCity, shownStatus } from "@/lib/marketplace/rules";
 import { commitImport, previewImport, undoImport } from "@/lib/marketplace/import";
 import { autoLinkReturn, linkOrdersToReturns } from "@/lib/marketplace/link";
 import { resolveSkuKeys } from "@/lib/marketplace/sku";
@@ -79,6 +79,18 @@ describe("Marketplace: aturan murni", () => {
     expect(lineKey("SHP", "BBWP", "Bubble Wrap")).toBe("BBWP|BUBBLEWRAP");
     expect(lineKey("TTS", "BBWP", "apa saja")).toBe("BBWP|"); // TikTok: Seller SKU sudah spesifik
   });
+  it("nama wilayah diseragamkan antar Shopee/TikTok (mentah tetap disimpan)", () => {
+    expect(regionCity("KAB. BOGOR")).toBe("Kab. Bogor");
+    expect(regionCity("Kab. Bogor")).toBe("Kab. Bogor");
+    expect(regionCity("Kabupaten Bogor")).toBe("Kab. Bogor");
+    expect(regionCity("KOTA BEKASI")).toBe("Kota Bekasi");
+    expect(regionCity("Kota Bekasi")).toBe("Kota Bekasi");
+    expect(regionCity("KOTA JAKARTA TIMUR")).toBe("Kota Jakarta Timur");
+    expect(regionCity("Kota Administrasi Jakarta Timur")).toBe("Kota Jakarta Timur");
+    expect(regionCity("KOTA ADM. JAKARTA TIMUR")).toBe("Kota Jakarta Timur");
+    expect(regionCity("  kab.   tangerang ")).toBe("Kab. Tangerang");
+    expect(regionCity(null)).toBe("-");
+  });
   it("angka berformat titik ribuan", () => {
     expect(parseNum("64.208")).toBe(64208);
     expect(parseNum("1.234.567")).toBe(1234567);
@@ -124,6 +136,14 @@ describe("Marketplace: pembaca 4 format", () => {
     expect(json).not.toContain(HP_RAHASIA);
     expect(json).not.toContain("budi_rahasia");
   });
+  it("Shopee Order: nilai pesanan tidak Rp 0 bila kolom total kosong di baris pertama atau semuanya kosong (pakai isi pesanan)", async () => {
+    const r1 = shpRow({ "No. Pesanan": `Z1${tag}`, "Status Pesanan": "Selesai", "SKU Induk": "GB", "Nama Produk": "GiftBox", "Nomor Referensi SKU": `GB${tag}`, "Harga Setelah Diskon": 30000, "Jumlah": 1 });
+    const r2 = shpRow({ "No. Pesanan": `Z1${tag}`, "Status Pesanan": "Selesai", "SKU Induk": "GB", "Nama Produk": "GiftBox 2", "Nomor Referensi SKU": `GB2${tag}`, "Harga Setelah Diskon": 20000, "Jumlah": 1, "Total Pembayaran": "50.000", "No. Resi": `RS${tag}` });
+    const r3 = shpRow({ "No. Pesanan": `Z2${tag}`, "Status Pesanan": "Selesai", "SKU Induk": "GB", "Nama Produk": "GiftBox", "Nomor Referensi SKU": `GB${tag}`, "Harga Setelah Diskon": 30000, "Jumlah": 2 });
+    const p = await parseMarketplaceFile(await makeXlsx([{ name: "orders", rows: [SHP_HEAD, r1, r2, r3] }]));
+    expect(p.orders.find((o) => o.orderNo === `Z1${tag}`)).toMatchObject({ total: 50000, trackingNo: `RS${tag}` }); // dari baris berikutnya
+    expect(p.orders.find((o) => o.orderNo === `Z2${tag}`)!.total).toBe(60000); // dari isi pesanan
+  });
   it("Shopee Income: header baris 3, biaya dirinci, username penjual dari Summary", async () => {
     const p = await parseMarketplaceFile(await shopeeIncomeFile());
     expect(p).toMatchObject({ platform: "SHOPEE", kind: "INCOME", info: { seller: "toko_uji" } });
@@ -164,7 +184,7 @@ describe("Marketplace: pembaca 4 format", () => {
   });
   it("format tak dikenal ditolak dengan pesan jelas", async () => {
     await expect(parseMarketplaceFile(await makeXlsx([{ name: "Sheet1", rows: [["a", "b"]] }]))).rejects.toThrow(FormatError);
-    await expect(parseMarketplaceFile(Buffer.from("bukan excel"))).rejects.toThrow(/bukan Excel/);
+    await expect(parseMarketplaceFile(Buffer.from("bukan excel"))).rejects.toThrow(/tidak dikenali/);
   });
 });
 
@@ -270,7 +290,7 @@ describe("Marketplace: SKU & tautan retur", () => {
     expect(f2).toMatchObject({ city: "KAB. SIDOARJO", province: "Jawa Timur", marketplace: "SHOPEE", storeId: st.id });
     const rep = await regionReport({ storeId: st.id, q: tag });
     expect(rep.total).toBe(2); // pesanan batal tidak dihitung
-    expect(rep.cities.find((c) => c.name === "KAB. SIDOARJO")).toMatchObject({ orders: 2, retur: 2 });
+    expect(rep.cities.find((c) => c.name === "Kab. Sidoarjo")).toMatchObject({ orders: 2, retur: 2 });
     await undoImport(actor, r.importId);
     await prisma.returnCase.deleteMany({ where: { id: { in: [old.id, fresh.id] } } });
   });

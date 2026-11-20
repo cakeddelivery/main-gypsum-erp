@@ -21,7 +21,7 @@ export const MIRROR_SOURCES: Record<string, { label: string; href: (ref: string 
   KASBON: { label: "Kasbon", href: () => "/gaji/kasbon" },
   BORONGAN: { label: "Upah borongan", href: () => "/borongan" },
   SISIHAN: { label: "Dana sisihan", href: () => "/finance/sisihan" },
-  PENJUALAN: { label: "Penjualan", href: () => "/penjualan" },
+  PENJUALAN: { label: "Penjualan", href: () => "/penjualan/offline" },
   ASET: { label: "Aset tetap", href: () => "/akuntansi/aset" },
   KOMPLAIN: { label: "Refund komplain", href: (r) => (r ? `/retur/komplain?q=${encodeURIComponent(r.split(":")[0])}` : "/retur/komplain") },
   RETUR: { label: "Klaim retur", href: (r) => (r ? `/retur?q=${encodeURIComponent(r.split(":")[0])}` : "/retur") },

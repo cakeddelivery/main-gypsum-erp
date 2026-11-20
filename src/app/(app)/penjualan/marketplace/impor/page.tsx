@@ -39,7 +39,7 @@ export default async function ImporPage() {
                     return (
                       <tr key={b.id} className={b.undoneAt ? "opacity-60" : ""}>
                         <td className="whitespace-nowrap">{fmtDateTime(b.createdAt)}<div className="text-xs text-slate-400">{b.createdBy}</div></td>
-                        <td className="max-w-[14rem] break-all text-xs">{b.fileName}<div className="text-slate-400">{b.kind === "ORDER" ? "Pesanan" : "Penghasilan"}</div></td>
+                        <td className="max-w-[14rem] break-all text-xs">{b.fileName}<div className="text-slate-400">{({ ORDER: "Pesanan", INCOME: "Penghasilan", BALANCE: "Buku Saldo Penjual", ADSBILL: "Saldo iklan" } as Record<string, string>)[b.kind] ?? b.kind}</div></td>
                         <td>{sn.get(b.storeId) ?? "-"} · {CHANNEL_LABEL[b.channel]}</td>
                         <td className="text-xs">{s.baru ?? 0} baru · {s.diperbarui ?? 0} diperbarui · {s.dilewati ?? 0} dilewati</td>
                         <td>
