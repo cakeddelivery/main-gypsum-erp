@@ -8,6 +8,7 @@ import { audit } from "@/lib/audit";
 import { createInvoice, InvoiceError } from "@/lib/invoice";
 import { commitImport, previewImport, undoImport, MarketplaceImportError, type ImportFile, type Preview } from "@/lib/marketplace/import";
 import { FormatError, parseMarketplaceFile } from "@/lib/marketplace/parse";
+import { rebuildGl } from "@/lib/marketplace/gl";
 import { integrityCheck } from "@/lib/marketplace/integrity";
 import { latestMonth } from "@/lib/marketplace/dashboard";
 import { finishJob, runningJob, startJob, stepJob } from "@/lib/marketplace/job";
@@ -150,6 +151,7 @@ export async function saveMarketplaceAction(fd: FormData): Promise<PreviewResult
     const { files, fileErrors } = await readFiles(fd);
     if (fileErrors.length || !files.length) return { ok: false, error: fileErrors[0]?.error ?? "Tidak ada file yang bisa disimpan", fileErrors };
     const res = await commitImport(user, files);
+    await rebuildGl().catch(() => {}); // buku bayangan (simulasi) ikut segar; gagal tidak menggagalkan impor
     revalidatePath("/penjualan", "layout");
     const baru = res.reduce((a, r) => a + r.baru, 0), upd = res.reduce((a, r) => a + r.diperbarui, 0), skip = res.reduce((a, r) => a + r.dilewati, 0);
     return { ok: true, message: `Impor tersimpan: ${baru} baru, ${upd} diperbarui, ${skip} dilewati (sama persis)` };
