@@ -2951,6 +2951,8 @@ model MarketplaceOrder {
   returnQty       Int      @default(0)
   /// Sidik isi pesanan (untuk mengenali impor ulang yang identik)
   sig             String?
+  /// Semua kolom NON-pribadi dari file Order per baris produk (berat, voucher, cashback koin, dst.). Data pribadi pembeli tidak disimpan.
+  extra           Json?
   importId        String
   lastImportId    String
   createdAt       DateTime @default(now())
@@ -3162,4 +3164,60 @@ model MarketplaceGlOpening {
   createdAt DateTime @default(now())
 
   @@unique([storeId, channel, wallet])
+}
+
+/// Selisih ongkir Shopee (sheet "Shipping Fee Discrepancy" di file Penghasilan): estimasi vs yang dibayarkan ke jasa kirim
+model MarketplaceShipDiscrepancy {
+  id        String   @id @default(cuid())
+  storeId   String
+  channel   String
+  orderNo   String
+  estimate  BigInt   @default(0)
+  paid      BigInt   @default(0)
+  /// paid - estimate (positif = penjual menanggung lebih)
+  diff      BigInt   @default(0)
+  reason    String?
+  /// Tanggal acuan bulan laporan (tanggal dana dilepas pesanan itu, atau tanggal pesanan)
+  date      DateTime?
+  importId  String
+  createdAt DateTime @default(now())
+
+  @@unique([storeId, channel, orderNo])
+  @@index([storeId, channel, date])
+  @@index([importId])
+}
+
+/// Rincian "Seller Fee" Shopee per pesanan (sheet "Seller Fee" di file Penghasilan) — pembanding silang untuk Cek Integritas
+model MarketplaceSellerFee {
+  id          String   @id @default(cuid())
+  storeId     String
+  channel     String
+  orderNo     String
+  platformFee BigInt   @default(0)
+  xtra        BigInt   @default(0)
+  service     BigInt   @default(0)
+  promo       BigInt   @default(0)
+  other       BigInt   @default(0)
+  importId    String
+  createdAt   DateTime @default(now())
+
+  @@unique([storeId, channel, orderNo])
+  @@index([importId])
+}
+
+/// Proses impor yang sedang berjalan (untuk banner "Impor sedang diproses…" & progres)
+model MarketplaceImportJob {
+  id         String    @id @default(cuid())
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+  createdBy  String
+  /// RUNNING / DONE / FAILED
+  status     String    @default("RUNNING")
+  total      Int       @default(0)
+  doneCount  Int       @default(0)
+  label      String?
+  message    String?
+  finishedAt DateTime?
+
+  @@index([status, updatedAt])
 }

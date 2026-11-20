@@ -22,14 +22,17 @@ export default async function OrderDetail({ params }: { params: Promise<{ id: st
   const { id } = await params;
   const o = await prisma.marketplaceOrder.findUnique({ where: { id }, include: { lines: { orderBy: { sortOrder: "asc" } }, income: true } });
   if (!o) notFound();
-  const [store, res, inv, ret, comp, hist] = await Promise.all([
+  const [store, res, inv, ret, comp, hist, disc, sellerFee] = await Promise.all([
     prisma.store.findUnique({ where: { id: o.storeId }, select: { name: true } }),
     resolveSkuKeys(o.lines.map((l) => l.skuKey)),
     o.invoiceId ? prisma.invoice.findUnique({ where: { id: o.invoiceId }, select: { id: true, number: true } }) : null,
     o.returnCaseId ? prisma.returnCase.findUnique({ where: { id: o.returnCaseId }, include: { lines: { select: { goodQty: true, damagedQty: true, qty: true } } } }) : null,
     o.complaintId ? prisma.complaint.findUnique({ where: { id: o.complaintId } }) : null,
     prisma.marketplaceChange.findMany({ where: { rowId: o.id }, orderBy: { createdAt: "desc" }, take: 30 }),
+    prisma.marketplaceShipDiscrepancy.findUnique({ where: { storeId_channel_orderNo: { storeId: o.storeId, channel: o.channel, orderNo: o.orderNo } } }),
+    prisma.marketplaceSellerFee.findUnique({ where: { storeId_channel_orderNo: { storeId: o.storeId, channel: o.channel, orderNo: o.orderNo } } }),
   ]);
+  const extra = (Array.isArray(o.extra) ? o.extra : []) as Record<string, string | number>[];
   const cover = o.incomeId ? (await allocationMap({ storeId: o.storeId, channel: o.channel })).covers.get(o.incomeId) : undefined;
   const stage = o.income ? stageOf(Number(o.income.released), cover) : null;
   const st = shownStatus(o.status, !!o.income, stage === "DITARIK");
@@ -92,6 +95,26 @@ export default async function OrderDetail({ params }: { params: Promise<{ id: st
           </div>
         </Card>
       </div>
+      {disc && (
+        <Card title="Selisih ongkir dari Shopee">
+          <p className="text-sm">Estimasi {idr(Number(disc.estimate))} · dibayarkan ke jasa kirim {idr(Number(disc.paid))} · selisih <b>{idr(Number(disc.diff))}</b></p>
+          {disc.reason && <p className="mt-1 text-xs text-slate-600">{disc.reason}</p>}
+        </Card>
+      )}
+      {sellerFee && (
+        <Card title="Seller Fee (rincian Shopee)">
+          <ul className="grid grid-cols-2 gap-1 text-sm sm:grid-cols-5">{[["Biaya platform", sellerFee.platformFee], ["Gratis Ongkir XTRA", sellerFee.xtra], ["Biaya layanan", sellerFee.service], ["Biaya promosi", sellerFee.promo], ["Biaya lainnya", sellerFee.other]].map(([l, v]) => <li key={l as string}><span className="block text-xs text-slate-500">{l as string}</span>{idr(Number(v))}</li>)}</ul>
+        </Card>
+      )}
+      {extra.length > 0 && (
+        <Card title="Data lengkap dari file pesanan">
+          <details><summary className="cursor-pointer text-sm text-sky-700">Tampilkan semua kolom (tanpa data pribadi pembeli)</summary>
+            {extra.map((row, i) => (
+              <dl key={i} className="mt-2 grid grid-cols-2 gap-x-3 gap-y-0.5 border-t pt-2 text-xs sm:grid-cols-3">{Object.entries(row).map(([k, v]) => <div key={k}><dt className="text-slate-500">{k}</dt><dd className="break-words">{String(v)}</dd></div>)}</dl>
+            ))}
+          </details>
+        </Card>
+      )}
       {hist.length > 0 && (
         <Card title="Riwayat perubahan">
           <ul className="space-y-1 text-sm">{hist.map((h) => <li key={h.id} className={h.undone ? "text-slate-400 line-through" : ""}><span className="text-xs text-slate-400">{fmtDateTime(h.createdAt)}</span> · {h.summary}{h.undone && " (dibatalkan)"}</li>)}</ul>

@@ -6,6 +6,7 @@ const TABS = [
   { href: "/penjualan/marketplace/impor", label: "Impor", key: "impor" },
   { href: "/penjualan/marketplace/sku", label: "Pemetaan SKU", key: "sku" },
   { href: "/penjualan/marketplace/potongan", label: "Potongan", key: "potongan" },
+  { href: "/penjualan/marketplace/pengeluaran", label: "Pengeluaran", key: "pengeluaran" },
   { href: "/penjualan/marketplace/affiliate", label: "Affiliate", key: "affiliate" },
   { href: "/penjualan/marketplace/saldo", label: "Saldo", key: "saldo" },
   { href: "/penjualan/marketplace/rekon", label: "Rekonsiliasi", key: "rekon" },
