@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./db";
+import { autoLinkReturn } from "./marketplace/link";
 import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } from "./accounting";
 import { nextNumber } from "./numbering";
 import { audit } from "./audit";
@@ -89,6 +90,9 @@ export async function createComplaint(input: ComplaintInput, actor: Actor) {
     });
     // Data rekening tidak ikut dicatat di log audit
     await audit(actor, "KOMPLAIN_DIBUAT", "Complaint", c.id, { number, solution: c.solution, amount: Number(c.refundAmount) }, tx);
+    return c;
+  }).then(async (c) => {
+    await autoLinkReturn("KOMPLAIN", c.id); // cocokkan ke pesanan marketplace; gagal diam-diam
     return c;
   });
 }

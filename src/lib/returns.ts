@@ -6,6 +6,7 @@ import { audit } from "./audit";
 import { locationSettings, recordMovement, reverseMovementsByRef, StockError } from "./stock";
 import { recipeMaterialCost } from "./hpp";
 import { packComponents, pieceInspection, type PieceInput } from "./returnPieces";
+import { autoLinkReturn } from "./marketplace/link";
 import { skuKey, type CatalogEntry, type LabelLine } from "./returnLabel";
 
 type Tx = Prisma.TransactionClient;
@@ -127,6 +128,9 @@ export async function createReturn(input: ReturnInput, actor: Actor) {
     });
     await learnMaps(tx, rows, actor);
     await audit(actor, "RETUR_DIBUAT", "ReturnCase", r.id, { number, trackingNo, lines: rows.length }, tx);
+    return r;
+  }).then(async (r) => {
+    await autoLinkReturn("RETUR", r.id); // cocokkan ke pesanan marketplace (resi/no. pesanan); gagal diam-diam
     return r;
   });
 }

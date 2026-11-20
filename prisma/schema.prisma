@@ -2844,3 +2844,174 @@ model Invoice {
   @@index([date])
   @@index([storeCode, channel, yymm])
 }
+
+// ============ IMPOR PENJUALAN MARKETPLACE (Shopee & TikTok Shop) ============
+// Tabel terpisah: TIDAK menyentuh stok maupun jurnal. Tanpa data pribadi pembeli
+// (hanya kota/kab, provinsi, no. pesanan, no. resi, kurir, metode bayar).
+
+/// Satu kali unggah file = satu batch yang bisa dibatalkan
+model MarketplaceImport {
+  id         String    @id @default(cuid())
+  createdAt  DateTime  @default(now())
+  createdBy  String
+  storeId    String
+  /// SHP / TTS
+  channel    String
+  /// ORDER / INCOME
+  kind       String
+  fileName   String
+  periodFrom DateTime? @db.Date
+  periodTo   DateTime? @db.Date
+  /// {baru, diperbarui, dilewati, perluDicek, ...}
+  stats      Json?
+  undoneAt   DateTime?
+  undoneBy   String?
+  changes    MarketplaceChange[]
+
+  @@index([createdAt])
+}
+
+/// Foto kondisi sebelum batch mengubah baris yang sudah ada (untuk pembatalan batch)
+model MarketplaceChange {
+  id       String            @id @default(cuid())
+  importId String
+  batch    MarketplaceImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  /// ORDER / INCOME
+  table    String
+  rowId    String
+  before   Json
+
+  @@index([importId])
+}
+
+model MarketplaceOrder {
+  id              String   @id @default(cuid())
+  storeId         String
+  /// SHP / TTS
+  channel         String
+  orderNo         String
+  orderedAt       DateTime?
+  paidAt          DateTime?
+  completedAt     DateTime?
+  /// Status mentah dari platform (apa adanya)
+  rawStatus       String?
+  rawSubstatus    String?
+  /// Status Pembatalan/Pengembalian (Shopee) atau Cancelation/Return Type (TikTok)
+  rawReturn       String?
+  cancelReason    String?
+  /// PIUTANG / BATAL / RETUR (CAIR dihitung dari tautan income)
+  status          String
+  /// Ditandai komplain manual
+  complaint       Boolean  @default(false)
+  complaintNote   String?
+  trackingNo      String?
+  shipOption      String?
+  courier         String?
+  paymentMethod   String?
+  city            String?
+  province        String?
+  creatorHandle   String?
+  subtotal        BigInt   @default(0)
+  discount        BigInt   @default(0)
+  shippingPaid    BigInt   @default(0)
+  total           BigInt   @default(0)
+  refundAmount    BigInt   @default(0)
+  returnQty       Int      @default(0)
+  /// Sidik isi pesanan (untuk mengenali impor ulang yang identik)
+  sig             String?
+  importId        String
+  lastImportId    String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  incomeId        String?  @unique
+  income          MarketplaceIncome? @relation(fields: [incomeId], references: [id], onDelete: SetNull)
+  /// Invoice resmi yang diterbitkan dari pesanan ini
+  invoiceId       String?
+  /// Retur / komplain ERP yang cocok (tanpa FK; hanya penanda tautan)
+  returnCaseId    String?
+  complaintId     String?
+  lines           MarketplaceOrderLine[]
+
+  @@unique([storeId, channel, orderNo])
+  @@index([orderedAt])
+  @@index([trackingNo])
+  @@index([importId])
+  @@index([status])
+}
+
+model MarketplaceOrderLine {
+  id        String           @id @default(cuid())
+  orderId   String
+  order     MarketplaceOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  sku       String?
+  variation String?
+  /// Kunci pemetaan SKU yang sudah dinormalkan (tanpa awalan MG-, huruf besar, tanpa spasi)
+  skuKey    String
+  name      String?
+  qty       Int
+  unitPrice BigInt           @default(0)
+  amount    BigInt           @default(0)
+  returnQty Int              @default(0)
+  sortOrder Int              @default(0)
+
+  @@index([orderId])
+  @@index([skuKey])
+}
+
+/// Uang cair per pesanan (dari file penghasilan). Bisa masuk lebih dulu daripada pesanannya.
+model MarketplaceIncome {
+  id          String    @id @default(cuid())
+  storeId     String
+  channel     String
+  /// ORDER / ADS (potongan GMV iklan) / ADJUST (penyesuaian)
+  kind        String    @default("ORDER")
+  /// No. pesanan (ORDER) atau ID penyesuaian/referensi
+  refNo       String
+  orderedAt   DateTime?
+  releasedAt  DateTime?
+  /// Uang yang masuk saldo toko (boleh negatif)
+  released    BigInt    @default(0)
+  productAmt  BigInt    @default(0)
+  refundAmt   BigInt    @default(0)
+  /// Total biaya platform (positif = potongan)
+  fees        BigInt    @default(0)
+  /// Rincian biaya {nama: nilai}
+  feeDetail   Json?
+  sig         String?
+  importId    String
+  lastImportId String
+  order       MarketplaceOrder?
+
+  @@unique([storeId, channel, kind, refNo])
+  @@index([releasedAt])
+  @@index([importId])
+}
+
+/// Riwayat penarikan dana TikTok (untuk rekonsiliasi; tanpa rekening bank)
+model MarketplaceWithdrawal {
+  id         String    @id @default(cuid())
+  storeId    String
+  channel    String
+  /// Withdrawal / GMV Pay Deduction / dst.
+  txType     String
+  refId      String
+  requestedAt DateTime?
+  doneAt     DateTime?
+  amount     BigInt    @default(0)
+  status     String?
+  importId   String
+
+  @@unique([storeId, channel, txType, refId])
+  @@index([requestedAt])
+}
+
+/// Penandaan SKU marketplace yang BUKAN produk jadi (mis. Extra Packing). Produk jadi tetap di MarketplaceSkuMap (dipakai bersama Retur).
+model MarketplaceSkuClass {
+  /// Kunci SKU ternormalisasi (sama dengan MarketplaceOrderLine.skuKey)
+  key       String   @id
+  /// EXTRA_PACKING
+  kind      String
+  variant   String?
+  updatedBy String
+  updatedAt DateTime @updatedAt
+}
