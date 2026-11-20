@@ -273,7 +273,7 @@ function parseTiktokIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
   const h = headerMap(header);
   const I = {
     no: need(h, "id pesanan/penyesuaian"), type: need(h, "jenis transaksi"), ordered: need(h, "waktu pemesanan"), paid: need(h, "waktu pembayaran pesanan"),
-    rel: need(h, "jumlah penyelesaian pembayaran"), income: need(h, "total pendapatan"), cost: need(h, "total biaya"),
+    rel: need(h, "jumlah penyelesaian pembayaran"), adj: need(h, "jumlah penyesuaian"), income: need(h, "total pendapatan"), cost: need(h, "total biaya"),
   };
   if (I.no < 0 || I.rel < 0) throw new FormatError("Header sheet Detail pesanan tidak sesuai format TikTok income");
   const feeCols = header.map((c, i) => ({ k: String(c ?? "").trim(), i })).filter((x) => x.k && x.i !== I.cost && x.i !== I.rel && x.i !== I.income && looksLikeFee(x.k, "TIKTOK"));
@@ -285,6 +285,8 @@ function parseTiktokIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
     rows++;
     const t = norm(r[I.type]);
     const kind: ParsedIncome["kind"] = t === "pesanan" ? "ORDER" : /iklan|gmv/.test(t) ? "ADS" : "ADJUST";
+    // Baris iklan/penyesuaian: nilainya di "Jumlah penyesuaian" bila kolom penyelesaian kosong
+    const settle = Math.round(parseNum(r[I.rel])) || (kind === "ORDER" || I.adj < 0 ? 0 : Math.round(parseNum(r[I.adj])));
     const feeDetail: Record<string, number> = {};
     for (const { k, i } of feeCols) {
       const v = Math.round(parseNum(r[i]));
@@ -293,7 +295,7 @@ function parseTiktokIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
     const totalCost = Math.abs(parseNum(r[I.cost]));
     const fees = totalCost || Object.values(feeDetail).reduce((a, b) => a + Math.abs(b), 0);
     incomes.push({
-      kind, refNo: no, orderedAt: parseDate(r[I.ordered]), releasedAt: parseDate(r[I.paid]), released: Math.round(parseNum(r[I.rel])), productAmt: Math.round(parseNum(r[I.income])), refundAmt: 0, fees: Math.round(fees), feeDetail,
+      kind, refNo: no, orderedAt: parseDate(r[I.ordered]), releasedAt: parseDate(r[I.paid]) ?? (kind === "ORDER" ? null : parseDate(r[I.ordered])), released: settle, productAmt: Math.round(parseNum(r[I.income])), refundAmt: 0, fees: Math.round(fees), feeDetail,
     });
   }
   const withdrawals: ParsedWithdrawal[] = [];

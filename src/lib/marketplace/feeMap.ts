@@ -24,6 +24,8 @@ export const FEE_CATEGORIES = {
 } as const;
 export type FeeCategory = keyof typeof FEE_CATEGORIES;
 export const UNMAPPED = "BELUM" as const;
+/** Voucher penjual mengurangi saldo di Shopee, tetapi di TikTok hanya info (sudah ada di harga) */
+export const isCounted = (c: FeeCategory, platform: Platform) => (c === "VOUCHER" ? platform === "SHOPEE" : FEE_CATEGORIES[c].counted);
 export type FeeCategoryOrNone = FeeCategory | typeof UNMAPPED;
 
 export const normCol = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
@@ -39,7 +41,7 @@ const SHOPEE: Rule[] = [
   [/^pengembalian dana ke pembeli$|jumlah dibayar pembeli|pro-?rata/, "INFO"],
   [/pengembalian biaya kirim/, "ONGKIR"],
   [/gratis ongkir xtra/, "ONGKIR_PROGRAM"],
-  [/ongkos kirim|ongkir|jasa kirim/, "RINCIAN"],
+  [/ongkos kirim|ongkir|jasa kirim/, "ONGKIR"],
 ];
 const TIKTOK: Rule[] = [
   [/^biaya komisi platform$|^komisi dinamis$/, "ADMIN"],
@@ -101,7 +103,7 @@ export function sumFees(platform: Platform, details: Record<string, number>[], o
         continue;
       }
       byCategory[c] = (byCategory[c] ?? 0) + v;
-      if (FEE_CATEGORIES[c].counted) counted += v;
+      if (isCounted(c, platform)) counted += v;
     }
   }
   return { byCategory, byColumn, unmapped, counted };

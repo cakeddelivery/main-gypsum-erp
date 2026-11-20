@@ -47,7 +47,9 @@ describe("Pemetaan biaya", () => {
     expect(d("Biaya pemrosesan pesanan")).toBe("PROSES");
     expect(d("Biaya Gratis Ongkir XTRA - Program 1")).toBe("ONGKIR_PROGRAM");
     expect(d("Biaya layanan logistik", "TIKTOK")).toBe("RINCIAN"); // sudah termasuk di Ongkir
-    expect(d("Ongkos Kirim yang Dibayarkan ke Jasa Kirim", "SHOPEE")).toBe("RINCIAN");
+    expect(d("Ongkos Kirim yang Dibayarkan ke Jasa Kirim", "SHOPEE")).toBe("ONGKIR");
+    expect(d("Gratis Ongkir dari Shopee", "SHOPEE")).toBe("ONGKIR");
+    expect(d("Ongkos Kirim Pengembalian Barang", "SHOPEE")).toBe("ONGKIR");
     expect(d("Pengembalian Biaya Kirim", "SHOPEE")).toBe("ONGKIR");
     expect(d("Ongkir", "TIKTOK")).toBe("ONGKIR");
     expect(d("Biaya Komisi AMS")).toBe("AFFILIATE");
@@ -75,7 +77,8 @@ describe("Pemetaan biaya", () => {
     const t = sumFees("SHOPEE", [{ "Biaya Administrasi": -1000, "Biaya Transaksi": -200, Premi: -50, "Voucher disponsor oleh Penjual": -300, "Biaya Aneh": -7 }], undefined);
     expect(t.byCategory).toMatchObject({ ADMIN: -1200, ASURANSI: -50, VOUCHER: -300 });
     expect(t.unmapped).toEqual({ "Biaya Aneh": -7 });
-    expect(t.counted).toBe(-1250); // voucher (info) tidak mengurangi saldo; kolom belum dikenal belum ikut sampai dipetakan
+    expect(t.counted).toBe(-1550); // voucher penjual mengurangi saldo di Shopee; kolom belum dikenal belum ikut sampai dipetakan
+    expect(sumFees("TIKTOK", [{ "Diskon penjual": -300, "Biaya komisi platform": -100 }]).counted).toBe(-100); // di TikTok diskon penjual hanya info
   });
 });
 
@@ -93,11 +96,22 @@ describe("File penghasilan berpola asli (sintetis)", () => {
     expect(7350).toBe(10000 + sum.counted); // Total Pendapatan + Σ potongan = penyelesaian
   });
   it("Shopee: kolom grup info pembeli tidak dobel; Pengembalian Biaya Kirim = ongkir; Harga Produk + Σ potongan = Total Penghasilan", async () => {
-    const head = ["No.", "Lihat berdasarkan", "No. Pesanan", "Tanggal Dana Dilepaskan", "Total Penghasilan", "Harga Produk", "Biaya Administrasi", "Jumlah Pengembalian Dana ke Pembeli", "Pengembalian Biaya Kirim", "Jumlah Dibayar Pembeli", "Pengembalian Dana ke Pembeli", "Pro-rata Voucher Shopee"];
-    const p = await parseMarketplaceFile(await makeXlsx([{ name: "Penghasilan", rows: [[], [], head, [1, "Order", `9${num}`, "2036-03-12 08:00", 8850, 10000, -1000, -300, 150, 9700, -300, -50]] }]));
+    const head = ["No.", "Lihat berdasarkan", "No. Pesanan", "Tanggal Dana Dilepaskan", "Total Penghasilan", "Harga Produk", "Biaya Administrasi", "Jumlah Pengembalian Dana ke Pembeli", "Pengembalian Biaya Kirim", "Voucher disponsor oleh Penjual", "Ongkos Kirim yang Dibayarkan ke Jasa Kirim", "Gratis Ongkir dari Shopee", "Jumlah Dibayar Pembeli", "Pengembalian Dana ke Pembeli", "Pro-rata Voucher Shopee"];
+    const p = await parseMarketplaceFile(await makeXlsx([{ name: "Penghasilan", rows: [[], [], head, [1, "Order", `9${num}`, "2036-03-12 08:00", 8650, 10000, -1000, -300, 150, -200, -900, 900, 9700, -300, -50]] }]));
     const sum = sumFees("SHOPEE", [p.incomes[0].feeDetail]);
-    expect(sum.byCategory).toMatchObject({ ADMIN: -1000, REFUND: -300, ONGKIR: 150, INFO: 9700 - 300 - 50 });
-    expect(10000 + sum.counted).toBe(8850);
+    expect(sum.byCategory).toMatchObject({ ADMIN: -1000, REFUND: -300, ONGKIR: 150, VOUCHER: -200, INFO: 9700 - 300 - 50 });
+    expect(10000 + sum.counted).toBe(8650); // voucher penjual & kolom ongkir (-900 +900 +150) ikut dijumlah
+  });
+});
+
+describe("TikTok baris iklan & penyesuaian", () => {
+  it("nilai dari 'Jumlah penyesuaian': GMV Pay → ADS (iklan), penyesuaian komisi → ADJUST", async () => {
+    const head = ["ID pesanan/penyesuaian", "Jenis transaksi", "Waktu pemesanan", "Waktu pembayaran pesanan", "Jumlah penyelesaian pembayaran", "Jumlah penyesuaian", "Total Pendapatan", "Total Biaya"];
+    const p = await parseMarketplaceFile(await makeXlsx([{ name: "Detail pesanan", rows: [head, [`ADS${num}`, "Pembayaran GMV untuk Iklan TikTok", "10/03/2036 00:00:00", null, 0, -3872670, 0, 0], [`ADJ${num}`, "Penyesuaian komisi platform", "11/03/2036 00:00:00", null, 0, -1568, 0, 0], [`5787${num}`, "Pesanan", "05/03/2036 10:00:00", "12/03/2036 09:00:00", 5000, 0, 5000, 0]] }]));
+    const by = (k: string) => p.incomes.find((i) => i.kind === k)!;
+    expect(by("ADS")).toMatchObject({ released: -3872670 });
+    expect(by("ADJUST")).toMatchObject({ released: -1568 });
+    expect(by("ADS").releasedAt).not.toBeNull(); // tanggal cadangan: waktu pemesanan
   });
 });
 

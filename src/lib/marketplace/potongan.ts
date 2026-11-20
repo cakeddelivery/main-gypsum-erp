@@ -2,7 +2,7 @@ import { prisma } from "../db";
 import { audit } from "../audit";
 import { n } from "../money";
 import { parseFees } from "../pricing";
-import { FEE_CATEGORIES, categoryOf, normCol, sumFees, type FeeTotals } from "./feeMap";
+import { FEE_CATEGORIES, categoryOf, isCounted, normCol, sumFees, type FeeCategory, type FeeTotals } from "./feeMap";
 import { platformOf } from "./rules";
 import { dayEnd, dayStart } from "./report";
 import { resolveSkuKeys } from "./sku";
@@ -38,7 +38,7 @@ export async function potonganReport(f: PotonganFilter) {
     ads: adsV, adjust: adjV,
     /** cair − (harga jual + semua potongan): selisih yang belum terjelaskan oleh kolom biaya */
     residual: released - explained,
-    rows: Object.entries(byCategory).filter(([, v]) => v).map(([c, v]) => ({ category: c, label: FEE_CATEGORIES[c as keyof typeof FEE_CATEGORIES]?.label ?? c, counted: FEE_CATEGORIES[c as keyof typeof FEE_CATEGORIES]?.counted ?? true, value: v, pct: gross ? (Math.abs(v) / gross) * 100 : 0 })).sort((a, b) => Math.abs(b.value) - Math.abs(a.value)),
+    rows: Object.entries(byCategory).filter(([, v]) => v).map(([c, v]) => ({ category: c, label: FEE_CATEGORIES[c as keyof typeof FEE_CATEGORIES]?.label ?? c, counted: c in FEE_CATEGORIES ? isCounted(c as FeeCategory, platform) : true, value: v, pct: gross ? (Math.abs(v) / gross) * 100 : 0 })).sort((a, b) => Math.abs(b.value) - Math.abs(a.value)),
   };
 }
 
