@@ -383,7 +383,8 @@ export async function commitImport(actor: Actor, files: ImportFile[]) {
           return { importId: "", fileName: f.fileName, ...stats };
         }
         // Angka pembanding untuk cek integritas: Σ cair baris ORDER di file vs total ringkasan file
-        const fileTotal = f.parsed.incomes.filter((i) => i.kind === "ORDER").reduce((a, i) => a + i.released, 0);
+        // Ringkasan TikTok = Σ SEMUA baris Detail pesanan (pesanan + iklan GMV + penyesuaian); Shopee "Total Penghasilan" = baris Order saja
+        const fileTotal = f.parsed.incomes.filter((i) => f.parsed.platform === "TIKTOK" || i.kind === "ORDER").reduce((a, i) => a + i.released, 0);
         const extra = { total: f.parsed.kind === "ORDER" ? f.parsed.orders.length : f.parsed.kind === "BALANCE" ? (f.parsed.balanceTx?.length ?? 0) : f.parsed.incomes.length, lines: f.parsed.orders.reduce((a, o) => a + o.lines.length, 0), ...(f.parsed.kind !== "ORDER" ? { fileTotal, summaryTotal: f.parsed.info.summaryTotal ?? null, summaryLabel: f.parsed.info.summaryLabel ?? null, seller: f.parsed.info.seller ?? null } : {}) };
         await tx.marketplaceImport.update({ where: { id: imp.id }, data: { stats: { ...stats, ...extra } } });
         await linkIncome(tx, f.storeId, channel);

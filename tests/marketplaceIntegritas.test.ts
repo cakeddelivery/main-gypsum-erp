@@ -158,3 +158,24 @@ describe("Cek integritas", () => {
     void fixed;
   });
 });
+
+describe("Total ringkasan TikTok = semua baris Detail pesanan", () => {
+  it("sheet Laporan: 'Jumlah penyelesaian pembayaran' terbaca; pembanding file mencakup ORDER + iklan + penyesuaian", async () => {
+    const { dl } = await stores();
+    const head = ["ID pesanan/penyesuaian", "Jenis transaksi", "Waktu pemesanan", "Waktu pembayaran pesanan", "Jumlah penyelesaian pembayaran", "Jumlah penyesuaian", "Total Pendapatan", "Total Biaya"];
+    const xl = await makeXlsx([
+      { name: "Laporan", rows: [["Periode", "2040/08/01-2040/08/31"], ["Jumlah penyelesaian pembayaran", 7350 - 2000 - 10], [null, "Total Pendapatan", 10000], [null, "Total Biaya", -2650]] },
+      { name: "Detail pesanan", rows: [head,
+        [`5788${num}`, "Pesanan", "05/08/2040 10:00:00", "12/08/2040 09:00:00", 7350, 0, 10000, -2650],
+        [`ADS${num}`, "Pembayaran GMV untuk Iklan TikTok", "10/08/2040 00:00:00", null, 0, -2000, 0, 0],
+        [`ADJ${num}`, "Penyesuaian komisi platform", "11/08/2040 00:00:00", null, 0, -10, 0, 0]] },
+    ]);
+    const p = await parseMarketplaceFile(xl);
+    expect(p.info.summaryTotal).toBe(5340);
+    const [r] = await commitImport(actor, [{ fileName: `tt.sum.${tag}.xlsx`, storeId: dl.id, parsed: p }]);
+    cleanups.push(() => undoImport(actor, r.importId));
+    const st = (await prisma.marketplaceImport.findUniqueOrThrow({ where: { id: r.importId } })).stats as { fileTotal: number; summaryTotal: number };
+    expect(st.fileTotal).toBe(5340); // 7.350 − 2.000 − 10
+    expect(st.summaryTotal).toBe(5340);
+  });
+});
