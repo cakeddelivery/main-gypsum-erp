@@ -22,8 +22,8 @@ export default async function BoronganPage() {
     prisma.payrollPeriod.findMany({ where: { kind: "BORONGAN" }, include: { payslips: { include: { employee: true } } }, orderBy: { createdAt: "desc" }, take: 20 }),
   ]);
   const emp = await prisma.employee.findMany({ where: { id: { in: unclaimed.map((u) => u.employeeId) } } });
-  // Alur lama (per karyawan) ditutup otomatis bila tidak ada karyawan aktif bersistem upah Borongan/Campuran
-  const readOnly = workers.length === 0;
+  // Alur lama (per karyawan) sudah ditutup (keputusan owner 20 Nov 2026): arsip read-only; borongan dicatat di menu Borongan
+  const readOnly = true;
   const openClaims = claims.filter((c) => c.status !== "DIBAYAR").length;
   const t = todayStr();
   const activeTasks = tasks.filter((x) => x.active);
@@ -45,7 +45,7 @@ export default async function BoronganPage() {
       } />
       {readOnly && (
         <div role="note" className="space-y-1 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          <b>Gunakan Borongan › Klaim Upah.</b> Tidak ada karyawan aktif bersistem upah Borongan/Campuran, jadi halaman ini read-only (hanya riwayat dan penyelesaian klaim lama).
+          <b>Gunakan Borongan › Klaim Upah.</b> Alur lama per karyawan sudah ditutup; halaman ini arsip read-only (hanya riwayat dan penyelesaian klaim lama).
           <div className="text-xs">Masih terbuka: <b>{unclaimed.length}</b> pekerja dengan hasil belum diklaim (Rp {Number(unclaimed.reduce((a, u) => a + Number(u._sum.amount ?? 0), 0)).toLocaleString("id-ID")}) · <b>{openClaims}</b> klaim belum dibayar.</div>
         </div>
       )}

@@ -44,6 +44,11 @@ export const saveEmployee = action(
       // Rekening gaji: hanya Owner/Finance
       ...(fd.has("bankAccountNo") && (user.role === "OWNER" || user.role === "FINANCE") ? { bankName: optStr(fd, "bankName"), bankAccountNo: optStr(fd, "bankAccountNo")?.replace(/\D/g, "") || null, bankAccountName: optStr(fd, "bankAccountName") } : {}),
     };
+    // Sistem upah per hasil (Borongan/Campuran) ditutup untuk karyawan baru; data lama tetap boleh disimpan apa adanya
+    if (data.wageType === "BORONGAN" || data.wageType === "CAMPURAN") {
+      const before = id ? (await prisma.employee.findUnique({ where: { id }, select: { wageType: true } }))?.wageType : null;
+      if (before !== data.wageType) throw withField(new Error("Sistem upah Borongan/Campuran sudah ditutup untuk karyawan tetap. Pekerja borongan dicatat di menu Borongan."), "wageType");
+    }
     if (data.wageType === "BULANAN" && !data.joinDate) throw withField(new Error("Karyawan bulanan wajib punya tanggal masuk (dasar tanggal gajian)"), "joinDate");
     if (data.wageType === "BULANAN" && data.monthlySalary <= BigInt(0)) throw withField(new Error("Isi gaji pokok"), "monthlySalary");
     // Tunjangan ikut disimpan dari form (hanya pengelola penggajian)
@@ -178,6 +183,7 @@ export const approveRegistrationAction = action(
   async (fd, user) => {
     const role = str(fd, "role") as Role;
     if (!user.can("users.manage") && !FIELD_ROLES.includes(role)) throw new ForbiddenError();
+    if (["BORONGAN", "CAMPURAN"].includes(str(fd, "wageType"))) throw withField(new Error("Sistem upah Borongan/Campuran sudah ditutup untuk karyawan tetap. Pilih Bulanan atau Harian."), "wageType");
     const r = await approveRegistration(
       str(fd, "id"),
       {

@@ -20,6 +20,8 @@ export default async function GajiPage() {
   if (!user.can("payroll.view")) redirect("/gaji/saya");
   const periods = await prisma.payrollPeriod.findMany({ include: { payslips: { select: { total: true } } }, orderBy: [{ endDate: "desc" }, { code: "asc" }], take: 60 });
   const t = todayStr();
+  // Arsip alur lama (PieceWork): tautan hanya bila masih ada hasil belum diklaim / klaim belum dibayar
+  const oldOpen = user.can("payroll.manage") ? (await prisma.pieceWork.count({ where: { periodId: null } })) + (await prisma.payrollPeriod.count({ where: { kind: "BORONGAN", status: { not: "DIBAYAR" } } })) : 0;
   return (
     <div>
       <PageHeader
@@ -29,7 +31,7 @@ export default async function GajiPage() {
           <>
             {user.employeeId && <Link href="/gaji/saya" className="btn-secondary">Slip saya</Link>}
             <Link href="/gaji/kasbon" className="btn-secondary">Kasbon</Link>
-            {user.can("payroll.manage") && <Link href="/gaji/borongan" className="btn-secondary">Borongan & klaim</Link>}
+            {oldOpen > 0 && <Link href="/gaji/borongan" className="btn-secondary">Arsip borongan lama ({oldOpen})</Link>}
             {user.can("payroll.manage") && <Link href="/gaji/tunjangan" className="btn-secondary">Tunjangan</Link>}
             {user.can("payroll.manage") && <Link href="/gaji/tarif" className="btn-secondary">Tarif & transport</Link>}
             {user.can("payroll.manage") && <ActionForm action={generateMonthly}><Submit className="btn-secondary" pendingText="Memeriksa…">Buat slip bulanan</Submit></ActionForm>}
