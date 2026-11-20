@@ -13,6 +13,7 @@ import { dateStr } from "@/lib/time";
 import { FEE_CATEGORIES, normCol } from "@/lib/marketplace/feeMap";
 import { applyActuals, applyProductAffiliate } from "@/lib/marketplace/potongan";
 import { WD_REMINDER_KEY } from "@/lib/marketplace/saldo";
+import { SYNC_HOUR_KEY, SYNC_START_KEY } from "@/lib/marketplace/sync";
 
 const MAX_FILES = 4;
 const MAX_BYTES = 12 * 1024 * 1024;
@@ -198,6 +199,23 @@ export const saveWdHourAction = action(
     if (!Number.isInteger(h) || h < 0 || h > 23) throw new InvoiceError("Jam 0–23");
     await prisma.setting.upsert({ where: { key: WD_REMINDER_KEY }, create: { key: WD_REMINDER_KEY, value: String(h) }, update: { value: String(h) } });
     return `Pengingat withdraw tiap hari pukul ${String(h).padStart(2, "0")}.00`;
+  },
+  ["/penjualan"],
+);
+
+/** Atur mulai tanggal data marketplace wajib diperbarui tiap hari + jam pengingat (kosongkan tanggal = nonaktif) */
+export const saveSyncAction = action(
+  "sales.manage",
+  async (fd, user) => {
+    const start = str(fd, "start");
+    const hour = Number(str(fd, "hour") || 10);
+    if (start && !DATE.test(start)) throw new InvoiceError("Tanggal tidak valid");
+    if (!Number.isInteger(hour) || hour < 0 || hour > 21) throw new InvoiceError("Jam pengingat 0–21");
+    if (start) await prisma.setting.upsert({ where: { key: SYNC_START_KEY }, create: { key: SYNC_START_KEY, value: start }, update: { value: start } });
+    else await prisma.setting.deleteMany({ where: { key: SYNC_START_KEY } });
+    await prisma.setting.upsert({ where: { key: SYNC_HOUR_KEY }, create: { key: SYNC_HOUR_KEY, value: String(hour) }, update: { value: String(hour) } });
+    await audit(user, "MARKETPLACE_SYNC_ATUR", "Setting", SYNC_START_KEY, { start: start || null, hour });
+    return start ? `Data marketplace wajib diperbarui tiap hari mulai ${start} (pengingat pukul ${String(hour).padStart(2, "0")}.00)` : "Tuntutan pembaruan harian dimatikan";
   },
   ["/penjualan"],
 );

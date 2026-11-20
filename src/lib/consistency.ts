@@ -170,7 +170,7 @@ const cancelledDocsNotReversed: Check = async () => {
     prisma.boronganSettlement.findMany({ where: { cancelledAt: { not: null }, journalId: { not: null } }, select: { number: true, journalId: true } }),
     prisma.cashAdvance.findMany({ where: { cancelledAt: { not: null }, journalId: { not: null } }, select: { number: true, journalId: true } }),
   ]);
-  const all = [...pur.map((x) => ({ ...x, kind: "Pembelian", href: "/stok/pembelian" })), ...sal.map((x) => ({ ...x, kind: "Penjualan", href: "/penjualan" })), ...set.map((x) => ({ ...x, kind: "Upah borongan", href: "/borongan" })), ...adv.map((x) => ({ ...x, kind: "Kasbon", href: "/gaji/kasbon" }))];
+  const all = [...pur.map((x) => ({ ...x, kind: "Pembelian", href: "/stok/pembelian" })), ...sal.map((x) => ({ ...x, kind: "Penjualan", href: "/penjualan/offline" })), ...set.map((x) => ({ ...x, kind: "Upah borongan", href: "/borongan" })), ...adv.map((x) => ({ ...x, kind: "Kasbon", href: "/gaji/kasbon" }))];
   const rev = await reversedIds(all.map((x) => x.journalId!));
   return issue("dokumen-batal-belum-dibalik", "UANG", "KRITIS", "Dokumen dibatalkan tetapi jurnalnya belum dibalik", "Uang/stok dokumen ini masih terhitung walau sudah dibatalkan.",
     all.filter((x) => !rev.has(x.journalId!)).map((x) => ({ label: `${x.kind} ${x.number}`, href: x.href })));

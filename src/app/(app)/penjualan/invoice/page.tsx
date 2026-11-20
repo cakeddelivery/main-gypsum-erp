@@ -32,7 +32,7 @@ export default async function InvoicePage() {
         title="Invoice"
         subtitle="Nomor resmi otomatis · unduh ulang sebagai JPG atau PDF"
         actions={<>
-          <Link href="/penjualan" className="btn-secondary">Penjualan</Link>
+          <Link href="/penjualan/offline" className="btn-secondary">Penjualan</Link>
           {canManage && (
             <Modal trigger="+ Buat invoice" title="Buat invoice">
               <ModalForm action={createInvoiceAction} className="space-y-3">

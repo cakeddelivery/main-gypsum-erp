@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 const TABS = [
+  { href: "/penjualan", label: "Dashboard", key: "dashboard" },
   { href: "/penjualan/marketplace", label: "Pesanan", key: "pesanan" },
   { href: "/penjualan/marketplace/impor", label: "Impor", key: "impor" },
   { href: "/penjualan/marketplace/sku", label: "Pemetaan SKU", key: "sku" },

@@ -38,7 +38,7 @@ export default async function MarketplacePage({ searchParams }: { searchParams: 
   const tabs = TABS.map((t) => ({ key: t, label: TAB_LABEL[t], href: qs(t), count: sum.counts[t] }));
   return (
     <div className="space-y-4">
-      <PageHeader title="Pesanan Marketplace" subtitle="Shopee & TikTok Shop dari file Excel · tidak mengubah stok maupun jurnal" actions={<Link href="/penjualan" className="btn-secondary">Penjualan</Link>} />
+      <PageHeader title="Pesanan Marketplace" subtitle="Shopee & TikTok Shop dari file Excel · tidak mengubah stok maupun jurnal" actions={<Link href="/penjualan/offline" className="btn-secondary">Penjualan</Link>} />
       <MpNav current="pesanan" />
       {noData ? (
         <Empty title="Belum ada pesanan marketplace" hint="Unggah file Order & Penghasilan dari Seller Center di menu Impor." action={<Link href="/penjualan/marketplace/impor" className="btn-primary">Impor file</Link>} />

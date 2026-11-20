@@ -51,7 +51,7 @@ export function sourceHref(source: string, sourceId: string | null, docId?: stri
     case "WD_DITERIMA":
       return sourceId ? `/finance/${sourceId}` : "/finance";
     case "PENJUALAN":
-      return docId ? `/penjualan/${docId}` : "/penjualan";
+      return docId ? `/penjualan/${docId}` : "/penjualan/offline";
     case "PEMBELIAN":
       return "/stok/pembelian";
     case "PAYROLL":
