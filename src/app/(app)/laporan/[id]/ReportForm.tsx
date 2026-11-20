@@ -30,7 +30,7 @@ import {
   type StockCountRow,
   type WorkData,
 } from "@/lib/shiftReport";
-import { addReceipts, removeChecklistPhoto, removeReceipt, saveReport, uploadChecklistPhoto } from "../actions";
+import { addReceipts, discardOpenedDraft, removeChecklistPhoto, removeReceipt, saveReport, uploadChecklistPhoto } from "../actions";
 import { FormDraft, clearFormDraft } from "@/components/FormDraft";
 import { CameraCapture } from "@/components/CameraCapture";
 import { readReopen, reportReopenKey, writeReopen } from "@/lib/reopen";
@@ -703,7 +703,17 @@ export function ReportForm(p: Props) {
               <span className="flex" onClickCapture={() => { sending.current = false; leaving.current = true; }}>
                 <Submit className="btn-primary flex-1" name="intent" value="draft" pendingText="Menyimpan…">Simpan draf</Submit>
               </span>
-              <button type="button" className="btn-danger" onClick={() => { clearFormDraft(draftKey); setCloseAsk(false); leave(); }}>Tutup tanpa simpan</button>
+              <button type="button" className="btn-danger" onClick={async () => {
+                clearFormDraft(draftKey);
+                setCloseAsk(false);
+                // Draf yang dibuat saat form dibuka & belum pernah disimpan berisi data → dihapus (server memeriksa ulang)
+                if (!p.sent) {
+                  const fd = new FormData();
+                  fd.set("id", p.id);
+                  await discardOpenedDraft(fd).catch(() => null);
+                }
+                leave();
+              }}>Tutup tanpa simpan</button>
               <button type="button" className="btn-secondary" onClick={() => setCloseAsk(false)} autoFocus>Batal</button>
             </div>
           </div>
