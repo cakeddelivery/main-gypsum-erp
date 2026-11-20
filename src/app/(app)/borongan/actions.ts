@@ -133,7 +133,7 @@ export const savePersonAction = action(
   ["borongan.manage", "borongan.point"],
   async (fd, user) => {
     const scope = await boronganScope(prisma, user);
-    const p = await savePerson({ id: optStr(fd, "id"), name: str(fd, "name"), phone: optStr(fd, "phone"), role: (str(fd, "role") || "PEKERJA") as BoronganRole, pointId: optStr(fd, "pointId") ?? scope.pointIds[0], active: fd.get("active") !== "off", note: optStr(fd, "note"), taskIds: fd.has("tasksSent") ? fd.getAll("taskIds").map(String).filter(Boolean) : undefined, coordinatorId: fd.has("coordinatorId") ? String(fd.get("coordinatorId") ?? "") : undefined }, user, scope);
+    const p = await savePerson({ id: optStr(fd, "id"), name: str(fd, "name"), phone: optStr(fd, "phone"), role: (str(fd, "role") || "PEKERJA") as BoronganRole, pointId: optStr(fd, "pointId") ?? scope.pointIds[0], active: fd.get("active") !== "off", note: optStr(fd, "note"), taskIds: fd.has("tasksSent") ? fd.getAll("taskIds").map(String).filter(Boolean) : undefined, coordinatorId: fd.has("coordinatorId") ? String(fd.get("coordinatorId") ?? "") : undefined, extraPointIds: fd.has("extraSent") ? fd.getAll("extraPointIds").map(String).filter(Boolean) : undefined }, user, scope);
     return p.active || scope.all ? `${p.name} tersimpan` : `${p.name} tersimpan, menunggu diaktifkan pengelola borongan`;
   },
   PATHS,
@@ -251,6 +251,14 @@ export const savePointSettings = action(
     const data = { viaDriver: fd.get("viaDriver") === "on", noCoordinator: fd.get("noCoordinator") === "on" };
     const p = await prisma.boronganPoint.update({ where: { id }, data });
     await audit(user, "TITIK_BORONGAN_DIATUR", "BoronganPoint", id, { titik: p.code, lewatDriver: data.viaDriver, tanpaKoordinator: data.noCoordinator });
+    if (fd.has("payDay")) {
+      const { savePayday, paydayConfig } = await import("@/lib/boronganPayday");
+      const raw = String(fd.get("payDay") ?? "");
+      const day = raw === "" ? null : Number(raw);
+      const time = String(fd.get("remindTime") || "08:00");
+      const cur = (await paydayConfig())[id];
+      if ((cur?.day ?? null) !== day || (day != null && cur?.time !== time)) await savePayday(id, day, time, user);
+    }
     return `Titik ${p.name} tersimpan${data.noCoordinator ? " (tanpa fee koordinator: upah koordinator ke pekerja; koordinator titik hanya pencatat)" : ""}`;
   },
   PATHS,

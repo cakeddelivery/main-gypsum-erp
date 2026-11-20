@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { boronganScope } from "@/lib/borongan";
+import { boronganScope, coordinatorsAt } from "@/lib/borongan";
 import { canRequestClaim } from "@/lib/boronganClaim";
 import { isCoordinatorOf } from "@/lib/boronganFlow";
 
@@ -10,6 +10,6 @@ export async function canSeeClaim(user: User, pointId: string) {
   if (user.can("borongan.pay")) return true;
   const scope = await boronganScope(prisma, user);
   if (scope.all || isCoordinatorOf(scope, pointId)) return true;
-  const hasCoordinator = (await prisma.boronganPerson.count({ where: { role: "KOORDINATOR", active: true, pointId } })) > 0;
+  const hasCoordinator = (await prisma.boronganPerson.count({ where: coordinatorsAt(pointId) })) > 0;
   return canRequestClaim(scope, pointId, hasCoordinator);
 }

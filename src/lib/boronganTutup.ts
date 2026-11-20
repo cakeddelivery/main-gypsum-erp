@@ -3,6 +3,7 @@ import { prisma } from "./db";
 import { audit } from "./audit";
 import { shipmentViews, type ShipmentView } from "./boronganFlow";
 import { claimBreakdown, claimable } from "./boronganClaim";
+import { coordinatorCovers, coordinatorPointSelect, coordinatorsAt } from "./borongan";
 
 type Tx = Prisma.TransactionClient;
 type Actor = { id: string; name: string };
@@ -33,7 +34,7 @@ export async function planCloseAll(): Promise<ClosePlan> {
   const allIds = [...new Set([...pointIds, ...extra.map((x) => x.pointId), ...claimPts.map((x) => x.pointId)])];
   const [points, coords] = await Promise.all([
     prisma.boronganPoint.findMany({ where: { id: { in: allIds } }, select: { id: true, name: true, code: true } }),
-    prisma.boronganPerson.findMany({ where: { role: "KOORDINATOR", active: true, pointId: { in: allIds } }, select: { pointId: true, name: true } }),
+    prisma.boronganPerson.findMany({ where: coordinatorsAt(allIds), select: { name: true, ...coordinatorPointSelect } }),
   ]);
   const out: ClosePoint[] = [];
   for (const id of allIds) {
@@ -49,7 +50,7 @@ export async function planCloseAll(): Promise<ClosePlan> {
     const results = await prisma.boronganResult.findMany({ where: claimable(id), include: { worker: { select: { id: true, name: true } }, coordinator: { select: { id: true, name: true } }, driver: { select: { id: true, name: true } }, task: { select: { name: true } } } });
     const claims = await prisma.boronganClaim.findMany({ where: { pointId: id, status: "MENUNGGU" }, select: { total: true } });
     out.push({
-      pointId: id, point: p ? `${p.code} ${p.name}` : id, coordinator: coords.filter((c) => c.pointId === id).map((c) => c.name).join(", ") || "(tanpa koordinator)",
+      pointId: id, point: p ? `${p.code} ${p.name}` : id, coordinator: coords.filter((c) => coordinatorCovers(c, id)).map((c) => c.name).join(", ") || "(tanpa koordinator)",
       shipments: mine.map((v) => v.number), cells, pendingPickups,
       unclaimed: { count: results.length, total: claimBreakdown(results).totals.all },
       openClaims: { count: claims.length, total: claims.reduce((a, c) => a + Number(c.total), 0) },

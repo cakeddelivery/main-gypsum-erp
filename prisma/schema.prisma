@@ -565,6 +565,22 @@ model BoronganPoint {
   reports       BoronganWorkReport[]
   pickupLines   BoronganPickupLine[]
   claims        BoronganClaim[]
+  coordinatorAssignments BoronganCoordinatorPoint[]
+}
+
+/// Titik TAMBAHAN yang dipegang koordinator (selain titik utama BoronganPerson.pointId), mis. Mita: BMR (utama, ber-fee)
+/// + Beringin (tambahan, titik tanpa fee → hanya pencatat). Hak akses, laporan, klaim & notifikasi per titik.
+model BoronganCoordinatorPoint {
+  id        String         @id @default(cuid())
+  personId  String
+  person    BoronganPerson @relation(fields: [personId], references: [id], onDelete: Cascade)
+  pointId   String
+  point     BoronganPoint  @relation(fields: [pointId], references: [id])
+  createdBy String
+  createdAt DateTime       @default(now())
+
+  @@unique([personId, pointId])
+  @@index([pointId])
 }
 
 /// Tetangga yang bekerja borongan (bukan karyawan): pekerja & koordinator per titik, driver tanpa titik
@@ -599,6 +615,8 @@ model BoronganPerson {
   reportLines   BoronganWorkReportLine[]
   pickups       BoronganPickup[]
   pickupLines   BoronganPickupLine[]
+  /// Koordinator: titik tambahan yang dipegang (lihat BoronganCoordinatorPoint)
+  extraPoints   BoronganCoordinatorPoint[]
 }
 
 /// Serah terima lewat driver: KIRIM = bahan gudang → titik, KEMBALI = hasil titik → gudang.

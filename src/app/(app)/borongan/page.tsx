@@ -20,6 +20,7 @@ import { ItemLines } from "@/components/ItemLines";
 import { ReceiveForm } from "./ReceiveForm";
 import { KirimanTab } from "./KirimanTab";
 import { taskKits } from "@/lib/boronganSetup";
+import { DAY_NAMES, DEFAULT_REMIND_TIME, paydayConfig } from "@/lib/boronganPayday";
 import { initials } from "@/lib/initials";
 import { taskGroupName } from "@/lib/boronganKirim";
 import { shortTaskName } from "@/lib/boronganFlow";
@@ -79,7 +80,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
 
   const [points, people, tasks, items, banks, pending, balances] = await Promise.all([
     prisma.boronganPoint.findMany({ where: { active: true, ...pointFilter }, include: { location: true }, orderBy: { code: "asc" } }),
-    prisma.boronganPerson.findMany({ where: manage ? {} : { OR: [{ pointId: { in: scope.pointIds } }, { role: "DRIVER" }] }, include: { point: true, user: true }, orderBy: [{ active: "desc" }, { name: "asc" }] }),
+    prisma.boronganPerson.findMany({ where: manage ? {} : { OR: [{ pointId: { in: scope.pointIds } }, { role: "DRIVER" }] }, include: { point: true, user: true, extraPoints: { include: { point: { select: { name: true } } } } }, orderBy: [{ active: "desc" }, { name: "asc" }] }),
     prisma.pieceTask.findMany({ include: { inputs: { include: { item: true } }, outputItem: true }, orderBy: { name: "asc" } }),
     prisma.item.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     prisma.bankAccount.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
@@ -152,7 +153,7 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
       {tab === "orang" && <PeopleTab people={people} points={points} manage={manage} canLogin={manage} tasks={tasks.filter((t) => t.active).map((t) => ({ id: t.id, name: t.name, division: divisionName.get(t.divisionId ?? "") ?? null }))} />}
       {tab === "tugas" && manage && (
         <>
-          <PointsCard points={points.map((p) => ({ id: p.id, name: p.name, viaDriver: p.viaDriver, noCoordinator: p.noCoordinator, coordinators: people.filter((x) => x.role === "KOORDINATOR" && x.active && x.pointId === p.id).map((x) => x.name) }))} />
+          <PointsCard payday={await paydayConfig()} points={points.map((p) => ({ id: p.id, name: p.name, viaDriver: p.viaDriver, noCoordinator: p.noCoordinator, coordinators: people.filter((x) => x.role === "KOORDINATOR" && x.active && (x.pointId === p.id || x.extraPoints.some((e) => e.pointId === p.id))).map((x) => x.name) }))} />
           <TasksTab tasks={tasks} items={items} divisions={divisions} kits={await taskKits(prisma)} />
         </>
       )}
@@ -344,7 +345,7 @@ function PayTable({ lines }: { lines: ReturnType<typeof payLines> }) {
   );
 }
 
-type PersonRow = Awaited<ReturnType<typeof prisma.boronganPerson.findMany<{ include: { point: true; user: true } }>>>[number];
+type PersonRow = Awaited<ReturnType<typeof prisma.boronganPerson.findMany<{ include: { point: true; user: true; extraPoints: { include: { point: { select: { name: true } } } } } }>>>[number];
 
 type TaskOpt = { id: string; name: string; division: string | null };
 
@@ -360,6 +361,18 @@ function PersonForm({ p, points, manage, tasks, coordinators = [] }: { p?: Perso
         <>
           <Field label="Sebagai"><select name="role" defaultValue={p?.role ?? "PEKERJA"} className="input">{(["PEKERJA", "KOORDINATOR", "DRIVER"] as const).map((r) => <option key={r} value={r}>{BORONGAN_ROLE_LABEL[r]}</option>)}</select></Field>
           <Field label="Titik" hint="Driver tidak terikat titik"><select name="pointId" defaultValue={p?.pointId ?? points[0]?.id} className="input">{points.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>
+          {(!p || p.role === "KOORDINATOR") && (
+            <fieldset className="rounded-lg border border-slate-200 p-3">
+              <legend className="px-1 text-xs font-medium text-slate-600">Titik tambahan (khusus koordinator)</legend>
+              <input type="hidden" name="extraSent" value="1" />
+              <p className="mb-2 text-xs text-slate-500">Koordinator juga memegang titik ini: melihat & mencatat hasil, klaim upah, dan notifikasinya — terpisah per titik. Fee koordinator mengikuti setelan titik (titik &quot;Tanpa fee koordinator&quot; = hanya pencatat).</p>
+              <div className="grid gap-1 sm:grid-cols-2">
+                {points.map((x) => (
+                  <label key={x.id} className="flex min-h-9 items-center gap-2 text-sm"><input type="checkbox" name="extraPointIds" value={x.id} defaultChecked={p?.extraPoints.some((e) => e.pointId === x.id)} className="h-4 w-4" /> {x.name}</label>
+                ))}
+              </div>
+            </fieldset>
+          )}
         </>
       ) : <input type="hidden" name="role" value="PEKERJA" />}
       {(!p || p.role === "PEKERJA") && tasks.length > 0 && (
@@ -416,9 +429,9 @@ const ROLE_ORDER = { KOORDINATOR: 0, PEKERJA: 1, DRIVER: 2 } as const;
 
 function PeopleTab({ people, points, manage, canLogin, tasks }: { people: PersonRow[]; points: { id: string; name: string }[]; manage: boolean; canLogin: boolean; tasks: TaskOpt[] }) {
   const taskName = new Map(tasks.map((t) => [t.id, t]));
-  const coordinators = people.filter((x) => x.role === "KOORDINATOR" && x.active).map((x) => ({ id: x.id, name: x.name, point: x.point?.name ?? "" }));
+  const coordinators = people.filter((x) => x.role === "KOORDINATOR" && x.active).map((x) => ({ id: x.id, name: x.name, point: [x.point?.name, ...x.extraPoints.map((e) => e.point.name)].filter(Boolean).join(" + ") }));
   const sorted = (rows: PersonRow[]) => [...rows].sort((a, b) => Number(b.active) - Number(a.active) || ROLE_ORDER[a.role] - ROLE_ORDER[b.role] || a.name.localeCompare(b.name, "id"));
-  const groups = [...points.map((p) => ({ key: p.id, title: `Titik ${p.name}`, rows: sorted(people.filter((x) => x.pointId === p.id)) })), ...(manage ? [{ key: "drv", title: "Driver", rows: sorted(people.filter((x) => x.role === "DRIVER")) }] : [])];
+  const groups = [...points.map((p) => ({ key: p.id, title: `Titik ${p.name}`, rows: sorted(people.filter((x) => x.pointId === p.id || (x.role === "KOORDINATOR" && x.extraPoints.some((e) => e.pointId === p.id)))) })), ...(manage ? [{ key: "drv", title: "Driver", rows: sorted(people.filter((x) => x.role === "DRIVER")) }] : [])];
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
@@ -514,7 +527,7 @@ function TaskForm({ task, items, divisions, kit = [] }: { task?: TaskRow; items:
 }
 
 /** Setelan per titik: cara kirim bawaan & ada tidaknya koordinator (tanpa koordinator → upah koordinator ke pekerja) */
-function PointsCard({ points }: { points: { id: string; name: string; viaDriver: boolean; noCoordinator: boolean; coordinators: string[] }[] }) {
+function PointsCard({ points, payday }: { points: { id: string; name: string; viaDriver: boolean; noCoordinator: boolean; coordinators: string[] }[]; payday: Record<string, { day: number; time: string }> }) {
   return (
     <Card title="Titik borongan">
       <ul className="divide-y divide-slate-100">
@@ -528,12 +541,21 @@ function PointsCard({ points }: { points: { id: string; name: string; viaDriver:
               </div>
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="viaDriver" defaultChecked={p.viaDriver} className="h-4 w-4" /> Lewat driver</label>
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="noCoordinator" defaultChecked={p.noCoordinator} className="h-4 w-4" /> Tanpa fee koordinator</label>
+              <label className="flex items-center gap-2 text-sm">Hari bayar upah
+                <select name="payDay" defaultValue={payday[p.id]?.day ?? ""} className="input w-auto">
+                  <option value="">—</option>
+                  {DAY_NAMES.map((d, i) => <option key={d} value={i}>{d}</option>)}
+                </select>
+              </label>
+              <label className="flex items-center gap-2 text-sm" title="Pengingat dikirim sehari sebelum hari bayar">Jam pengingat
+                <input type="time" name="remindTime" defaultValue={payday[p.id]?.time ?? DEFAULT_REMIND_TIME} className="input w-auto" />
+              </label>
               <Submit className="btn-secondary btn-sm">Simpan</Submit>
             </ActionForm>
           </li>
         ))}
       </ul>
-      <p className="mt-2 text-xs text-slate-500">Ada koordinator: bagian koordinator (mis. Cat Plastik Rp2) untuk koordinator. Tanpa fee koordinator: pekerja menerima penuh (Rp15); koordinator yang ditambahkan di tab Orang hanya menjadi pencatat (lapor hasil, klaim upah, notifikasi) tanpa fee, dan tim divisi tetap boleh mencatat sebagai cadangan. Selain itu pilihan koordinator per pekerja di tab Orang lebih diutamakan.</p>
+      <p className="mt-2 text-xs text-slate-500">Ada koordinator: bagian koordinator (mis. Cat Plastik Rp2) untuk koordinator. Tanpa fee koordinator: pekerja menerima penuh (Rp15); koordinator yang ditambahkan di tab Orang hanya menjadi pencatat (lapor hasil, klaim upah, notifikasi) tanpa fee, dan tim divisi tetap boleh mencatat sebagai cadangan. Selain itu pilihan koordinator per pekerja di tab Orang lebih diutamakan. Hari bayar upah: pengingat (push + lonceng) dikirim sehari sebelumnya pada jam pengingat ke koordinator/pencatat titik, Finance, dan Owner, berisi setoran yang belum diklaim.</p>
     </Card>
   );
 }

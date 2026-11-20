@@ -4,7 +4,7 @@ import { audit } from "./audit";
 import { addDays, dateOnly, dateStr, todayStr } from "./time";
 import { recordMovement, reverseMovementsByRef } from "./stock";
 import { bomStockQty } from "./unitcost";
-import { BoronganError, canTask, coordinatorFor, postResultTx, unpostResultTx, warehouseFor, type Scope } from "./borongan";
+import { BoronganError, canTask, coordinatorCovers, coordinatorFor, coordinatorPointSelect, coordinatorsAt, postResultTx, unpostResultTx, warehouseFor, type Scope } from "./borongan";
 import { taskGroupName } from "./boronganKirim";
 import { pointConfig, taskKits } from "./boronganSetup";
 import { sendPush, type PushPayload } from "./push";
@@ -149,7 +149,7 @@ export const canReport = (scope: Scope, s: { taskIds: string[] }, pointId: strin
 /** Lapor hasil hanya oleh koordinator: titik punya koordinator aktif DAN bukan titik tanpa fee koordinator (pencatat saja) */
 export async function coordinatorOnly(db: Tx | typeof prisma, pointId: string) {
   const [n, point] = await Promise.all([
-    db.boronganPerson.count({ where: { role: "KOORDINATOR", active: true, pointId } }),
+    db.boronganPerson.count({ where: coordinatorsAt(pointId) }),
     db.boronganPoint.findUnique({ where: { id: pointId }, select: { noCoordinator: true } }),
   ]);
   return n > 0 && !point?.noCoordinator;
@@ -212,7 +212,7 @@ export async function buildViews(rows: ShipmentRow[]): Promise<ShipmentView[]> {
   const itemIds = [...new Set(rows.flatMap((s) => s.lines.map((l) => l.itemId)))];
   const [points, coords, items] = await Promise.all([
     prisma.boronganPoint.findMany({ where: { id: { in: pointIds } }, select: { id: true, name: true, code: true, noCoordinator: true } }),
-    prisma.boronganPerson.findMany({ where: { role: "KOORDINATOR", active: true, pointId: { in: pointIds } }, select: { pointId: true } }),
+    prisma.boronganPerson.findMany({ where: coordinatorsAt(pointIds), select: coordinatorPointSelect }),
     prisma.item.findMany({ where: { id: { in: itemIds } }, select: { id: true, name: true, unit: true } }),
   ]);
   return rows.map((s) => {
@@ -234,7 +234,7 @@ export async function buildViews(rows: ShipmentRow[]): Promise<ShipmentView[]> {
       closed: s.closedAt ? `${s.closeNote ?? "Ditutup administratif"} (${s.closedBy ?? "-"}, ${dateStr(s.closedAt)})` : null,
       group: s.tasks[0] ? taskGroupName(s.tasks[0].task.name) : "",
       points: s.pointIds.map((id) => {
-        const coordinator = coords.some((c) => c.pointId === id);
+        const coordinator = coords.some((c) => coordinatorCovers(c, id));
         return { id, name: points.find((p) => p.id === id)?.name ?? "?", coordinator, coordinatorOnly: coordinator && !points.find((p) => p.id === id)?.noCoordinator };
       }),
       tasks: byColumn(s.tasks, (t) => t.task.name).map((t) => ({ id: t.taskId, name: t.task.name, short: shortTaskName(t.task.name), qty: t.qty, divisionId: t.task.divisionId })),
@@ -663,7 +663,7 @@ async function notify(userIds: (string | null | undefined)[], payload: PushPaylo
   if (ids.length) await sendPush(ids, payload).catch(() => {});
 }
 async function coordinatorUsers(pointIds: string[]) {
-  return (await prisma.boronganPerson.findMany({ where: { role: "KOORDINATOR", active: true, pointId: { in: pointIds }, userId: { not: null } }, select: { userId: true } })).map((p) => p.userId);
+  return (await prisma.boronganPerson.findMany({ where: { ...coordinatorsAt(pointIds), userId: { not: null } }, select: { userId: true } })).map((p) => p.userId);
 }
 
 export async function createPickup(shipmentId: string, rows: PickupInput[], actor: Actor, scope: Scope, day: string = todayStr()) {
