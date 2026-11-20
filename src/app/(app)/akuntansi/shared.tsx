@@ -77,6 +77,7 @@ export const REPORTS = [
   { href: "/akuntansi/neraca-saldo", label: "Neraca saldo", desc: "Debit & kredit per akun" },
   { href: "/stok/kartu", label: "Kartu persediaan", desc: "Mutasi & nilai persediaan per item" },
   { href: "/akuntansi/marketplace", label: "Biaya marketplace", desc: "Potongan Shopee/TikTok bulanan → omzet kotor" },
+  { href: "/akuntansi/buku-marketplace", label: "Buku bayangan marketplace", desc: "SIMULASI jurnal penuh marketplace (belum masuk Neraca)" },
   { href: "/akuntansi/anggaran", label: "Anggaran beban", desc: "Anggaran per bulan, realisasi & peringatan" },
   { href: "/akuntansi/piutang-utang", label: "Piutang & hutang", desc: "Tagihan & kewajiban usaha" },
   { href: "/akuntansi/aset", label: "Aset tetap", desc: "Peralatan, cetakan, penyusutan" },

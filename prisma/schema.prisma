@@ -3112,3 +3112,54 @@ model MarketplaceBalanceTx {
   @@index([orderNo])
   @@index([importId])
 }
+
+/// BUKU BAYANGAN marketplace (mode SIMULASI): jurnal penuh yang DITURUNKAN dari data impor, terpisah dari jurnal nyata.
+/// Tidak mengubah Neraca/Laba Rugi nyata. Dibangun ulang otomatis (idempoten) dari data impor + withdraw.
+model MarketplaceGlJournal {
+  id          String   @id @default(cuid())
+  /// Kunci stabil, mis. "SETTLE|<toko>|<kanal>|2026-11-25" (satu jurnal per hari per jenis)
+  key         String   @unique
+  date        DateTime
+  storeId     String
+  channel     String
+  /// SETTLE (cair pesanan) · ADS (iklan: isi saldo/pemakaian/GMV Pay) · ADJ (penyesuaian) · WD (withdraw) · OPEN (saldo pembuka)
+  kind        String
+  description String
+  createdAt   DateTime @default(now())
+  lines       MarketplaceGlLine[]
+
+  @@index([date])
+  @@index([storeId, channel, date])
+}
+
+model MarketplaceGlLine {
+  id        String   @id @default(cuid())
+  journalId String
+  journal   MarketplaceGlJournal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+  /// Kode akun (lihat gl.ts); belum tentu ada di COA nyata sebelum aktivasi
+  account   String
+  debit     BigInt   @default(0)
+  credit    BigInt   @default(0)
+  memo      String?
+
+  @@index([journalId])
+  @@index([account])
+}
+
+/// Saldo pembuka buku marketplace per toko × kanal × jenis saldo (Saldo Penjual / Saldo Iklan) pada tanggal tertentu
+model MarketplaceGlOpening {
+  id        String   @id @default(cuid())
+  storeId   String
+  channel   String
+  /// PENJUAL / IKLAN
+  wallet    String
+  asOf      DateTime @db.Date
+  amount    BigInt
+  /// FILE (dari file saldo) / MANUAL (diisi Finance)
+  source    String
+  note      String?
+  createdBy String
+  createdAt DateTime @default(now())
+
+  @@unique([storeId, channel, wallet])
+}
