@@ -7,7 +7,8 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { Paged } from "@/components/Paged";
 import { undoImportAction } from "../actions";
 import { MpNav } from "../MpNav";
-import { ImportForm } from "./ImportForm";
+import { SLOTS, slotStatus } from "@/lib/marketplace/slots";
+import { ImportForm, type Card as SlotCard } from "./ImportForm";
 
 export const metadata = { title: "Impor Marketplace" };
 type Stats = { baru?: number; diperbarui?: number; dilewati?: number; withdrawals?: number; dibatalkan?: unknown };
@@ -15,16 +16,18 @@ type Stats = { baru?: number; diperbarui?: number; dilewati?: number; withdrawal
 export default async function ImporPage() {
   const user = await requirePerm("sales.view");
   const canManage = user.can("sales.manage");
-  const [stores, batches] = await Promise.all([
+  const [stores, batches, status] = await Promise.all([
     prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } }),
     prisma.marketplaceImport.findMany({ orderBy: { createdAt: "desc" }, take: 60 }),
+    slotStatus(),
   ]);
+  const cards: SlotCard[] = stores.flatMap((st) => (["SHP", "TTS"] as const).map((ch) => ({ storeId: st.id, storeName: st.name, channel: ch, slots: SLOTS[ch].map((sl) => { const x = status[`${st.id}|${ch}|${sl.key}`]; return { ...sl, lastAt: x?.lastAt ?? null, lastFile: x?.fileName ?? null, periodFrom: x?.periodFrom ?? null, periodTo: x?.periodTo ?? null }; }) })));
   const sn = new Map(stores.map((s) => [s.id, s.name]));
   return (
     <div className="space-y-4">
       <PageHeader title="Impor Marketplace" subtitle="Unggah file Excel dari Seller Center Shopee & TikTok Shop" />
       <MpNav current="impor" />
-      <Card title="Unggah file"><ImportForm stores={stores} canManage={canManage} /></Card>
+      <Card title="Unggah file per slot"><ImportForm cards={cards} canManage={canManage} /></Card>
       <Card title="Riwayat impor">
         {batches.length === 0 ? (
           <Empty title="Belum ada impor" />

@@ -8,6 +8,7 @@ import { audit } from "@/lib/audit";
 import { createInvoice, InvoiceError } from "@/lib/invoice";
 import { commitImport, previewImport, undoImport, MarketplaceImportError, type ImportFile, type Preview } from "@/lib/marketplace/import";
 import { FormatError, parseMarketplaceFile } from "@/lib/marketplace/parse";
+import { detectFiles, type Detected } from "@/lib/marketplace/slots";
 import { resolveSkuKeys } from "@/lib/marketplace/sku";
 import { dateStr } from "@/lib/time";
 import { FEE_CATEGORIES, normCol } from "@/lib/marketplace/feeMap";
@@ -16,7 +17,7 @@ import { WD_REMINDER_KEY } from "@/lib/marketplace/saldo";
 import { SYNC_HOUR_KEY, SYNC_START_KEY } from "@/lib/marketplace/sync";
 import { SECTORS, loadTargets, saveTargets, targetKey } from "@/lib/marketplace/pengeluaran";
 
-const MAX_FILES = 4;
+const MAX_FILES = 12;
 const MAX_BYTES = 12 * 1024 * 1024;
 
 type SerPreview = { files: (Omit<Preview["files"][number], "periodFrom" | "periodTo"> & { periodFrom: string | null; periodTo: string | null })[]; totals: Preview["totals"] };
@@ -46,6 +47,28 @@ async function readFiles(fd: FormData): Promise<{ files: ImportFile[]; fileError
     }
   }
   return { files, fileErrors };
+}
+
+/** Kenali jenis file + cek slot/toko (belum menyimpan apa pun) */
+export async function detectSlotsAction(fd: FormData): Promise<{ ok: boolean; error?: string; items?: Detected[] }> {
+  try {
+    await assertPerm("sales.manage");
+    const raw = fd.getAll("file").filter((f): f is File => f instanceof File && f.size > 0);
+    const targets = fd.getAll("target").map(String);
+    if (!raw.length) return { ok: false, error: "Pilih file dulu" };
+    if (raw.length > MAX_FILES) return { ok: false, error: `Maksimal ${MAX_FILES} file sekaligus` };
+    const items: { name: string; buf: Buffer; target?: string }[] = [];
+    const pre: Detected[] = [];
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i].size > MAX_BYTES) { pre[i] = { fileName: raw[i].name, error: "File terlalu besar (maks 12 MB). Unduh per bulan dari Seller Center." }; continue; }
+      items.push({ name: raw[i].name, buf: Buffer.from(await raw[i].arrayBuffer()), target: targets[i] || undefined });
+    }
+    const det = await detectFiles(items);
+    let j = 0;
+    return { ok: true, items: raw.map((_, i) => pre[i] ?? det[j++]) };
+  } catch (e) {
+    return { ok: false, error: friendly(e) };
+  }
 }
 
 const ser = (p: Preview): SerPreview => ({ totals: p.totals, files: p.files.map((f) => ({ ...f, periodFrom: f.periodFrom ? dateStr(f.periodFrom) : null, periodTo: f.periodTo ? dateStr(f.periodTo) : null })) });
