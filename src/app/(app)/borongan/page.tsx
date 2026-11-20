@@ -524,16 +524,16 @@ function PointsCard({ points }: { points: { id: string; name: string; viaDriver:
               <input type="hidden" name="id" value={p.id} />
               <div className="min-w-0 flex-1 basis-40">
                 <div className="font-semibold text-slate-900">{p.name}</div>
-                <div className="text-xs text-slate-500">{p.noCoordinator ? "Tanpa koordinator: upah koordinator dibayarkan ke pekerja" : p.coordinators.length ? `Koordinator: ${p.coordinators.join(", ")}` : "Belum ada koordinator: upah koordinator ke pekerja"}</div>
+                <div className="text-xs text-slate-500">{p.noCoordinator ? `Tanpa fee koordinator: upah koordinator dibayarkan ke pekerja${p.coordinators.length ? ` · pencatat: ${p.coordinators.join(", ")}` : ""}` : p.coordinators.length ? `Koordinator: ${p.coordinators.join(", ")}` : "Belum ada koordinator: upah koordinator ke pekerja"}</div>
               </div>
               <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="viaDriver" defaultChecked={p.viaDriver} className="h-4 w-4" /> Lewat driver</label>
-              <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="noCoordinator" defaultChecked={p.noCoordinator} className="h-4 w-4" /> Tanpa koordinator</label>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="noCoordinator" defaultChecked={p.noCoordinator} className="h-4 w-4" /> Tanpa fee koordinator</label>
               <Submit className="btn-secondary btn-sm">Simpan</Submit>
             </ActionForm>
           </li>
         ))}
       </ul>
-      <p className="mt-2 text-xs text-slate-500">Ada koordinator: bagian koordinator (mis. Cat Plastik Rp2) untuk koordinator. Tanpa koordinator: pekerja menerima penuh (Rp15). Pilihan per pekerja di tab Orang lebih diutamakan.</p>
+      <p className="mt-2 text-xs text-slate-500">Ada koordinator: bagian koordinator (mis. Cat Plastik Rp2) untuk koordinator. Tanpa fee koordinator: pekerja menerima penuh (Rp15); koordinator yang ditambahkan di tab Orang hanya menjadi pencatat (lapor hasil, klaim upah, notifikasi) tanpa fee, dan tim divisi tetap boleh mencatat sebagai cadangan. Selain itu pilihan koordinator per pekerja di tab Orang lebih diutamakan.</p>
     </Card>
   );
 }

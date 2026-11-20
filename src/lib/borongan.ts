@@ -334,12 +334,14 @@ async function recordResultTx(tx: Tx, input: ResultInput, actor: Actor, scope: S
  */
 export async function coordinatorFor(db: DB, worker: { coordinatorId?: string | null; pointId: string | null; noCoordinator?: boolean }) {
   if (worker.noCoordinator) return null;
+  // Koordinator di titik TANPA FEE koordinator (mis. Mita di Beringin) hanya pencatat: tidak pernah menerima fee
+  const earns = { OR: [{ pointId: null }, { point: { noCoordinator: false } }] } satisfies Prisma.BoronganPersonWhereInput;
   if (worker.coordinatorId) {
-    const c = await db.boronganPerson.findFirst({ where: { id: worker.coordinatorId, role: "KOORDINATOR", active: true } });
+    const c = await db.boronganPerson.findFirst({ where: { id: worker.coordinatorId, role: "KOORDINATOR", active: true, ...earns } });
     if (c) return c;
   }
   if (!worker.pointId) return null;
-  // Titik disetel tanpa koordinator → upah koordinator ke pekerja
+  // Titik disetel tanpa fee koordinator → upah koordinator ke pekerja
   const point = await db.boronganPoint.findUnique({ where: { id: worker.pointId }, select: { noCoordinator: true } });
   if (point?.noCoordinator) return null;
   return db.boronganPerson.findFirst({ where: { role: "KOORDINATOR", pointId: worker.pointId, active: true }, orderBy: { createdAt: "asc" } });

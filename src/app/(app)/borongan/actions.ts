@@ -251,7 +251,7 @@ export const savePointSettings = action(
     const data = { viaDriver: fd.get("viaDriver") === "on", noCoordinator: fd.get("noCoordinator") === "on" };
     const p = await prisma.boronganPoint.update({ where: { id }, data });
     await audit(user, "TITIK_BORONGAN_DIATUR", "BoronganPoint", id, { titik: p.code, lewatDriver: data.viaDriver, tanpaKoordinator: data.noCoordinator });
-    return `Titik ${p.name} tersimpan${data.noCoordinator ? " (tanpa koordinator: upah koordinator ke pekerja)" : ""}`;
+    return `Titik ${p.name} tersimpan${data.noCoordinator ? " (tanpa fee koordinator: upah koordinator ke pekerja; koordinator titik hanya pencatat)" : ""}`;
   },
   PATHS,
 );
