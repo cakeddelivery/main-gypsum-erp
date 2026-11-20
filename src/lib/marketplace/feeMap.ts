@@ -14,6 +14,8 @@ export const FEE_CATEGORIES = {
   ASURANSI: { label: "Asuransi (premi)", counted: true },
   LAYANAN: { label: "Layanan Live / video", counted: true },
   VOUCHER: { label: "Voucher / diskon penjual (info)", counted: false },
+  RINCIAN: { label: "Rincian komponen (sudah termasuk di potongan lain)", counted: false },
+  INFO: { label: "Harga & diskon (info, bukan potongan saldo)", counted: false },
   REFUND: { label: "Refund ke pembeli", counted: true },
   PENYESUAIAN: { label: "Penyesuaian", counted: true },
   PAJAK: { label: "Pajak (PPh)", counted: true },
@@ -26,31 +28,61 @@ export type FeeCategoryOrNone = FeeCategory | typeof UNMAPPED;
 
 export const normCol = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 
-/** Aturan bawaan (urut: yang spesifik dulu) */
-const RULES: [RegExp, FeeCategory][] = [
-  [/gratis ongkir xtra|layanan logistik/, "ONGKIR_PROGRAM"],
+/** Kolom yang bukan uang sama sekali (ID, waktu, berat, mata uang, dst.) — tidak pernah disimpan sebagai biaya */
+const IGNORE = /(^|\s)id(\s|$)|waktu|tanggal|berat|mata uang|currency|jenis |metode|status|nama |no\. |nomor|alasan|jumlah item|kuantitas|sku/i;
+
+type Rule = [RegExp, FeeCategory];
+/** Aturan umum + khusus platform (yang spesifik dulu). Kolom tak dikenal = "BELUM" dan TIDAK ikut total sampai dipetakan. */
+const SHOPEE: Rule[] = [
+  [/pre-?order/, "ADMIN"],
+  // info grup pembeli di kolom belakang (jangan dijumlah dengan rincian penghasilan)
+  [/^pengembalian dana ke pembeli$|jumlah dibayar pembeli|pro-?rata/, "INFO"],
+  [/pengembalian biaya kirim/, "ONGKIR"],
+  [/gratis ongkir xtra/, "ONGKIR_PROGRAM"],
+  [/ongkos kirim|ongkir|jasa kirim/, "RINCIAN"],
+];
+const TIKTOK: Rule[] = [
+  [/^biaya komisi platform$|^komisi dinamis$/, "ADMIN"],
+  [/^biaya pemrosesan pesanan$/, "PROSES"],
+  [/^ongkir$/, "ONGKIR"],
+  [/^komisi afiliasi$|^komisi iklan toko afiliasi$/, "AFFILIATE"],
+  [/^biaya layanan pre-?order$/, "LAYANAN"],
+  // sub-rincian: sudah termasuk di komponen di atas, JANGAN dijumlah lagi
+  [/biaya layanan logistik|biaya komisi sebelum diskon|diskon \(dari belanja iklan\)|ongkir yang (ditalangi|ditanggung)|diskon ongkir/, "RINCIAN"],
+  // bagian "dari harga coret ke pendapatan" (info)
+  [/subtotal|diskon penjual|diskon platform|pengembalian dana/, "INFO"],
+];
+const COMMON: Rule[] = [
   [/komisi ams|afiliasi|affiliate|komisi kreator/, "AFFILIATE"],
-  [/komisi platform|komisi dinamis|biaya administrasi|biaya transaksi|pre-?order/, "ADMIN"],
+  [/komisi platform|komisi dinamis|biaya administrasi|biaya transaksi/, "ADMIN"],
+  [/pre-?order|shopee live|layanan video|live xtra/, "LAYANAN"],
   [/proses pesanan|pemrosesan pesanan/, "PROSES"],
   [/premi/, "ASURANSI"],
-  [/shopee live|layanan video|live xtra/, "LAYANAN"],
   [/iklan|isi saldo/, "IKLAN"],
-  [/voucher|diskon penjual/, "VOUCHER"],
-  [/pengembalian dana|refund/, "REFUND"],
+  [/voucher/, "VOUCHER"],
+  [/jumlah pengembalian dana|refund/, "REFUND"],
   [/pph|pajak/, "PAJAK"],
-  [/ongkos kirim|ongkir|jasa kirim|biaya pengiriman/, "ONGKIR"],
   [/penyesuaian/, "PENYESUAIAN"],
 ];
-export const defaultCategory = (column: string): FeeCategoryOrNone => RULES.find(([r]) => r.test(normCol(column)))?.[1] ?? UNMAPPED;
+export const ignoredColumn = (column: string) => IGNORE.test(column.trim());
+export function defaultCategory(column: string, platform?: Platform): FeeCategoryOrNone {
+  const c = normCol(column);
+  if (ignoredColumn(c)) return "ABAIKAN";
+  const rules = platform === "SHOPEE" ? [...SHOPEE, ...COMMON] : platform === "TIKTOK" ? [...TIKTOK, ...COMMON] : [...SHOPEE, ...TIKTOK, ...COMMON];
+  return rules.find(([r]) => r.test(c))?.[1] ?? UNMAPPED;
+}
 
-/** Kolom yang tampak seperti komponen biaya (ikut disimpan walau kategorinya belum dikenal) */
-export const looksLikeFee = (column: string) => defaultCategory(column) !== UNMAPPED || /biaya|komisi|premi|pph|pajak|ongkir|ongkos|voucher|diskon|pengembalian|iklan|saldo|layanan|fee|potongan|penyesuaian/i.test(column);
+/** Kolom yang disimpan: bukan kolom non-uang, dan dikenal atau tampak seperti komponen biaya */
+export const looksLikeFee = (column: string, platform?: Platform) => {
+  if (ignoredColumn(column)) return false;
+  return defaultCategory(column, platform) !== UNMAPPED || /biaya|komisi|premi|pph|pajak|ongkir|ongkos|voucher|diskon|pengembalian|iklan|saldo|layanan|fee|potongan|penyesuaian/i.test(column);
+};
 
 /** Kategori akhir: pemetaan buatan pengguna (`overrides`: kunci "PLATFORM|kolom") menimpa bawaan */
 export function categoryOf(platform: Platform, column: string, overrides?: Map<string, string>): FeeCategoryOrNone {
   const o = overrides?.get(`${platform}|${normCol(column)}`);
   if (o && (o in FEE_CATEGORIES)) return o as FeeCategory;
-  return defaultCategory(column);
+  return defaultCategory(column, platform);
 }
 
 export type FeeTotals = { byCategory: Record<string, number>; byColumn: Record<string, number>; unmapped: Record<string, number>; counted: number };
@@ -65,8 +97,7 @@ export function sumFees(platform: Platform, details: Record<string, number>[], o
       byColumn[normCol(col)] = (byColumn[normCol(col)] ?? 0) + v;
       const c = categoryOf(platform, col, overrides);
       if (c === UNMAPPED) {
-        unmapped[col] = (unmapped[col] ?? 0) + v;
-        counted += v;
+        unmapped[col] = (unmapped[col] ?? 0) + v; // tampil, tetapi belum masuk total sampai dipetakan
         continue;
       }
       byCategory[c] = (byCategory[c] ?? 0) + v;

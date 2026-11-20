@@ -1,5 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
+import { makeXlsx } from "./fixtures/xlsxMake";
+import { parseMarketplaceFile } from "@/lib/marketplace/parse";
 import { categoryOf, defaultCategory, sumFees } from "@/lib/marketplace/feeMap";
 import { commitImport, undoImport } from "@/lib/marketplace/import";
 import type { ParsedFile, ParsedIncome, ParsedOrder } from "@/lib/marketplace/parse";
@@ -34,28 +36,35 @@ const file = (platform: "SHOPEE" | "TIKTOK", kind: "ORDER" | "INCOME", f: Partia
 
 describe("Pemetaan biaya", () => {
   it("kolom bawaan Shopee & TikTok masuk kategori yang benar; kolom baru tetap 'BELUM' (tidak hilang)", () => {
-    const d = defaultCategory;
+    const d = (c: string, p?: "SHOPEE" | "TIKTOK") => defaultCategory(c, p);
     expect(d("Biaya Administrasi")).toBe("ADMIN");
     expect(d("Biaya Transaksi")).toBe("ADMIN");
     expect(d("Biaya komisi platform")).toBe("ADMIN");
     expect(d("Komisi dinamis")).toBe("ADMIN");
-    expect(d("Biaya Layanan Pre-Order")).toBe("ADMIN");
+    expect(d("Biaya Layanan Pre-Order", "SHOPEE")).toBe("ADMIN");
+    expect(d("Biaya layanan pre-order", "TIKTOK")).toBe("LAYANAN");
     expect(d("Biaya Proses Pesanan")).toBe("PROSES");
     expect(d("Biaya pemrosesan pesanan")).toBe("PROSES");
     expect(d("Biaya Gratis Ongkir XTRA - Program 1")).toBe("ONGKIR_PROGRAM");
-    expect(d("Biaya layanan logistik")).toBe("ONGKIR_PROGRAM");
-    expect(d("Ongkos Kirim yang Dibayarkan ke Jasa Kirim")).toBe("ONGKIR");
-    expect(d("Ongkir")).toBe("ONGKIR");
+    expect(d("Biaya layanan logistik", "TIKTOK")).toBe("RINCIAN"); // sudah termasuk di Ongkir
+    expect(d("Ongkos Kirim yang Dibayarkan ke Jasa Kirim", "SHOPEE")).toBe("RINCIAN");
+    expect(d("Pengembalian Biaya Kirim", "SHOPEE")).toBe("ONGKIR");
+    expect(d("Ongkir", "TIKTOK")).toBe("ONGKIR");
     expect(d("Biaya Komisi AMS")).toBe("AFFILIATE");
     expect(d("Komisi Afiliasi")).toBe("AFFILIATE");
     expect(d("Komisi Iklan Toko afiliasi")).toBe("AFFILIATE");
-    expect(d("Diskon (dari belanja iklan)")).toBe("IKLAN");
+    expect(d("Diskon (dari belanja iklan)", "TIKTOK")).toBe("RINCIAN"); // rincian komisi, bukan iklan
     expect(d("Biaya Isi Saldo Otomatis")).toBe("IKLAN");
     expect(d("Premi")).toBe("ASURANSI");
     expect(d("Biaya Layanan Shopee Live XTRA")).toBe("LAYANAN");
     expect(d("Voucher disponsor oleh Penjual")).toBe("VOUCHER");
-    expect(d("Diskon penjual")).toBe("VOUCHER");
-    expect(d("Jumlah Pengembalian Dana ke Pembeli")).toBe("REFUND");
+    expect(d("Diskon penjual", "TIKTOK")).toBe("INFO");
+    expect(d("Jumlah Pengembalian Dana ke Pembeli", "SHOPEE")).toBe("REFUND");
+    expect(d("Pengembalian Dana ke Pembeli", "SHOPEE")).toBe("INFO"); // grup info pembeli: tidak dijumlah
+    expect(d("Jumlah Dibayar Pembeli", "SHOPEE")).toBe("INFO");
+    expect(d("ID pesanan/penyesuaian")).toBe("ABAIKAN");
+    expect(d("ID pesanan terkait")).toBe("ABAIKAN");
+    expect(d("Perkiraan berat paket")).toBe("ABAIKAN");
     expect(d("PPh 22")).toBe("PAJAK");
     expect(d("Biaya Kampanye Misterius")).toBe("BELUM");
   });
@@ -66,7 +75,29 @@ describe("Pemetaan biaya", () => {
     const t = sumFees("SHOPEE", [{ "Biaya Administrasi": -1000, "Biaya Transaksi": -200, Premi: -50, "Voucher disponsor oleh Penjual": -300, "Biaya Aneh": -7 }], undefined);
     expect(t.byCategory).toMatchObject({ ADMIN: -1200, ASURANSI: -50, VOUCHER: -300 });
     expect(t.unmapped).toEqual({ "Biaya Aneh": -7 });
-    expect(t.counted).toBe(-1257); // voucher (info) tidak mengurangi saldo; kolom belum dikenal tetap dihitung
+    expect(t.counted).toBe(-1250); // voucher (info) tidak mengurangi saldo; kolom belum dikenal belum ikut sampai dipetakan
+  });
+});
+
+describe("File penghasilan berpola asli (sintetis)", () => {
+  it("TikTok: Total Pendapatan + Σ potongan = penyelesaian; kolom ID/berat diabaikan; rincian tidak dijumlah", async () => {
+    const head = ["ID pesanan/penyesuaian", "ID pesanan terkait", "Jenis transaksi", "Waktu pemesanan", "Waktu pembayaran pesanan", "Jumlah penyelesaian pembayaran", "Total Pendapatan", "Total Biaya", "Biaya komisi platform", "Komisi dinamis", "Biaya pemrosesan pesanan", "Ongkir", "Komisi Afiliasi", "Komisi Iklan Toko afiliasi", "Biaya layanan pre-order", "Biaya layanan logistik", "Biaya komisi sebelum diskon", "Diskon (dari belanja iklan)", "Perkiraan berat paket", "Subtotal sebelum diskon", "Diskon penjual"];
+    const row = (id: string) => [id, "5786000000000000001", "Pesanan", "05/03/2036 10:00:00", "12/03/2036 09:00:00", 7350, 10000, -2650, -500, -700, -300, -400, -600, -100, -50, -250, -900, 400, 1200, 20000, -10000];
+    const p = await parseMarketplaceFile(await makeXlsx([{ name: "Detail pesanan", rows: [head, row(`5785${num}001`), row(`5785${num}002`)] }]));
+    const d = p.incomes[0].feeDetail;
+    expect(Object.keys(d).some((k) => /^id|berat/i.test(k))).toBe(false); // kolom ID & berat tidak ikut
+    expect(p.incomes[0].fees).toBe(2650);
+    const sum = sumFees("TIKTOK", [d]);
+    expect(sum.byCategory).toMatchObject({ ADMIN: -1200, PROSES: -300, ONGKIR: -400, AFFILIATE: -700, LAYANAN: -50, RINCIAN: -750 /* -250 -900 +400 */, INFO: -10000 + 20000 });
+    expect(sum.counted).toBe(-2650); // sama dengan Total Biaya; rincian & info tidak dijumlah
+    expect(7350).toBe(10000 + sum.counted); // Total Pendapatan + Σ potongan = penyelesaian
+  });
+  it("Shopee: kolom grup info pembeli tidak dobel; Pengembalian Biaya Kirim = ongkir; Harga Produk + Σ potongan = Total Penghasilan", async () => {
+    const head = ["No.", "Lihat berdasarkan", "No. Pesanan", "Tanggal Dana Dilepaskan", "Total Penghasilan", "Harga Produk", "Biaya Administrasi", "Jumlah Pengembalian Dana ke Pembeli", "Pengembalian Biaya Kirim", "Jumlah Dibayar Pembeli", "Pengembalian Dana ke Pembeli", "Pro-rata Voucher Shopee"];
+    const p = await parseMarketplaceFile(await makeXlsx([{ name: "Penghasilan", rows: [[], [], head, [1, "Order", `9${num}`, "2036-03-12 08:00", 8850, 10000, -1000, -300, 150, 9700, -300, -50]] }]));
+    const sum = sumFees("SHOPEE", [p.incomes[0].feeDetail]);
+    expect(sum.byCategory).toMatchObject({ ADMIN: -1000, REFUND: -300, ONGKIR: 150, INFO: 9700 - 300 - 50 });
+    expect(10000 + sum.counted).toBe(8850);
   });
 });
 
@@ -86,13 +117,14 @@ describe("Potongan, aktual vs pengaturan, affiliate, withdraw", () => {
     expect(rep.byCategory.AFFILIATE).toBe(-6600);
     expect(rep.byCategory.ASURANSI).toBe(-1100);
     expect(rep.unmapped["Biaya Kampanye Zeta"]).toBe(-1694); // tetap tampil sebagai "belum dipetakan"
-    expect(rep.residual).toBe(0); // gross + semua potongan = cair
+    expect(rep.residual).toBe(-1694); // kolom belum dipetakan belum ikut total → tampil sebagai selisih belum terjelaskan
     expect(rep.rows.find((x) => x.category === "ADMIN")!.pct).toBeCloseTo(10, 5);
     // dipetakan → pindah ke kategori
     await prisma.marketplaceFeeMap.create({ data: { platform: "SHOPEE", column: "biaya kampanye zeta", category: "IKLAN", updatedBy: "t" } });
     cleanups.push(() => prisma.marketplaceFeeMap.deleteMany({ where: { column: "biaya kampanye zeta" } }));
     const rep2 = await potonganReport(f);
     expect(rep2.byCategory.IKLAN).toBe(-1694);
+    expect(rep2.residual).toBe(0); // setelah dipetakan: gross + potongan = cair
     expect(Object.keys(rep2.unmapped)).toHaveLength(0);
 
     // aktual vs pengaturan: admin 10%, ongkir xtra 6%, per pesanan 250

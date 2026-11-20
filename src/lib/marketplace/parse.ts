@@ -181,7 +181,7 @@ function parseShopeeIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
   if (I.no < 0 || I.total < 0) throw new FormatError("Header sheet Penghasilan tidak sesuai format Shopee “Income”");
   // Semua kolom yang tampak seperti komponen biaya disimpan APA ADANYA (bertanda) agar tidak ada potongan yang hilang
   const skip = new Set([I.no, I.view, I.created, I.rel, I.total, I.prod, need(h, "no."), need(h, "no. pengajuan"), need(h, "metode pelepasan dana")]);
-  const feeCols = (sh.rows[hr] ?? []).map((c, i) => ({ k: String(c ?? "").trim(), i })).filter((x) => x.k && !skip.has(x.i) && looksLikeFee(x.k));
+  const feeCols = (sh.rows[hr] ?? []).map((c, i) => ({ k: String(c ?? "").trim(), i })).filter((x) => x.k && !skip.has(x.i) && looksLikeFee(x.k, "SHOPEE"));
   const incomes: ParsedIncome[] = [];
   let rows = 0;
   for (const r of sh.rows.slice(hr + 1)) {
@@ -194,9 +194,9 @@ function parseShopeeIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
     let fees = 0;
     for (const { k, i } of feeCols) {
       const v = Math.round(parseNum(r[i]));
-      if (!v) continue;
+      if (!v || k in feeDetail) continue; // nama kolom sama muncul lagi (grup info pembeli): hanya yang pertama
       feeDetail[k] = v;
-      const c = defaultCategory(k);
+      const c = defaultCategory(k, "SHOPEE");
       if (["ADMIN", "PROSES", "ONGKIR_PROGRAM", "AFFILIATE", "ASURANSI", "LAYANAN", "PAJAK"].includes(c)) fees += Math.abs(v);
     }
     incomes.push({ kind: "ORDER", refNo: no, orderedAt: parseDate(r[I.created]), releasedAt: parseDate(r[I.rel]), released: Math.round(parseNum(r[I.total])), productAmt: Math.round(parseNum(r[I.prod])), refundAmt: Math.round(Math.abs(parseNum(r[I.refund]))), fees: Math.round(fees), feeDetail });
@@ -276,7 +276,7 @@ function parseTiktokIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
     rel: need(h, "jumlah penyelesaian pembayaran"), income: need(h, "total pendapatan"), cost: need(h, "total biaya"),
   };
   if (I.no < 0 || I.rel < 0) throw new FormatError("Header sheet Detail pesanan tidak sesuai format TikTok income");
-  const feeCols = header.map((c, i) => ({ k: String(c ?? "").trim(), i })).filter((x) => x.k && x.i !== I.cost && x.i !== I.rel && x.i !== I.income && looksLikeFee(x.k));
+  const feeCols = header.map((c, i) => ({ k: String(c ?? "").trim(), i })).filter((x) => x.k && x.i !== I.cost && x.i !== I.rel && x.i !== I.income && looksLikeFee(x.k, "TIKTOK"));
   const incomes: ParsedIncome[] = [];
   let rows = 0;
   for (const r of sh.rows.slice(hr + 1)) {
@@ -288,7 +288,7 @@ function parseTiktokIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
     const feeDetail: Record<string, number> = {};
     for (const { k, i } of feeCols) {
       const v = Math.round(parseNum(r[i]));
-      if (v) feeDetail[k] = v;
+      if (v && !(k in feeDetail)) feeDetail[k] = v;
     }
     const totalCost = Math.abs(parseNum(r[I.cost]));
     const fees = totalCost || Object.values(feeDetail).reduce((a, b) => a + Math.abs(b), 0);

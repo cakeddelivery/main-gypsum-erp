@@ -32,7 +32,7 @@ export default async function PotonganPage({ searchParams }: { searchParams: Pro
         <Field label="Dari"><input type="date" name="dari" defaultValue={from} className="input" /></Field>
         <Field label="Sampai"><input type="date" name="sampai" defaultValue={to} className="input" /></Field>
       </FilterBar>
-      {unmapped.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{unmapped.length} kolom biaya belum dipetakan ke kategori (nilainya tetap dihitung). Pilih kategorinya di bagian “Kolom biaya belum dipetakan” di bawah.</div>}
+      {unmapped.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{unmapped.length} kolom biaya belum dipetakan ke kategori (belum ikut dijumlah; muncul sebagai selisih belum terjelaskan). Pilih kategorinya di bagian “Kolom biaya belum dipetakan” di bawah.</div>}
       {rep.orders === 0 ? <Empty title="Belum ada pesanan cair pada periode ini" hint="Unggah file penghasilan di menu Impor." /> : (
         <>
           <Card title={`${CHANNEL_LABEL[channel]} · ${rep.orders.toLocaleString("id-ID")} pesanan cair`}>
@@ -41,14 +41,20 @@ export default async function PotonganPage({ searchParams }: { searchParams: Pro
                 <thead><tr><th>Komponen</th><th className="num">Rp</th><th className="num">% harga jual</th></tr></thead>
                 <tbody>
                   <tr className="font-medium"><td>Harga jual (gross)</td><td className="num">{idr(rep.gross)}</td><td className="num">100%</td></tr>
-                  {rep.rows.map((r) => <tr key={r.category} className={r.counted ? "" : "text-slate-400"}><td>{r.label}{!r.counted && " (tidak mengurangi saldo)"}</td><td className="num">{idr(r.value)}</td><td className="num">{pc(r.pct)}</td></tr>)}
+                  {rep.rows.filter((r) => r.counted).map((r) => <tr key={r.category}><td>{r.label}</td><td className="num">{idr(r.value)}</td><td className="num">{pc(r.pct)}</td></tr>)}
                   {Object.entries(rep.unmapped).map(([c, v]) => <tr key={c}><td>{c} <Badge tone="amber">Belum dipetakan</Badge></td><td className="num">{idr(v)}</td><td className="num">{rep.gross ? pc((Math.abs(v) / rep.gross) * 100) : "-"}</td></tr>)}
                   <tr className="font-semibold"><td>Masuk saldo (cair)</td><td className="num">{idr(rep.released)}</td><td className="num">{rep.gross ? pc((rep.released / rep.gross) * 100) : "-"}</td></tr>
                   <tr><td>Selisih belum terjelaskan</td><td className="num">{idr(rep.residual)}</td><td className="num">{rep.residual === 0 ? <Badge tone="green">Cocok</Badge> : <Badge tone="amber">Cek</Badge>}</td></tr>
                 </tbody>
               </table>
             </div>
-            <p className="mt-2 text-xs text-slate-500">Selisih = cair − (harga jual + semua potongan). Selisih bukan nol berarti ada komponen di file yang belum tertangkap (mis. selisih ongkir); periksa kolom biayanya.</p>
+            {rep.rows.some((r) => !r.counted) && (
+              <div className="mt-3 border-t pt-2 text-xs text-slate-500">
+                <p className="mb-1 font-medium">Rincian &amp; info (tidak dijumlah ke potongan)</p>
+                <ul>{rep.rows.filter((r) => !r.counted).map((r) => <li key={r.category} className="flex justify-between"><span>{r.label}</span><span>{idr(r.value)}</span></li>)}</ul>
+              </div>
+            )}
+            <p className="mt-2 text-xs text-slate-500">Selisih = cair − (harga jual + potongan yang sudah dipetakan). Kolom “Belum dipetakan” tidak ikut dijumlah sampai dipetakan. Selisih bukan nol berarti ada komponen di file yang belum tertangkap (mis. selisih ongkir); periksa kolom biayanya.</p>
           </Card>
           <Card title="Angka aktual vs pengaturan harga" actions={canManage && rep.enough ? (
             <ActionForm action={applyActualFeesAction} confirm="Pakai angka aktual sebagai pengaturan biaya marketplace? Ini hanya mengubah saran harga (Produk › Biaya), bukan transaksi.">{hidden}<Submit className="btn-secondary" pendingText="Menyimpan…">Pakai angka aktual</Submit></ActionForm>
