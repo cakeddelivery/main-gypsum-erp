@@ -13,7 +13,7 @@ import { sendTelegram, telegramConfigured, esc } from "@/lib/telegram";
 import { STAGE_LABEL } from "@/lib/stock";
 import { applyShiftStockCount } from "@/lib/shiftReportStock";
 import { postShiftWork } from "@/lib/shiftReportFlow";
-import { assertMemberOwnsReport, memberReportSlot, moveReportShift } from "@/lib/reportShift";
+import { assertMemberOwnsReport, memberReportSlot, moveReportShift, discardEmptyDraft } from "@/lib/reportShift";
 import { REJECT_KEY, REJECT_REASONS, applyReportRejects, parseRejects, storedRejects } from "@/lib/productionReject";
 import { boronganBalanceLines, saveShiftBalance } from "@/lib/shiftBalance";
 import { LPG_KEY, applyLpg, parseLpg, storedLpg as storedLpgFor } from "@/lib/lpg";
@@ -106,6 +106,20 @@ const num = (s: string) => {
   if (!Number.isFinite(x) || x < 0) throw new Error("Jumlah stok tidak valid");
   return x;
 };
+
+/** "Tutup tanpa simpan": hapus draf yang dibuat saat form dibuka bila belum pernah berisi data tersimpan */
+export async function discardOpenedDraft(fd: FormData): Promise<{ ok: boolean; deleted?: boolean; error?: string }> {
+  try {
+    const user = await assertPerm("report.create");
+    const id = str(fd, "id");
+    await guardReport(id, user);
+    const deleted = await discardEmptyDraft(id, user);
+    if (deleted) revalidatePath("/laporan");
+    return { ok: true, deleted };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Gagal" };
+  }
+}
 
 /** Simpan isian laporan (draf). Dipakai tombol "Simpan draf" dan sebelum "Kirim laporan" */
 async function saveReportData(fd: FormData, user: User) {

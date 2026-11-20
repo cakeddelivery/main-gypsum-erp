@@ -110,6 +110,41 @@ const hasData = (v: unknown): boolean => {
   return true;
 };
 
+type DraftFields = { checklist: unknown; work: unknown; stockCount: unknown; complaints: string | null; followUp: string | null; workPostedVersion: number; stockApplied: boolean; resultApplied: unknown };
+
+/** Laporan sudah berisi data (checklist dicentang/berfoto, hasil, stok, barang masuk, kendala, atau pernah diposting) */
+export function reportFilled(r: DraftFields, receipts: number) {
+  const checklist = (r.checklist as { done?: boolean; photo?: unknown; photoPath?: unknown }[] | null) ?? [];
+  return checklist.some((c) => c.done || !!c.photoPath || (typeof c.photo === "string" && !!c.photo)) || hasData(r.work)
+    || ((r.stockCount as { qty: number | null }[] | null) ?? []).some((x) => x.qty != null) || receipts > 0
+    || !!r.complaints?.trim() || !!r.followUp?.trim() || r.workPostedVersion > 0 || r.stockApplied || r.resultApplied != null;
+}
+
+/**
+ * "Tutup tanpa simpan": draf dibuat otomatis saat form dibuka (openReport). Bila draf itu belum pernah berisi data
+ * yang disimpan pengguna, hapus agar tidak tertinggal draf kosong. Draf berisi data dan laporan terkirim TIDAK disentuh.
+ * Mengembalikan true bila dihapus.
+ */
+export async function discardEmptyDraft(id: string, actor: Actor): Promise<boolean> {
+  return prisma.$transaction(async (tx) => {
+    const r = await tx.shiftReport.findUnique({ where: { id }, include: { division: true, shift: true, _count: { select: { receipts: true } } } });
+    if (!r || r.status !== "DRAFT" || reportFilled(r, r._count.receipts)) return false;
+    // Data lain yang menunjuk laporan (tanpa relasi FK): bila ada, draf tetap disimpan
+    const [rejects, balances, lpg, refills, anomalies, requests] = await Promise.all([
+      tx.productionReject.count({ where: { reportId: id } }),
+      tx.shiftBalance.count({ where: { reportId: id } }),
+      tx.lpgState.count({ where: { reportId: id } }),
+      tx.lpgRefill.count({ where: { reportId: id } }),
+      tx.stockAnomaly.count({ where: { reportId: id } }),
+      tx.stockRequest.count({ where: { reportId: id } }),
+    ]);
+    if (rejects + balances + lpg + refills + anomalies + requests > 0) return false;
+    await tx.shiftReport.delete({ where: { id } });
+    await audit(actor, "LAPORAN_DRAF_KOSONG_DIHAPUS", "ShiftReport", id, { label: `${r.division.name} · ${fmtDay(r.date)} · ${r.shift.name}`, sebab: "Tutup tanpa simpan" }, tx);
+    return true;
+  });
+}
+
 export type ExtraDraft = { id: string; label: string; empty: boolean };
 
 /**
@@ -131,8 +166,7 @@ export async function findExtraDrafts(days = 30, now: Date = new Date()): Promis
     if (!cache.has(day)) cache.set(day, await expectedSlots(day));
     if (cache.get(day)!.some((x) => x.divisionId === r.divisionId && x.shiftId === r.shiftId)) continue;
     const checklist = (r.checklist as { done?: boolean }[] | null) ?? [];
-    const filled = checklist.some((c) => c.done) || hasData(r.work) || (r.stockCount as { qty: number | null }[]).some((x) => x.qty != null) || r._count.receipts > 0
-      || !!r.complaints?.trim() || !!r.followUp?.trim() || r.workPostedVersion > 0 || r.stockApplied || r.resultApplied != null;
+    const filled = reportFilled(r, r._count.receipts);
     out.push({ id: r.id, empty: !filled, label: `${r.division.name} · ${fmtDay(r.date)} · ${r.shift.name} (PIC ${r.picName ?? "-"}) — checklist ${checklist.filter((c) => c.done).length}/${checklist.length} — ${filled ? "BERISI DATA (tidak dihapus)" : "kosong"}` });
   }
   return out;
