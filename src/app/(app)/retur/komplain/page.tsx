@@ -13,12 +13,13 @@ import { ModalForm } from "@/components/ModalForm";
 import { Paged } from "@/components/Paged";
 import { DownloadCsv } from "@/components/DownloadCsv";
 import { ReturTabs } from "../ReturTabs";
+import { lookupOrderById } from "@/lib/marketplace/lookup";
 import { ComplaintFields } from "./ComplaintFields";
 import { saveComplaint } from "./actions";
 
 export const metadata = { title: "Komplain & Refund" };
 
-type SP = { tab?: string; q?: string };
+type SP = { tab?: string; q?: string; dari?: string };
 const TABS: { key: string; label: string; where: Prisma.ComplaintWhereInput }[] = [
   { key: "proses", label: "Perlu tindakan", where: { cancelledAt: null, status: { in: ["DIAJUKAN", "DISETUJUI", "DIBAYAR", "DIKIRIM"] as ComplaintStatus[] } } },
   { key: "setuju", label: "Perlu disetujui", where: { cancelledAt: null, status: "DIAJUKAN", solution: "REFUND" } },
@@ -36,6 +37,7 @@ export default async function KomplainPage({ searchParams }: { searchParams: Pro
   const p = jakartaParts();
   const monthStart = jakartaDateTime(`${p.year}-${String(p.month).padStart(2, "0")}-01`, "00:00");
   const canCreate = user.can("refund.request");
+  const prefill = sp.dari && canCreate ? await lookupOrderById(sp.dari) : null;
   const [rows, counts, paid, sent, items] = await Promise.all([
     prisma.complaint.findMany({ where, orderBy: [{ date: "desc" }, { number: "desc" }], take: 300, include: { lines: { include: { item: { select: { name: true } } }, orderBy: { sortOrder: "asc" } } } }),
     Promise.all(TABS.map((t) => prisma.complaint.count({ where: t.where }))),
@@ -52,9 +54,9 @@ export default async function KomplainPage({ searchParams }: { searchParams: Pro
         actions={<>
           <DownloadCsv filename={`komplain-${todayStr()}`} rows={[["No.", "Tanggal", "Marketplace", "Resi", "No. pesanan", "Kota/Kab", "Provinsi", "Masalah", "Barang", "Solusi", "Refund", "Nilai pengganti", "Status"], ...rows.map((c) => [c.number, fmtDate(c.date), marketplaceLabel(c.marketplace), c.trackingNo ?? "", c.orderNo ?? "", c.city ?? "", c.province ?? "", issueLabel(c.issueType), c.lines.map((l) => `${l.item?.name ?? l.labelSku ?? l.labelName} × ${l.qty}`).join("; "), solutionLabel(c.solution), Number(c.refundAmount), Number(c.replacementValue), complaintStatusOf(c).label])]} />
           {canCreate && (
-            <Modal trigger="+ Komplain" title="Komplain baru" full>
+            <Modal trigger="+ Komplain" title="Komplain baru" full defaultOpen={!!prefill}>
               <ModalForm action={saveComplaint}>
-                <ComplaintFields items={items} today={todayStr()} />
+                <ComplaintFields items={items} today={todayStr()} prefill={prefill} />
                 <div className="mt-4"><Submit>Simpan komplain</Submit></div>
               </ModalForm>
             </Modal>

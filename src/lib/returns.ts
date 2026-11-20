@@ -6,7 +6,7 @@ import { audit } from "./audit";
 import { locationSettings, recordMovement, reverseMovementsByRef, StockError } from "./stock";
 import { recipeMaterialCost } from "./hpp";
 import { packComponents, pieceInspection, type PieceInput } from "./returnPieces";
-import { autoLinkReturn } from "./marketplace/link";
+import { autoLinkReturn, duplicateFor } from "./marketplace/link";
 import { skuKey, type CatalogEntry, type LabelLine } from "./returnLabel";
 
 type Tx = Prisma.TransactionClient;
@@ -57,6 +57,8 @@ export type ReturnInput = {
   labelRead?: Prisma.InputJsonValue | null;
   /// Ongkir retur ditanggung toko (opsional, untuk analitik)
   shippingCost?: number;
+  /// Konfirmasi: pesanan ini memang punya retur kedua
+  confirmDup?: boolean;
   lines: ReturnLineInput[];
 };
 
@@ -113,6 +115,10 @@ export async function createReturn(input: ReturnInput, actor: Actor) {
   const trackingNo = normResi(input.trackingNo ?? "");
   if (trackingNo.length < 6) throw new StockError("No. resi wajib diisi (scan barcode label atau ketik manual)");
   const rows = validLines(input.lines);
+  if (!input.confirmDup) {
+    const dup = await duplicateFor("RETUR", { trackingNo, orderNo: input.orderNo });
+    if (dup) throw new StockError(`Pesanan ini sudah punya retur ${dup}. Bila memang retur kedua (mis. sebagian barang), centang “Ini retur kedua untuk pesanan yang sama”.`);
+  }
   return prisma.$transaction(async (tx) => {
     const same = await tx.returnCase.findFirst({ where: { trackingNo, cancelledAt: null }, select: { number: true } });
     if (same) throw new StockError(`Resi ${trackingNo} sudah tercatat di ${same.number}`);

@@ -11,6 +11,7 @@ import { mediaStore } from "@/lib/mediaStore";
 import { compressImage } from "@/lib/imageCompress";
 import { readReturnLabel } from "@/lib/returnLabelRead";
 import { matchItem, type LabelRead } from "@/lib/returnLabel";
+import { lookupOrders, type OrderHit } from "@/lib/marketplace/lookup";
 import { cancelReturn, claimPaid, claimRejected, createReturn, finishReturn, inspectReturn, returnCatalog, skuMaps, submitClaim, updateReturn, type ReturnInput } from "@/lib/returns";
 
 const PATHS = ["/retur", "/stok", "/finance", "/akuntansi"];
@@ -64,6 +65,8 @@ function inputOf(fd: FormData): ReturnInput {
     note: optStr(fd, "note"),
     labelRead,
     shippingCost: int(fd, "shippingCost"),
+    confirmDup: fd.get("confirmDup") === "on",
+    storeId: optStr(fd, "storeId"),
     lines: skus.map((s, i) => ({ labelSku: s, labelVariation: vars[i], labelName: names[i], qty: qty[i], itemId: items[i] || null })),
   };
 }
@@ -185,3 +188,15 @@ export const cancelAction = action(
   },
   PATHS,
 );
+
+/** Cari pesanan marketplace (No. Pesanan / No. Resi) untuk mengisi form Retur & Komplain otomatis */
+export async function findOrderAction(q: string): Promise<{ ok: boolean; error?: string; hits?: OrderHit[] }> {
+  try {
+    await assertPerm("retur.manage", "refund.request");
+    const query = String(q ?? "").slice(0, 400);
+    if (query.trim().length < 6) return { ok: false, error: "Ketik minimal 6 karakter (No. Pesanan atau No. Resi)" };
+    return { ok: true, hits: await lookupOrders(query) };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message.slice(0, 200) : "Gagal mencari" };
+  }
+}

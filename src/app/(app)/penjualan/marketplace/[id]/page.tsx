@@ -7,6 +7,8 @@ import { fmtDate, fmtDateTime } from "@/lib/time";
 import { CHANNEL_LABEL, shownStatus, STATUS_LABEL } from "@/lib/marketplace/rules";
 import { resolveSkuKeys } from "@/lib/marketplace/sku";
 import { allocationMap, stageOf } from "@/lib/marketplace/saldo";
+import { returnStatusOf } from "@/lib/returns";
+import { complaintStatusOf } from "@/lib/complaintShared";
 import { Badge, Card, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { invoiceFromOrderAction, toggleComplaintAction } from "../actions";
@@ -24,8 +26,8 @@ export default async function OrderDetail({ params }: { params: Promise<{ id: st
     prisma.store.findUnique({ where: { id: o.storeId }, select: { name: true } }),
     resolveSkuKeys(o.lines.map((l) => l.skuKey)),
     o.invoiceId ? prisma.invoice.findUnique({ where: { id: o.invoiceId }, select: { id: true, number: true } }) : null,
-    o.returnCaseId ? prisma.returnCase.findUnique({ where: { id: o.returnCaseId }, select: { id: true, number: true } }) : null,
-    o.complaintId ? prisma.complaint.findUnique({ where: { id: o.complaintId }, select: { id: true, number: true } }) : null,
+    o.returnCaseId ? prisma.returnCase.findUnique({ where: { id: o.returnCaseId }, include: { lines: { select: { goodQty: true, damagedQty: true, qty: true } } } }) : null,
+    o.complaintId ? prisma.complaint.findUnique({ where: { id: o.complaintId } }) : null,
     prisma.marketplaceChange.findMany({ where: { rowId: o.id }, orderBy: { createdAt: "desc" }, take: 30 }),
   ]);
   const cover = o.incomeId ? (await allocationMap({ storeId: o.storeId, channel: o.channel })).covers.get(o.incomeId) : undefined;
@@ -83,9 +85,10 @@ export default async function OrderDetail({ params }: { params: Promise<{ id: st
             <dt className="text-slate-500">Metode bayar</dt><dd className="text-right">{o.paymentMethod ?? "-"}</dd>
             {o.creatorHandle && <><dt className="text-slate-500">Kreator</dt><dd className="text-right">{o.creatorHandle}</dd></>}
           </dl>
-          <div className="mt-2 flex flex-wrap gap-2 text-sm">
-            {ret && <Link className="link" href={`/retur/${ret.id}`}>Retur {ret.number}</Link>}
-            {comp && <Link className="link" href={`/retur/komplain/${comp.id}`}>Komplain {comp.number}</Link>}
+          <div className="mt-2 space-y-1 text-sm">
+            {ret && <p><Link className="link" href={`/retur/${ret.id}`}>Retur {ret.number}</Link> · <Badge tone={returnStatusOf(ret).tone}>{returnStatusOf(ret).label}</Badge> · baik {ret.lines.reduce((a, l) => a + l.goodQty, 0)} / rusak {ret.lines.reduce((a, l) => a + l.damagedQty, 0)} dari {ret.lines.reduce((a, l) => a + l.qty, 0)} pcs{Number(ret.claimPaidAmount) > 0 ? ` · klaim cair ${idr(ret.claimPaidAmount)}` : ""}</p>}
+            {comp && <p><Link className="link" href={`/retur/komplain/${comp.id}`}>Komplain {comp.number}</Link> · <Badge tone={complaintStatusOf(comp).tone}>{complaintStatusOf(comp).label}</Badge>{comp.solution === "REFUND" ? ` · refund ${idr(comp.refundAmount)}` : " · kirim ganti"}</p>}
+            {!ret && !comp && (st === "RETUR" || o.complaint) && <p className="text-amber-700">Belum dicatat di menu Retur/Komplain.</p>}
           </div>
         </Card>
       </div>
