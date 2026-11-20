@@ -106,6 +106,7 @@ export function ImportForm({ stores, canManage }: { stores: Store[]; canManage: 
               </div>
               {f.seller && <p className="text-xs text-slate-500">Penjual di file: {f.seller}</p>}
               <p>{nf(f.total)} {f.kind === "ORDER" ? "pesanan" : "baris"}: <b>{nf(f.baru)}</b> baru, <b>{nf(f.diperbarui)}</b> diperbarui, {nf(f.dilewati)} dilewati{f.adsRows ? ` · ${f.adsRows} potongan iklan/penyesuaian` : ""}{f.withdrawals ? ` · ${f.withdrawals} penarikan` : ""}</p>
+              {Object.keys(f.changes).length > 0 && <p className="rounded bg-sky-50 px-2 py-1 text-xs text-sky-800">Perubahan pada pesanan yang sudah ada: {Object.entries(f.changes).map(([k, v]) => `${k}: ${nf(v)}`).join(" · ")}</p>}
               {f.incomeNoOrder > 0 && <p className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">{nf(f.incomeNoOrder)} penghasilan belum punya pesanan di ERP — tetap disimpan, cocok otomatis saat file pesanannya diunggah.</p>}
               {f.unmapped.length > 0 && (
                 <div className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">

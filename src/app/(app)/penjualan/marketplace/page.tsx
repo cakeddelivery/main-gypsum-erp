@@ -72,7 +72,7 @@ export default async function MarketplacePage({ searchParams }: { searchParams: 
                           <td className="max-w-[16rem] truncate">{o.lines.map((l) => `${l.name ?? l.sku ?? "-"} ×${l.qty}`).join(", ")}</td>
                           <td className="num">{idr(o.total)}</td>
                           <td className="num">{st === "BATAL" ? "0" : o.income ? idr(o.income.released) : "—"}</td>
-                          <td><Badge tone={TONE[st]}>{STATUS_LABEL[st]}</Badge>{o.complaint && <Badge tone="red">Komplain</Badge>}</td>
+                          <td><Badge tone={TONE[st]}>{STATUS_LABEL[st]}</Badge>{o.needsCheck && <Badge tone="amber">Cek</Badge>}{o.complaint && <Badge tone="red">Komplain</Badge>}</td>
                         </tr>
                       );
                     })}

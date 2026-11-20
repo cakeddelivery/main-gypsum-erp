@@ -129,7 +129,7 @@ describe("Marketplace: pembaca 4 format", () => {
     expect(p).toMatchObject({ platform: "SHOPEE", kind: "INCOME", info: { seller: "toko_uji" } });
     expect(p.incomes).toHaveLength(1);
     expect(p.incomes[0]).toMatchObject({ refNo: `A${tag}1`, released: 80000, productAmt: 88000, fees: 8000 });
-    expect(p.incomes[0].feeDetail["biaya administrasi"]).toBe(4000);
+    expect(p.incomes[0].feeDetail["Biaya Administrasi"]).toBe(-4000); // nilai apa adanya (bertanda)
   });
   it("TikTok Order: baris deskripsi dilewati, dikelompokkan per Order ID", async () => {
     const p = await parseMarketplaceFile(await tiktokOrderFile());
@@ -203,15 +203,15 @@ describe("Marketplace: impor ke database", () => {
     // stok/jurnal/transaksi tidak berubah sama sekali
     expect(await Promise.all([prisma.stockMovement.count(), prisma.journal.count(), prisma.financeTransaction.count()])).toEqual([mov0, jur0, tx0]);
 
-    // status berubah di impor berikutnya → diperbarui; batalkan batch itu → kembali
+    // nilai berubah di impor berikutnya → diperbarui; batalkan batch itu → kembali
     const changedRows = [...SHP_ORDERS];
-    changedRows[2] = shpRow({ "No. Pesanan": `B${tag}2`, "Status Pesanan": "Selesai", "SKU Induk": "SP", "Nama Produk": "Single Pack", "Nomor Referensi SKU": `SP${tag}`, "Harga Setelah Diskon": 9900, "Jumlah": 3, "Total Pembayaran": "29.700", "Kota/Kabupaten": "KOTA SURABAYA", "Provinsi": "Jawa Timur" });
+    changedRows[0] = shpRow({ ...Object.fromEntries(SHP_HEAD.map((h, i) => [h, SHP_ORDERS[0][i]]).filter(([, v]) => v !== null)) as Record<string, string | number>, "Total Pembayaran": "90.000" });
     const upFile = { fileName: `Order.all.${tag}.v2.xlsx`, storeId: st.id, parsed: await parseMarketplaceFile(await makeXlsx([{ name: "orders", rows: [SHP_HEAD, ...changedRows] }])) };
     const [r3] = await commitImport(actor, [upFile]);
     expect(r3).toMatchObject({ baru: 0, diperbarui: 1, dilewati: 2 });
-    expect((await prisma.marketplaceOrder.findFirstOrThrow({ where: { orderNo: `B${tag}2` } })).status).toBe("PIUTANG");
+    expect((await prisma.marketplaceOrder.findFirstOrThrow({ where: { orderNo: `A${tag}1` } })).total).toBe(90000n);
     await undoImport(actor, r3.importId);
-    expect((await prisma.marketplaceOrder.findFirstOrThrow({ where: { orderNo: `B${tag}2` } })).status).toBe("BATAL");
+    expect((await prisma.marketplaceOrder.findFirstOrThrow({ where: { orderNo: `A${tag}1` } })).total).toBe(88000n);
     await expect(undoImport(actor, r3.importId)).rejects.toThrow(/sudah dibatalkan/);
 
     // batalkan batch pesanan awal: pesanan hilang, penghasilan tetap, tautan putus
@@ -273,5 +273,63 @@ describe("Marketplace: SKU & tautan retur", () => {
     expect(rep.cities.find((c) => c.name === "KAB. SIDOARJO")).toMatchObject({ orders: 2, retur: 2 });
     await undoImport(actor, r.importId);
     await prisma.returnCase.deleteMany({ where: { id: { in: [old.id, fresh.id] } } });
+  });
+});
+
+describe("Marketplace: unggah harian dengan periode tumpang tindih", () => {
+  const one = (no: string, o: Record<string, string | number>) => shpRow({ "No. Pesanan": no, "SKU Induk": "SP", "Nama Produk": "Single Pack", "Nomor Referensi SKU": `SP${tag}`, "Harga Setelah Diskon": 9900, "Jumlah": 1, "Total Pembayaran": "9.900", "Waktu Pesanan Dibuat": "2026-09-01 10:00", "Kota/Kabupaten": "KOTA MALANG", "Provinsi": "Jawa Timur", ...o });
+  const file = async (name: string, rows: (string | number | null)[][], st: string) => ({ fileName: `${name}.${tag}.xlsx`, storeId: st, parsed: await parseMarketplaceFile(await makeXlsx([{ name: "orders", rows: [SHP_HEAD, ...rows] }])) });
+
+  it("pesanan lama tidak jadi baru: hanya status/resi/batal/retur & pencairan; status tidak mundur; riwayat tercatat", async () => {
+    const st = await store();
+    const X = `X1${tag}`, Y = `Y1${tag}`;
+    const day1 = await file("hari1", [one(X, { "Status Pesanan": "Sedang Dikirim" })], st.id);
+    const [d1] = await commitImport(actor, [day1]);
+    expect(d1.baru).toBe(1);
+
+    // hari 2: X selesai + resi baru, Y baru
+    const day2 = await file("hari2", [one(X, { "Status Pesanan": "Selesai", "No. Resi": `RES${tag}X` }), one(Y, { "Status Pesanan": "Sedang Dikirim" })], st.id);
+    const prev = await previewImport([day2]);
+    expect(prev.files[0]).toMatchObject({ baru: 1, diperbarui: 1, dilewati: 0 });
+    expect(prev.files[0].changes["Sedang Dikirim → Selesai"]).toBe(1);
+    expect(prev.files[0].changes["resi baru"]).toBe(1);
+    const [d2] = await commitImport(actor, [day2]);
+    expect(d2).toMatchObject({ baru: 1, diperbarui: 1 });
+
+    // file lama diunggah lagi: tidak ada yang mundur, tidak ada yang baru
+    const [d3] = await commitImport(actor, [day1]);
+    expect(d3).toMatchObject({ baru: 0, diperbarui: 0, dilewati: 1 });
+    const x = await prisma.marketplaceOrder.findFirstOrThrow({ where: { orderNo: X } });
+    expect(x).toMatchObject({ rawStatus: "Selesai", trackingNo: `RES${tag}X` });
+
+    // penghasilan masuk → Piutang → Cair (riwayat); lalu file order menyatakan batal setelah cair → perlu dicek, bukan mundur ke piutang
+    const inc = { fileName: `inc.${tag}.xlsx`, storeId: st.id, parsed: await parseMarketplaceFile(await makeXlsx([{ name: "Penghasilan", rows: [[], [], INC_HEAD, [1, "Order", X, null, "2026-09-01 10:00", "2026-09-05 08:00", "Saldo", 9000, 9900, 0, "-900", 0, 0, 0, 0]] }])) };
+    const pi = await previewImport([inc]);
+    expect(pi.files[0].changes["Piutang → Cair"]).toBe(1);
+    const [i1] = await commitImport(actor, [inc]);
+    expect((await prisma.marketplaceOrder.findFirstOrThrow({ where: { orderNo: X }, include: { income: true } })).income?.released).toBe(9000n);
+    const day3 = await file("hari3", [one(X, { "Status Pesanan": "Batal", "Status Pembatalan/ Pengembalian": "Permintaan Disetujui" })], st.id);
+    const [d4] = await commitImport(actor, [day3]);
+    expect(d4.diperbarui).toBe(1);
+    const x2 = await prisma.marketplaceOrder.findFirstOrThrow({ where: { orderNo: X } });
+    expect(x2).toMatchObject({ status: "BATAL", needsCheck: "BATAL_SETELAH_CAIR" });
+    // file lama setelah batal tidak menghidupkan lagi
+    const [d5] = await commitImport(actor, [day2]);
+    expect(d5).toMatchObject({ baru: 0, diperbarui: 0 });
+    expect((await prisma.marketplaceOrder.findFirstOrThrow({ where: { orderNo: X } })).status).toBe("BATAL");
+
+    // riwayat per pesanan
+    const hist = await prisma.marketplaceChange.findMany({ where: { rowId: x.id }, orderBy: { createdAt: "asc" } });
+    expect(hist.map((h) => h.summary).join(" | ")).toMatch(/Selesai.*resi baru/);
+    expect(hist.some((h) => h.summary === "Piutang → Cair")).toBe(true);
+    expect(hist.some((h) => /Batal/.test(h.summary ?? ""))).toBe(true);
+
+    // batalkan dari yang terbaru: status kembali; riwayat ringkas tetap ada
+    await undoImport(actor, d4.importId);
+    expect((await prisma.marketplaceOrder.findFirstOrThrow({ where: { orderNo: X } })).status).toBe("PIUTANG");
+    await undoImport(actor, i1.importId);
+    await undoImport(actor, d2.importId);
+    await undoImport(actor, d1.importId);
+    expect(await prisma.marketplaceChange.count({ where: { rowId: x.id, undone: true } })).toBeGreaterThan(0);
   });
 });

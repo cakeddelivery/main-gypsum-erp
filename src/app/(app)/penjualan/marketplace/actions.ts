@@ -10,6 +10,9 @@ import { commitImport, previewImport, undoImport, MarketplaceImportError, type I
 import { FormatError, parseMarketplaceFile } from "@/lib/marketplace/parse";
 import { resolveSkuKeys } from "@/lib/marketplace/sku";
 import { dateStr } from "@/lib/time";
+import { FEE_CATEGORIES, normCol } from "@/lib/marketplace/feeMap";
+import { applyActuals, applyProductAffiliate } from "@/lib/marketplace/potongan";
+import { WD_REMINDER_KEY } from "@/lib/marketplace/saldo";
 
 const MAX_FILES = 4;
 const MAX_BYTES = 12 * 1024 * 1024;
@@ -143,6 +146,58 @@ export const invoiceFromOrderAction = action(
     });
     await prisma.marketplaceOrder.update({ where: { id }, data: { invoiceId: inv.id } });
     return `Invoice ${inv.number} terbit`;
+  },
+  ["/penjualan"],
+);
+
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const period = (fd: FormData) => {
+  const from = str(fd, "from"), to = str(fd, "to"), channel = str(fd, "channel");
+  if (!DATE.test(from) || !DATE.test(to) || (channel !== "SHP" && channel !== "TTS")) throw new InvoiceError("Periode atau kanal tidak valid");
+  return { from, to, channel, storeId: str(fd, "storeId") || undefined };
+};
+
+/** Pemetaan nama kolom biaya → kategori potongan */
+export const mapFeeAction = action(
+  "sales.manage",
+  async (fd, user) => {
+    const platform = str(fd, "platform");
+    const column = normCol(str(fd, "column"));
+    const category = str(fd, "category");
+    if ((platform !== "SHOPEE" && platform !== "TIKTOK") || !column || !(category in FEE_CATEGORIES)) throw new InvoiceError("Pilih kategori potongan");
+    await prisma.marketplaceFeeMap.upsert({ where: { platform_column: { platform, column } }, create: { platform, column, category, updatedBy: user.name }, update: { category, updatedBy: user.name } });
+    await audit(user, "MARKETPLACE_BIAYA_PETA", "MarketplaceFeeMap", `${platform}|${column}`, { category });
+    return "Pemetaan biaya tersimpan";
+  },
+  ["/penjualan"],
+);
+
+/** "Pakai angka aktual": hanya mengubah PENGATURAN biaya marketplace (Produk › Biaya), bukan transaksi */
+export const applyActualFeesAction = action(
+  "sales.manage",
+  async (fd, user) => {
+    await applyActuals(user, period(fd));
+    return "Angka aktual dipakai di pengaturan biaya marketplace";
+  },
+  ["/penjualan", "/produk"],
+);
+
+export const applyAffiliateAction = action(
+  "sales.manage",
+  async (fd, user) => {
+    const n = await applyProductAffiliate(user, period(fd));
+    return `${n} produk diperbarui (% affiliate aktual)`;
+  },
+  ["/penjualan", "/produk"],
+);
+
+export const saveWdHourAction = action(
+  "sales.manage",
+  async (fd) => {
+    const h = Number(str(fd, "hour"));
+    if (!Number.isInteger(h) || h < 0 || h > 23) throw new InvoiceError("Jam 0–23");
+    await prisma.setting.upsert({ where: { key: WD_REMINDER_KEY }, create: { key: WD_REMINDER_KEY, value: String(h) }, update: { value: String(h) } });
+    return `Pengingat withdraw tiap hari pukul ${String(h).padStart(2, "0")}.00`;
   },
   ["/penjualan"],
 );

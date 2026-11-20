@@ -4,6 +4,7 @@ import { prisma } from "../db";
 import { audit } from "../audit";
 import type { ParsedFile, ParsedIncome, ParsedOrder } from "./parse";
 import { CHANNEL_OF, incomeSig, lineKey, mapStatus, orderSig } from "./rules";
+import { planOrderUpdate, type ExistingOrder } from "./merge";
 import { resolveSkuKeys } from "./sku";
 import { linkOrdersToReturns } from "./link";
 
@@ -35,6 +36,8 @@ export type FilePreview = {
   unmapped: { key: string; sku: string; name: string; orders: number }[];
   /** Penghasilan yang pesanannya belum ada di ERP (disimpan; cocok otomatis saat order diunggah) */
   incomeNoOrder: number;
+  /** Rincian perubahan pada pesanan yang sudah ada, mis. {"Dikirim → Selesai": 120, "resi baru": 15, "Piutang → Cair": 340} */
+  changes: Record<string, number>;
 };
 export type Preview = { files: FilePreview[]; totals: { baru: number; diperbarui: number; dilewati: number; perluDicek: number } };
 
@@ -57,18 +60,24 @@ export async function previewImport(files: ImportFile[]): Promise<Preview> {
     const channel = CHANNEL_OF[f.parsed.platform];
     const p: FilePreview = {
       fileName: f.fileName, storeName: store.name, platform: f.parsed.platform, kind: f.parsed.kind, channel, periodFrom: f.parsed.periodFrom, periodTo: f.parsed.periodTo, seller: f.parsed.info.seller,
-      total: 0, baru: 0, diperbarui: 0, dilewati: 0, withdrawals: 0, adsRows: 0, unmapped: [], incomeNoOrder: 0,
+      total: 0, baru: 0, diperbarui: 0, dilewati: 0, withdrawals: 0, adsRows: 0, unmapped: [], incomeNoOrder: 0, changes: {},
     };
     if (f.parsed.kind === "ORDER") {
       const orders = f.parsed.orders;
       p.total = orders.length;
-      const exist = new Map<string, string | null>();
-      for (const part of chunk(orders.map((o) => o.orderNo))) for (const e of await prisma.marketplaceOrder.findMany({ where: { storeId: f.storeId, channel, orderNo: { in: part } }, select: { orderNo: true, sig: true } })) exist.set(e.orderNo, e.sig);
+      const exist = await loadExisting(prisma, f.storeId, channel, orders.map((o) => o.orderNo));
       for (const o of orders) {
-        const sig = orderSig(o, mapStatus(channel, o));
-        if (!exist.has(o.orderNo)) p.baru++;
-        else if (exist.get(o.orderNo) === sig) p.dilewati++;
-        else p.diperbarui++;
+        const ex = exist.get(o.orderNo);
+        if (!ex) {
+          p.baru++;
+          continue;
+        }
+        const plan = planOrderUpdate(ex.row, o, channel);
+        if (!plan.changes.length && !Object.keys(plan.data).length && !plan.replaceLines) p.dilewati++;
+        else {
+          p.diperbarui++;
+          for (const c of plan.changes) p.changes[c] = (p.changes[c] ?? 0) + 1;
+        }
       }
       const keyOrders = new Map<string, { sku: string; name: string; orders: Set<string> }>();
       for (const o of orders) for (const l of o.lines) {
@@ -96,6 +105,9 @@ export async function previewImport(files: ImportFile[]): Promise<Preview> {
       const have = new Set<string>();
       for (const part of chunk(orderRefs)) for (const e of await prisma.marketplaceOrder.findMany({ where: { storeId: f.storeId, channel, orderNo: { in: part } }, select: { orderNo: true } })) have.add(e.orderNo);
       p.incomeNoOrder = orderRefs.filter((r) => !have.has(r) && !inUpload.has(`${f.storeId}|${channel}|${r}`)).length;
+      let cair = 0;
+      for (const part of chunk(orderRefs)) cair += await prisma.marketplaceOrder.count({ where: { storeId: f.storeId, channel, orderNo: { in: part }, incomeId: null, status: { not: "BATAL" } } });
+      if (cair) p.changes["Piutang → Cair"] = cair;
     }
     out.push(p);
   }
@@ -133,33 +145,47 @@ export async function linkIncome(tx: Tx | typeof prisma, storeId: string, channe
     AND NOT EXISTS (SELECT 1 FROM "MarketplaceOrder" x WHERE x."incomeId" = i."id")`;
 }
 
+type ExistingRow = { id: string; row: ExistingOrder };
+/** Muat pesanan yang sudah ada (beserta isi & status pencairan) untuk dibandingkan */
+async function loadExisting(db: Tx | typeof prisma, storeId: string, channel: string, orderNos: string[]) {
+  const out = new Map<string, ExistingRow>();
+  for (const part of chunk(orderNos)) {
+    for (const e of await db.marketplaceOrder.findMany({ where: { storeId, channel, orderNo: { in: part } }, include: { lines: true } })) {
+      out.set(e.orderNo, { id: e.id, row: { ...e, hasIncome: !!e.incomeId } });
+    }
+  }
+  return out;
+}
+
 async function commitOrders(tx: Tx, f: ImportFile, channel: string, importId: string) {
   const orders = f.parsed.orders;
-  const exist = new Map<string, { id: string; sig: string | null }>();
-  for (const part of chunk(orders.map((o) => o.orderNo))) for (const e of await tx.marketplaceOrder.findMany({ where: { storeId: f.storeId, channel, orderNo: { in: part } } })) exist.set(e.orderNo, { id: e.id, sig: e.sig });
+  const exist = await loadExisting(tx, f.storeId, channel, orders.map((o) => o.orderNo));
   const news: ParsedOrder[] = [];
   let upd = 0, skip = 0;
   for (const o of orders) {
-    const status = mapStatus(channel, o);
     const e = exist.get(o.orderNo);
     if (!e) {
       news.push(o);
       continue;
     }
-    if (e.sig === orderSig(o, status)) {
+    const plan = planOrderUpdate(e.row, o, channel);
+    if (!plan.changes.length && !Object.keys(plan.data).length && !plan.replaceLines) {
       skip++;
       continue;
     }
     const before = await tx.marketplaceOrder.findUniqueOrThrow({ where: { id: e.id }, include: { lines: true } });
-    await tx.marketplaceChange.create({ data: { importId, table: "ORDER", rowId: e.id, before: { ...ser(before as unknown as Record<string, unknown>, SCALAR_O), lines: before.lines.map((l) => ({ ...ser(l as unknown as Record<string, unknown>, ["id", "sku", "variation", "skuKey", "name", "qty", "unitPrice", "amount", "returnQty", "sortOrder"]) })) } as Prisma.InputJsonValue } });
-    await tx.marketplaceOrder.update({ where: { id: e.id }, data: orderData(o, status, importId) });
-    await tx.marketplaceOrderLine.deleteMany({ where: { orderId: e.id } });
-    await tx.marketplaceOrderLine.createMany({ data: lineRows(e.id, channel, o) });
+    const keys = [...SCALAR_O, "affiliate", "needsCheck"] as const;
+    await tx.marketplaceChange.create({ data: { importId, table: "ORDER", rowId: e.id, summary: plan.changes.join("; ") || "data dilengkapi", before: { ...ser(before as unknown as Record<string, unknown>, keys), lines: before.lines.map((l) => ({ ...ser(l as unknown as Record<string, unknown>, ["id", "sku", "variation", "skuKey", "name", "qty", "unitPrice", "amount", "returnQty", "sortOrder"]) })) } as Prisma.InputJsonValue } });
+    await tx.marketplaceOrder.update({ where: { id: e.id }, data: { ...(plan.data as Prisma.MarketplaceOrderUncheckedUpdateInput), lastImportId: importId, sig: orderSig(o, plan.status) } });
+    if (plan.replaceLines) {
+      await tx.marketplaceOrderLine.deleteMany({ where: { orderId: e.id } });
+      await tx.marketplaceOrderLine.createMany({ data: lineRows(e.id, channel, o) });
+    }
     upd++;
   }
   for (const part of chunk(news, 500)) {
     const ids = part.map(() => randomUUID());
-    await tx.marketplaceOrder.createMany({ data: part.map((o, i) => ({ id: ids[i], storeId: f.storeId, channel, orderNo: o.orderNo, importId, ...orderData(o, mapStatus(channel, o), importId) })) });
+    await tx.marketplaceOrder.createMany({ data: part.map((o, i) => ({ id: ids[i], storeId: f.storeId, channel, orderNo: o.orderNo, importId, affiliate: o.affiliate, ...orderData(o, mapStatus(channel, o), importId) })) });
     await tx.marketplaceOrderLine.createMany({ data: part.flatMap((o, i) => lineRows(ids[i], channel, o)) });
   }
   return { baru: news.length, diperbarui: upd, dilewati: skip };
@@ -186,11 +212,20 @@ async function commitIncome(tx: Tx, f: ImportFile, channel: string, importId: st
       continue;
     }
     const before = await tx.marketplaceIncome.findUniqueOrThrow({ where: { id: e.id } });
-    await tx.marketplaceChange.create({ data: { importId, table: "INCOME", rowId: e.id, before: ser(before as unknown as Record<string, unknown>, SCALAR_I) as Prisma.InputJsonValue } });
+    await tx.marketplaceChange.create({ data: { importId, table: "INCOME", rowId: e.id, summary: "penghasilan diperbarui", before: ser(before as unknown as Record<string, unknown>, SCALAR_I) as Prisma.InputJsonValue } });
     await tx.marketplaceIncome.update({ where: { id: e.id }, data: incomeData(r, importId) });
     upd++;
   }
   for (const part of chunk(news, 1000)) await tx.marketplaceIncome.createMany({ data: part.map((r) => ({ storeId: f.storeId, channel, kind: r.kind, refNo: r.refNo, importId, ...incomeData(r, importId) })) });
+  // Pesanan yang belum cair dan baru ketemu penghasilannya: catat riwayat "Piutang → Cair" (tidak ada yang perlu dikembalikan saat batal: tautan putus otomatis)
+  const refs = rows.filter((r) => r.kind === "ORDER").map((r) => r.refNo);
+  const waiting: { id: string; orderNo: string }[] = [];
+  for (const part of chunk(refs)) waiting.push(...(await tx.marketplaceOrder.findMany({ where: { storeId: f.storeId, channel, orderNo: { in: part }, incomeId: null, status: { not: "BATAL" } }, select: { id: true, orderNo: true } })));
+  if (waiting.length) {
+    await linkIncome(tx, f.storeId, channel);
+    const linked = await tx.marketplaceOrder.findMany({ where: { id: { in: waiting.map((w) => w.id) }, incomeId: { not: null } }, select: { id: true } });
+    if (linked.length) await tx.marketplaceChange.createMany({ data: linked.map((o) => ({ importId, table: "LINK", rowId: o.id, summary: "Piutang → Cair", before: {} })) });
+  }
   let wd = 0;
   const wrows = f.parsed.withdrawals;
   if (wrows.length) {
@@ -239,8 +274,8 @@ export async function undoImport(actor: Actor, importId: string) {
   if (newer) throw new MarketplaceImportError(`Ada impor yang lebih baru (${newer.fileName}). Batalkan yang terbaru dulu agar data tidak tercampur.`);
   await prisma.$transaction(
     async (tx) => {
-      const restored = imp.changes.length;
       for (const c of imp.changes) {
+        if (c.table === "LINK") continue;
         const b = des(c.before as Record<string, unknown>);
         if (c.table === "ORDER") {
           const { lines, ...rest } = b as Record<string, unknown> & { lines: Record<string, unknown>[] };
@@ -252,13 +287,12 @@ export async function undoImport(actor: Actor, importId: string) {
           await tx.marketplaceIncome.update({ where: { id: c.rowId }, data: b as Prisma.MarketplaceIncomeUncheckedUpdateInput });
         }
       }
-      void restored;
       // yang dibuat batch ini (pesanan → barisnya ikut terhapus; penghasilan → tautan pesanan kembali kosong)
       const dOrders = await tx.marketplaceOrder.deleteMany({ where: { importId } });
       const dIncome = await tx.marketplaceIncome.deleteMany({ where: { importId } });
       const dWd = await tx.marketplaceWithdrawal.deleteMany({ where: { importId } });
       await tx.marketplaceImport.update({ where: { id: importId }, data: { undoneAt: new Date(), undoneBy: actor.name, stats: { ...(imp.stats as object), dibatalkan: { pesanan: dOrders.count, penghasilan: dIncome.count, penarikan: dWd.count, dikembalikan: imp.changes.length } } } });
-      await tx.marketplaceChange.deleteMany({ where: { importId } });
+      await tx.marketplaceChange.updateMany({ where: { importId }, data: { undone: true } }); // riwayat ringkas tetap ada
       await linkIncome(tx, imp.storeId, imp.channel);
     },
     { timeout: 300_000, maxWait: 30_000 },

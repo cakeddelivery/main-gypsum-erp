@@ -1,3 +1,4 @@
+import { defaultCategory, looksLikeFee } from "./feeMap";
 import { readXlsx, XlsxError, type Cell, type Sheet } from "./xlsx";
 
 /**
@@ -24,6 +25,8 @@ export type ParsedOrder = {
   city: string | null;
   province: string | null;
   creatorHandle: string | null;
+  /** Penanda affiliate dari file order (TikTok: kreator terisi) */
+  affiliate: boolean;
   subtotal: number;
   discount: number;
   shippingPaid: number;
@@ -148,7 +151,7 @@ function parseShopeeOrders(sh: Sheet): ParsedFile {
         orderNo: no, orderedAt: parseDate(r[I.created]), paidAt: parseDate(r[I.paid]), completedAt: parseDate(r[I.done]),
         rawStatus: clean(str(r[I.status]), 200), rawSubstatus: null, rawReturn: clean(str(r[I.ret]), 120), cancelReason: clean(str(r[I.cancelReason]), 200),
         trackingNo: clean(str(r[I.resi]), 60)?.toUpperCase() ?? null, shipOption: ship, courier: ship ? ship.split(/[\s-]/)[0] : null, paymentMethod: clean(str(r[I.pay]), 60),
-        city: clean(str(r[I.city]), 60), province: clean(str(r[I.prov]), 60), creatorHandle: null,
+        city: clean(str(r[I.city]), 60), province: clean(str(r[I.prov]), 60), creatorHandle: null, affiliate: false,
         subtotal: parseNum(r[I.subtotal]), discount: parseNum(r[I.disc]), shippingPaid: parseNum(r[I.shipFee]), total: parseNum(r[I.total]), refundAmount: 0, returnQty: 0, lines: [],
       };
       byNo.set(no, o);
@@ -176,7 +179,9 @@ function parseShopeeIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
     view: need(h, "lihat berdasarkan"), prod: need(h, "harga produk"), refund: need(h, "jumlah pengembalian dana ke pembeli"),
   };
   if (I.no < 0 || I.total < 0) throw new FormatError("Header sheet Penghasilan tidak sesuai format Shopee “Income”");
-  const feeCols = [...h.entries()].filter(([k]) => /^(biaya|premi|pph)/.test(k));
+  // Semua kolom yang tampak seperti komponen biaya disimpan APA ADANYA (bertanda) agar tidak ada potongan yang hilang
+  const skip = new Set([I.no, I.view, I.created, I.rel, I.total, I.prod, need(h, "no."), need(h, "no. pengajuan"), need(h, "metode pelepasan dana")]);
+  const feeCols = (sh.rows[hr] ?? []).map((c, i) => ({ k: String(c ?? "").trim(), i })).filter((x) => x.k && !skip.has(x.i) && looksLikeFee(x.k));
   const incomes: ParsedIncome[] = [];
   let rows = 0;
   for (const r of sh.rows.slice(hr + 1)) {
@@ -187,12 +192,12 @@ function parseShopeeIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
     rows++;
     const feeDetail: Record<string, number> = {};
     let fees = 0;
-    for (const [k, i] of feeCols) {
-      const v = Math.abs(parseNum(r[i]));
-      if (v) {
-        feeDetail[k] = v;
-        fees += v;
-      }
+    for (const { k, i } of feeCols) {
+      const v = Math.round(parseNum(r[i]));
+      if (!v) continue;
+      feeDetail[k] = v;
+      const c = defaultCategory(k);
+      if (["ADMIN", "PROSES", "ONGKIR_PROGRAM", "AFFILIATE", "ASURANSI", "LAYANAN", "PAJAK"].includes(c)) fees += Math.abs(v);
     }
     incomes.push({ kind: "ORDER", refNo: no, orderedAt: parseDate(r[I.created]), releasedAt: parseDate(r[I.rel]), released: Math.round(parseNum(r[I.total])), productAmt: Math.round(parseNum(r[I.prod])), refundAmt: Math.round(Math.abs(parseNum(r[I.refund]))), fees: Math.round(fees), feeDetail });
   }
@@ -241,7 +246,7 @@ function parseTiktokOrders(sh: Sheet): ParsedFile {
         orderNo: no, orderedAt: parseDate(r[I.created]), paidAt: parseDate(r[I.paid]), completedAt: parseDate(r[I.delivered]),
         rawStatus: clean(str(r[I.status]), 120), rawSubstatus: clean(str(r[I.sub]), 120), rawReturn: clean(str(r[I.ret]), 60), cancelReason: clean(str(r[I.cancelReason]), 200),
         trackingNo: clean(str(r[I.track]), 60)?.toUpperCase() ?? null, shipOption: clean(str(r[I.deliv]), 60), courier: clean(str(r[I.provider]), 40), paymentMethod: clean(str(r[I.pay]), 60),
-        city: clean(str(r[I.city]), 60), province: clean(str(r[I.prov]), 60), creatorHandle: clean(str(r[I.handle]), 60),
+        city: clean(str(r[I.city]), 60), province: clean(str(r[I.prov]), 60), creatorHandle: clean(str(r[I.handle]), 60), affiliate: !!clean(str(r[I.handle]), 60),
         subtotal: 0, discount: 0, shippingPaid: 0, total: parseNum(r[I.amount]), refundAmount: parseNum(r[I.refund]), returnQty: 0, lines: [],
       };
       byNo.set(no, o);
@@ -271,7 +276,7 @@ function parseTiktokIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
     rel: need(h, "jumlah penyelesaian pembayaran"), income: need(h, "total pendapatan"), cost: need(h, "total biaya"),
   };
   if (I.no < 0 || I.rel < 0) throw new FormatError("Header sheet Detail pesanan tidak sesuai format TikTok income");
-  const feeCols = header.map((c, i) => ({ k: String(c ?? "").trim(), i })).filter((x) => x.k && /biaya|komisi|pajak|pph|ppn/i.test(x.k) && x.i !== I.cost);
+  const feeCols = header.map((c, i) => ({ k: String(c ?? "").trim(), i })).filter((x) => x.k && x.i !== I.cost && x.i !== I.rel && x.i !== I.income && looksLikeFee(x.k));
   const incomes: ParsedIncome[] = [];
   let rows = 0;
   for (const r of sh.rows.slice(hr + 1)) {
@@ -282,11 +287,11 @@ function parseTiktokIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
     const kind: ParsedIncome["kind"] = t === "pesanan" ? "ORDER" : /iklan|gmv/.test(t) ? "ADS" : "ADJUST";
     const feeDetail: Record<string, number> = {};
     for (const { k, i } of feeCols) {
-      const v = Math.abs(parseNum(r[i]));
+      const v = Math.round(parseNum(r[i]));
       if (v) feeDetail[k] = v;
     }
     const totalCost = Math.abs(parseNum(r[I.cost]));
-    const fees = totalCost || Object.values(feeDetail).reduce((a, b) => a + b, 0);
+    const fees = totalCost || Object.values(feeDetail).reduce((a, b) => a + Math.abs(b), 0);
     incomes.push({
       kind, refNo: no, orderedAt: parseDate(r[I.ordered]), releasedAt: parseDate(r[I.paid]), released: Math.round(parseNum(r[I.rel])), productAmt: Math.round(parseNum(r[I.income])), refundAmt: 0, fees: Math.round(fees), feeDetail,
     });

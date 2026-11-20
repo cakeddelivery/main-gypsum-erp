@@ -2880,8 +2880,14 @@ model MarketplaceChange {
   table    String
   rowId    String
   before   Json
+  /// Ringkasan perubahan yang dibawa batch ini (mis. "status: Dikirim → Selesai")
+  summary  String?
+  createdAt DateTime @default(now())
+  /// Setelah batch dibatalkan, foto kondisi dibuang tapi riwayat ringkas tetap ada
+  undone   Boolean  @default(false)
 
   @@index([importId])
+  @@index([rowId])
 }
 
 model MarketplaceOrder {
@@ -2911,6 +2917,10 @@ model MarketplaceOrder {
   city            String?
   province        String?
   creatorHandle   String?
+  /// Pesanan affiliate (TikTok: kreator terisi / komisi afiliasi; Shopee: komisi AMS)
+  affiliate       Boolean  @default(false)
+  /// Perlu dicek manual (mis. RETUR_SETELAH_CAIR, BATAL_SETELAH_CAIR)
+  needsCheck      String?
   subtotal        BigInt   @default(0)
   discount        BigInt   @default(0)
   shippingPaid    BigInt   @default(0)
@@ -3014,4 +3024,17 @@ model MarketplaceSkuClass {
   variant   String?
   updatedBy String
   updatedAt DateTime @updatedAt
+}
+
+/// Pemetaan nama kolom biaya (sesuai file platform) → kategori potongan. Bawaan ada di kode; baris ini menimpa/menambah.
+model MarketplaceFeeMap {
+  /// SHOPEE / TIKTOK
+  platform  String
+  /// Nama kolom asli yang dinormalkan (huruf kecil, spasi tunggal)
+  column    String
+  category  String
+  updatedBy String
+  updatedAt DateTime @updatedAt
+
+  @@id([platform, column])
 }

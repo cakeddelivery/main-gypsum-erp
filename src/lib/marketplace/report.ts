@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../db";
 import { n } from "../money";
+import { marketplaceBanks, recordedWithdraws } from "./bank";
 import { resolveSkuKeys, type SkuResolved } from "./sku";
 
 /** Query laporan marketplace (hanya baca). */
@@ -56,30 +57,26 @@ export async function skuOverview() {
     .sort((a, b) => Number(!!a.resolved) - Number(!!b.resolved) || b.orders - a.orders);
 }
 
-const CH_WORDS: Record<string, RegExp> = { SHP: /shopee/i, TTS: /tiktok|tokopedia/i };
-
 /** Rekonsiliasi: uang cair (file penghasilan) vs withdraw yang sudah dicatat di Keuangan, per toko & kanal untuk satu periode */
 export async function reconcile(f: { storeId?: string; from: string; to: string }) {
-  const stores = await prisma.store.findMany({ where: { active: true, ...(f.storeId ? { id: f.storeId } : {}) }, select: { id: true, name: true, code: true }, orderBy: { code: "asc" } });
-  const banks = await prisma.bankAccount.findMany({ where: { marketplace: true, active: true }, select: { id: true, name: true, aliases: true } });
+  const all = await prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, select: { id: true, name: true, code: true }, orderBy: { code: "asc" } });
+  const stores = f.storeId ? all.filter((s) => s.id === f.storeId) : all;
+  const banks = await marketplaceBanks();
   const rows = [];
   for (const s of stores) {
     for (const ch of ["SHP", "TTS"]) {
       const rel = { gte: dayStart(f.from), lt: dayEnd(f.to) };
-      const [cair, ads, adj, wd] = await Promise.all([
+      const [cair, ads, adj, wd, rec] = await Promise.all([
         prisma.marketplaceIncome.aggregate({ where: { storeId: s.id, channel: ch, kind: "ORDER", releasedAt: rel }, _sum: { released: true, fees: true }, _count: true }),
         prisma.marketplaceIncome.aggregate({ where: { storeId: s.id, channel: ch, kind: "ADS", releasedAt: rel }, _sum: { released: true } }),
         prisma.marketplaceIncome.aggregate({ where: { storeId: s.id, channel: ch, kind: "ADJUST", releasedAt: rel }, _sum: { released: true } }),
         prisma.marketplaceWithdrawal.findMany({ where: { storeId: s.id, channel: ch, txType: { contains: "withdraw", mode: "insensitive" }, requestedAt: rel }, select: { amount: true, status: true } }),
+        recordedWithdraws(s, ch, banks, all.length, rel.gte, rel.lt),
       ]);
-      const bankIds = banks.filter((b) => CH_WORDS[ch].test(`${b.name} ${b.aliases}`)).map((b) => b.id);
-      const rec = bankIds.length
-        ? await prisma.financeTransaction.aggregate({ where: { direction: "TRANSFER", accountId: { in: bankIds }, status: { in: ["DIBUKUKAN", "DALAM_PROSES"] }, deletedAt: null, storeId: s.id, date: { gte: dayStart(f.from), lt: dayEnd(f.to) } }, _sum: { amount: true } })
-        : { _sum: { amount: 0n } };
       const cairV = n(cair._sum.released), adsV = n(ads._sum.released), adjV = n(adj._sum.released);
-      const recorded = n(rec._sum.amount);
+      const recorded = rec.rows.reduce((a, x) => a + x.amount, 0);
       if (!cair._count && !recorded && !wd.length && !adsV && !adjV) continue;
-      rows.push({ storeId: s.id, store: s.name, channel: ch, orders: cair._count, cair: cairV, ads: adsV, adjust: adjV, tiktokWithdraw: wd.reduce((a, w) => a + Math.abs(n(w.amount)), 0), recorded, diff: cairV + adsV + adjV - recorded, noBank: bankIds.length === 0 });
+      rows.push({ storeId: s.id, store: s.name, channel: ch, orders: cair._count, cair: cairV, ads: adsV, adjust: adjV, tiktokWithdraw: wd.reduce((a, w) => a + Math.abs(n(w.amount)), 0), recorded, diff: cairV + adsV + adjV - recorded, noBank: rec.noBank });
     }
   }
   return rows;

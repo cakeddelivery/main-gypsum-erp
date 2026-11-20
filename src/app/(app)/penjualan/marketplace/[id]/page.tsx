@@ -19,12 +19,13 @@ export default async function OrderDetail({ params }: { params: Promise<{ id: st
   const { id } = await params;
   const o = await prisma.marketplaceOrder.findUnique({ where: { id }, include: { lines: { orderBy: { sortOrder: "asc" } }, income: true } });
   if (!o) notFound();
-  const [store, res, inv, ret, comp] = await Promise.all([
+  const [store, res, inv, ret, comp, hist] = await Promise.all([
     prisma.store.findUnique({ where: { id: o.storeId }, select: { name: true } }),
     resolveSkuKeys(o.lines.map((l) => l.skuKey)),
     o.invoiceId ? prisma.invoice.findUnique({ where: { id: o.invoiceId }, select: { id: true, number: true } }) : null,
     o.returnCaseId ? prisma.returnCase.findUnique({ where: { id: o.returnCaseId }, select: { id: true, number: true } }) : null,
     o.complaintId ? prisma.complaint.findUnique({ where: { id: o.complaintId }, select: { id: true, number: true } }) : null,
+    prisma.marketplaceChange.findMany({ where: { rowId: o.id }, orderBy: { createdAt: "desc" }, take: 30 }),
   ]);
   const st = shownStatus(o.status, !!o.income);
   const fee = (o.income?.feeDetail ?? {}) as Record<string, number>;
@@ -34,6 +35,8 @@ export default async function OrderDetail({ params }: { params: Promise<{ id: st
       <MpNav current="pesanan" />
       <div className="flex flex-wrap gap-2">
         <Badge tone={st === "CAIR" ? "green" : st === "PIUTANG" ? "amber" : st === "RETUR" ? "red" : "gray"}>{STATUS_LABEL[st]}</Badge>
+        {o.needsCheck && <Badge tone="amber">Perlu dicek: {o.needsCheck === "BATAL_SETELAH_CAIR" ? "dibatalkan setelah cair" : "retur setelah cair"}</Badge>}
+        {o.affiliate && <Badge tone="purple">Affiliate{o.creatorHandle ? ` · ${o.creatorHandle}` : ""}</Badge>}
         {o.complaint && <Badge tone="red">Komplain{o.complaintNote ? `: ${o.complaintNote}` : ""}</Badge>}
         {o.rawStatus && <span className="text-xs text-slate-500">Status platform: {o.rawStatus}{o.rawSubstatus ? ` / ${o.rawSubstatus}` : ""}{o.rawReturn ? ` · ${o.rawReturn}` : ""}</span>}
       </div>
@@ -82,6 +85,11 @@ export default async function OrderDetail({ params }: { params: Promise<{ id: st
           </div>
         </Card>
       </div>
+      {hist.length > 0 && (
+        <Card title="Riwayat perubahan">
+          <ul className="space-y-1 text-sm">{hist.map((h) => <li key={h.id} className={h.undone ? "text-slate-400 line-through" : ""}><span className="text-xs text-slate-400">{fmtDateTime(h.createdAt)}</span> · {h.summary}{h.undone && " (dibatalkan)"}</li>)}</ul>
+        </Card>
+      )}
       {canManage && (
         <Card title="Tindakan">
           <div className="flex flex-wrap items-end gap-3">
