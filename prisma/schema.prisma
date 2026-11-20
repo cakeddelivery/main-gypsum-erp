@@ -3013,6 +3013,8 @@ model MarketplaceIncome {
   importId    String
   lastImportId String
   order       MarketplaceOrder?
+  /// Satu pesanan bisa punya beberapa baris penyelesaian (mis. cair lalu refund); angka di atas = jumlah semua event
+  events      MarketplaceIncomeEvent[]
 
   @@unique([storeId, channel, kind, refNo])
   @@index([releasedAt])
@@ -3059,4 +3061,24 @@ model MarketplaceFeeMap {
   updatedAt DateTime @updatedAt
 
   @@id([platform, column])
+}
+
+/// Satu baris penyelesaian dari file penghasilan. Cair pesanan = jumlah semua event-nya.
+model MarketplaceIncomeEvent {
+  id         String            @id @default(cuid())
+  incomeId   String
+  income     MarketplaceIncome @relation(fields: [incomeId], references: [id], onDelete: Cascade)
+  /// Kunci stabil: hash (no. pesanan, tanggal, nilai) + urutan bila ada baris kembar; "legacy" = hasil impor lama
+  eventKey   String
+  releasedAt DateTime?
+  released   BigInt            @default(0)
+  productAmt BigInt            @default(0)
+  refundAmt  BigInt            @default(0)
+  fees       BigInt            @default(0)
+  feeDetail  Json?
+  importId   String
+
+  @@unique([incomeId, eventKey])
+  @@index([importId])
+  @@index([releasedAt])
 }

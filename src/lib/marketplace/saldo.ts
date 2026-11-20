@@ -96,7 +96,8 @@ const FAR = new Date("2100-01-01");
 export async function loadAllocation(s: StoreLite, ch: string, storeCount: number, banks?: Awaited<ReturnType<typeof marketplaceBanks>>) {
   const bks = banks ?? (await marketplaceBanks());
   const [incomes, rec, fileWd] = await Promise.all([
-    prisma.marketplaceIncome.findMany({ where: { storeId: s.id, channel: ch, releasedAt: { not: null } }, select: { id: true, kind: true, refNo: true, released: true, releasedAt: true }, orderBy: [{ releasedAt: "asc" }, { id: "asc" }] }),
+    // Setiap baris penyelesaian (event) = satu lot: cair positif, refund/iklan/penyesuaian negatif
+    prisma.marketplaceIncomeEvent.findMany({ where: { income: { storeId: s.id, channel: ch }, releasedAt: { not: null } }, select: { id: true, incomeId: true, released: true, releasedAt: true }, orderBy: [{ releasedAt: "asc" }, { id: "asc" }] }),
     recordedWithdraws(s, ch, bks, storeCount, new Date(0), FAR),
     prisma.marketplaceWithdrawal.findMany({ where: { storeId: s.id, channel: ch, txType: { contains: "withdraw", mode: "insensitive" } } }),
   ]);
@@ -125,8 +126,16 @@ export async function allocationMap(opts: { storeId?: string; channel?: string }
   for (const s of stores.filter((x) => !opts.storeId || x.id === opts.storeId)) {
     for (const ch of ["SHP", "TTS"].filter((c) => !opts.channel || c === opts.channel)) {
       const a = await loadAllocation(s, ch, stores.length, banks);
-      for (const [id, c] of a.fifo.perLot) covers.set(id, c);
-      for (const i of a.incomes) released.set(i.id, n(i.released));
+      // lot = event; digabung per pesanan (penghasilan)
+      const owner = new Map(a.incomes.map((e) => [e.id, e.incomeId]));
+      for (const [evId, c] of a.fifo.perLot) {
+        const inc = owner.get(evId)!;
+        const cur = covers.get(inc) ?? { withdrawn: 0, by: [] };
+        cur.withdrawn += c.withdrawn;
+        cur.by.push(...c.by);
+        covers.set(inc, cur);
+      }
+      for (const e of a.incomes) released.set(e.incomeId, (released.get(e.incomeId) ?? 0) + n(e.released));
     }
   }
   return { covers, released };

@@ -24,7 +24,7 @@ export async function dashboardData(f: { month: string; storeId?: string }) {
   const where = { orderedAt: { gte: dayStart(from), lt: dayEnd(to) }, ...(f.storeId ? { storeId: f.storeId } : {}) };
   const [orders, incomes, summary, stores] = await Promise.all([
     prisma.marketplaceOrder.findMany({ where, select: { channel: true, storeId: true, orderedAt: true, total: true, status: true, affiliate: true, city: true, lines: { select: { skuKey: true, qty: true, amount: true } } } }),
-    prisma.marketplaceIncome.findMany({ where: { kind: "ORDER", releasedAt: { gte: dayStart(from), lt: dayEnd(to) }, ...(f.storeId ? { storeId: f.storeId } : {}) }, select: { channel: true, releasedAt: true, released: true } }),
+    prisma.marketplaceIncomeEvent.findMany({ where: { income: { kind: "ORDER", ...(f.storeId ? { storeId: f.storeId } : {}) }, releasedAt: { gte: dayStart(from), lt: dayEnd(to) } }, select: { releasedAt: true, released: true } }),
     orderSummary({ storeId: f.storeId, from, to }),
     prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } }),
   ]);

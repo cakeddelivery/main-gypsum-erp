@@ -40,6 +40,7 @@ export default async function MarketplacePage({ searchParams }: { searchParams: 
     <div className="space-y-4">
       <PageHeader title="Pesanan Marketplace" subtitle="Shopee & TikTok Shop dari file Excel · tidak mengubah stok maupun jurnal" actions={<Link href="/penjualan/offline" className="btn-secondary">Penjualan</Link>} />
       <MpNav current="pesanan" />
+      <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Angka marketplace = data operasional dari file; tidak masuk jurnal. Pendapatan akuntansi dicatat dari withdraw — jangan dijumlahkan dengan laporan Laba.</p>
       {noData ? (
         <Empty title="Belum ada pesanan marketplace" hint="Unggah file Order & Penghasilan dari Seller Center di menu Impor." action={<Link href="/penjualan/marketplace/impor" className="btn-primary">Impor file</Link>} />
       ) : (

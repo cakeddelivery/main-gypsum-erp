@@ -17,11 +17,12 @@ export type PotonganFilter = { storeId?: string; channel: string; from: string; 
 export async function potonganReport(f: PotonganFilter) {
   const platform = platformOf(f.channel);
   const rel = { gte: dayStart(f.from), lt: dayEnd(f.to) };
-  const base = { channel: f.channel, ...(f.storeId ? { storeId: f.storeId } : {}), releasedAt: rel };
+  const inc = (kind: string) => ({ income: { channel: f.channel, kind, ...(f.storeId ? { storeId: f.storeId } : {}) }, releasedAt: rel });
   const [orders, ads, adj, overrides] = await Promise.all([
-    prisma.marketplaceIncome.findMany({ where: { ...base, kind: "ORDER" }, select: { released: true, productAmt: true, feeDetail: true } }),
-    prisma.marketplaceIncome.aggregate({ where: { ...base, kind: "ADS" }, _sum: { released: true } }),
-    prisma.marketplaceIncome.aggregate({ where: { ...base, kind: "ADJUST" }, _sum: { released: true } }),
+    // per baris penyelesaian pada tanggalnya (refund setelah cair ikut masuk periodenya sendiri)
+    prisma.marketplaceIncomeEvent.findMany({ where: inc("ORDER"), select: { incomeId: true, released: true, productAmt: true, feeDetail: true } }),
+    prisma.marketplaceIncomeEvent.aggregate({ where: inc("ADS"), _sum: { released: true } }),
+    prisma.marketplaceIncomeEvent.aggregate({ where: inc("ADJUST"), _sum: { released: true } }),
     feeOverrides(),
   ]);
   const gross = orders.reduce((a, o) => a + n(o.productAmt), 0);
@@ -34,7 +35,7 @@ export async function potonganReport(f: PotonganFilter) {
   if (adjV) byCategory.PENYESUAIAN = (byCategory.PENYESUAIAN ?? 0) + adjV;
   const explained = gross + t.counted + adsV + adjV;
   return {
-    platform, orders: orders.length, gross, released, byCategory, byColumn: t.byColumn, unmapped: t.unmapped,
+    platform, orders: new Set(orders.map((o) => o.incomeId)).size, events: orders.length, gross, released, byCategory, byColumn: t.byColumn, unmapped: t.unmapped,
     ads: adsV, adjust: adjV,
     /** cair − (harga jual + semua potongan): selisih yang belum terjelaskan oleh kolom biaya */
     residual: released - explained,

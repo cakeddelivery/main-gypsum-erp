@@ -57,7 +57,7 @@ export type ParsedFile = {
   periodFrom: Date | null;
   periodTo: Date | null;
   /** Info tampilan (mis. username penjual dari sheet Summary Shopee) */
-  info: { seller?: string; rows: number; /** Keterangan tambahan untuk pratinjau (mis. ringkasan Saldo Penjual) */ note?: string };
+  info: { seller?: string; rows: number; /** Keterangan tambahan untuk pratinjau (mis. ringkasan Saldo Penjual) */ note?: string; /** Total ringkasan di file (Shopee Summary / TikTok Laporan) untuk cek integritas */ summaryTotal?: number; summaryLabel?: string };
 };
 
 export class FormatError extends Error {}
@@ -123,6 +123,29 @@ const clean = (s: string | null, max = 120) => (s ? s.replace(/\s+/g, " ").slice
 const minMax = (ds: (Date | null)[]) => {
   const xs = ds.filter((d): d is Date => !!d).map((d) => d.getTime());
   return xs.length ? { from: new Date(Math.min(...xs)), to: new Date(Math.max(...xs)) } : { from: null, to: null };
+};
+
+/** Cari nilai di sebelah kanan sel berlabel (untuk sheet ringkasan); label dicocokkan longgar */
+function labelValue(sheet: Sheet | undefined, re: RegExp): { label: string; value: number } | null {
+  for (const row of sheet?.rows ?? []) {
+    for (let i = 0; i < (row?.length ?? 0); i++) {
+      const c = row[i];
+      if (typeof c !== "string" || !re.test(c.trim().toLowerCase())) continue;
+      for (const v of row.slice(i + 1)) {
+        if (v === null || v === "") continue;
+        const num = typeof v === "number" ? v : parseNum(v);
+        if (typeof v === "number" || /\d/.test(String(v))) return { label: c.trim(), value: num };
+      }
+    }
+  }
+  return null;
+}
+const textRight = (sheet: Sheet | undefined, re: RegExp): string | undefined => {
+  for (const row of sheet?.rows ?? []) {
+    const i = (row ?? []).findIndex((c) => re.test(String(c ?? "").trim().toLowerCase()));
+    if (i >= 0) return (row.slice(i + 1).map(str).find(Boolean) as string | undefined) ?? undefined;
+  }
+  return undefined;
 };
 
 // ---------- 1) Shopee Order.all ----------
@@ -209,22 +232,49 @@ function parseShopeeIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
     }
     incomes.push({ kind: "ORDER", refNo: no, orderedAt: parseDate(r[I.created]), releasedAt: parseDate(r[I.rel]), released: Math.round(parseNum(r[I.total])), productAmt: Math.round(parseNum(r[I.prod])), refundAmt: Math.round(Math.abs(parseNum(r[I.refund]))), fees: Math.round(fees), feeDetail });
   }
-  // Summary: username penjual (info saja)
-  let seller: string | undefined;
+  // Summary: username penjual + total ringkasan (untuk cek integritas)
   const sum = sheetOf(sheets, "summary");
+  let seller: string | undefined;
+  let summaryTotal: number | undefined;
+  let summaryLabel: string | undefined;
   try {
-    for (const row of sum?.rows ?? []) {
-      const i = (row ?? []).findIndex((c) => /username|nama pengguna/i.test(String(c ?? "")));
-      if (i >= 0) {
-        seller = (row.slice(i + 1).map(str).find(Boolean) as string | undefined) ?? undefined;
-        break;
+    seller = textRight(sum, /username|nama pengguna/);
+    const direct = labelValue(sum, /^total penghasilan$/);
+    if (direct) ({ value: summaryTotal, label: summaryLabel } = direct);
+    else {
+      const inc = labelValue(sum, /^total pendapatan$/);
+      const out = labelValue(sum, /^total pengeluaran$/);
+      if (inc && out) {
+        summaryTotal = inc.value - Math.abs(out.value);
+        summaryLabel = "Total Pendapatan − Total Pengeluaran";
       }
     }
   } catch {
     /* info saja */
   }
+  // Sheet "Adjustment": penyesuaian saldo di luar penghasilan per pesanan (tolerant; tidak dikenali = dilewati dengan catatan)
+  let note: string | undefined;
+  const adj = sheetOf(sheets, "adjustment");
+  if (adj) {
+    const ar = adj.rows.findIndex((r) => (r ?? []).some((c) => /no\. pesanan|order id|id pesanan/.test(norm(c))) && (r ?? []).some((c) => /jumlah|amount|nominal/.test(norm(c))));
+    if (ar >= 0) {
+      const hh = headerMap(adj.rows[ar]);
+      const col = (re: RegExp) => [...hh.entries()].find(([k]) => re.test(k))?.[1] ?? -1;
+      const A = { no: col(/no\. pesanan|order id|id pesanan/), amt: col(/jumlah|amount|nominal/), date: col(/tanggal|waktu|date/), why: col(/alasan|keterangan|tipe|jenis|deskripsi|description/) };
+      let n = 0;
+      for (const r of adj.rows.slice(ar + 1)) {
+        const v = Math.round(parseNum(r?.[A.amt]));
+        if (!v) continue;
+        const no = str(r[A.no]);
+        const at = parseDate(r[A.date]);
+        incomes.push({ kind: "ADJUST", refNo: no ?? `ADJ-${createHash("sha1").update(`${at?.toISOString()}|${v}|${str(r[A.why]) ?? ""}|${n}`).digest("hex").slice(0, 10)}`, orderedAt: at, releasedAt: at, released: v, productAmt: 0, refundAmt: 0, fees: 0, feeDetail: {} });
+        n++;
+      }
+      note = `Sheet Adjustment: ${n} penyesuaian dibaca (masuk saldo sebagai Penyesuaian)`;
+    } else note = `Sheet Adjustment tidak dikenali (header yang terbaca: ${(adj.rows.find((r) => (r ?? []).filter(Boolean).length >= 2) ?? []).filter(Boolean).slice(0, 8).join(" | ")}); dilewati`;
+  }
   const { from, to } = minMax(incomes.map((x) => x.releasedAt ?? x.orderedAt));
-  return { platform: "SHOPEE", kind: "INCOME", orders: [], incomes, withdrawals: [], periodFrom: from, periodTo: to, info: { seller, rows } };
+  return { platform: "SHOPEE", kind: "INCOME", orders: [], incomes, withdrawals: [], periodFrom: from, periodTo: to, info: { seller, rows, note, summaryTotal, summaryLabel } };
 }
 
 // ---------- 3) TikTok Semua pesanan ----------
@@ -327,7 +377,16 @@ function parseTiktokIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
   const byOrder = dates(incomes.filter((x) => x.kind === "ORDER"));
   const any = byOrder.from ? byOrder : dates(incomes);
   const { from, to } = any.from ? any : minMax(withdrawals.flatMap((w) => [w.requestedAt, w.doneAt]));
-  return { platform: "TIKTOK", kind: "INCOME", orders: [], incomes, withdrawals, periodFrom: from, periodTo: to, info: { rows } };
+  const rep = sheetOf(sheets, "laporan");
+  let summaryTotal: number | undefined, summaryLabel: string | undefined, seller: string | undefined;
+  try {
+    const t = labelValue(rep, /jumlah penyelesaian|total penyelesaian|settlement amount|total settlement/);
+    if (t) ({ value: summaryTotal, label: summaryLabel } = t);
+    seller = textRight(rep, /^(nama toko|shop name|username|nama pengguna)/);
+  } catch {
+    /* info saja */
+  }
+  return { platform: "TIKTOK", kind: "INCOME", orders: [], incomes, withdrawals, periodFrom: from, periodTo: to, info: { rows, seller, summaryTotal, summaryLabel } };
 }
 
 // ---------- 5) Shopee "Transaksi Saldo Penjual" (format toleran: dideteksi dari header kolom) ----------

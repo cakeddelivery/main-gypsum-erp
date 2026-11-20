@@ -104,6 +104,7 @@ export function ImportForm({ stores, canManage }: { stores: Store[]; canManage: 
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs">{f.storeName}</span>
                 {f.periodFrom && <span className="text-xs text-slate-500">{f.periodFrom} s/d {f.periodTo}</span>}
               </div>
+              {f.error && <p className="rounded bg-rose-50 px-2 py-1 text-xs font-medium text-rose-700">⛔ {f.error}</p>}
               {f.note && <p className="rounded bg-slate-50 px-2 py-1 text-xs text-slate-600">{f.note}</p>}
               {f.seller && <p className="text-xs text-slate-500">Penjual di file: {f.seller}</p>}
               <p>{nf(f.total)} {f.kind === "ORDER" ? "pesanan" : "baris"}: <b>{nf(f.baru)}</b> baru, <b>{nf(f.diperbarui)}</b> diperbarui, {nf(f.dilewati)} dilewati{f.adsRows ? ` · ${f.adsRows} potongan iklan/penyesuaian` : ""}{f.withdrawals ? ` · ${f.withdrawals} penarikan` : ""}</p>
@@ -119,7 +120,7 @@ export function ImportForm({ stores, canManage }: { stores: Store[]; canManage: 
           ))}
           <p className="text-xs text-slate-500">Menyimpan hanya mencatat penjualan marketplace. Stok dan jurnal keuangan tidak berubah. Setiap file menjadi satu batch yang bisa dibatalkan.</p>
           <div className="flex gap-2">
-            <button type="button" className="btn-primary" disabled={pending || !!res?.fileErrors?.length} onClick={save}>{pending ? "Menyimpan…" : "Simpan impor"}</button>
+            <button type="button" className="btn-primary" disabled={pending || !!res?.fileErrors?.length || !!p.files.some((x) => x.error)} onClick={save}>{pending ? "Menyimpan…" : "Simpan impor"}</button>
             <button type="button" className="btn-secondary" disabled={pending} onClick={() => setRes(null)}>Batal</button>
           </div>
           {!!res?.fileErrors?.length && <p className="text-xs text-amber-700">Hapus file yang bermasalah dulu agar semua file bisa disimpan bersama.</p>}

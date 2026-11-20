@@ -112,9 +112,9 @@ export async function reconcile(f: { storeId?: string; from: string; to: string 
     for (const ch of ["SHP", "TTS"]) {
       const rel = { gte: dayStart(f.from), lt: dayEnd(f.to) };
       const [cair, ads, adj, wd, rec] = await Promise.all([
-        prisma.marketplaceIncome.aggregate({ where: { storeId: s.id, channel: ch, kind: "ORDER", releasedAt: rel }, _sum: { released: true, fees: true }, _count: true }),
-        prisma.marketplaceIncome.aggregate({ where: { storeId: s.id, channel: ch, kind: "ADS", releasedAt: rel }, _sum: { released: true } }),
-        prisma.marketplaceIncome.aggregate({ where: { storeId: s.id, channel: ch, kind: "ADJUST", releasedAt: rel }, _sum: { released: true } }),
+        prisma.marketplaceIncomeEvent.aggregate({ where: { income: { storeId: s.id, channel: ch, kind: "ORDER" }, releasedAt: rel }, _sum: { released: true, fees: true }, _count: true }),
+        prisma.marketplaceIncomeEvent.aggregate({ where: { income: { storeId: s.id, channel: ch, kind: "ADS" }, releasedAt: rel }, _sum: { released: true } }),
+        prisma.marketplaceIncomeEvent.aggregate({ where: { income: { storeId: s.id, channel: ch, kind: "ADJUST" }, releasedAt: rel }, _sum: { released: true } }),
         prisma.marketplaceWithdrawal.findMany({ where: { storeId: s.id, channel: ch, txType: { contains: "withdraw", mode: "insensitive" }, requestedAt: rel }, select: { amount: true, status: true } }),
         recordedWithdraws(s, ch, banks, all.length, rel.gte, rel.lt),
       ]);
