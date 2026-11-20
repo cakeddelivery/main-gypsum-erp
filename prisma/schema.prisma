@@ -2519,6 +2519,10 @@ model BoronganShipment {
   waitingSupport Boolean                @default(false)
   completedBy    String?
   completedAt    DateTime?
+  /// Ditutup administratif (mis. cut-over stok 20 Nov): status SELESAI tanpa mutasi stok / upah / jurnal
+  closedAt       DateTime?
+  closedBy       String?
+  closeNote      String?
   tasks          BoronganShipmentTask[]
   lines          BoronganShipmentLine[]
   allots         BoronganAllot[]

@@ -21,3 +21,17 @@ Halaman pantau: **Stok › Cut-over** (daftar periksa kesiapan + daftar hitung s
 
 ## Mundur (rollback)
 Matikan sakelar; tiap laporan yang sudah diposting bisa dibalik per laporan (revisi laporan membalik versi lama). Reject, sample, dan LPG tetap tercatat sebagai data (tanpa pengaruh stok bila sakelar mati).
+
+## Cut-over dimajukan: dari laporan shift satu tanggal (mis. 20 Nov 2026)
+Stok riil = stok akhir laporan shift TERKIRIM tanggal itu (bukan hitung fisik terpisah).
+1. `npm run backup`.
+2. Borongan: `npm run borongan:tutup-semua` (pratinjau) → `npm run borongan:tutup-semua -- --jalankan`.
+   Kiriman yang belum selesai ditandai SELESAI administratif: tanpa mutasi stok (sisa di titik sudah tercermin di laporan shift),
+   tanpa upah/klaim/jurnal baru. Setoran yang belum diklaim dianggap sudah beres (keputusan Owner) — hanya tampil di pratinjau.
+3. Pastikan semua divisi sudah MENGIRIM laporan tanggal itu (Assembling ikut laporan divisinya).
+4. `npm run stok:cutover-laporan -- --tanggal 2026-11-20` (pratinjau: stok sistem → laporan → selisih qty & nilai, laporan sumber,
+   barang "tidak dihitung", laporan wajib belum terkirim) → `... --jalankan` (ditolak bila ada laporan wajib belum terkirim, kecuali `--paksa`).
+   Penyesuaian ref `CUTOVER-<tanggal>` pada jam selesai shift laporan sumber; selisih nilai ke Ekuitas Saldo Awal (sama dengan Stok awal riil;
+   `--akun-selisih` = Beban Selisih Persediaan). Barang yang tidak dihitung tidak diubah.
+5. Tanggal mulai stok terpadu otomatis = HARI BERIKUTNYA (21 Nov): laporan tanggal cut-over sudah tercermin di saldo, jadi kirim ulang
+   laporan itu tidak memposting hasil kerjanya lagi. `--mulai-tanggal-sama` bila Owner ingin tanggal yang sama.

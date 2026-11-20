@@ -174,6 +174,8 @@ export type CellView = { pointId: string; workerId: string; worker: string; task
 export type PickupView = { id: string; number: string; date: string; status: PickupStatus; driver: string | null; holdNote: string | null; lines: { id: string; pointId: string; workerId: string; worker: string; taskId: string; qty: number; reject: number; done: boolean }[]; counts: { taskId: string; qty: number }[] };
 export type ShipmentView = {
   id: string; number: string; date: string; mode: ShipmentMode; driver: string | null; state: ShipmentState; note: string | null; createdBy: string; cancelled: boolean; waitingSupport: boolean;
+  /** Ditutup administratif (tanpa stok/upah): catatan penutupan, null = tidak */
+  closed?: string | null;
   group: string;
   points: { id: string; name: string; coordinator: boolean }[];
   tasks: { id: string; name: string; short: string; qty: number; divisionId: string | null }[];
@@ -207,13 +209,15 @@ export async function buildViews(rows: ShipmentRow[]): Promise<ShipmentView[]> {
       const mine = active.flatMap((p) => p.lines.filter((l) => l.workerId === a.workerId && l.taskId === a.taskId));
       return { pointId: a.pointId, workerId: a.workerId, worker: a.worker.name, taskId: a.taskId, dibagi: a.qty, diambil: mine.reduce((x, l) => x + l.qty, 0), good: rep?.good ?? 0, reject: rep?.reject ?? 0, reported: !!rep, done: mine.some((l) => l.done) };
     });
-    const state = shipmentState(s.allots, s.pickups);
+    // Ditutup administratif (npm run borongan:tutup-semua) = selesai walau ada sel belum "Selesai semua"
+    const state = s.closedAt ? "SELESAI" : shipmentState(s.allots, s.pickups);
     const sent = s.tasks.reduce((a, t) => a + t.qty, 0);
     const received = active.filter((p) => p.status !== "DIBAWA").reduce((a, p) => a + p.lines.reduce((x, l) => x + l.qty, 0), 0);
     const reject = cells.reduce((a, c) => a + c.reject, 0);
     const taken = cells.reduce((a, c) => a + c.diambil, 0);
     return {
       id: s.id, number: s.number, date: dateStr(s.date), mode: s.mode, driver: s.driver?.name ?? null, state, note: s.note, createdBy: s.createdBy, cancelled: !!s.cancelledAt, waitingSupport: s.waitingSupport,
+      closed: s.closedAt ? `${s.closeNote ?? "Ditutup administratif"} (${s.closedBy ?? "-"}, ${dateStr(s.closedAt)})` : null,
       group: s.tasks[0] ? taskGroupName(s.tasks[0].task.name) : "",
       points: s.pointIds.map((id) => ({ id, name: points.find((p) => p.id === id)?.name ?? "?", coordinator: coords.some((c) => c.pointId === id) })),
       tasks: byColumn(s.tasks, (t) => t.task.name).map((t) => ({ id: t.taskId, name: t.task.name, short: shortTaskName(t.task.name), qty: t.qty, divisionId: t.task.divisionId })),
@@ -267,7 +271,7 @@ export function forCoordinator(v: ShipmentView, pointIds: string[]): ShipmentVie
   const taken = cells.reduce((a, c) => a + c.diambil, 0);
   const reject = cells.reduce((a, c) => a + c.reject, 0);
   const received = active.filter((p) => p.status !== "DIBAWA").reduce((a, p) => a + p.lines.reduce((x, l) => x + l.qty, 0), 0);
-  const state = shipmentState(cells.map((c) => ({ workerId: c.workerId, taskId: c.taskId, qty: c.dibagi })), active);
+  const state = v.closed ? "SELESAI" : shipmentState(cells.map((c) => ({ workerId: c.workerId, taskId: c.taskId, qty: c.dibagi })), active);
   return {
     ...v,
     state,
