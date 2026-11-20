@@ -8,12 +8,13 @@ import { SkuRow } from "./SkuRow";
 export const metadata = { title: "Pemetaan SKU Marketplace" };
 
 /** Kiri: SKU + nama produk dalam 1 baris (dipotong, tooltip penuh) + jumlah pesanan */
-function Info({ r, label, badge }: { r: { orders: number; sample?: { name: string | null } }; label: string; badge?: React.ReactNode }) {
+function Info({ r, label, badge, target }: { r: { orders: number; sample?: { name: string | null } }; label: string; badge?: React.ReactNode; target?: string }) {
   const title = `${label} · ${r.sample?.name ?? ""} · ${r.orders} pesanan`;
   return (
     <div className="min-w-0 flex-1" title={title}>
       <p className="truncate text-sm font-medium">{label} {badge}</p>
       <p className="truncate text-xs text-slate-500">{r.sample?.name ?? "-"} · {r.orders} pesanan</p>
+      {target && <p className="truncate text-xs font-medium text-emerald-700">→ {target}</p>}
     </div>
   );
 }
@@ -34,7 +35,7 @@ export default async function SkuPage() {
         {todo.length === 0 ? <Empty title="Semua SKU sudah dikenali" /> : (
           <ul className="divide-y divide-slate-100">
             {todo.map((r) => (
-              <li key={r.key} className="flex flex-col gap-2 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <li key={r.key} className="relative flex flex-col gap-2 py-2.5 focus-within:z-40 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                 <Info r={r} label={label(r)} />
                 {canManage && <SkuRow skuKey={r.key} items={items} kind="PRODUK" />}
               </li>
@@ -45,9 +46,9 @@ export default async function SkuPage() {
       <Card title={`Sudah dikenali (${done.length})`}>
         <ul className="divide-y divide-slate-100">
           {done.map((r) => (
-            <li key={r.key} className="flex flex-col gap-2 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-              <Info r={r} label={label(r)} badge={r.resolved!.kind === "PRODUK" ? <Badge tone={r.resolved!.by === "PETA" ? "green" : "blue"}>{r.resolved!.by === "PETA" ? "Dipetakan" : "Otomatis"}</Badge> : <Badge tone="purple">Extra Packing</Badge>} />
-              {canManage && <SkuRow skuKey={r.key} items={items} kind={r.resolved!.kind} itemId={r.resolved!.kind === "PRODUK" ? r.resolved!.itemId : undefined} variant={r.resolved!.kind === "EXTRA_PACKING" ? r.resolved!.variant : undefined} />}
+            <li key={r.key} className="relative flex flex-col gap-2 py-2.5 focus-within:z-40 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <Info r={r} label={label(r)} target={r.resolved!.kind === "PRODUK" ? r.resolved!.itemName : `Extra Packing${r.resolved!.variant ? ` · ${r.resolved!.variant}` : ""}`} badge={r.resolved!.kind === "PRODUK" ? <Badge tone={r.resolved!.by === "PETA" ? "green" : "blue"}>{r.resolved!.by === "PETA" ? "Dipetakan" : "Otomatis"}</Badge> : <Badge tone="purple">Extra Packing</Badge>} />
+              {canManage && <SkuRow mapped skuKey={r.key} items={items} kind={r.resolved!.kind} itemId={r.resolved!.kind === "PRODUK" ? r.resolved!.itemId : undefined} variant={r.resolved!.kind === "EXTRA_PACKING" ? r.resolved!.variant : undefined} />}
             </li>
           ))}
         </ul>

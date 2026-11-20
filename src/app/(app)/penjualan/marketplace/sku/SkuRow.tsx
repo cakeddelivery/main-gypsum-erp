@@ -6,12 +6,15 @@ import { mapSkuAction } from "../actions";
 const VARIANTS = ["Bubble Wrap", "Extra Dus", "Extra Dus + Bubble Wrap"];
 
 /** Satu baris rapi: [Produk jadi | Extra Packing] [pilihan] [Simpan]. Memilih produk/varian langsung tersimpan. */
-export function SkuRow({ skuKey, items, kind: k0, itemId, variant }: { skuKey: string; items: { id: string; name: string }[]; kind: "PRODUK" | "EXTRA_PACKING"; itemId?: string; variant?: string | null }) {
+export function SkuRow({ skuKey, items, kind: k0, itemId, variant, mapped = false }: { skuKey: string; items: { id: string; name: string }[]; kind: "PRODUK" | "EXTRA_PACKING"; itemId?: string; variant?: string | null; mapped?: boolean }) {
   const [kind, setKind] = useState(k0);
+  // SKU yang sudah dipetakan: tampil ringkas dengan tombol Edit; formulir baru muncul saat Edit ditekan
+  const [editing, setEditing] = useState(!mapped);
   const form = useRef<HTMLDivElement>(null);
   const submit = () => form.current?.closest("form")?.requestSubmit();
+  if (!editing) return <button type="button" className="btn-secondary btn-sm shrink-0" onClick={() => setEditing(true)}>Edit</button>;
   return (
-    <ActionForm action={mapSkuAction} className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center">
+    <ActionForm action={mapSkuAction} className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center" onSuccess={mapped ? () => setEditing(false) : undefined}>
       <div ref={form} className="contents" />
       <input type="hidden" name="key" value={skuKey} />
       <input type="hidden" name="kind" value={kind} />
@@ -33,6 +36,7 @@ export function SkuRow({ skuKey, items, kind: k0, itemId, variant }: { skuKey: s
         </select>
       )}
       <Submit className="btn-secondary shrink-0 whitespace-nowrap" pendingText="…">Simpan</Submit>
+      {mapped && <button type="button" className="btn-secondary shrink-0 whitespace-nowrap" onClick={() => setEditing(false)}>Batal</button>}
     </ActionForm>
   );
 }
