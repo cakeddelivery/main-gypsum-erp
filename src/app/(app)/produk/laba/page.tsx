@@ -1,6 +1,6 @@
 import { requirePerm } from "@/lib/auth";
 import { idr } from "@/lib/money";
-import { productProfit, rejectBreakdown } from "@/lib/productProfit";
+import { productProfit, rejectBreakdown, STAGE_NAME } from "@/lib/productProfit";
 import { CHANNEL_LABEL } from "@/lib/pricing";
 import { STAGE_LABEL } from "@/lib/stock";
 import { Badge, Card, Empty, Field, PageHeader, Stat } from "@/components/ui";
@@ -48,7 +48,7 @@ export default async function LabaProdukPage({ searchParams }: { searchParams: P
               ...rj.reason.map((x) => [x.label, x.reject]),
               [],
               ["Reject per tahap", "Hasil baik", "Reject", "Reject %"],
-              ...rj.stage.map((x) => [STAGE_LABEL[x.stage], x.good, x.reject, x.rate]),
+              ...rj.stage.map((x) => [STAGE_NAME[x.stage], x.good, x.reject, x.rate]),
               [],
               ["Reject per karyawan", "Hasil baik", "Reject", "Reject %"],
               ...rj.employee.map((x) => [x.label, x.good, x.reject, x.rate]),
@@ -116,12 +116,12 @@ export default async function LabaProdukPage({ searchParams }: { searchParams: P
         <Card title="Reject per tahap">
           {rj.stage.length === 0 ? <p className="text-sm text-slate-400">Tidak ada data</p> : (
             <ul className="divide-y divide-slate-100 text-sm">
-              {rj.stage.map((x) => <li key={x.stage} className="flex justify-between py-1.5"><span>{STAGE_LABEL[x.stage]}</span><span className="tabular-nums"><span className="text-rose-600">{x.reject.toLocaleString("id-ID")}</span> <span className="text-slate-400">({pct(x.rate)})</span></span></li>)}
+              {rj.stage.map((x) => <li key={x.stage} className="flex justify-between py-1.5"><span>{STAGE_NAME[x.stage]}</span><span className="tabular-nums"><span className="text-rose-600">{x.reject.toLocaleString("id-ID")}</span> <span className="text-slate-400">({pct(x.rate)})</span></span></li>)}
             </ul>
           )}
         </Card>
         <Card title="Reject per karyawan (tertinggi)">
-          {rj.employee.length === 0 ? <p className="text-sm text-slate-400">Tidak ada reject</p> : (
+          {rj.employee.length === 0 ? <p className="text-sm text-slate-400">Laporan shift mencatat reject per divisi, bukan per karyawan.</p> : (
             <ul className="divide-y divide-slate-100 text-sm">
               {rj.employee.slice(0, 10).map((x) => <li key={x.label} className="flex justify-between py-1.5"><span>{x.label}</span><span className="tabular-nums"><span className="text-rose-600">{x.reject.toLocaleString("id-ID")}</span> <span className="text-slate-400">({pct(x.rate)})</span></span></li>)}
             </ul>

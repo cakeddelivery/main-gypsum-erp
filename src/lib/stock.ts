@@ -3,6 +3,7 @@ import { bomLineCost, bomStockQty } from "./unitcost";
 import { prisma } from "./db";
 import { postJournal, reverseJournal, COA } from "./accounting";
 import { audit } from "./audit";
+import { todayStr } from "./time";
 
 type Tx = Prisma.TransactionClient;
 type DB = Tx | typeof prisma;
@@ -168,7 +169,10 @@ export async function boronganLocationIds(db: DB = prisma) {
  * - Penerimaan manual → biasanya lewat Stok → Pembelian atau Barang masuk laporan shift; hanya Owner, alasan wajib
  * - Penyesuaian → yang berwenang (stock.approve), alasan wajib
  */
-export async function manualMovementGuard(m: { type: MovementType; role: string; reason: string | null; fromLocationId: string | null; toLocationId: string | null }, db: DB = prisma) {
+/** Barang yang diposting OTOMATIS dari Laporan Shift / Borongan: patung cetak (basah), patung kering, dan semua barang jadi (satuan, paket, giftbox) */
+export const isAutoPostedItem = (i: { sku: string; type: string }) => i.sku.startsWith("SJ-CTK-") || i.sku.startsWith("SJ-PTG-") || i.type === "BARANG_JADI";
+
+export async function manualMovementGuard(m: { type: MovementType; role: string; reason: string | null; fromLocationId: string | null; toLocationId: string | null; itemId?: string | null; date?: string | null }, db: DB = prisma): Promise<{ correction: boolean }> {
   const locs = await boronganLocationIds(db);
   if ((m.fromLocationId && locs.has(m.fromLocationId)) || (m.toLocationId && locs.has(m.toLocationId)))
     throw new StockError("Stok di titik borongan / driver hanya lewat menu Borongan (Serah terima kirim bahan, setoran, penerimaan divisi), agar tidak dobel");
@@ -177,6 +181,20 @@ export async function manualMovementGuard(m: { type: MovementType; role: string;
     if (!m.reason?.trim()) throw new StockError("Isi alasan penerimaan manual (mis. hibah / sampel / koreksi)");
   }
   if (m.type === "PENYESUAIAN" && !m.reason?.trim()) throw new StockError("Isi alasan penyesuaian stok");
+  // Setelah cut-over (sakelar Laporan shift → stok menyala & tanggal sudah tiba): barang yang diposting otomatis tidak boleh dimutasi manual
+  // (dobel dengan laporan shift/borongan). Owner boleh sebagai KOREKSI dengan alasan wajib.
+  if (m.itemId) {
+    const item = await db.item.findUnique({ where: { id: m.itemId }, select: { sku: true, type: true, name: true } });
+    if (item && isAutoPostedItem(item)) {
+      const { flowEnabledOn } = await import("./shiftReportFlow");
+      if (await flowEnabledOn(m.date || todayStr(), db)) {
+        if (m.role !== "OWNER") throw new StockError(`${item.name} diposting otomatis dari Laporan Shift / Borongan; mutasi manual hanya untuk Owner (koreksi) agar stok tidak dobel.`);
+        if ((m.reason ?? "").trim().length < 5) throw new StockError("Koreksi barang otomatis wajib alasan yang jelas (min. 5 huruf); mutasi akan berlabel KOREKSI");
+        return { correction: true };
+      }
+    }
+  }
+  return { correction: false };
 }
 
 async function defaultStore(db: DB) {

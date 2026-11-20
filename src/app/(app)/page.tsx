@@ -3,12 +3,12 @@ import { redirect } from "next/navigation";
 import { requirePerm, requireUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { alertDivision, cachedAlerts, type Alert } from "@/lib/alerts";
-import { productionSummary, productionTrend, productivity, financeMonth, financeTrend, salesByStore } from "@/lib/dashboard";
+import { financeMonth, financeTrend, salesByStore } from "@/lib/dashboard";
+import { productionSummary, productionTrend } from "@/lib/alurProduksi";
 import { bankBalances } from "@/lib/finance";
 import { idr } from "@/lib/money";
 import { dateOnly, fmtDateTime, fmtDay, MONTHS, nowTimeStr, todayStr } from "@/lib/time";
 import { ROLE_LABEL } from "@/lib/rbac";
-import { STAGE_LABEL } from "@/lib/stock";
 import { ATT_LABEL } from "@/lib/attendance";
 import { Badge, Card, PageHeader, Stat, Tabs } from "@/components/ui";
 import { BarsChart, TrendChart } from "@/components/Charts";
@@ -27,18 +27,17 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const role = user.role;
   const isOperator = role === "OPERATOR";
   const isCaptain = role === "KAPTEN_DIVISI";
-  const scope = isOperator ? { employeeId: user.employeeId ?? "__none__" } : isCaptain ? { divisionId: user.divisionId } : {};
+  // Produksi dibaca dari Laporan Shift + Borongan; Kapten melihat divisinya sendiri
+  const scope = isCaptain ? { divisionId: user.divisionId } : {};
   const showFinance = user.can("dashboard.finance");
   const showProduction = user.can("production.view");
-  const canInput = user.can("production.create");
   const stores = await prisma.store.findMany({ orderBy: { code: "asc" } });
   const storeId = sp.store && stores.some((s) => s.id === sp.store) ? sp.store : null;
 
-  const [alerts, prod, trend, people, fin, finTrend, banks, sales, attendance] = await Promise.all([
+  const [alerts, prod, trend, fin, finTrend, banks, sales, attendance] = await Promise.all([
     cachedAlerts([...user.perms].sort(), alertDivision(user)),
-    showProduction ? productionSummary(today, scope) : null,
-    showProduction ? productionTrend(14, scope) : null,
-    showProduction && !isOperator ? productivity(today, isCaptain ? user.divisionId : null) : null,
+    showProduction && !isOperator ? productionSummary(today, scope) : null,
+    showProduction && !isOperator ? productionTrend(14, scope) : null,
     showFinance ? financeMonth(storeId) : null,
     showFinance ? financeTrend(14, storeId) : null,
     showFinance ? bankBalances() : null,
@@ -83,10 +82,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
       {(isOperator || isCaptain || role === "PIC_CONTENT") && user.employeeId && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="Absensi hari ini" value={attendance ? ATT_LABEL[attendance.status] : "Belum absen"} tone={attendance ? (attendance.status === "TERLAMBAT" ? "amber" : "green") : "red"} hint={attendance ? attendance.shift.name : "Ketuk untuk absen"} href="/absensi" />
-          {/* Hasil pribadi & tombol input hanya bila akun masih boleh input hasil produksi (izin production.create) */}
-          {prod && canInput && <Stat label="Hasil saya hari ini" value={`${prod.good} pcs`} hint={prod.target ? `Target ${prod.target}` : undefined} tone="blue" href="/produksi" />}
-          {prod && canInput && <Stat label="Reject" value={`${prod.reject} pcs`} hint={`${prod.rejectRate}%`} tone={prod.reject ? "red" : "slate"} />}
-          {canInput && <Link href="/produksi?baru=1" className="card flex items-center justify-center p-4 text-center text-sm font-semibold text-brand-700 hover:bg-brand-50">+ Input hasil produksi</Link>}
+          {/* Hasil produksi tidak lagi diketik di sini: dicatat lewat Laporan Shift */}
+          {user.can("report.create") && <Link href="/laporan" className="card flex items-center justify-center p-4 text-center text-sm font-semibold text-brand-700 hover:bg-brand-50">Buka laporan shift</Link>}
         </div>
       )}
 
@@ -104,19 +101,20 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
 
       {showProduction && prod && !isOperator && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-          <Stat label={isCaptain ? "Produksi divisi hari ini" : "Produksi hari ini"} value={`${prod.good.toLocaleString("id-ID")} pcs`} href="/produksi" />
-          <Stat label="Target harian" value={`${prod.target.toLocaleString("id-ID")} pcs`} hint={prod.target ? `Tercapai ${Math.round((prod.achieved / prod.target) * 100)}%` : "Belum diatur"} tone={prod.target && prod.achieved >= prod.target ? "green" : "amber"} />
-          <Stat label="Barang jadi" value={`${prod.finished.toLocaleString("id-ID")} pcs`} tone="blue" />
-          <Stat label="Reject" value={`${prod.reject.toLocaleString("id-ID")} pcs`} hint={`${prod.rejectRate}% dari total`} tone={prod.rejectRate > 5 ? "red" : "slate"} />
-          <Stat label="Karyawan produktif" value={people?.length ?? 0} hint="mencatat hasil hari ini" />
+          {prod.boxes.map((b) => (
+            <Stat key={b.key} label={`${b.label.replace("Assembling / Borongan & Cat", "Borongan & Cat")} hari ini`} value={`${b.good.toLocaleString("id-ID")} ${b.unit}`} hint={b.reject ? `reject ${b.reject.toLocaleString("id-ID")}` : b.from} tone={b.reject ? "red" : "blue"} href={`/produksi?box=${b.key}#sumber`} />
+          ))}
         </div>
+      )}
+      {showProduction && prod && !isOperator && prod.target > 0 && (
+        <p className="text-xs text-slate-500">Target harian {prod.target.toLocaleString("id-ID")} pcs · tercapai {Math.round((prod.achieved / prod.target) * 100)}% · angka dari Laporan Shift &amp; Borongan</p>
       )}
 
       <div className="grid gap-5 lg:grid-cols-2">
         {/* Operator tanpa input produksi: tren hasil pribadi selalu kosong → tidak ditampilkan */}
-        {trend && !(isOperator && !canInput) && (
+        {trend && (
           <Card title="Tren produksi 14 hari">
-            <BarsChart data={trend} series={[{ key: "hasil", label: "Hasil", color: "#2f6fde" }, { key: "reject", label: "Reject", color: "#e11d48" }]} />
+            <BarsChart data={trend} series={[{ key: "cetak", label: "Cetak", color: "#64748b" }, { key: "oven", label: "Oven", color: "#2f6fde" }, { key: "packing", label: "Packing", color: "#059669" }, { key: "reject", label: "Reject oven", color: "#e11d48" }]} />
           </Card>
         )}
         {finTrend && (
@@ -150,37 +148,6 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
               ))}
             </ul>
             <p className="mt-2 text-xs text-slate-400">Dari withdraw saldo penjual (transfer internal) yang sudah dibukukan, per toko.</p>
-          </Card>
-        )}
-        {prod && prod.byStage.length > 0 && (
-          <Card title="Hasil per tahap hari ini">
-            <ul className="divide-y divide-slate-100 text-sm">
-              {prod.byStage.map((s) => (
-                <li key={s.stage} className="flex justify-between py-2">
-                  <span>{STAGE_LABEL[s.stage]}</span>
-                  <span className="tabular-nums">
-                    {s._sum.qtyGood ?? 0} <span className="text-rose-500">/ {s._sum.qtyReject ?? 0} rj</span>
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Card>
-        )}
-        {people && people.length > 0 && (
-          <Card title="Produktivitas karyawan hari ini" className="lg:col-span-1">
-            <ul className="divide-y divide-slate-100 text-sm">
-              {people.slice(0, 8).map((p) => (
-                <li key={p.name} className="flex items-center justify-between py-2">
-                  <span>
-                    {p.name} <span className="text-xs text-slate-400">{p.division}</span>
-                  </span>
-                  <span className="tabular-nums">
-                    {p.good}
-                    {p.target > 0 && <span className="text-xs text-slate-400"> / {p.target}</span>}
-                  </span>
-                </li>
-              ))}
-            </ul>
           </Card>
         )}
       </div>

@@ -100,7 +100,8 @@ export function inputMenuRows(i: BotIdent): InlineButton[][] {
   const rows: InlineButton[][] = [];
   const top: InlineButton[] = [];
   if (can(i, "attendance.self") && i.user.employeeId) top.push({ text: "📍 Absen", callback_data: "f:start:absen" });
-  if (can(i, "production.create")) top.push({ text: "🏭 Input produksi", callback_data: "f:start:prod" });
+  // Hasil produksi dicatat lewat Laporan Shift (aplikasi); bot hanya untuk koreksi Owner
+  if (can(i, "production.create") && i.user.role === "OWNER") top.push({ text: "🏭 Koreksi produksi (Owner)", callback_data: "f:start:prod" });
   if (top.length) rows.push(top);
   if (can(i, "stock.move", "stock.request", "stock.view")) rows.push([{ text: "📦 Stok", callback_data: "f:start:stok" }]);
   rows.push(...t3MenuRows(i));
@@ -123,18 +124,11 @@ function stockMenu(i: BotIdent): Prompt {
 async function prodStart(ctx: Ctx): Promise<Session | string> {
   const { i } = ctx;
   if (!can(i, "production.create")) return "Anda tidak berwenang input produksi";
-  const s: Session = { chatId: ctx.chatId, userId: i.userId, flow: "prod", step: "", data: {} };
-  if (i.user.role === "OPERATOR") {
-    if (!i.user.employeeId) return "Akun Anda belum ditautkan ke data karyawan";
-    const emp = await prisma.employee.findUniqueOrThrow({ where: { id: i.user.employeeId } });
-    s.data = { employeeId: emp.id, employeeName: emp.name, divisionId: emp.divisionId };
-    s.step = "date";
-  } else if (i.user.role === "KAPTEN_DIVISI") {
-    const div = await userDivision(i);
-    if (!div) return "Akun kapten belum punya divisi";
-    s.data = { divisionId: div };
-    s.step = "emp";
-  } else s.step = "div";
+  const { flowEnabled } = await import("./shiftReportFlow");
+  const role: string = i.user.role;
+  if (role !== "OWNER" || (await flowEnabled())) return "Hasil produksi sekarang dicatat lewat <b>Laporan Shift</b> di aplikasi (menu Laporan → + Laporan). Input manual lewat bot hanya untuk koreksi Owner sebelum laporan shift menjadi sumber stok.";
+  // Hanya Owner (koreksi): pilih divisi dulu
+  const s: Session = { chatId: ctx.chatId, userId: i.userId, flow: "prod", step: "div", data: {} };
   return s;
 }
 
@@ -492,6 +486,9 @@ async function stokAnswer(ctx: Ctx, s: Session, v: string, fromText: boolean): P
           if (!can(ctx.i, "stock.move")) return "Anda tidak berwenang";
           const type = d.type as MovementType;
           if (type === "PENYESUAIAN" && !can(ctx.i, "stock.approve")) return "Penyesuaian stok hanya untuk penyetuju stok";
+          // Aturan yang sama dengan menu Stok › Mutasi (barang otomatis, titik borongan, alasan wajib)
+          const { manualMovementGuard } = await import("./stock");
+          const guard = await manualMovementGuard({ type, role: ctx.i.user.role, reason: d.note ? String(d.note) : null, fromLocationId: type === "PENYESUAIAN" ? String(d.locId) : d.fromId ? String(d.fromId) : null, toLocationId: d.toId ? String(d.toId) : null, itemId: String(d.itemId), date: todayStr() });
           await prisma.$transaction((tx) =>
             recordMovement(
               tx,
@@ -504,7 +501,7 @@ async function stokAnswer(ctx: Ctx, s: Session, v: string, fromText: boolean): P
                 unitCost: type === "PENERIMAAN" ? Number(d.unitCost) : undefined,
                 increase: d.dir === "plus",
                 ref: "Telegram",
-                note: d.note ? String(d.note) : null,
+                note: guard.correction ? `KOREKSI (Owner): ${d.note}` : d.note ? String(d.note) : null,
                 date: jakartaDateTime(todayStr(), "12:00"),
               },
               actor,

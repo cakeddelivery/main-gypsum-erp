@@ -51,6 +51,7 @@ export default async function StokPage({ searchParams }: { searchParams: Promise
             {user.can("stock.approve") && <Link href="/stok/opname" className="btn-secondary">Opname barang jadi</Link>}
             {user.can("stock.approve") && <Link href="/stok/awal" className="btn-secondary">Stok awal</Link>}
             {user.can("audit.view") && <Link href="/stok/cutover" className="btn-secondary">Cut-over</Link>}
+            {user.can("audit.view") && <Link href="/stok/selisih" className="btn-secondary">Selisih vs laporan</Link>}
             {(user.can("stock.request") || user.can("stock.approve")) && <Link href="/stok/permintaan" className="btn-secondary">Permintaan</Link>}
             {user.can("stock.view") && <Link href="/stok/kartu" className="btn-secondary">Kartu persediaan</Link>}
             {user.can("master.manage") && <Link href="/stok/master" className="btn-secondary">Master data</Link>}

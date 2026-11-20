@@ -103,15 +103,13 @@ export const savePieceTask = action(
   ["/gaji/borongan"],
 );
 
+/** Alur klaim borongan per karyawan (PieceWork) ditutup: hasil & klaim baru lewat Borongan › Klaim Upah */
+const OLD_PIECE_FLOW = "Alur lama ini sudah ditutup (arsip read-only). Catat hasil dan klaim upah borongan lewat menu Borongan › Klaim Upah.";
+
 export const addPieceWork = action(
   "payroll.manage",
-  async (fd, user) => {
-    const qty = int(fd, "qty");
-    if (qty <= 0) throw new Error("Jumlah harus > 0");
-    const task = await prisma.pieceTask.findUniqueOrThrow({ where: { id: str(fd, "taskId") } });
-    const w = await prisma.pieceWork.create({ data: { employeeId: str(fd, "employeeId"), taskId: task.id, date: dateOnly(str(fd, "date") || todayStr()), qty, rate: task.ratePerPcs, amount: task.ratePerPcs * BigInt(qty), note: optStr(fd, "note"), createdBy: user.name } });
-    await audit(user, "HASIL_BORONGAN", "PieceWork", w.id, { task: task.code, qty });
-    return `Tercatat ${qty} pcs ${task.name}`;
+  async () => {
+    throw new Error(OLD_PIECE_FLOW);
   },
   ["/gaji/borongan"],
 );
@@ -131,9 +129,8 @@ export const deletePieceWork = action(
 
 export const claimPieces = action(
   "payroll.manage",
-  async (fd, user) => {
-    const p = await createPieceClaim(str(fd, "employeeId"), str(fd, "upTo") || todayStr(), user);
-    return `Klaim ${p.code} dibuat, lanjutkan setujui & bayar`;
+  async () => {
+    throw new Error(OLD_PIECE_FLOW);
   },
   ["/gaji", "/gaji/borongan"],
 );

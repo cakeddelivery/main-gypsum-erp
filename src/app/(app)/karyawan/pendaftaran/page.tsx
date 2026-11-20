@@ -60,7 +60,7 @@ export default async function PendaftaranPage() {
                       <input type="hidden" name="id" value={r.id} />
                       <Field label="Divisi"><select name="divisionId" className="input" required defaultValue=""><option value="" disabled>— pilih —</option>{divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
                       <Field label="Role akun"><select name="role" className="input" defaultValue="OPERATOR">{roles.map((x) => <option key={x} value={x}>{ROLE_LABEL[x]}</option>)}</select></Field>
-                      <Field label="Sistem upah"><select name="wageType" className="input" defaultValue="HARIAN">{Object.entries(WAGE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+                      <Field label="Sistem upah"><select name="wageType" className="input" defaultValue="HARIAN">{Object.entries(WAGE).filter(([k]) => k !== "BORONGAN" && k !== "CAMPURAN").map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
                       <Field label="Tanggal masuk" hint="Menentukan siklus & tanggal gajian"><input type="date" name="joinDate" className="input" required defaultValue={r.startDate.toISOString().slice(0, 10)} /></Field>
                       <Field label="Gaji Pokok (IDR)" hint="Untuk sistem upah Bulanan; Alpa dipotong Gaji Pokok ÷ 30 per hari"><input name="monthlySalary" inputMode="numeric" className="input" defaultValue="0" /></Field>
                       <Field label="Upah harian (IDR)" hint="Untuk Harian / Campuran"><input name="dailyRate" inputMode="numeric" className="input" defaultValue="0" /></Field>

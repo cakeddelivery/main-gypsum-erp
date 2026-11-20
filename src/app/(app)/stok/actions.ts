@@ -20,8 +20,8 @@ export const createMovement = action(
     if (type === "PENYESUAIAN" && !user.can("stock.approve")) throw new ForbiddenError();
     const reason = optStr(fd, "note");
     // Mutasi manual dibatasi agar tidak dobel dengan alur lain (lihat manualMovementGuard)
-    await manualMovementGuard({ type, role: user.role, reason, fromLocationId: optStr(fd, "fromLocationId"), toLocationId: optStr(fd, "toLocationId") });
     const date = str(fd, "date") || todayStr();
+    const guard = await manualMovementGuard({ type, role: user.role, reason, fromLocationId: optStr(fd, "fromLocationId"), toLocationId: optStr(fd, "toLocationId"), itemId: str(fd, "itemId"), date });
     await prisma.$transaction((tx) =>
       recordMovement(
         tx,
@@ -35,7 +35,7 @@ export const createMovement = action(
           increase: str(fd, "direction") === "plus",
           // Penanda mutasi manual (dipakai Cek Konsistensi); nomor referensi isian tetap disimpan di belakangnya
           ref: `MUT${optStr(fd, "ref") ? `:${optStr(fd, "ref")}` : ""}`,
-          note: reason,
+          note: guard.correction ? `KOREKSI (Owner): ${reason}` : reason,
           date: jakartaDateTime(date, "12:00"),
         },
         user,

@@ -22,11 +22,14 @@ export default async function BoronganPage() {
     prisma.payrollPeriod.findMany({ where: { kind: "BORONGAN" }, include: { payslips: { include: { employee: true } } }, orderBy: { createdAt: "desc" }, take: 20 }),
   ]);
   const emp = await prisma.employee.findMany({ where: { id: { in: unclaimed.map((u) => u.employeeId) } } });
+  // Alur lama (per karyawan) sudah ditutup (keputusan owner 20 Nov 2026): arsip read-only; borongan dicatat di menu Borongan
+  const readOnly = true;
+  const openClaims = claims.filter((c) => c.status !== "DIBAYAR").length;
   const t = todayStr();
   const activeTasks = tasks.filter((x) => x.active);
   return (
     <div className="space-y-5">
-      <PageHeader title="Borongan & klaim" subtitle="Pekerja borongan dibayar per piece; gajian kapan saja sesuai klaim pekerja" actions={
+      <PageHeader title="Borongan & klaim" subtitle="Pekerja borongan dibayar per piece; gajian kapan saja sesuai klaim pekerja" actions={readOnly ? <Link href="/borongan?tab=klaim" className="btn-primary">Buka Borongan › Klaim Upah</Link> :
         <Modal trigger="+ Hasil borongan" title="Catat hasil borongan">
           {workers.length === 0 ? <p className="text-sm text-slate-500">Belum ada karyawan dengan sistem upah Borongan. Ubah di menu Karyawan.</p> : (
             <ModalForm action={addPieceWork} className="grid grid-cols-2 gap-3">
@@ -40,6 +43,12 @@ export default async function BoronganPage() {
           )}
         </Modal>
       } />
+      {readOnly && (
+        <div role="note" className="space-y-1 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <b>Gunakan Borongan › Klaim Upah.</b> Alur lama per karyawan sudah ditutup; halaman ini arsip read-only (hanya riwayat dan penyelesaian klaim lama).
+          <div className="text-xs">Masih terbuka: <b>{unclaimed.length}</b> pekerja dengan hasil belum diklaim (Rp {Number(unclaimed.reduce((a, u) => a + Number(u._sum.amount ?? 0), 0)).toLocaleString("id-ID")}) · <b>{openClaims}</b> klaim belum dibayar.</div>
+        </div>
+      )}
       <div className="grid gap-5 lg:grid-cols-2">
         <Card title="Tarif tugas borongan" actions={<Link href="/borongan?tab=tugas" className="btn-secondary btn-sm">Atur Di Menu Borongan</Link>}>
           <ul className="divide-y divide-slate-100 text-sm">
@@ -66,6 +75,7 @@ export default async function BoronganPage() {
                     <tr key={u.employeeId}>
                       <td>{e.name}</td><td>{fmtDay(u._min.date)}</td><td className="num">{(u._sum.qty ?? 0).toLocaleString("id-ID")}</td><td className="num font-semibold">{idr(u._sum.amount ?? 0)}</td>
                       <td>
+                        {readOnly ? <span className="text-xs text-slate-400">klaim via Borongan</span> : (
                         <Modal trigger="Klaim" triggerClass="btn-primary btn-sm" title={`Klaim borongan ${e.name}`}>
                           <ModalForm action={claimPieces} className="space-y-3">
                             <input type="hidden" name="employeeId" value={e.id} />
@@ -73,7 +83,7 @@ export default async function BoronganPage() {
                             <p className="text-sm text-slate-500">Slip klaim dibuat sebagai draft, lalu disetujui & dibayar dari halaman penggajian.</p>
                             <Submit>Buat klaim</Submit>
                           </ModalForm>
-                        </Modal>
+                        </Modal>)}
                       </td>
                     </tr>
                   );

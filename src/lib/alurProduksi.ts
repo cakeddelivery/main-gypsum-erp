@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 import { VARIANTS, TEMPLATES, colTotals, gridRows, isTemplate, sectionTotal, summaryOf, type ReportTemplate, type WorkData } from "./shiftReport";
-import { dateOnly } from "./time";
+import { dateOnly, todayStr } from "./time";
 import { stockBalances } from "./stock";
 
 /**
@@ -149,4 +149,67 @@ export async function alurProduksi(f: AlurFilter): Promise<AlurBox[]> {
   boxes.PACKING.stock = stockOf((i) => i.unit !== "box" && i.sku.startsWith("BJ-") === true);
   boxes.GIFTBOX.stock = stockOf((i) => i.unit === "box");
   return BOX_ORDER.map((k) => boxes[k]);
+}
+
+// ---------- Ringkasan untuk Dashboard, rekap harian, bot, dan Laba produk (menggantikan baca ProductionEntry) ----------
+
+/** Tahap lama (input manual / target) → kotak Alur Produksi yang berlaku sekarang */
+export const STAGE_TO_BOX: Record<string, BoxKey> = {
+  CETAK: "CETAK",
+  PANEN_1: "OVEN",
+  SORTIR_1: "OVEN",
+  OVEN: "OVEN",
+  PANEN_2: "OVEN",
+  SORTIR_2: "OVEN",
+  FILLING_CAT: "BORONGAN",
+  ASSEMBLING: "BORONGAN",
+  QC: "PACKING",
+  PACKING: "PACKING",
+  BARANG_JADI: "PACKING",
+};
+
+/** Ringkasan satu hari: semua kotak + total reject (reject panen + reject yang dilaporkan di tiap tahap) */
+export async function productionSummary(date: string, filter: { divisionId?: string | null } = {}) {
+  const boxes = await alurProduksi({ date, divisionId: filter.divisionId ?? null });
+  const rows = await prisma.shiftReport.findMany({ where: { date: dateOnly(date), status: { not: "DRAFT" }, ...(filter.divisionId ? { divisionId: filter.divisionId } : {}) }, select: { id: true } });
+  const rj = await prisma.productionReject.aggregate({ where: { reportId: { in: rows.map((r) => r.id) } }, _sum: { qty: true } });
+  const stageReject = Number(rj._sum.qty ?? 0);
+  const get = (k: BoxKey) => boxes.find((b) => b.key === k)!;
+  const targets = await prisma.productionTarget.findMany({ where: { active: true, employeeId: null, ...(filter.divisionId ? { divisionId: filter.divisionId } : {}) } });
+  const target = targets.reduce((s, t) => s + t.dailyQty, 0);
+  const achieved = targets.reduce((s, t) => s + (get(STAGE_TO_BOX[t.stage] ?? "PACKING").good > 0 ? Math.min(t.dailyQty, get(STAGE_TO_BOX[t.stage] ?? "PACKING").good) : 0), 0);
+  const ovenReject = get("OVEN").reject;
+  const totalReject = ovenReject + stageReject + get("BORONGAN").reject;
+  const finishedGood = get("PACKING").good + get("GIFTBOX").good;
+  return { boxes, good: get("OVEN").good, reject: totalReject, finished: finishedGood, target, achieved, rejectRate: get("OVEN").good + totalReject ? Math.round((totalReject / (get("OVEN").good + totalReject)) * 1000) / 10 : 0 };
+}
+
+export type StageDay = { date: string; cetak: number; oven: number; ovenReject: number; packing: number; giftbox: number };
+
+/** Hasil harian per tahap untuk rentang tanggal (inklusif); hari tanpa laporan = 0 */
+export async function alurRange(start: string, end: string, divisionId?: string | null): Promise<StageDay[]> {
+  const rows = await prisma.shiftReport.findMany({
+    where: { date: { gte: dateOnly(start), lte: dateOnly(end) }, status: { not: "DRAFT" }, ...(divisionId ? { divisionId } : {}) },
+    include: { division: { select: { reportTemplate: true } } },
+  });
+  const days = new Map<string, StageDay>();
+  for (let d = start; d <= end; d = new Date(Date.parse(`${d}T00:00:00Z`) + 86400000).toISOString().slice(0, 10)) days.set(d, { date: d, cetak: 0, oven: 0, ovenReject: 0, packing: 0, giftbox: 0 });
+  for (const r of rows) {
+    if (!isTemplate(r.division.reportTemplate)) continue;
+    const x = { template: r.division.reportTemplate as ReportTemplate, work: r.work as WorkData };
+    const day = days.get(r.date.toISOString().slice(0, 10));
+    if (!day) continue;
+    if (x.template === "CETAK" || x.template === "PRODUKSI") day.cetak += cetakOf(x).total;
+    if (x.template === "PRODUKSI") { const o = ovenOf(x); day.oven += o.good; day.ovenReject += o.reject; }
+    if (x.template === "PACKING") day.packing += packingOf(x).patung;
+    if (x.template === "GIFTBOX") day.giftbox += giftboxOf(x).box;
+  }
+  return [...days.values()];
+}
+
+/** Tren harian untuk grafik Dashboard (hasil panen oven, reject, dan patung dipacking) */
+export async function productionTrend(days: number, filter: { divisionId?: string | null } = {}) {
+  const endJ = todayStr();
+  const start = new Date(Date.parse(`${endJ}T00:00:00Z`) - (days - 1) * 86400000).toISOString().slice(0, 10);
+  return (await alurRange(start, endJ, filter.divisionId ?? null)).map((d) => ({ label: `${d.date.slice(8, 10)}/${d.date.slice(5, 7)}`, cetak: d.cetak, oven: d.oven, reject: d.ovenReject, packing: d.packing }));
 }

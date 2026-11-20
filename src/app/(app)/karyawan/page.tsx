@@ -49,7 +49,7 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
       <Field label="Nama"><input name="name" defaultValue={e?.name} className="input" required /></Field>
       <Field label="Divisi"><select name="divisionId" defaultValue={e?.divisionId} className="input">{divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
       <Field label="Status"><select name="status" defaultValue={e?.status ?? "AKTIF"} className="input"><option value="AKTIF">Aktif</option><option value="CUTI">Cuti</option><option value="NONAKTIF">Nonaktif</option></select></Field>
-      <Field label="Sistem upah"><select name="wageType" defaultValue={e?.wageType ?? "HARIAN"} className="input">{Object.entries(WAGE).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
+      <Field label="Sistem upah"><select name="wageType" defaultValue={e?.wageType ?? "HARIAN"} className="input">{Object.entries(WAGE).filter(([k]) => (k !== "BORONGAN" && k !== "CAMPURAN") || e?.wageType === k).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></Field>
       <Field label="Gaji Pokok (IDR)" hint="Untuk sistem upah Bulanan; Alpa dipotong Gaji Pokok ÷ 30 per hari"><input name="monthlySalary" inputMode="numeric" defaultValue={e ? Number(e.monthlySalary) : 0} className="input" /></Field>
       <Field label="Upah harian (IDR)" hint="Untuk Harian / Campuran"><input name="dailyRate" inputMode="numeric" defaultValue={e ? Number(e.dailyRate) : 0} className="input" /></Field>
       <Field label="Telepon"><input name="phone" defaultValue={e?.phone ?? ""} className="input" /></Field>
@@ -77,10 +77,16 @@ export default async function KaryawanPage({ searchParams }: { searchParams: Pro
       <div className="col-span-2 flex justify-end"><Submit>Simpan</Submit></div>
     </ModalForm>
   );
+  const perHasil = employees.filter((x) => x.status !== "NONAKTIF" && (x.wageType === "BORONGAN" || x.wageType === "CAMPURAN"));
   return (
     <div>
       <PageHeader title="Karyawan" subtitle="Data karyawan, divisi, status, sistem upah, tunjangan, dan akun login" actions={canManage && <Modal trigger="+ Karyawan" title="Karyawan baru">{form()}</Modal>} />
       {canManage && <Tabs current="karyawan" tabs={[{ key: "karyawan", label: "Karyawan", href: "/karyawan", count: employees.length }, { key: "pendaftaran", label: "Pendaftaran", href: "/karyawan/pendaftaran", count: await prisma.employeeRegistration.count({ where: { status: "MENUNGGU" } }) }]} />}
+      {perHasil.length > 0 && (
+        <div role="note" className="mb-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          ⚠ Masih ada <b>{perHasil.length}</b> karyawan aktif bersistem upah Borongan/Campuran ({perHasil.slice(0, 5).map((x) => x.name).join(", ")}{perHasil.length > 5 ? ", …" : ""}). Sistem ini sudah ditutup; ubah ke Bulanan/Harian, atau catat sebagai pekerja di menu Borongan.
+        </div>
+      )}
       <FilterBar>
         <Field label="Cari"><input name="q" defaultValue={sp.q} className="input" placeholder="Nama / kode" /></Field>
         {!fixedDiv && <Field label="Divisi"><select name="division" defaultValue={sp.division ?? ""} className="input"><option value="">Semua</option>{divisions.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>}
