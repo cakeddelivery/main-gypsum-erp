@@ -49,7 +49,8 @@
     "cek:absen": "tsx scripts/cek-absen.ts",
     "perbaiki:draf-ganda": "tsx scripts/perbaiki-draf-ganda.ts",
     "cek:selisih-stok": "tsx scripts/cek-selisih-stok.ts",
-    "perbaiki:shift-laporan": "tsx scripts/perbaiki-shift-laporan.ts"
+    "perbaiki:shift-laporan": "tsx scripts/perbaiki-shift-laporan.ts",
+    "perbaiki:single-pack": "tsx scripts/perbaiki-single-pack.ts"
   },
   "author": "",
   "license": "ISC",

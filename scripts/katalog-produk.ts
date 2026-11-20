@@ -16,6 +16,7 @@ import { CATALOG, applySkuPlan, ensureFamily, planFamilySkus } from "../src/lib/
 import { ensureWaterItem, addWaterToKeringRecipes } from "../src/lib/water";
 import { flowItem } from "../src/lib/shiftReportFlow";
 import { VARIANTS } from "../src/lib/shiftReport";
+import { applySinglePackLinks, planSinglePackLinks } from "../src/lib/singlePackLink";
 
 const run = process.argv.includes("--jalankan");
 const airMl = Number(process.argv.find((a) => a.startsWith("--air-ml="))?.split("=")[1] ?? "") || 0;
@@ -40,6 +41,10 @@ async function main() {
         const r = await applySkuPlan(tx, f, plans, { storeId, unit: spec.unit });
         console.log(`  → ${r.created} SKU baru, ${r.linked} produk lama dimasukkan ke induk`);
       }
+      const links = await planSinglePackLinks(tx);
+      await applySinglePackLinks(tx, links);
+      console.log("\nTautan Satuan Single Pack → barang Single Pack:");
+      for (const l of links) console.log(`  [${l.status}] ${l.text}`);
       const water = await ensureWaterItem(tx);
       console.log(`\nBahan baku Air: ${water.created ? "BARU" : "sudah ada"} ${water.item.sku} (${water.item.unit}, resep dalam ml, harga Rp${Number(water.item.lastCost).toLocaleString("id-ID")}/liter)`);
       if (airMl > 0) {

@@ -3,6 +3,7 @@ import { autoCode } from "./codes";
 import { itemQty, locationSettings, qtyAt, recordMovement } from "./stock";
 import { recipeUnit } from "./unitcost";
 import { skuKey } from "./returnLabel";
+import { applySinglePackLinks, planSinglePackLinks } from "./singlePackLink";
 
 type Tx = Prisma.TransactionClient;
 
@@ -441,6 +442,14 @@ async function run(tx: Tx, plan: ProdukHppPlan, konversi: KonversiOpts = {}) {
       taken.add(next);
       await renumberItemSku(tx, old, next, plan);
     }
+  }
+  // Produk katalog "Satuan Single Pack" harus menunjuk barang Single Pack-nya (grup Stok jadi laporan shift)
+  const links = await planSinglePackLinks(tx);
+  await applySinglePackLinks(tx, links);
+  for (const l of links) {
+    if (l.status === "tautkan") plan.diubah.push(`~ tautan produk ${l.text}`);
+    else if (l.status === "ganda" || l.status === "bentrok" || (l.status === "ok" && /ganda/i.test(l.text))) plan.bentrok.push(l.text);
+    else if (l.status !== "ok") plan.menunggu.push(l.text);
   }
 
   // ---------- 3. Produk jadi ----------

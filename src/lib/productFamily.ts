@@ -4,6 +4,7 @@ import { nextSequence } from "./codes";
 import { nextItemSku } from "./items";
 import { categoryPrefixOf, itemCategories } from "./itemCategories";
 import { TEMPLATES, isTemplate, type ReportCatalogs } from "./shiftReport";
+import { isSinglePackName } from "./singlePackLink";
 
 /**
  * Katalog produk induk + varian.
@@ -185,7 +186,13 @@ export async function planFamilySkus(db: Db, f: FamilyFull, spec?: FamilySpec, s
       const pkLegacy = pk ? legacyOf("Paket")?.options.find((x) => x.name === pk.name)?.legacy : undefined;
       if (ser && pk && (pk.name === "Standard" || pkLegacy)) legacySku = `BJ-GB-${ser}${pkLegacy ? `-${pkLegacy}` : ""}`;
     } else if (attrs.type === "SATUAN" && attrs.variant !== "MIX") legacySku = `BJ-SAT-${attrs.variant}`;
-    const legacyItem = legacySku ? await db.item.findUnique({ where: { sku: legacySku }, select: { id: true, sku: true, name: true } }) : null;
+    let legacyItem = legacySku ? await db.item.findUnique({ where: { sku: legacySku }, select: { id: true, sku: true, name: true } }) : null;
+    if ((!legacyItem || linkedItemIds.has(legacyItem.id)) && attrs.type === "SATUAN" && attrs.variant !== "MIX") {
+      // Barang "Single Pack <varian>" hasil Packing (tepat satu, belum tertaut) dipakai agar stok jadi laporan shift masuk grup ini
+      const v = opts.find((o) => o.variant === attrs.variant)?.name ?? attrs.variant;
+      const sp = (await db.item.findMany({ where: { active: true, name: { contains: "single", mode: "insensitive" } }, select: { id: true, sku: true, name: true } })).filter((i) => isSinglePackName(v, i.name) && !linkedItemIds.has(i.id));
+      if (sp.length === 1) legacyItem = sp[0];
+    }
     if (legacyItem && !linkedItemIds.has(legacyItem.id)) {
       linkedItemIds.add(legacyItem.id);
       out.push({ name, optionIds, attrs, action: "item-lama", existingItem: legacyItem });
@@ -212,7 +219,8 @@ export async function applySkuPlan(db: Db, f: { id: string; name: string }, plan
       continue;
     }
     let itemId = p.existingItem?.id;
-    if (itemId) await db.item.update({ where: { id: itemId }, data: { name: p.name, category: category ?? undefined } });
+    // Barang "Single Pack <varian>" tetap bernama Single Pack (nama dipakai setup HPP & laporan)
+    if (itemId) await db.item.update({ where: { id: itemId }, data: { name: p.existingItem && isSinglePackName(String(p.attrs.variant), p.existingItem.name) ? undefined : p.name, category: category ?? undefined } });
     else itemId = (await db.item.create({ data: { sku: await nextItemSku(db as Prisma.TransactionClient, prefix), name: p.name, type: "BARANG_JADI", unit: opts.unit, category } })).id;
     const item = await db.item.findUniqueOrThrow({ where: { id: itemId } });
     let sku = item.sku;
