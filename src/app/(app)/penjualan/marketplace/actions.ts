@@ -8,14 +8,19 @@ import { audit } from "@/lib/audit";
 import { createInvoice, InvoiceError } from "@/lib/invoice";
 import { commitImport, previewImport, undoImport, MarketplaceImportError, type ImportFile, type Preview } from "@/lib/marketplace/import";
 import { FormatError, parseMarketplaceFile } from "@/lib/marketplace/parse";
+import { integrityCheck } from "@/lib/marketplace/integrity";
+import { latestMonth } from "@/lib/marketplace/dashboard";
+import { finishJob, runningJob, startJob, stepJob } from "@/lib/marketplace/job";
+import { detectFiles, type Detected } from "@/lib/marketplace/slots";
 import { resolveSkuKeys } from "@/lib/marketplace/sku";
 import { dateStr } from "@/lib/time";
 import { FEE_CATEGORIES, normCol } from "@/lib/marketplace/feeMap";
 import { applyActuals, applyProductAffiliate } from "@/lib/marketplace/potongan";
 import { WD_REMINDER_KEY } from "@/lib/marketplace/saldo";
 import { SYNC_HOUR_KEY, SYNC_START_KEY } from "@/lib/marketplace/sync";
+import { SECTORS, loadTargets, saveTargets, targetKey } from "@/lib/marketplace/pengeluaran";
 
-const MAX_FILES = 4;
+const MAX_FILES = 12;
 const MAX_BYTES = 12 * 1024 * 1024;
 
 type SerPreview = { files: (Omit<Preview["files"][number], "periodFrom" | "periodTo"> & { periodFrom: string | null; periodTo: string | null })[]; totals: Preview["totals"] };
@@ -45,6 +50,83 @@ async function readFiles(fd: FormData): Promise<{ files: ImportFile[]; fileError
     }
   }
   return { files, fileErrors };
+}
+
+/** Kenali jenis file + cek slot/toko (belum menyimpan apa pun) */
+export async function detectSlotsAction(fd: FormData): Promise<{ ok: boolean; error?: string; items?: Detected[] }> {
+  try {
+    await assertPerm("sales.manage");
+    const raw = fd.getAll("file").filter((f): f is File => f instanceof File && f.size > 0);
+    const targets = fd.getAll("target").map(String);
+    if (!raw.length) return { ok: false, error: "Pilih file dulu" };
+    if (raw.length > MAX_FILES) return { ok: false, error: `Maksimal ${MAX_FILES} file sekaligus` };
+    const items: { name: string; buf: Buffer; target?: string }[] = [];
+    const pre: Detected[] = [];
+    for (let i = 0; i < raw.length; i++) {
+      if (raw[i].size > MAX_BYTES) { pre[i] = { fileName: raw[i].name, error: "File terlalu besar (maks 12 MB). Unduh per bulan dari Seller Center." }; continue; }
+      items.push({ name: raw[i].name, buf: Buffer.from(await raw[i].arrayBuffer()), target: targets[i] || undefined });
+    }
+    const det = await detectFiles(items);
+    let j = 0;
+    return { ok: true, items: raw.map((_, i) => pre[i] ?? det[j++]) };
+  } catch (e) {
+    return { ok: false, error: friendly(e) };
+  }
+}
+
+/** Progres impor: mulai → simpan file satu per satu → selesai (dipanggil dari halaman Impor) */
+export async function startImportJobAction(total: number, label: string): Promise<{ ok: boolean; id?: string; error?: string }> {
+  try {
+    const user = await assertPerm("sales.manage");
+    const running = await runningJob();
+    if (running) return { ok: false, error: `Masih ada impor berjalan oleh ${running.by}. Tunggu sampai selesai.` };
+    return { ok: true, id: (await startJob(user, total, label)).id };
+  } catch (e) {
+    return { ok: false, error: friendly(e) };
+  }
+}
+
+export async function saveOneFileAction(fd: FormData): Promise<{ ok: boolean; error?: string; baru?: number; diperbarui?: number; dilewati?: number; importId?: string }> {
+  const jobId = str(fd, "jobId");
+  try {
+    const user = await assertPerm("sales.manage");
+    const { files, fileErrors } = await readFiles(fd);
+    if (fileErrors.length || files.length !== 1) return { ok: false, error: fileErrors[0]?.error ?? "File tidak bisa dibaca" };
+    const [r] = await commitImport(user, files);
+    revalidatePath("/penjualan", "layout");
+    if (jobId) await stepJob(jobId, Number(str(fd, "done")) || 0, `${files[0].fileName} ✓`);
+    return { ok: true, baru: r.baru, diperbarui: r.diperbarui, dilewati: r.dilewati, importId: r.importId };
+  } catch (e) {
+    return { ok: false, error: e instanceof MarketplaceImportError ? e.message : friendly(e) };
+  }
+}
+
+/** Tutup proses impor + hitung ulang cek integritas bulan terbaru (hasilnya ditampilkan di ringkasan akhir) */
+export async function finishImportJobAction(id: string, ok: boolean, message: string): Promise<{ ok: boolean; failed?: number; total?: number; month?: string }> {
+  try {
+    await assertPerm("sales.manage");
+    let res: { failed?: number; total?: number; month?: string } = {};
+    if (ok) {
+      try {
+        const month = await latestMonth();
+        const c = await integrityCheck({ month });
+        res = { failed: c.failed, total: c.total, month };
+      } catch {
+        /* cek integritas gagal dihitung: impor tetap sah */
+      }
+    }
+    await finishJob(id, ok, message);
+    revalidatePath("/penjualan", "layout");
+    return { ok: true, ...res };
+  } catch {
+    return { ok: true }; // banner basi hilang sendiri setelah 15 menit
+  }
+}
+
+export async function importRunningAction(): Promise<{ running: Awaited<ReturnType<typeof runningJob>> extends infer T ? (T extends null ? null : { by: string; total: number; done: number; label: string | null }) : never }> {
+  await assertPerm("sales.view");
+  const r = await runningJob();
+  return { running: r ? { by: r.by, total: r.total, done: r.done, label: r.label } : null };
 }
 
 const ser = (p: Preview): SerPreview => ({ totals: p.totals, files: p.files.map((f) => ({ ...f, periodFrom: f.periodFrom ? dateStr(f.periodFrom) : null, periodTo: f.periodTo ? dateStr(f.periodTo) : null })) });
@@ -216,6 +298,29 @@ export const saveSyncAction = action(
     await prisma.setting.upsert({ where: { key: SYNC_HOUR_KEY }, create: { key: SYNC_HOUR_KEY, value: String(hour) }, update: { value: String(hour) } });
     await audit(user, "MARKETPLACE_SYNC_ATUR", "Setting", SYNC_START_KEY, { start: start || null, hour });
     return start ? `Data marketplace wajib diperbarui tiap hari mulai ${start} (pengingat pukul ${String(hour).padStart(2, "0")}.00)` : "Tuntutan pembaruan harian dimatikan";
+  },
+  ["/penjualan"],
+);
+
+/** Target % biaya per sektor (kosong = pakai bawaan dari pengaturan Produk › Biaya atau rata-rata 3 bulan + 20%) */
+export const saveCostTargetsAction = action(
+  "sales.manage",
+  async (fd, user) => {
+    const channel = str(fd, "channel");
+    if (channel !== "SHP" && channel !== "TTS") throw new InvoiceError("Kanal tidak valid");
+    const cur = await loadTargets();
+    for (const s of SECTORS) {
+      const raw = str(fd, `t:${s.key}`).replace(",", ".");
+      const k = targetKey(channel, s.key);
+      if (raw === "") delete cur[k];
+      else {
+        const v = Number(raw);
+        if (!Number.isFinite(v) || v < 0 || v > 100) throw new InvoiceError(`Target ${s.label}: isi angka 0–100`);
+        cur[k] = v;
+      }
+    }
+    await saveTargets(user, cur);
+    return "Target biaya tersimpan";
   },
   ["/penjualan"],
 );
