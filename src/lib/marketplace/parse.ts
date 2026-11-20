@@ -35,7 +35,13 @@ export type ParsedOrder = {
   refundAmount: number;
   returnQty: number;
   lines: ParsedLine[];
+  /** Semua kolom NON-pribadi dari file Order, satu objek per baris produk (nama kolom → nilai) */
+  extra?: Record<string, string | number>[];
 };
+/** Selisih ongkir Shopee (sheet "Shipping Fee Discrepancy") */
+export type ParsedShipDisc = { orderNo: string; estimate: number; paid: number; diff: number; reason: string | null; date: Date | null };
+/** Rincian "Seller Fee" Shopee per pesanan */
+export type ParsedSellerFee = { orderNo: string; platformFee: number; xtra: number; service: number; promo: number; other: number };
 export type ParsedIncome = {
   /// ORDER · ADS (potongan GMV iklan TikTok, langsung dari saldo) · ADJUST (penyesuaian) · TOPUP (isi saldo iklan Shopee, mengurangi saldo penjual) · ADSUSE (mutasi saldo iklan Shopee: pemakaian = biaya iklan)
   kind: "ORDER" | "ADS" | "ADJUST" | "TOPUP" | "ADSUSE";
@@ -59,10 +65,12 @@ export type ParsedFile = {
   withdrawals: ParsedWithdrawal[];
   /** Hanya file Buku Saldo Penjual */
   balanceTx?: ParsedBalanceTx[];
+  shipDiscrepancies?: ParsedShipDisc[];
+  sellerFees?: ParsedSellerFee[];
   periodFrom: Date | null;
   periodTo: Date | null;
   /** Info tampilan (mis. username penjual dari sheet Summary Shopee) */
-  info: { seller?: string; rows: number; /** Keterangan tambahan untuk pratinjau (mis. ringkasan Saldo Penjual) */ note?: string; /** Total ringkasan di file (Shopee Summary / TikTok Laporan) untuk cek integritas */ summaryTotal?: number; summaryLabel?: string };
+  info: { seller?: string; rows: number; /** Sheet yang dibaca / dilewati (dengan alasan) & kolom yang sengaja tidak disimpan (data pribadi) */ sheets?: { read: string[]; skipped: { name: string; reason: string }[] }; personalCols?: string[]; /** Semua baris sheet Summary (label → angka) */ summaryRows?: { label: string; value: number }[]; /** Keterangan tambahan untuk pratinjau (mis. ringkasan Saldo Penjual) */ note?: string; /** Total ringkasan di file (Shopee Summary / TikTok Laporan) untuk cek integritas */ summaryTotal?: number; summaryLabel?: string };
 };
 
 export class FormatError extends Error {}
@@ -153,6 +161,24 @@ const textRight = (sheet: Sheet | undefined, re: RegExp): string | undefined => 
   return undefined;
 };
 
+/** Kolom berisi data pribadi pembeli/penerima: TIDAK disimpan (kolom wilayah kota/provinsi sudah disimpan terpisah) */
+const PERSONAL_RE = /username|nama penerima|nama pembeli|penerima|pembeli.*nama|telepon|telp|phone|alamat|address|kode ?pos|zip|postal|catatan|note|message|pesan dari|buyer|recipient|email|\bnik\b|ktp|kecamatan|kelurahan|district|village|desa|rekening|bank account|account no/;
+/** Pengecualian: kolom "ongkos kirim dibayar oleh pembeli", dst. bukan data pribadi */
+const NOT_PERSONAL_RE = /dibayar oleh pembeli|paid by buyer|buyer paid|buyer service fee|biaya.*pembeli|pembeli.*biaya|diskon|subtotal|jumlah|total|voucher/;
+export const isPersonalCol = (name: string) => { const k = name.toLowerCase(); return PERSONAL_RE.test(k) && !NOT_PERSONAL_RE.test(k); };
+/** Satu baris file Order → semua kolom non-pribadi yang terisi */
+function rawRow(header: Cell[], r: Cell[]): Record<string, string | number> {
+  const out: Record<string, string | number> = {};
+  header.forEach((c, i) => {
+    const k = String(c ?? "").trim();
+    const v = r?.[i];
+    if (!k || v === null || v === undefined || v === "" || k in out || isPersonalCol(k)) return;
+    out[k.slice(0, 60)] = typeof v === "number" ? v : String(v).replace(/\s+/g, " ").slice(0, 100);
+  });
+  return out;
+}
+const personalCols = (header: Cell[]) => [...new Set(header.map((c) => String(c ?? "").trim()).filter((k) => k && isPersonalCol(k)))];
+
 // ---------- 1) Shopee Order.all ----------
 function parseShopeeOrders(sh: Sheet): ParsedFile {
   const hr = findHeaderRow(sh.rows, "no. pesanan", 3);
@@ -196,13 +222,14 @@ function parseShopeeOrders(sh: Sheet): ParsedFile {
     const retQty = Math.round(parseNum(r[I.retQty]));
     // SKU: Nomor Referensi SKU; bila kosong pakai SKU Induk (varian dibedakan lewat Nama Variasi)
     const ref = str(r[I.ref]);
+    (o.extra ??= []).push(rawRow(sh.rows[hr], r));
     o.lines.push({ sku: ref ?? str(r[I.skuInduk]), variation: ref ? null : clean(str(r[I.variation]), 80), name: clean(str(r[I.name]), 120), qty, unitPrice: unit, amount: Math.round(qty * unit), returnQty: retQty });
     o.returnQty += retQty;
   }
   const orders = [...byNo.values()];
   for (const o of orders) if (!o.total) o.total = o.subtotal || o.lines.reduce((a, l) => a + l.amount, 0); // nilai pesanan tidak boleh Rp 0 bila ada isinya
   const { from, to } = minMax(orders.map((o) => o.orderedAt));
-  return { platform: "SHOPEE", kind: "ORDER", orders, incomes: [], withdrawals: [], periodFrom: from, periodTo: to, info: { rows } };
+  return { platform: "SHOPEE", kind: "ORDER", orders, incomes: [], withdrawals: [], periodFrom: from, periodTo: to, info: { rows, personalCols: personalCols(sh.rows[hr]) } };
 }
 
 // ---------- 2) Shopee Income (sheet Penghasilan) ----------
@@ -265,7 +292,66 @@ function parseShopeeIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
     note = `Sheet Adjustment (${n} baris) tidak dihitung dari file ini; penyesuaian saldo dibaca dari file “Transaksi Saldo Penjual”.`;
   }
   const { from, to } = minMax(incomes.map((x) => x.releasedAt ?? x.orderedAt));
-  return { platform: "SHOPEE", kind: "INCOME", orders: [], incomes, withdrawals: [], periodFrom: from, periodTo: to, info: { seller, rows, note, summaryTotal, summaryLabel } };
+  const dateOf = new Map(incomes.map((x) => [x.refNo, x.releasedAt ?? x.orderedAt]));
+  const shipDiscrepancies = parseShipDiscrepancy(sheetOf(sheets, "shipping fee discrepancy"), dateOf);
+  const sellerFees = parseSellerFee(sheetOf(sheets, "seller fee"));
+  const summaryRows = summaryList(sum);
+  const read = [sh.name, ...(sum ? [sum.name] : []), ...(shipDiscrepancies.length || sheetOf(sheets, "shipping fee discrepancy") ? ["Shipping Fee Discrepancy"] : []), ...(sellerFees.length || sheetOf(sheets, "seller fee") ? ["Seller Fee"] : [])];
+  const skipped = sheets.filter((x) => !read.includes(x.name)).map((x) => ({ name: x.name, reason: norm(x.name) === "adjustment" ? "ringkasan (penyesuaian saldo dibaca dari file Saldo Penjual, agar tidak dobel)" : "tidak dipakai" }));
+  return { platform: "SHOPEE", kind: "INCOME", orders: [], incomes, withdrawals: [], periodFrom: from, periodTo: to, shipDiscrepancies, sellerFees, info: { seller, rows, note, summaryTotal, summaryLabel, summaryRows, sheets: { read, skipped } } };
+}
+
+/** Sheet "Shipping Fee Discrepancy": baris 1 catatan, header baris 2 (No. Pesanan | Estimasi Ongkos Kirim | Ongkos Kirim yang Dibayarkan ke Jasa Kirim | Discrepancy reason) */
+function parseShipDiscrepancy(sh: Sheet | undefined, dateOf: Map<string, Date | null>): ParsedShipDisc[] {
+  if (!sh) return [];
+  const hr = findHeaderRow(sh.rows, "no. pesanan", 6);
+  if (hr < 0) return [];
+  const h = headerMap(sh.rows[hr]);
+  const est = [...h.keys()].find((k) => k.startsWith("estimasi ongkos kirim"));
+  const paid = [...h.keys()].find((k) => k.startsWith("ongkos kirim yang dibayarkan"));
+  const why = [...h.keys()].find((k) => k.includes("discrepancy reason") || k.includes("alasan"));
+  const iNo = h.get("no. pesanan")!, iEst = est ? h.get(est)! : -1, iPaid = paid ? h.get(paid)! : -1, iWhy = why ? h.get(why)! : -1;
+  if (iEst < 0 || iPaid < 0) return [];
+  const out = new Map<string, ParsedShipDisc>();
+  for (const r of sh.rows.slice(hr + 1)) {
+    const no = str(r?.[iNo]);
+    if (!no || !/\d/.test(no)) continue;
+    const e = Math.round(parseNum(r[iEst])), p = Math.round(parseNum(r[iPaid]));
+    out.set(no, { orderNo: no, estimate: e, paid: p, diff: p - e, reason: iWhy >= 0 ? clean(str(r[iWhy]), 200) : null, date: dateOf.get(no) ?? null });
+  }
+  return [...out.values()];
+}
+
+/** Sheet "Seller Fee": No. | No. Pesanan | Biaya Platform | Biaya Gratis Ongkir XTRA | Biaya Layanan | Biaya Promosi | Biaya Lainnya */
+function parseSellerFee(sh: Sheet | undefined): ParsedSellerFee[] {
+  if (!sh) return [];
+  const hr = findHeaderRow(sh.rows, "no. pesanan", 6);
+  if (hr < 0) return [];
+  const h = headerMap(sh.rows[hr]);
+  const col = (re: RegExp) => { const k = [...h.keys()].find((x) => re.test(x)); return k ? h.get(k)! : -1; };
+  const I = { no: h.get("no. pesanan")!, platform: col(/^biaya platform/), xtra: col(/xtra|gratis ongkir/), service: col(/^biaya layanan/), promo: col(/^biaya promosi/), other: col(/^biaya lainnya/) };
+  const v = (r: Cell[], i: number) => (i < 0 ? 0 : Math.round(Math.abs(parseNum(r[i]))));
+  const out = new Map<string, ParsedSellerFee>();
+  for (const r of sh.rows.slice(hr + 1)) {
+    const no = str(r?.[I.no]);
+    if (!no || !/\d/.test(no)) continue;
+    out.set(no, { orderNo: no, platformFee: v(r, I.platform), xtra: v(r, I.xtra), service: v(r, I.service), promo: v(r, I.promo), other: v(r, I.other) });
+  }
+  return [...out.values()];
+}
+
+/** Semua baris ringkasan sheet Summary (label + angka pertama di kanannya) */
+function summaryList(sum: Sheet | undefined): { label: string; value: number }[] {
+  const out: { label: string; value: number }[] = [];
+  for (const row of sum?.rows ?? []) {
+    const i = (row ?? []).findIndex((c) => typeof c === "string" && c.trim() && !/^[\d.,\s-]+$/.test(c));
+    if (i < 0) continue;
+    const label = String(row[i]).trim().slice(0, 80);
+    const val = row.slice(i + 1).find((c) => typeof c === "number" || (typeof c === "string" && /^-?[\d.,]+$/.test(c.trim())));
+    if (val === undefined) continue;
+    out.push({ label, value: parseNum(val) });
+  }
+  return out.slice(0, 80);
 }
 
 // ---------- 3) TikTok Semua pesanan ----------
@@ -305,6 +391,7 @@ function parseTiktokOrders(sh: Sheet): ParsedFile {
     const unit = parseNum(r[I.unit]);
     const amount = parseNum(r[I.after]) || Math.round(qty * unit);
     const retQty = Math.round(parseNum(r[I.retQty]));
+    (o.extra ??= []).push(rawRow(sh.rows[hr], r));
     o.lines.push({ sku: str(r[I.seller]), variation: clean(str(r[I.variation]), 80), name: clean(str(r[I.name]), 120), qty, unitPrice: unit, amount: Math.round(amount), returnQty: retQty });
     o.subtotal += Math.round(parseNum(r[I.before]) || qty * unit);
     o.discount += Math.round(parseNum(r[I.sellerDisc]));
@@ -313,7 +400,7 @@ function parseTiktokOrders(sh: Sheet): ParsedFile {
   const orders = [...byNo.values()];
   for (const o of orders) if (!o.total) o.total = Math.max(0, o.subtotal - o.discount) || o.lines.reduce((a, l) => a + l.amount, 0);
   const { from, to } = minMax(orders.map((o) => o.orderedAt));
-  return { platform: "TIKTOK", kind: "ORDER", orders, incomes: [], withdrawals: [], periodFrom: from, periodTo: to, info: { rows } };
+  return { platform: "TIKTOK", kind: "ORDER", orders, incomes: [], withdrawals: [], periodFrom: from, periodTo: to, info: { rows, personalCols: personalCols(sh.rows[hr]) } };
 }
 
 // ---------- 4) TikTok income ----------
@@ -377,7 +464,9 @@ function parseTiktokIncome(sheets: Sheet[], sh: Sheet): ParsedFile {
   } catch {
     /* info saja */
   }
-  return { platform: "TIKTOK", kind: "INCOME", orders: [], incomes, withdrawals, periodFrom: from, periodTo: to, info: { rows, seller, summaryTotal, summaryLabel } };
+  const read = [sh.name, ...(rep ? [rep.name] : []), ...(wd ? [wd.name] : [])];
+  const skipped = sheets.filter((x) => !read.includes(x.name)).map((x) => ({ name: x.name, reason: /penjelasan/.test(norm(x.name)) ? "dilewati: penjelasan (dokumentasi biaya)" : "tidak dipakai" }));
+  return { platform: "TIKTOK", kind: "INCOME", orders: [], incomes, withdrawals, periodFrom: from, periodTo: to, info: { rows, seller, summaryTotal, summaryLabel, summaryRows: summaryList(rep), sheets: { read, skipped } } };
 }
 
 // ---------- 5) Shopee "Transaksi Saldo Penjual" (format toleran: dideteksi dari header kolom) ----------
@@ -548,6 +637,20 @@ function describeSheets(sheets: Sheet[]) {
 
 /** Kenali & baca satu file; format tak dikenal → FormatError berpesan jelas */
 export async function parseMarketplaceFile(buf: Buffer | Uint8Array): Promise<ParsedFile> {
+  const r = await parseInner(buf);
+  if (!r.info.sheets) {
+    if (!(buf[0] === 0x50 && buf[1] === 0x4b)) r.info.sheets = { read: ["CSV"], skipped: [] };
+    else {
+      const sheets = await readXlsx(buf);
+      const main = r.kind === "ORDER" ? (sheetOf(sheets, "orders") ?? sheetOf(sheets, "orderskulist")) : undefined;
+      const read = main ? [main.name] : sheets.filter((x) => x.rows.length).map((x) => x.name);
+      r.info.sheets = { read, skipped: sheets.filter((x) => !read.includes(x.name)).map((x) => ({ name: x.name, reason: /penjelasan|instruction|petunjuk/.test(norm(x.name)) ? "dilewati: penjelasan/dokumentasi" : "tidak dipakai" })) };
+    }
+  }
+  return r;
+}
+
+async function parseInner(buf: Buffer | Uint8Array): Promise<ParsedFile> {
   // CSV (saldo iklan Shopee) bukan zip/xlsx
   if (!(buf[0] === 0x50 && buf[1] === 0x4b)) {
     const ads = parseAdsBillCsv(Buffer.from(buf).toString("utf8"));

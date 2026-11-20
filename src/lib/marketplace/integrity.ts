@@ -100,6 +100,18 @@ export async function integrityCheck(f: { month: string; storeId?: string }) {
           for (const [no, v] of book) if (Math.abs(v - (inc.get(no) ?? 0)) > TOL) hm.push(`${no}: buku saldo ${idr(v)} vs penghasilan ${inc.has(no) ? idr(inc.get(no)!) : "(belum diimpor)"}`);
           checks.push({ key: "h", label: "Buku Saldo Shopee = file Penghasilan per pesanan", ok: hm.length === 0, detail: hm.length ? `${hm.length} dari ${book.size} pesanan berbeda` : `${book.size} pesanan cocok`, items: hm.slice(0, 20) });
         }
+        // j. Sheet "Seller Fee" (5 kolom biaya per pesanan) = biaya terhitung di file Penghasilan, per pesanan
+        const sfRows = await prisma.marketplaceSellerFee.findMany({ where: { storeId: s.id, channel: ch, orderNo: { in: incomes.map((i) => i.refNo) } } });
+        if (sfRows.length) {
+          const feeOf = new Map(incomes.map((i) => [i.refNo, Math.abs(sumFees(platform, [(i.feeDetail ?? {}) as Record<string, number>], overrides).counted)]));
+          const jm: string[] = [];
+          for (const r of sfRows) {
+            const total = n(r.platformFee) + n(r.xtra) + n(r.service) + n(r.promo) + n(r.other);
+            const mine = feeOf.get(r.orderNo) ?? 0;
+            if (Math.abs(total - mine) > TOL) jm.push(`${r.orderNo}: Seller Fee ${idr(total)} vs potongan di Penghasilan ${idr(mine)} (selisih ${idr(total - mine)})`);
+          }
+          checks.push({ key: "j", label: "Seller Fee (5 kolom) = potongan di Penghasilan per pesanan", ok: jm.length === 0, detail: jm.length ? `${jm.length} dari ${sfRows.length} pesanan berbeda — cek pemetaan biaya (komisi AMS/ongkir bisa dihitung terpisah)` : `${sfRows.length} pesanan cocok`, items: jm.slice(0, 20) });
+        }
         // i. Saldo menurut Shopee vs estimasi ERP
         const bb = await bookBalance(s.id, ch);
         if (bb) checks.push({ key: "i", label: "Saldo menurut Shopee = estimasi ERP", ok: Math.abs(bb.diff) <= TOL, detail: `per ${bb.asOf}: Shopee ${idr(bb.shopee)} vs ERP ${idr(bb.erp)} (selisih ${idr(bb.diff)})`, items: Math.abs(bb.diff) > TOL ? [`saldo awal ${idr(bb.opening)} (${bb.from}) + cair/penyesuaian/isi saldo iklan ${idr(bb.events)} − withdraw ${idr(bb.withdraws)}`] : [] });
