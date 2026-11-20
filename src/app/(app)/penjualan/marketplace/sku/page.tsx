@@ -7,6 +7,17 @@ import { SkuRow } from "./SkuRow";
 
 export const metadata = { title: "Pemetaan SKU Marketplace" };
 
+/** Kiri: SKU + nama produk dalam 1 baris (dipotong, tooltip penuh) + jumlah pesanan */
+function Info({ r, label, badge }: { r: { orders: number; sample?: { name: string | null } }; label: string; badge?: React.ReactNode }) {
+  const title = `${label} · ${r.sample?.name ?? ""} · ${r.orders} pesanan`;
+  return (
+    <div className="min-w-0 flex-1" title={title}>
+      <p className="truncate text-sm font-medium">{label} {badge}</p>
+      <p className="truncate text-xs text-slate-500">{r.sample?.name ?? "-"} · {r.orders} pesanan</p>
+    </div>
+  );
+}
+
 export default async function SkuPage() {
   const user = await requirePerm("sales.view");
   const canManage = user.can("sales.manage");
@@ -21,32 +32,25 @@ export default async function SkuPage() {
       <p className="text-sm text-slate-500">“12 MIX”, “12MIX”, dan “MG-12MIX” dibaca sebagai SKU yang sama. Extra Packing (Bubble Wrap, Extra Dus) adalah pendapatan tambahan, bukan produk jadi: tidak masuk penjualan produk dan tidak menyentuh stok.</p>
       <Card title={`Belum dipetakan (${todo.length})`}>
         {todo.length === 0 ? <Empty title="Semua SKU sudah dikenali" /> : (
-          <div className="space-y-3">
+          <ul className="divide-y divide-slate-100">
             {todo.map((r) => (
-              <div key={r.key} className="rounded-lg border border-slate-200 p-3">
-                <p className="text-sm font-medium">{label(r)} <span className="font-normal text-slate-400">· {r.sample?.name} · {r.orders} pesanan</span></p>
-                {canManage && <div className="mt-2"><SkuRow skuKey={r.key} items={items} kind="PRODUK" /></div>}
-              </div>
+              <li key={r.key} className="flex flex-col gap-2 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <Info r={r} label={label(r)} />
+                {canManage && <SkuRow skuKey={r.key} items={items} kind="PRODUK" />}
+              </li>
             ))}
-          </div>
+          </ul>
         )}
       </Card>
       <Card title={`Sudah dikenali (${done.length})`}>
-        <div className="table-wrap">
-          <table className="tbl">
-            <thead><tr><th>SKU</th><th className="num">Pesanan</th><th>Produk / jenis</th><th></th></tr></thead>
-            <tbody>
-              {done.map((r) => (
-                <tr key={r.key}>
-                  <td>{label(r)}</td>
-                  <td className="num">{r.orders}</td>
-                  <td>{r.resolved!.kind === "PRODUK" ? <>{r.resolved!.itemName} <Badge tone={r.resolved!.by === "PETA" ? "green" : "blue"}>{r.resolved!.by === "PETA" ? "Dipetakan" : "Otomatis"}</Badge></> : <><Badge tone="purple">Extra Packing</Badge> {r.resolved!.variant}</>}</td>
-                  <td>{canManage && <SkuRow skuKey={r.key} items={items} kind={r.resolved!.kind} itemId={r.resolved!.kind === "PRODUK" ? r.resolved!.itemId : undefined} variant={r.resolved!.kind === "EXTRA_PACKING" ? r.resolved!.variant : undefined} />}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ul className="divide-y divide-slate-100">
+          {done.map((r) => (
+            <li key={r.key} className="flex flex-col gap-2 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <Info r={r} label={label(r)} badge={r.resolved!.kind === "PRODUK" ? <Badge tone={r.resolved!.by === "PETA" ? "green" : "blue"}>{r.resolved!.by === "PETA" ? "Dipetakan" : "Otomatis"}</Badge> : <Badge tone="purple">Extra Packing</Badge>} />
+              {canManage && <SkuRow skuKey={r.key} items={items} kind={r.resolved!.kind} itemId={r.resolved!.kind === "PRODUK" ? r.resolved!.itemId : undefined} variant={r.resolved!.kind === "EXTRA_PACKING" ? r.resolved!.variant : undefined} />}
+            </li>
+          ))}
+        </ul>
       </Card>
     </div>
   );

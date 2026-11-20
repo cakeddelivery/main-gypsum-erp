@@ -6,7 +6,8 @@ import { categoryOf, defaultCategory, sumFees } from "@/lib/marketplace/feeMap";
 import { commitImport, undoImport } from "@/lib/marketplace/import";
 import type { ParsedFile, ParsedIncome, ParsedOrder } from "@/lib/marketplace/parse";
 import { affiliateReport, applyActuals, feeVsSettings, potonganReport } from "@/lib/marketplace/potongan";
-import { allocateFifo, matchTiktokWithdrawals, matchWithdrawals, saldoNeedsAttention, saldoPanel, saldoStatus } from "@/lib/marketplace/saldo";
+import { listOrders, orderSummary, regionReport } from "@/lib/marketplace/report";
+import { allocateFifo, allocationMap, stageOf, matchTiktokWithdrawals, matchWithdrawals, saldoNeedsAttention, saldoPanel, saldoStatus } from "@/lib/marketplace/saldo";
 
 /** Tanggal jauh (2036) agar tidak bercampur data tes lain */
 const tag = Date.now().toString(36).slice(-4).toUpperCase();
@@ -115,6 +116,80 @@ describe("TikTok baris iklan & penyesuaian", () => {
   });
 });
 
+describe("Piutang → Di saldo → Ditarik (alokasi FIFO per pesanan)", () => {
+  it("withdraw dari Keuangan menutup cair tertua; sebagian ditandai; kartu & tab konsisten; potongan = komponen COUNTED; tanpa transaksi/jurnal otomatis", async () => {
+    const st = await storeDL();
+    const coa = await prisma.coaAccount.findFirstOrThrow();
+    const bank = await prisma.bankAccount.create({ data: { code: `MPD${tag}`, name: `Saldo Shopee DL ${tag}`, coaAccountId: coa.id, marketplace: true, aliases: "shopee" } });
+    const mine: (() => Promise<unknown>)[] = [() => prisma.bankAccount.delete({ where: { id: bank.id } })];
+    try {
+      const o = (n: number, d: string, total: number) => ord(`D${num}${n}`, { orderedAt: at(d), total, lines: [{ sku: `FIFO${tag}`, variation: null, name: "Produk", qty: 1, unitPrice: total, amount: total, returnQty: 0 }] });
+      const fee = { "Biaya Administrasi": -1000, "Voucher disponsor oleh Penjual": -200, "Pengembalian Dana ke Pembeli": -777 }; // voucher counted (Shopee), kolom info tidak
+      const orders = [o(1, "2036-09-01", 10000), o(2, "2036-09-02", 20000), o(3, "2036-09-03", 30000), o(4, "2036-09-03", 9000)];
+      const rel = (n: number, d: string, v: number) => inc(`D${num}${n}`, { orderedAt: at("2036-09-01"), releasedAt: at(d), released: v, productAmt: v + 1200, feeDetail: fee });
+      const incomes = [rel(1, "2036-09-01", 10000), rel(2, "2036-09-02", 20000), rel(3, "2036-09-03", 30000)]; // pesanan 4 belum cair
+      const rs = await commitImport(actor, [{ fileName: `ord.fifo.${tag}.xlsx`, storeId: st.id, parsed: file("SHOPEE", "ORDER", { orders }) }, { fileName: `inc.fifo.${tag}.xlsx`, storeId: st.id, parsed: file("SHOPEE", "INCOME", { incomes }) }]);
+      mine.push(...rs.map((r) => () => undoImport(actor, r.importId)));
+      const mk = (k: number, ref: string, amount: number, d: string) => prisma.financeTransaction.create({ data: { number: `TX-MPT-${tag}-F${k}`, source: "MANUAL", direction: "TRANSFER", amount: BigInt(amount), date: at(d), accountId: bank.id, status: "DIBUKUKAN", fingerprint: `fp-${tag}-F${k}`, createdBy: "t", withdrawRef: ref, storeId: st.id } });
+      const f = { storeId: st.id, channel: "SHP", from: "2036-09-01", to: "2036-09-30" };
+      // belum ada withdraw: semua cair masih di saldo
+      let sum = await orderSummary(f);
+      expect(sum.counts).toMatchObject({ ALL: 4, PIUTANG: 1, CAIR: 3, DITARIK: 0 });
+      expect(sum).toMatchObject({ piutang: 9000, saldo: 60000, withdrawnMonth: 0 });
+      expect(sum.fees).toBe(3600); // (1000 + 200 voucher) × 3 pesanan; kolom info tidak ikut
+      expect(sum.fees).toBe(Math.abs((await potonganReport(f)).rows.filter((r) => r.counted).reduce((a, r) => a + r.value, 0))); // sama dengan halaman Potongan
+      // withdraw 30.000 (3 Sep): menutup pesanan 1 (10.000) & 2 (20.000) penuh
+      const w1 = await mk(1, `WD-F1${tag}`, 30000, "2036-09-03");
+      mine.push(() => prisma.financeTransaction.delete({ where: { id: w1.id } }));
+      const [tx0, j0] = await Promise.all([prisma.financeTransaction.count(), prisma.journal.count()]);
+      sum = await orderSummary(f);
+      expect(sum.counts).toMatchObject({ PIUTANG: 1, CAIR: 1, DITARIK: 2 });
+      expect(sum.saldo).toBe(30000);
+      const ditarik = await listOrders({ ...f, tab: "DITARIK" });
+      expect(ditarik.map((x) => x.orderNo).sort()).toEqual([`D${num}1`, `D${num}2`]);
+      expect(ditarik[0].cover?.by[0]).toMatchObject({ date: "2036-09-03", ref: `WD-F1${tag}` });
+      // withdraw 15.000 berikutnya (4 Sep): menutup pesanan 3 SEBAGIAN (15.000 dari 30.000)
+      const w2 = await mk(2, `WD-F2${tag}`, 15000, "2036-09-04");
+      mine.push(() => prisma.financeTransaction.delete({ where: { id: w2.id } }));
+      const { covers } = await allocationMap({ storeId: st.id, channel: "SHP" });
+      const o3 = await prisma.marketplaceOrder.findFirstOrThrow({ where: { orderNo: `D${num}3` }, include: { income: true } });
+      expect(covers.get(o3.incomeId!)).toMatchObject({ withdrawn: 15000, by: [{ date: "2036-09-04", ref: `WD-F2${tag}`, amount: 15000 }] });
+      expect(stageOf(30000, covers.get(o3.incomeId!))).toBe("SEBAGIAN");
+      sum = await orderSummary(f);
+      expect(sum.counts).toMatchObject({ CAIR: 1, DITARIK: 2 }); // sebagian tetap "Di saldo"
+      expect(sum).toMatchObject({ saldo: 15000 });
+      expect((await listOrders({ ...f, tab: "CAIR" })).map((x) => x.orderNo)).toEqual([`D${num}3`]);
+      // withdraw melebihi cair yang diketahui → ditandai kelebihan, bukan menutup cair yang belum ada
+      const w3 = await mk(3, `WD-F3${tag}`, 99000, "2036-09-05");
+      mine.push(() => prisma.financeTransaction.delete({ where: { id: w3.id } }));
+      const panel = (await saldoPanel({ storeId: st.id })).find((x) => x.channel === "SHP")!;
+      expect(panel.over).toBe(84000); // 99.000 − sisa cair 15.000
+      expect(await Promise.all([prisma.financeTransaction.count(), prisma.journal.count()])).toEqual([tx0 + 2, j0]); // hanya 2 transaksi uji yang saya buat; tidak ada jurnal baru
+    } finally {
+      for (const c of mine.reverse()) await c().catch(() => {});
+    }
+  });
+});
+
+describe("Wilayah: nama diseragamkan & dikelompokkan", () => {
+  it("varian penulisan Shopee/TikTok digabung dalam satu baris; nilai mentah tetap", async () => {
+    const st = await store();
+    const mk = (n: number, city: string, prov: string) => ord(`R${num}${n}`, { city, province: prov, orderedAt: at("2036-10-01"), lines: [{ sku: `RG${tag}`, variation: null, name: "P", qty: 1, unitPrice: 1000, amount: 1000, returnQty: 0 }], total: 1000 });
+    const [r] = await commitImport(actor, [{ fileName: `ord.wil.${tag}.xlsx`, storeId: st.id, parsed: file("TIKTOK", "ORDER", { orders: [mk(1, "KAB. BOGOR", "JAWA BARAT"), mk(2, "Kab. Bogor", "Jawa Barat"), mk(3, "KOTA JAKARTA TIMUR", "DKI JAKARTA"), mk(4, "Kota Administrasi Jakarta Timur", "DKI Jakarta")] }) }]);
+    try {
+      const rep = await regionReport({ storeId: st.id, channel: "TTS", from: "2036-10-01", to: "2036-10-31" });
+      expect(rep.cities.find((c) => c.name === "Kab. Bogor")).toMatchObject({ orders: 2, province: "Jawa Barat" });
+      expect(rep.cities.find((c) => c.name === "Kota Jakarta Timur")).toMatchObject({ orders: 2, province: "DKI Jakarta" });
+      expect(rep.provinces.find((p) => p.name === "Jawa Barat")?.orders).toBe(2);
+      expect(rep.provinces.find((p) => p.name === "DKI Jakarta")?.orders).toBe(2);
+      expect(rep.cities.filter((c) => /bogor/i.test(c.name))).toHaveLength(1); // tidak lagi terpecah
+      expect((await prisma.marketplaceOrder.findFirstOrThrow({ where: { orderNo: `R${num}1` } })).city).toBe("KAB. BOGOR"); // mentah tetap
+    } finally {
+      await undoImport(actor, r.importId);
+    }
+  });
+});
+
 describe("Potongan, aktual vs pengaturan, affiliate, withdraw", () => {
   it("laporan potongan: gross − potongan = cair, kolom baru tidak hilang, pemetaan mengubah hasil", async () => {
     const st = await store();
@@ -196,7 +271,8 @@ describe("Potongan, aktual vs pengaturan, affiliate, withdraw", () => {
     const [tx0, j0] = await Promise.all([prisma.financeTransaction.count(), prisma.journal.count()]);
     const panel = (await saldoPanel({ storeId: st.id })).find((x) => x.channel === "TTS")!;
     // cair bersih 60.000 − iklan 3.000 = 57.000, withdraw tercatat 50.000 + 7.000 = 57.000 → saldo 0
-    expect(panel).toMatchObject({ cair: 57000, recorded: 57000, estimate: 0, status: "KOSONG" });
+    // WD-B ada di file tetapi belum tercatat di ERP: tetap nyata (mengurangi saldo) → melebihi cair yang diketahui
+    expect(panel).toMatchObject({ cair: 57000, recorded: 58000, estimate: -1000, over: 1000, notInErp: 1, status: "KOSONG" });
     expect(await Promise.all([prisma.financeTransaction.count(), prisma.journal.count()])).toEqual([tx0, j0]);
   });
 
@@ -220,6 +296,11 @@ describe("Potongan, aktual vs pengaturan, affiliate, withdraw", () => {
     const a = allocateFifo([{ date: "2036-11-19", amount: 10000 }, { date: "2036-11-20", amount: -3000 }], []);
     expect(a.balance).toBe(7000);
     expect(a.coverage).toEqual([]);
+    // withdraw hanya menutup cair yang sudah ada pada tanggalnya
+    const early = allocateFifo([{ date: "2036-11-20", amount: 5000 }], [{ date: "2036-11-19", amount: 5000 }]);
+    expect(early.balance).toBe(0);
+    expect(early.over).toBe(5000);
+    expect(early.remaining).toEqual([{ date: "2036-11-20", amount: 5000 }]);
   });
 
   it("withdraw gabungan 2 hari di database: saldo menutup cair tertua, pengingat memakai umur saldo", async () => {

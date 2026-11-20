@@ -11,13 +11,15 @@ import { MpNav } from "./MpNav";
 
 export const metadata = { title: "Pesanan Marketplace" };
 type SP = { toko?: string; kanal?: string; dari?: string; sampai?: string; tab?: string; q?: string };
-const TONE: Record<ShownStatus, "amber" | "green" | "gray" | "red"> = { PIUTANG: "amber", CAIR: "green", BATAL: "gray", RETUR: "red" };
+const TONE: Record<ShownStatus, "amber" | "green" | "gray" | "red" | "blue"> = { PIUTANG: "amber", CAIR: "blue", DITARIK: "green", BATAL: "gray", RETUR: "red" };
+const TAB_LABEL: Record<Tab, string> = { ALL: "Semua", PIUTANG: "Piutang", CAIR: "Di saldo", DITARIK: "Ditarik", BATAL: "Batal", RETUR: "Retur/Komplain" };
+const TABS: Tab[] = ["ALL", "PIUTANG", "CAIR", "DITARIK", "BATAL", "RETUR"];
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export default async function MarketplacePage({ searchParams }: { searchParams: Promise<SP> }) {
   await requirePerm("sales.view");
   const sp = await searchParams;
-  const tab = (["ALL", "PIUTANG", "CAIR", "BATAL", "RETUR"].includes(sp.tab ?? "") ? sp.tab : "ALL") as Tab;
+  const tab = (TABS.includes((sp.tab ?? "") as Tab) ? sp.tab : "ALL") as Tab;
   const f = { storeId: sp.toko || undefined, channel: sp.kanal === "SHP" || sp.kanal === "TTS" ? sp.kanal : undefined, from: DATE.test(sp.dari ?? "") ? sp.dari : undefined, to: DATE.test(sp.sampai ?? "") ? sp.sampai : undefined, q: sp.q };
   const [stores, sum, rows, noData] = await Promise.all([
     prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } }),
@@ -30,7 +32,7 @@ export default async function MarketplacePage({ searchParams }: { searchParams: 
     for (const [k, v] of Object.entries({ toko: sp.toko, kanal: sp.kanal, dari: sp.dari, sampai: sp.sampai, q: sp.q, tab: t })) if (v && !(k === "tab" && t === "ALL")) p.set(k, v);
     return `/penjualan/marketplace${p.size ? `?${p}` : ""}`;
   };
-  const tabs = (["ALL", "PIUTANG", "CAIR", "BATAL", "RETUR"] as Tab[]).map((t) => ({ key: t, label: { ALL: "Semua", PIUTANG: "Piutang", CAIR: "Cair", BATAL: "Batal", RETUR: "Retur/Komplain" }[t], href: qs(t), count: sum.counts[t] }));
+  const tabs = TABS.map((t) => ({ key: t, label: TAB_LABEL[t], href: qs(t), count: sum.counts[t] }));
   return (
     <div className="space-y-4">
       <PageHeader title="Pesanan Marketplace" subtitle="Shopee & TikTok Shop dari file Excel · tidak mengubah stok maupun jurnal" actions={<Link href="/penjualan" className="btn-secondary">Penjualan</Link>} />
@@ -39,10 +41,11 @@ export default async function MarketplacePage({ searchParams }: { searchParams: 
         <Empty title="Belum ada pesanan marketplace" hint="Unggah file Order & Penghasilan dari Seller Center di menu Impor." action={<Link href="/penjualan/marketplace/impor" className="btn-primary">Impor file</Link>} />
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
             <Stat label="Piutang (belum cair)" value={idr(sum.piutang)} tone="amber" hint={`${sum.piutangCount} pesanan`} />
-            <Stat label="Cair" value={idr(sum.cair)} tone="green" hint="uang masuk saldo toko" />
-            <Stat label="Biaya platform" value={idr(sum.fees)} hint="dari file penghasilan" />
+            <Stat label="Saldo di marketplace" value={idr(sum.saldo)} tone="blue" hint="cair, belum ditarik" />
+            <Stat label="Sudah ditarik bulan ini" value={idr(sum.withdrawnMonth)} tone="green" hint="withdraw ke rekening" />
+            <Stat label="Potongan platform" value={idr(sum.fees)} hint="komponen yang mengurangi saldo" />
             <Stat label="Retur/komplain" value={sum.retur} tone="red" hint="pesanan" />
           </div>
           <FilterBar>
@@ -63,7 +66,7 @@ export default async function MarketplacePage({ searchParams }: { searchParams: 
                   <thead><tr><th>No. pesanan</th><th>Kanal</th><th>Tgl</th><th>Produk</th><th className="num">Nilai</th><th className="num">Diterima</th><th>Status</th></tr></thead>
                   <tbody>
                     {rows.map((o) => {
-                      const st = shownStatus(o.status, !!o.income);
+                      const st = shownStatus(o.status, !!o.income, !!o.income && (o.cover?.withdrawn ?? 0) >= Number(o.income.released) && Number(o.income.released) > 0);
                       return (
                         <tr key={o.id}>
                           <td><Link href={`/penjualan/marketplace/${o.id}`} className="link font-mono text-xs">{o.orderNo}</Link></td>
@@ -72,7 +75,7 @@ export default async function MarketplacePage({ searchParams }: { searchParams: 
                           <td className="max-w-[16rem] truncate">{o.lines.map((l) => `${l.name ?? l.sku ?? "-"} ×${l.qty}`).join(", ")}</td>
                           <td className="num">{idr(o.total)}</td>
                           <td className="num">{st === "BATAL" ? "0" : o.income ? idr(o.income.released) : "—"}</td>
-                          <td><Badge tone={TONE[st]}>{STATUS_LABEL[st]}</Badge>{o.needsCheck && <Badge tone="amber">Cek</Badge>}{o.complaint && <Badge tone="red">Komplain</Badge>}</td>
+                          <td><Badge tone={TONE[st]}>{STATUS_LABEL[st]}</Badge>{st === "CAIR" && (o.cover?.withdrawn ?? 0) > 0 && <Badge tone="blue">sebagian ditarik</Badge>}{o.needsCheck && <Badge tone="amber">Cek</Badge>}{o.complaint && <Badge tone="red">Komplain</Badge>}</td>
                         </tr>
                       );
                     })}

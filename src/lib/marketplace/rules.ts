@@ -29,9 +29,9 @@ export function mapStatus(channel: string, o: Pick<ParsedOrder, "rawStatus" | "r
 }
 
 /** Status yang ditampilkan: Batal/Retur menang; lalu Cair bila ada di file penghasilan; selain itu Piutang */
-export type ShownStatus = "PIUTANG" | "CAIR" | "BATAL" | "RETUR";
-export const shownStatus = (status: string, hasIncome: boolean): ShownStatus => (status === "BATAL" ? "BATAL" : status === "RETUR" ? "RETUR" : hasIncome ? "CAIR" : "PIUTANG");
-export const STATUS_LABEL: Record<ShownStatus, string> = { PIUTANG: "Piutang", CAIR: "Cair", BATAL: "Batal", RETUR: "Retur" };
+export type ShownStatus = "PIUTANG" | "CAIR" | "DITARIK" | "BATAL" | "RETUR";
+export const shownStatus = (status: string, hasIncome: boolean, withdrawn = false): ShownStatus => (status === "BATAL" ? "BATAL" : status === "RETUR" ? "RETUR" : hasIncome ? (withdrawn ? "DITARIK" : "CAIR") : "PIUTANG");
+export const STATUS_LABEL: Record<ShownStatus, string> = { PIUTANG: "Piutang", CAIR: "Di saldo", DITARIK: "Ditarik", BATAL: "Batal", RETUR: "Retur" };
 
 const sha = (v: unknown) => createHash("sha1").update(JSON.stringify(v)).digest("hex").slice(0, 20);
 const t = (d: Date | null | undefined) => d?.getTime() ?? null;
@@ -42,4 +42,18 @@ export function orderSig(o: ParsedOrder, status: string) {
 }
 export function incomeSig(i: ParsedIncome) {
   return sha([i.released, i.productAmt, i.refundAmt, i.fees, t(i.releasedAt), t(i.orderedAt), i.feeDetail]);
+}
+
+const titleCase = (s: string) => s.toLowerCase().replace(/(^|[\s\-/(])([a-z])/g, (_, a, b) => a + b.toUpperCase());
+
+/** Nama kota/kab seragam antar Shopee/TikTok: "KAB. BOGOR" = "Kabupaten Bogor" → "Kab. Bogor"; "Kota Administrasi Jakarta Timur" → "Kota Jakarta Timur". Nilai mentah tetap disimpan apa adanya. */
+export function regionCity(raw: string | null | undefined): string {
+  const s = (raw ?? "").replace(/\s+/g, " ").trim();
+  if (!s) return "-";
+  const u = s.toUpperCase().replace(/\./g, ". ").replace(/\s+/g, " ").trim();
+  const m = /^(KABUPATEN|KAB)\s+(.+)$/.exec(u);
+  if (m) return `Kab. ${titleCase(m[2])}`;
+  const k = /^(KOTA ADMINISTRASI|KOTA ADM\.?|KOTAMADYA|KOTA)\s+(.+)$/.exec(u);
+  if (k) return `Kota ${titleCase(k[2])}`;
+  return titleCase(u);
 }

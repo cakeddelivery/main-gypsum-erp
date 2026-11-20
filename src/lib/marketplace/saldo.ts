@@ -5,34 +5,51 @@ import { dayEnd, dayStart, reconcile } from "./report";
 import { marketplaceBanks, recordedWithdraws, ref } from "./bank";
 
 /** Saldo marketplace & pencocokan withdraw (hanya baca; pencatatan withdraw tetap di Keuangan). */
-/** Saldo berjalan: cair masuk per hari, withdraw menutup cair TERTUA lebih dulu (FIFO). Murni, mudah dites. */
-export type Lot = { date: string; amount: number };
+/**
+ * Saldo berjalan: cair masuk, withdraw menutup cair TERTUA lebih dulu (FIFO). Murni, mudah dites.
+ * `id` pada cair (mis. id penghasilan per pesanan) membuat hasil juga memuat withdraw mana yang menutup tiap cair (bisa sebagian).
+ */
+export type Lot = { date: string; amount: number; id?: string; ref?: string };
 export type Coverage = { date: string; amount: number; covers: { from: string; to: string } | null };
+export type LotCover = { withdrawn: number; by: { date: string; ref?: string; amount: number }[] };
 export function allocateFifo(cair: Lot[], withdraws: Lot[]) {
-  const lots = cair.filter((c) => c.amount > 0).map((c) => ({ ...c })).sort((a, b) => a.date.localeCompare(b.date));
+  const lots = cair.filter((c) => c.amount > 0).map((c) => ({ ...c, left: c.amount })).sort((a, b) => a.date.localeCompare(b.date));
   // potongan iklan/penyesuaian negatif mengurangi saldo seperti withdraw, tetapi tidak ditampilkan sebagai withdraw
-  const neg = cair.filter((c) => c.amount < 0).map((c) => ({ date: c.date, amount: -c.amount, silent: true }));
+  const neg = cair.filter((c) => c.amount < 0).map((c) => ({ date: c.date, amount: -c.amount, silent: true, ref: undefined as string | undefined }));
   const outs = [...withdraws.map((w) => ({ ...w, silent: false })), ...neg].sort((a, b) => a.date.localeCompare(b.date));
   const coverage: Coverage[] = [];
+  const perLot = new Map<string, LotCover>();
   let i = 0;
   let over = 0;
   for (const w of outs) {
     let need = w.amount;
     let from: string | null = null;
     let to: string | null = null;
-    while (need > 0 && i < lots.length) {
-      const take = Math.min(need, lots[i].amount);
-      lots[i].amount -= take;
+    // withdraw hanya bisa menutup cair yang SUDAH ada pada tanggalnya (cair yang lebih baru tidak ikut)
+    while (need > 0 && i < lots.length && lots[i].date <= w.date) {
+      const take = Math.min(need, lots[i].left);
+      lots[i].left -= take;
       need -= take;
       from ??= lots[i].date;
       to = lots[i].date;
-      if (lots[i].amount === 0) i++;
+      const id = lots[i].id;
+      if (id && !w.silent) {
+        const c = perLot.get(id) ?? { withdrawn: 0, by: [] };
+        c.withdrawn += take;
+        c.by.push({ date: w.date, ref: w.ref, amount: take });
+        perLot.set(id, c);
+      } else if (id) {
+        const c = perLot.get(id) ?? { withdrawn: 0, by: [] };
+        c.withdrawn += take; // dipotong iklan/penyesuaian: tidak lagi ada di saldo
+        perLot.set(id, c);
+      }
+      if (lots[i].left === 0) i++;
     }
     over += need;
     if (!w.silent) coverage.push({ date: w.date, amount: w.amount, covers: from && to ? { from, to } : null });
   }
-  const remaining = lots.filter((l) => l.amount > 0);
-  return { remaining, coverage, balance: remaining.reduce((a, l) => a + l.amount, 0) - over, oldest: remaining[0]?.date ?? null };
+  const remaining = lots.filter((l) => l.left > 0).map((l) => ({ date: l.date, amount: l.left }));
+  return { remaining, coverage, perLot, over, balance: remaining.reduce((a, l) => a + l.amount, 0) - over, oldest: remaining[0]?.date ?? null };
 }
 
 export type SaldoStatus = "KOSONG" | "NORMAL" | "PERINGATAN" | "MERAH";
@@ -44,39 +61,104 @@ export function saldoStatus(balance: number, oldest: string | null, today: strin
 }
 
 const wib = (d: Date) => new Date(d.getTime() + 7 * 3600000).toISOString().slice(0, 10);
+const dateStrWib = wib;
 
-/** Panel "Saldo marketplace" (kumulatif sejak data pertama): cair − withdraw tercatat − iklan = estimasi saldo belum ditarik */
+export type WdMatch = { status: "COCOK" | "BELUM_DI_ERP" | "TIDAK_DI_FILE"; refId: string; fileAmount: number | null; erpAmount: number | null; date: Date | null; txId?: string };
+type FileWd = { refId: string; amount: number; date: Date | null };
+type ErpWd = { id: string; amount: number; date: Date; withdrawRef: string | null; number?: string };
+
+/**
+ * Pasangkan penarikan di file (TikTok "Riwayat penarikan" / Shopee "Transaksi Saldo Penjual") dengan withdraw di Keuangan.
+ * TikTok: ID referensi = withdrawRef. Shopee: tidak ada ID bersama → nominal sama & tanggal berselisih ≤ 2 hari (satu lawan satu). Murni.
+ */
+export function pairWithdraws(channel: string, file: FileWd[], erp: ErpWd[]): WdMatch[] {
+  const used = new Set<string>();
+  const out: WdMatch[] = [];
+  const DAY = 86400000;
+  for (const w of file) {
+    const e = channel === "TTS"
+      ? erp.find((x) => x.withdrawRef && ref(x.withdrawRef) === ref(w.refId) && !used.has(x.id))
+      : erp.find((x) => !used.has(x.id) && x.amount === w.amount && w.date && Math.abs(x.date.getTime() - w.date.getTime()) <= 2 * DAY);
+    if (e) used.add(e.id);
+    out.push({ status: e ? "COCOK" : "BELUM_DI_ERP", refId: channel === "TTS" ? w.refId : `Saldo Penjual ${w.date ? dateStrWib(w.date) : ""}`, fileAmount: w.amount, erpAmount: e?.amount ?? null, date: w.date, txId: e?.id });
+  }
+  for (const e of erp) if (!used.has(e.id) && (channel === "SHP" || e.withdrawRef)) out.push({ status: "TIDAK_DI_FILE", refId: e.withdrawRef ?? e.number ?? `Keuangan ${dateStrWib(e.date)}`, fileAmount: null, erpAmount: e.amount, date: e.date, txId: e.id });
+  return out.sort((a, b) => (b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0));
+}
+
+type StoreLite = { id: string; name: string; code: string };
+const FAR = new Date("2100-01-01");
+
+/**
+ * Alokasi FIFO per toko & kanal: tiap penghasilan pesanan mendapat withdraw yang menutupnya.
+ * Withdraw = yang tercatat di Keuangan + penarikan di file yang BELUM tercatat di ERP (tetap nyata, mengurangi saldo).
+ */
+export async function loadAllocation(s: StoreLite, ch: string, storeCount: number, banks?: Awaited<ReturnType<typeof marketplaceBanks>>) {
+  const bks = banks ?? (await marketplaceBanks());
+  const [incomes, rec, fileWd] = await Promise.all([
+    prisma.marketplaceIncome.findMany({ where: { storeId: s.id, channel: ch, releasedAt: { not: null } }, select: { id: true, kind: true, refNo: true, released: true, releasedAt: true }, orderBy: [{ releasedAt: "asc" }, { id: "asc" }] }),
+    recordedWithdraws(s, ch, bks, storeCount, new Date(0), FAR),
+    prisma.marketplaceWithdrawal.findMany({ where: { storeId: s.id, channel: ch, txType: { contains: "withdraw", mode: "insensitive" } } }),
+  ]);
+  const pairs = pairWithdraws(ch, fileWd.map((w) => ({ refId: w.refId, amount: Math.abs(n(w.amount)), date: w.requestedAt })), rec.rows);
+  const withdraws = [
+    ...rec.rows.map((r) => ({ date: wib(r.date), amount: r.amount, ref: r.withdrawRef ?? r.number ?? undefined, inErp: true })),
+    ...pairs.filter((p) => p.status === "BELUM_DI_ERP" && p.date).map((p) => ({ date: wib(p.date!), amount: p.fileAmount ?? 0, ref: p.refId, inErp: false })),
+  ];
+  const fifo = allocateFifo(incomes.map((i) => ({ date: wib(i.releasedAt!), amount: n(i.released), id: i.id })), withdraws.map((w) => ({ date: w.date, amount: w.amount, ref: w.ref })));
+  return { incomes, withdraws, pairs, fifo, noBank: rec.noBank, recordedRows: rec.rows, notInErp: pairs.filter((p) => p.status === "BELUM_DI_ERP") };
+}
+
+/** Tahap tiap pesanan cair: DITARIK bila withdraw sudah menutup seluruh nilai cairnya */
+export function stageOf(released: number, cover: LotCover | undefined): "CAIR" | "SEBAGIAN" | "DITARIK" {
+  const w = cover?.withdrawn ?? 0;
+  if (released > 0 && w >= released) return "DITARIK";
+  return w > 0 ? "SEBAGIAN" : "CAIR";
+}
+
+/** Peta id penghasilan → penutup withdraw, untuk semua toko/kanal (atau yang difilter) */
+export async function allocationMap(opts: { storeId?: string; channel?: string } = {}) {
+  const stores = await prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, select: { id: true, name: true, code: true }, orderBy: { code: "asc" } });
+  const banks = await marketplaceBanks();
+  const covers = new Map<string, LotCover>();
+  const released = new Map<string, number>();
+  for (const s of stores.filter((x) => !opts.storeId || x.id === opts.storeId)) {
+    for (const ch of ["SHP", "TTS"].filter((c) => !opts.channel || c === opts.channel)) {
+      const a = await loadAllocation(s, ch, stores.length, banks);
+      for (const [id, c] of a.fifo.perLot) covers.set(id, c);
+      for (const i of a.incomes) released.set(i.id, n(i.released));
+    }
+  }
+  return { covers, released };
+}
+
+/** Panel "Saldo marketplace" (kumulatif sejak data pertama): cair − iklan − withdraw = saldo belum ditarik */
 export async function saldoPanel(opts: { storeId?: string } = {}) {
   const today = todayStr();
-  const stores = await prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] }, ...(opts.storeId ? { id: opts.storeId } : {}) }, select: { id: true, name: true, code: true }, orderBy: { code: "asc" } });
-  const all = opts.storeId ? await prisma.store.count({ where: { active: true, code: { in: ["MG", "DL"] } } }) : stores.length;
+  const all = await prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, select: { id: true, name: true, code: true }, orderBy: { code: "asc" } });
+  const stores = opts.storeId ? all.filter((s) => s.id === opts.storeId) : all;
   const banks = await marketplaceBanks();
   const out = [];
   for (const s of stores) {
     for (const ch of ["SHP", "TTS"]) {
-      const incomes = await prisma.marketplaceIncome.findMany({ where: { storeId: s.id, channel: ch, releasedAt: { not: null } }, select: { releasedAt: true, released: true } });
-      const wd = await recordedWithdraws(s, ch, banks, all, new Date(0), new Date("2100-01-01"));
-      if (!incomes.length && !wd.rows.length) continue;
-      const perDay = new Map<string, number>();
-      for (const i of incomes) perDay.set(wib(i.releasedAt!), (perDay.get(wib(i.releasedAt!)) ?? 0) + n(i.released));
-      const fifo = allocateFifo([...perDay].map(([date, amount]) => ({ date, amount })), wd.rows.map((w) => ({ date: wib(w.date), amount: w.amount })));
-      const st = saldoStatus(fifo.balance, fifo.oldest, today);
-      const todayRows = wd.rows.filter((w) => wib(w.date) === today);
+      const a = await loadAllocation(s, ch, all.length, banks);
+      if (!a.incomes.length && !a.withdraws.length) continue;
+      const st = saldoStatus(a.fifo.balance, a.fifo.oldest, today);
+      const todayRows = a.recordedRows.filter((w) => wib(w.date) === today);
       out.push({
-        storeId: s.id, store: s.name, channel: ch, cair: incomes.reduce((a, i) => a + n(i.released), 0), recorded: wd.rows.reduce((a, w) => a + w.amount, 0),
-        estimate: fifo.balance, since: fifo.oldest, ...st, noBank: wd.noBank, todayCount: todayRows.length, todayAmount: todayRows.reduce((a, w) => a + w.amount, 0),
-        coverage: fifo.coverage.slice(-5).reverse(),
+        storeId: s.id, store: s.name, channel: ch, cair: a.incomes.reduce((x, i) => x + n(i.released), 0), recorded: a.withdraws.reduce((x, w) => x + w.amount, 0),
+        estimate: a.fifo.balance, since: a.fifo.oldest, ...st, noBank: a.noBank, todayCount: todayRows.length, todayAmount: todayRows.reduce((x, w) => x + w.amount, 0),
+        coverage: a.fifo.coverage.slice(-5).reverse(),
+        /** withdraw melebihi cair yang diketahui (file penghasilan mungkin belum diunggah) */
+        over: a.fifo.over, notInErp: a.notInErp.length, notInErpAmount: a.notInErp.reduce((x, p) => x + (p.fileAmount ?? 0), 0),
       });
     }
   }
   return out;
 }
 
-export type WdMatch = { status: "COCOK" | "BELUM_DI_ERP" | "TIDAK_DI_FILE"; refId: string; fileAmount: number | null; erpAmount: number | null; date: Date | null; txId?: string };
-
 /**
- * Cocokkan penarikan di file (TikTok "Riwayat penarikan" / Shopee "Transaksi Saldo Penjual") dengan withdraw di Keuangan.
- * TikTok: ID referensi = withdrawRef. Shopee: tidak ada ID bersama → nominal sama & tanggal berselisih ≤ 2 hari (satu lawan satu).
+ * Cocokkan penarikan di file dengan withdraw di Keuangan pada rentang tanggal (untuk tabel pencocokan).
  */
 export async function matchWithdrawals(opts: { storeId: string; channel: "SHP" | "TTS"; from: string; to: string }): Promise<WdMatch[]> {
   const stores = await prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, select: { id: true, name: true, code: true } });
@@ -85,22 +167,9 @@ export async function matchWithdrawals(opts: { storeId: string; channel: "SHP" |
   const file = await prisma.marketplaceWithdrawal.findMany({ where: { storeId: s.id, channel: opts.channel, txType: { contains: "withdraw", mode: "insensitive" }, requestedAt: { gte: dayStart(opts.from), lt: dayEnd(opts.to) } } });
   const banks = await marketplaceBanks();
   const erp = (await recordedWithdraws(s, opts.channel, banks, stores.length, dayStart(opts.from), dayEnd(opts.to))).rows;
-  const used = new Set<string>();
-  const out: WdMatch[] = [];
-  const DAY = 86400000;
-  for (const w of file) {
-    const amount = Math.abs(n(w.amount));
-    const e = opts.channel === "TTS"
-      ? erp.find((x) => x.withdrawRef && ref(x.withdrawRef) === ref(w.refId) && !used.has(x.id))
-      : erp.find((x) => !used.has(x.id) && x.amount === amount && w.requestedAt && Math.abs(x.date.getTime() - w.requestedAt.getTime()) <= 2 * DAY);
-    if (e) used.add(e.id);
-    out.push({ status: e ? "COCOK" : "BELUM_DI_ERP", refId: opts.channel === "TTS" ? w.refId : `Saldo Penjual ${w.requestedAt ? dateStrWib(w.requestedAt) : ""}`, fileAmount: amount, erpAmount: e?.amount ?? null, date: w.requestedAt, txId: e?.id });
-  }
-  for (const e of erp) if (!used.has(e.id) && (opts.channel === "SHP" || e.withdrawRef)) out.push({ status: "TIDAK_DI_FILE", refId: e.withdrawRef ?? `Keuangan ${dateStrWib(e.date)}`, fileAmount: null, erpAmount: e.amount, date: e.date, txId: e.id });
-  return out.sort((a, b) => (b.date?.getTime() ?? 0) - (a.date?.getTime() ?? 0));
+  return pairWithdraws(opts.channel, file.map((w) => ({ refId: w.refId, amount: Math.abs(n(w.amount)), date: w.requestedAt })), erp);
 }
 export const matchTiktokWithdrawals = (o: { storeId: string; from: string; to: string }) => matchWithdrawals({ ...o, channel: "TTS" });
-const dateStrWib = (d: Date) => new Date(d.getTime() + 7 * 3600000).toISOString().slice(0, 10);
 
 export const WD_REMINDER_KEY = "marketplace_wd_reminder_hour";
 export const wdReminderHour = async () => {

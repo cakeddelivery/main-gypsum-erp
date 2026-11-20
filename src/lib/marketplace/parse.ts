@@ -157,6 +157,12 @@ function parseShopeeOrders(sh: Sheet): ParsedFile {
       };
       byNo.set(no, o);
     }
+    // kolom tingkat-pesanan bisa kosong di baris pertama: lengkapi dari baris berikutnya
+    if (!o.total) o.total = parseNum(r[I.total]);
+    if (!o.subtotal) o.subtotal = parseNum(r[I.subtotal]);
+    if (!o.discount) o.discount = parseNum(r[I.disc]);
+    if (!o.shippingPaid) o.shippingPaid = parseNum(r[I.shipFee]);
+    o.trackingNo ??= clean(str(r[I.resi]), 60)?.toUpperCase() ?? null;
     const qty = Math.round(parseNum(r[I.qty]));
     const unit = parseNum(r[I.priceAfter]) || parseNum(r[I.price]);
     const retQty = Math.round(parseNum(r[I.retQty]));
@@ -166,6 +172,7 @@ function parseShopeeOrders(sh: Sheet): ParsedFile {
     o.returnQty += retQty;
   }
   const orders = [...byNo.values()];
+  for (const o of orders) if (!o.total) o.total = o.subtotal || o.lines.reduce((a, l) => a + l.amount, 0); // nilai pesanan tidak boleh Rp 0 bila ada isinya
   const { from, to } = minMax(orders.map((o) => o.orderedAt));
   return { platform: "SHOPEE", kind: "ORDER", orders, incomes: [], withdrawals: [], periodFrom: from, periodTo: to, info: { rows } };
 }
@@ -252,6 +259,7 @@ function parseTiktokOrders(sh: Sheet): ParsedFile {
       };
       byNo.set(no, o);
     }
+    if (!o.total) o.total = parseNum(r[I.amount]);
     const qty = Math.round(parseNum(r[I.qty]));
     const unit = parseNum(r[I.unit]);
     const amount = parseNum(r[I.after]) || Math.round(qty * unit);
@@ -262,6 +270,7 @@ function parseTiktokOrders(sh: Sheet): ParsedFile {
     o.returnQty += retQty;
   }
   const orders = [...byNo.values()];
+  for (const o of orders) if (!o.total) o.total = Math.max(0, o.subtotal - o.discount) || o.lines.reduce((a, l) => a + l.amount, 0);
   const { from, to } = minMax(orders.map((o) => o.orderedAt));
   return { platform: "TIKTOK", kind: "ORDER", orders, incomes: [], withdrawals: [], periodFrom: from, periodTo: to, info: { rows } };
 }

@@ -42,6 +42,8 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
                   {r.status === "KOSONG" ? <Badge tone="gray">Sudah ditarik</Badge> : r.status === "NORMAL" ? <Badge tone="green">Normal · dari hari ini</Badge> : r.status === "PERINGATAN" ? <Badge tone="amber">Peringatan · sejak {r.since} ({r.ageDays} hari)</Badge> : <Badge tone="red">Merah · sejak {r.since} ({r.ageDays} hari)</Badge>}
                   {r.todayCount > 0 && <div className="text-xs text-slate-500">Hari ini: {r.todayCount} withdraw · {idr(r.todayAmount)}</div>}
                   {r.coverage.slice(0, 3).map((c) => <div key={c.date + c.amount} className="text-xs text-slate-500">Withdraw {c.date} ({idr(c.amount)}) {c.covers ? `menutup cair ${c.covers.from === c.covers.to ? c.covers.from : `${c.covers.from} s/d ${c.covers.to}`}` : "belum ada cair yang ditutup"}</div>)}
+                  {r.over > 0 && <div className="text-xs text-rose-700">Withdraw melebihi cair yang diketahui Rp {r.over.toLocaleString("id-ID")} — unggah file penghasilan yang belum masuk, atau cek nominal withdraw.</div>}
+                  {r.notInErp > 0 && <div className="text-xs text-amber-700">{r.notInErp} penarikan di file (Rp {r.notInErpAmount.toLocaleString("id-ID")}) belum tercatat di Keuangan; tetap dihitung mengurangi saldo.</div>}
                   {r.noBank && <div className="text-xs text-amber-700">Rekening saldo marketplace belum ada di Keuangan</div>}
                 </td>
               </tr>))}</tbody>
