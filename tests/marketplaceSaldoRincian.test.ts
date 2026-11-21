@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { commitImport, undoImport } from "@/lib/marketplace/import";
 import type { ParsedFile, ParsedIncome } from "@/lib/marketplace/parse";
 import { createTransaction } from "@/lib/finance";
-import { matchWithdrawals, pairWithdraws, saldoPanel, walletDetail } from "@/lib/marketplace/saldo";
+import { matchWithdrawals, pairWithdraws, saldoPanel, walletDetail, wdSummary } from "@/lib/marketplace/saldo";
 
 const tag = Date.now().toString(36).slice(-4).toUpperCase();
 const actor = { id: "t", name: "Tester" };
@@ -151,6 +151,38 @@ describe("Rincian saldo marketplace: saldo awal, satu sumber withdraw, acuan", (
     expect(st("TTS", "2054-01-01")).toBe("COCOK"); // 4 hari
     expect(st("TTS", "2053-12-31")).toBe("BELUM_DI_ERP"); // 5 hari
     expect(st("SHP", "2054-01-02")).toBe("BELUM_DI_ERP"); // Shopee 3 hari > 2
+  });
+
+  it("pencocokan per HARI KALENDER WIB: file 00.00 vs Keuangan 23.59 empat hari kemudian cocok; jam malam Shopee vs 00.00 hari berikutnya cocok", () => {
+    const w = (iso: string) => new Date(iso);
+    const erp = [{ id: "e1", amount: 60000, date: w("2054-03-05T16:59:00Z"), withdrawRef: null }]; // 5 Mar 23.59 WIB
+    const f = (iso: string) => [{ refId: "WDY", amount: 60000, date: w(iso) }];
+    expect(pairWithdraws("TTS", f("2054-03-01T00:00:00+07:00"), erp)[0].status).toBe("COCOK"); // 4 hari kalender (4 hari 23 jam)
+    expect(pairWithdraws("TTS", f("2054-02-28T23:00:00+07:00"), erp)[0].status).toBe("BELUM_DI_ERP"); // 5 hari kalender
+    const erp2 = [{ id: "e2", amount: 70000, date: w("2054-03-05T17:00:00Z"), withdrawRef: null }]; // 6 Mar 00.00 WIB
+    expect(pairWithdraws("SHP", [{ refId: "x", amount: 70000, date: w("2054-03-05T22:53:30+07:00") }], erp2)[0].status).toBe("COCOK");
+  });
+
+  it("ringkasan: penarikan file SEBELUM withdraw tercatat pertama dipisah (sebelum pencatatan dimulai)", () => {
+    const d = (day: string) => new Date(`${day}T05:00:00Z`);
+    const erp = [{ id: "e1", amount: 50000, date: d("2054-04-10"), withdrawRef: null }];
+    const file = [{ refId: "a", amount: 11000, date: d("2054-04-01") }, { refId: "b", amount: 50000, date: d("2054-04-10") }, { refId: "c", amount: 22000, date: d("2054-04-12") }];
+    const sm = wdSummary(pairWithdraws("SHP", file, erp));
+    expect(sm).toMatchObject({ inFile: 3, ok: 1, firstDay: "2054-04-10", beforeSum: 11000, recentSum: 22000 });
+    expect(sm.before).toHaveLength(1);
+    expect(sm.recent).toHaveLength(1);
+  });
+
+  it("acuan Seller Center Rp 0 + jam diterima; mutasi sesudahnya menambah dari 0", async () => {
+    const st = await mg();
+    const [r] = await commitImport(actor, [{ fileName: `tts.inc4.${tag}.xlsx`, storeId: st.id, parsed: file("TIKTOK", "INCOME", { incomes: [ev(`Z${tag}1`, "2056-07-01", 80000), ev(`Z${tag}2`, "2056-07-03", 15000)] }) }]);
+    cleanups.push(() => undoImport(actor, r.importId));
+    const chk = await prisma.marketplaceWalletCheck.create({ data: { storeId: st.id, channel: "TTS", asOf: new Date("2056-07-02T00:00:00Z"), asOfAt: new Date("2056-07-02T22:45:00+07:00"), amount: 0n, createdBy: "t" } });
+    cleanups.push(() => prisma.marketplaceWalletCheck.delete({ where: { id: chk.id } }));
+    const w = await walletOf(st.id, "TTS");
+    expect(w.official).toMatchObject({ amount: 0, source: "ISIAN", at: "22:45" });
+    expect(w.basis).toBe("ACUAN");
+    expect(w.balance).toBe(15000); // 0 + cair 3 Juli
   });
 
   it("rekening saldo BERSAMA (satu 'Saldo Penjual TikTok' untuk semua toko): toko withdraw ditetapkan dari padanan file; tersimpan; tak mengubah transaksi", async () => {

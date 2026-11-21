@@ -1,5 +1,6 @@
 import { prisma } from "../db";
 import { n } from "../money";
+import { dayDiffWib } from "./bank";
 
 /**
  * DIAGNOSA withdraw (HANYA BACA, tanpa data pribadi): bagaimana withdraw marketplace sebenarnya tercatat di Keuangan,
@@ -13,14 +14,14 @@ export type DiagTx = { date: string; dir: string; from: string; to: string; cat:
 export type FileWd = { id: string; store: string; ch: string; amount: number; date: Date };
 type T = { id: string; amount: number; date: Date };
 
-/** Pasangan 1-1 (nominal sama, selisih tanggal ≤ tol hari), terdekat dulu */
+/** Pasangan 1-1 (nominal sama, selisih HARI KALENDER WIB ≤ tol), terdekat dulu. diff = hari transaksi − hari file */
 export function pairByAmount(txs: T[], files: { id: string; amount: number; date: Date }[], tolDays: number) {
-  const cand: { t: string; f: string; d: number }[] = [];
-  for (const t of txs) for (const f of files) if (t.amount === f.amount) { const d = Math.abs(t.date.getTime() - f.date.getTime()); if (d <= tolDays * DAY) cand.push({ t: t.id, f: f.id, d }); }
+  const cand: { t: string; f: string; d: number; diff: number }[] = [];
+  for (const t of txs) for (const f of files) if (t.amount === f.amount) { const diff = dayDiffWib(t.date, f.date); if (Math.abs(diff) <= tolDays) cand.push({ t: t.id, f: f.id, d: Math.abs(diff) * 1e10 + Math.abs(t.date.getTime() - f.date.getTime()), diff }); }
   cand.sort((a, b) => a.d - b.d);
-  const ut = new Set<string>(), uf = new Set<string>();
-  for (const c of cand) if (!ut.has(c.t) && !uf.has(c.f)) { ut.add(c.t); uf.add(c.f); }
-  return { tx: ut, file: uf };
+  const ut = new Set<string>(), uf = new Set<string>(), pairs: { t: string; f: string; diff: number }[] = [];
+  for (const c of cand) if (!ut.has(c.t) && !uf.has(c.f)) { ut.add(c.t); uf.add(c.f); pairs.push({ t: c.t, f: c.f, diff: c.diff }); }
+  return { tx: ut, file: uf, pairs };
 }
 
 /** Satu transaksi = jumlah beberapa penarikan file (satu kanal, satu hari ± tol; semua toko / lintas toko). Hanya 2–4 penarikan, tanpa memakai file yang sudah terpakai */
@@ -31,7 +32,7 @@ export function pairBySum(txs: T[], files: FileWd[], tolDays: number, maxParts =
   for (const f of files) byCh.set(f.ch, [...(byCh.get(f.ch) ?? []), f]);
   for (const t of txs) {
     for (const [, list] of byCh) {
-      const near = list.filter((f) => !usedF.has(f.id) && Math.abs(f.date.getTime() - t.date.getTime()) <= tolDays * DAY).slice(0, 14);
+      const near = list.filter((f) => !usedF.has(f.id) && Math.abs(dayDiffWib(f.date, t.date)) <= tolDays).slice(0, 14);
       let hit: FileWd[] | null = null;
       const rec = (i: number, cur: FileWd[], sum: number) => {
         if (hit || cur.length > maxParts) return;
@@ -81,6 +82,15 @@ export async function diagnoseWithdraws(opts: { from: string; to: string }) {
   const oneToOne5 = pairByAmount(candT, files.map((f) => ({ id: f.id, amount: f.amount, date: f.date })), 5);
   const leftoverTx = cand.map((c) => ({ id: c.t.id, amount: c.view.amount, date: c.t.date })).filter((t) => !oneToOne5.tx.has(t.id));
   const sums = pairBySum(leftoverTx, files.filter((f) => !oneToOne5.file.has(f.id)), 2);
+  // distribusi selisih hari kalender WIB (transaksi − file) pada pasangan nominal-sama (toleransi ±5), per kanal
+  const chOf = new Map(files.map((f) => [f.id, f.ch]));
+  const dist: Record<string, Record<number, number>> = { SHP: {}, TTS: {} };
+  for (const p of oneToOne5.pairs) { const c = chOf.get(p.f) ?? "?"; dist[c] = dist[c] ?? {}; dist[c][p.diff] = (dist[c][p.diff] ?? 0) + 1; }
+  // sisa tak cocok setelah 1-1 (±5) dan jumlah: sisi file & sisi Keuangan (hanya yang tampak withdraw: dari rekening "Saldo Penjual …")
+  const sumFileUsed = new Set<string>(); // penarikan file yang terpakai di kecocokan jumlah tidak dilacak per id (hanya hitungan)
+  const unFiles = files.filter((f) => !oneToOne5.file.has(f.id)).map((f) => ({ ch: f.ch, store: f.store, date: wib(f.date), amount: f.amount })).sort((a, b) => a.date.localeCompare(b.date));
+  const unTx = cand.filter((c) => !oneToOne5.tx.has(c.t.id) && /saldo penjual/i.test(c.view.from)).map((c) => ({ ...c.view })).sort((a, b) => a.date.localeCompare(b.date));
+  void sumFileUsed;
   const perDayPerCh = new Map<string, number>();
   for (const f of files) perDayPerCh.set(`${f.ch}|${wib(f.date)}`, (perDayPerCh.get(`${f.ch}|${wib(f.date)}`) ?? 0) + 1);
   return {
@@ -88,6 +98,7 @@ export async function diagnoseWithdraws(opts: { from: string; to: string }) {
     financeTxInRange: inRange.length, candidates: cand.map((c) => c.view).sort((a, b) => a.date.localeCompare(b.date)),
     combos: [...combo.entries()].sort((a, b) => b[1].count - a[1].count), tol,
     sumMatches: { txs: sums.usedT.size, details: sums.found, candidatesLeft: leftoverTx.length },
+    dayDistribution: dist, unmatchedFiles: unFiles, unmatchedTx: unTx,
     daysWithMultipleWithdraws: [...perDayPerCh.values()].filter((v) => v > 1).length,
   };
 }

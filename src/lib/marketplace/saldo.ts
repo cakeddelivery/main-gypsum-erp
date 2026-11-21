@@ -2,7 +2,7 @@ import { prisma } from "../db";
 import { n } from "../money";
 import { todayStr } from "../time";
 import { dayEnd, dayStart, reconcile } from "./report";
-import { marketplaceBanks, recordedWithdraws, ref } from "./bank";
+import { dayDiffWib, marketplaceBanks, recordedWithdraws, ref } from "./bank";
 
 /** Saldo marketplace & pencocokan withdraw (hanya baca; pencatatan withdraw tetap di Keuangan). */
 /**
@@ -74,7 +74,6 @@ type ErpWd = { id: string; amount: number; date: Date; withdrawRef: string | nul
 export function pairWithdraws(channel: string, file: FileWd[], erp: ErpWd[]): WdMatch[] {
   const used = new Set<string>();
   const out: WdMatch[] = [];
-  const DAY = 86400000;
   // TikTok: uang baru masuk bank 1–3 hari setelah diminta, jadi tanggal di Keuangan bisa berselisih 0–4 hari dari "Waktu permintaan"
   const tol = channel === "TTS" ? 4 : 2;
   const res = new Map<FileWd, ErpWd | undefined>();
@@ -83,8 +82,8 @@ export function pairWithdraws(channel: string, file: FileWd[], erp: ErpWd[]): Wd
   // 2) nominal sama & tanggal dalam toleransi (satu lawan satu, yang paling dekat dulu)
   for (const w of file) {
     if (res.has(w)) continue;
-    const cands = erp.filter((x) => !used.has(x.id) && x.amount === w.amount && w.date && Math.abs(x.date.getTime() - w.date.getTime()) <= tol * DAY && (channel === "SHP" || !x.withdrawRef));
-    cands.sort((a, b) => Math.abs(a.date.getTime() - w.date!.getTime()) - Math.abs(b.date.getTime() - w.date!.getTime()));
+    const cands = erp.filter((x) => !used.has(x.id) && x.amount === w.amount && w.date && Math.abs(dayDiffWib(x.date, w.date)) <= tol && (channel === "SHP" || !x.withdrawRef));
+    cands.sort((a, b) => Math.abs(dayDiffWib(a.date, w.date!)) - Math.abs(dayDiffWib(b.date, w.date!)) || Math.abs(a.date.getTime() - w.date!.getTime()) - Math.abs(b.date.getTime() - w.date!.getTime()));
     const e = cands[0];
     if (e) { used.add(e.id); res.set(w, e); }
   }
@@ -280,6 +279,20 @@ export async function matchWithdrawals(opts: { storeId: string; channel: "SHP" |
   const banks = await marketplaceBanks();
   const erp = (await recordedWithdraws(s, opts.channel, banks, stores.length, dayStart(opts.from), dayEnd(opts.to))).rows;
   return pairWithdraws(opts.channel, file.map((w) => ({ refId: w.refId, amount: Math.abs(n(w.amount)), date: w.requestedAt })), erp).map((p) => ({ ...p, via: erp.find((e) => e.id === p.txId)?.via }));
+}
+/**
+ * Ringkasan pencocokan: penarikan file yang tanggalnya SEBELUM withdraw tercatat pertama di Keuangan dianggap "sebelum pencatatan
+ * dimulai" (bukan kelalaian); yang sesudahnya dan belum tercatat = "belum tercatat" yang perlu dicatat.
+ */
+export function wdSummary(list: WdMatch[]) {
+  const recorded = list.filter((x) => x.status !== "BELUM_DI_ERP" && x.date);
+  const first = recorded.length ? recorded.reduce((a, x) => (x.date!.getTime() < a.getTime() ? x.date! : a), recorded[0].date!) : null;
+  const inFile = list.filter((x) => x.fileAmount !== null);
+  const missing = list.filter((x) => x.status === "BELUM_DI_ERP");
+  const old = (x: WdMatch) => !!first && !!x.date && dayDiffWib(x.date, first) < 0;
+  const before = missing.filter(old), recent = missing.filter((x) => !old(x));
+  const sum = (l: WdMatch[]) => l.reduce((a, x) => a + (x.fileAmount ?? 0), 0);
+  return { inFile: inFile.length, ok: list.filter((x) => x.status === "COCOK").length, firstDay: first ? wib(first) : null, before, recent, beforeSum: sum(before), recentSum: sum(recent), isBefore: old };
 }
 export const matchTiktokWithdrawals = (o: { storeId: string; from: string; to: string }) => matchWithdrawals({ ...o, channel: "TTS" });
 

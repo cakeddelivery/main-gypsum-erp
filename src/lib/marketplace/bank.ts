@@ -4,6 +4,10 @@ import { n } from "../money";
 export const CH_WORDS: Record<string, RegExp> = { SHP: /shopee/i, TTS: /tiktok|tokopedia/i };
 export const ref = (s: string | null | undefined) => (s ?? "").trim().toUpperCase().replace(/\s+/g, "");
 
+/** Selisih HARI KALENDER WIB (tanpa jam) a − b. Penarikan file ("2026/11/20" tanpa jam, atau dengan jam) dan transaksi Keuangan (00.00 WIB) dibandingkan per tanggal, bukan per milidetik. */
+export const dayDiffWib = (a: Date, b: Date) => Math.round((Date.UTC(...ymd(a)) - Date.UTC(...ymd(b))) / 86400000);
+const ymd = (d: Date): [number, number, number] => { const x = new Date(d.getTime() + 7 * 3600000); return [x.getUTCFullYear(), x.getUTCMonth(), x.getUTCDate()]; };
+
 export type Store = { id: string; name: string; code: string };
 
 /** Rekening saldo marketplace per kanal; milik toko tertentu bila nama/alias memuat kode/nama toko */
@@ -21,11 +25,10 @@ export type Assign = { storeId: string | null; via: "TERSIMPAN" | "FILE_REF" | "
 type TxLite = { id: string; amount: number; date: Date; storeId: string | null; withdrawRef: string | null };
 type FileLite = { id: string; storeId: string; refId: string; amount: number; date: Date | null };
 
-/** Pasangkan satu-lawan-satu (nominal sama & tanggal berselisih ≤ tol hari), yang paling dekat dulu. Murni. */
+/** Pasangkan satu-lawan-satu (nominal sama & hari kalender WIB berselisih ≤ tol), yang paling dekat dulu. Murni. */
 export function greedyPair(txs: TxLite[], files: FileLite[], tolDays: number, allow: (t: TxLite, f: FileLite) => boolean = () => true): [TxLite, FileLite][] {
-  const DAY = 86400000;
   const cand: { t: TxLite; f: FileLite; d: number }[] = [];
-  for (const t of txs) for (const f of files) if (f.date && t.amount === f.amount && allow(t, f)) { const d = Math.abs(t.date.getTime() - f.date.getTime()); if (d <= tolDays * DAY) cand.push({ t, f, d }); }
+  for (const t of txs) for (const f of files) if (f.date && t.amount === f.amount && allow(t, f)) { const dd = Math.abs(dayDiffWib(t.date, f.date)); if (dd <= tolDays) cand.push({ t, f, d: dd * 1e10 + Math.abs(t.date.getTime() - f.date.getTime()) }); }
   cand.sort((a, b) => a.d - b.d);
   const ut = new Set<string>(), uf = new Set<string>();
   const out: [TxLite, FileLite][] = [];

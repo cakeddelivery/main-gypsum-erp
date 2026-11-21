@@ -7,7 +7,7 @@
  * marketplace (Saldo Akhir file Saldo Penjual Shopee / isian Finance) → selisih + kandidat penyebab.
  */
 import { prisma } from "../src/lib/db";
-import { matchWithdrawals, saldoPanel } from "../src/lib/marketplace/saldo";
+import { matchWithdrawals, saldoPanel, wdSummary } from "../src/lib/marketplace/saldo";
 import { diagnoseWithdraws } from "../src/lib/marketplace/diagnosa";
 
 const idr = (v: number) => `Rp ${Math.round(v).toLocaleString("id-ID")}`;
@@ -21,6 +21,12 @@ async function diagnosa() {
   for (const [k, v] of d.combos) console.log(`  ${v.count} × ${idr(v.sum)} · nominal-sama ${v.sameAmt} · ${k}`);
   console.log("\nBila toleransi tanggal dilebarkan (nominal sama, satu-satu, di antara kandidat):");
   for (const t of d.tol) console.log(`  ±${t.days} hari: ${t.files} penarikan file cocok dengan ${t.txs} transaksi`);
+  console.log("\nDistribusi selisih HARI KALENDER WIB (tanggal transaksi − tanggal file) pada pasangan nominal-sama ±5 hari:");
+  for (const [ch, m] of Object.entries(d.dayDistribution)) console.log(`  ${ch === "SHP" ? "Shopee" : "TikTok"}: ${[-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5].map((k) => `${k > 0 ? "+" : ""}${k}:${m[k] ?? 0}`).join("  ")}`);
+  console.log(`\nPenarikan file TANPA padanan (±5 hari, nominal sama): ${d.unmatchedFiles.length}`);
+  for (const f of d.unmatchedFiles) console.log(`  ${f.date} · ${f.ch === "SHP" ? "Shopee" : "TikTok"} · ${f.store} · ${idr(f.amount)}`);
+  console.log(`Transaksi dari rekening Saldo Penjual TANPA padanan: ${d.unmatchedTx.length}`);
+  for (const c of d.unmatchedTx) console.log(`  ${c.date} · ${c.from} → ${c.to} · ${c.source} · ${c.store} · ${idr(c.amount)}`);
   console.log(`\nSatu transaksi = jumlah 2–4 penarikan file (satu kanal, ±2 hari; sisa yang belum cocok 1-1 pada ±5 hari): ${d.sumMatches.txs} transaksi cocok dari ${d.sumMatches.candidatesLeft} sisa kandidat${d.sumMatches.details.length ? ` (${d.sumMatches.details.map((x) => `${x.parts} penarikan${x.crossStore ? " lintas toko" : ""}`).join(", ")})` : ""}`);
   console.log("\nDaftar kandidat (tanggal · jenis · asal → tujuan · kategori · sumber · toko · ref · nominal):");
   for (const c of d.candidates) console.log(`  ${c.date} · ${c.dir} · ${c.from} → ${c.to} · ${c.cat} · ${c.source}${c.origin !== "-" ? `/${c.origin}` : ""} · ${c.store} · ref ${c.hasRef ? "ada" : "tidak"} · ${idr(c.amount)}${c.sameAmountAsFile ? " · =file" : ""}${c.keyword ? " · kata" : ""}`);
@@ -50,7 +56,9 @@ async function main() {
     console.log(`  Withdraw Keuangan tanpa padanan di file (tidak dikurangkan): ${w.ignoredErp.count} (${idr(w.ignoredErp.amount)}) · penarikan file belum di Keuangan: ${w.notInErp.count} (${idr(w.notInErp.amount)})`);
     const m = await matchWithdrawals({ storeId: r.storeId, channel: r.channel as "SHP" | "TTS", from: "2020-01-01", to: "2099-12-31" });
     const fileRows = m.filter((x) => x.fileAmount !== null), ok = m.filter((x) => x.status === "COCOK"), miss = m.filter((x) => x.status === "BELUM_DI_ERP"), fromFile = ok.filter((x) => x.via?.startsWith("FILE"));
+    const sm = wdSummary(m);
     console.log(`  Withdraw: file ${fileRows.length} · tercatat di ERP ${ok.length} (${fromFile.length} di rekening bersama ditetapkan tokonya dari file) · belum tercatat ${miss.length} (${idr(miss.reduce((a, x) => a + (x.fileAmount ?? 0), 0))})`);
+    console.log(`    dari yang belum tercatat: ${sm.before.length} (${idr(sm.beforeSum)}) SEBELUM withdraw tercatat pertama di Keuangan (${sm.firstDay ?? "-"}) · ${sm.recent.length} (${idr(sm.recentSum)}) sesudahnya`);
     for (const c of w.causes) console.log(`  ! ${c}`);
     console.log();
   }
