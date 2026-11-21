@@ -137,8 +137,13 @@ Role (`enum Role`): OWNER, FINANCE, ADMIN, ADMIN_PRODUKSI, ADMIN_MARKETPLACE, KA
 Perintah update production (setelah merge ke `main`):
 
 ```bash
-cd ~/main-gypsum-erp && git pull origin main && npm run backup && npm ci && npx prisma migrate deploy && npm run build && pm2 restart maingypsum maingypsum-jadwal --update-env
+cd ~/main-gypsum-erp && npm run update:prod
 ```
+
+(Pertama kali sebelum skrip ada di server: `cd ~/main-gypsum-erp && git pull origin main && npm run update:prod`.) Skrip `scripts/update-prod.sh`:
+git pull → backup → npm ci → migrasi → stop staging → `build:ringan` ke `.next-baru` → tukar ke `.next` (lama di `.next-lama`) → restart pm2 →
+commit terbaru. Build hemat memori (VPS 3,6 GB + swap 1,9 GB sempat macet saat `next build` biasa, 21 Nov). Rollback build:
+`rm -rf .next && mv .next-lama .next && pm2 restart maingypsum maingypsum-jadwal --update-env`.
 
 ### Staging
 - **https://tes.maingypsum.shop**, folder `~/main-gypsum-erp-staging`, DB `maingypsum_staging`, PM2 `maingypsum-staging` (port 3001), tanpa scheduler, Telegram/cron mati, `APP_ENV=staging`, data = salinan production. Detail di `docs/STAGING.md`.

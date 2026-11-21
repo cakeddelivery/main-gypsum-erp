@@ -36,11 +36,16 @@ Apa pun yang diubah di staging **tidak** memengaruhi data asli.
    bash ~/main-gypsum-erp/scripts/staging/deploy.sh <nama-cabang>
    ```
 3. Cek di https://tes.maingypsum.shop. Kalau ada yang kurang, perbaikan didorong ke cabang yang sama, lalu jalankan perintah no. 2 lagi.
-4. Kalau sudah oke, PR digabung ke `main`, lalu update produksi seperti biasa:
+4. Kalau sudah oke, PR digabung ke `main`, lalu update produksi:
    ```bash
-   cd ~/main-gypsum-erp && git pull origin main && npm run backup && npm ci && npx prisma migrate deploy && npm run build && pm2 restart maingypsum maingypsum-jadwal --update-env
+   cd ~/main-gypsum-erp && npm run update:prod
    ```
-5. (Opsional) kembalikan staging ke `main`: `bash ~/main-gypsum-erp/scripts/staging/deploy.sh main`
+   (Pertama kali, sebelum skrip ada di server: `cd ~/main-gypsum-erp && git pull origin main && npm run update:prod`.)
+   Isi skrip `scripts/update-prod.sh`: git pull → backup → npm ci → migrasi → **stop staging** → build ringan ke `.next-baru`
+   → tukar ke `.next` (build lama di `.next-lama`) → restart `maingypsum` & `maingypsum-jadwal` → tampilkan commit.
+   Situs tetap jalan selama build; berhenti di langkah yang gagal dengan pesan jelas.
+5. **Setelah uji, matikan staging** agar RAM cukup untuk build produksi: `pm2 stop maingypsum-staging && pm2 save`.
+6. (Opsional) kembalikan staging ke `main`: `bash ~/main-gypsum-erp/scripts/staging/deploy.sh main`
 
 ## Perintah lain
 
@@ -49,6 +54,9 @@ Apa pun yang diubah di staging **tidak** memengaruhi data asli.
   Pakai ini juga bila database staging jadi aneh setelah mencoba beberapa cabang dengan migrasi berbeda.
 - **Hemat RAM** saat staging tidak dipakai: `pm2 stop maingypsum-staging` (nyalakan lagi: `pm2 start maingypsum-staging`).
 - **Log staging**: `pm2 logs maingypsum-staging`
+- **Build hemat memori** (VPS 3,6 GB): produksi & staging memakai `npm run build:ringan` (1 proses build, tanpa worker thread,
+  batas memori Node 2 GB, tanpa lint/typecheck di dalam build — keduanya sudah dijalankan sebelum merge). `npm run build` biasa
+  tetap memeriksa tipe. Bila build tetap macet: pastikan staging mati (`pm2 stop maingypsum-staging`) dan cek `free -h`.
 
 ## Catatan
 

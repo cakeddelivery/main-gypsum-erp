@@ -14,7 +14,7 @@ ALUR KERJA WAJIB
    (staging biasanya dimatikan untuk hemat RAM; deploy.sh menyalakannya lagi. Bila ada migrasi, jalankan dulu bash ~/main-gypsum-erp/scripts/staging/refresh-data.sh)
 3. Aku cek di tes.maingypsum.shop. Kalau ada masalah, perbaiki di branch yang sama.
 4. Merge ke main HANYA setelah aku bilang "staging OK" atau "merge #N". Fitur bot Telegram tidak bisa dites di staging; boleh langsung merge bila aku minta. Lalu beri perintah update production:
-   cd ~/main-gypsum-erp && git pull origin main && npm run backup && npm ci && npx prisma migrate deploy && npm run build && pm2 restart maingypsum maingypsum-jadwal --update-env
+   cd ~/main-gypsum-erp && npm run update:prod
    (plus skrip data bila ada; skrip selalu pratinjau dulu, lalu "-- --jalankan" setelah npm run backup).
 
 ATURAN PENTING

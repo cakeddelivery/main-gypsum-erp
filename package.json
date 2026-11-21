@@ -5,6 +5,8 @@
   "scripts": {
     "dev": "node scripts/copy-ocr.mjs && next dev",
     "build": "node scripts/copy-ocr.mjs && prisma generate && next build",
+    "build:ringan": "node scripts/copy-ocr.mjs && prisma generate && BUILD_RINGAN=1 NODE_OPTIONS=--max-old-space-size=2048 next build --no-lint",
+    "update:prod": "bash scripts/update-prod.sh",
     "start": "next start",
     "db:migrate": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
