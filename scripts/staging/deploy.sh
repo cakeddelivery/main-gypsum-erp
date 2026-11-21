@@ -14,7 +14,8 @@ git log --oneline -1
 
 npm ci --no-audit --no-fund
 npx prisma migrate deploy
-npm run build
+npm run build:ringan
 pm2 restart "$STAGING_PM2" --update-env
 echo
 echo "Staging sekarang menjalankan cabang $BRANCH: https://$STAGING_DOMAIN"
+echo "Setelah selesai diuji, matikan staging agar RAM cukup untuk build produksi: pm2 stop $STAGING_PM2 && pm2 save"

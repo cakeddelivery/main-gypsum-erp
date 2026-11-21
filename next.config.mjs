@@ -17,14 +17,27 @@ const commit = (() => {
 process.env.APP_BUILD_ID ||= `${commit}-${Date.now().toString(36)}`;
 const BUILD_ID = process.env.APP_BUILD_ID;
 
+// Build ringan (VPS 3,6 GB RAM): BUILD_RINGAN=1 melewati typecheck di dalam next build — typecheck & lint sudah
+// dijalankan sebelum merge (npm run -s typecheck). Build biasa (npm run build) tetap memeriksa tipe.
+const ringan = process.env.BUILD_RINGAN === "1";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
+  // Folder hasil build; update produksi membangun ke folder sementara lalu menukarnya ke .next (situs tidak mati saat build)
+  distDir: process.env.NEXT_DIST_DIR || ".next",
+  typescript: { ignoreBuildErrors: ringan },
+  eslint: { ignoreDuringBuilds: ringan },
   generateBuildId: async () => BUILD_ID,
   env: { APP_BUILD_ID: BUILD_ID },
   serverExternalPackages: ["@prisma/client", "bcryptjs", "tesseract.js"],
   experimental: {
     serverActions: { bodySizeLimit: "16mb" },
+    // Hemat memori saat build (hanya memengaruhi proses build, bukan perilaku aplikasi):
+    // satu proses pembuat halaman, tanpa worker thread, dan optimasi memori webpack
+    cpus: 1,
+    workerThreads: false,
+    webpackMemoryOptimizations: true,
     // Halaman yang baru dibuka disimpan 30 detik di HP: kembali/berpindah ke menu yang sama terasa instan.
     // Setiap simpan/ubah data (server action + revalidatePath) langsung membuang simpanan ini, dan AutoRefresh
     // menyegarkan halaman daftar penting secara berkala, jadi data tidak basi.
