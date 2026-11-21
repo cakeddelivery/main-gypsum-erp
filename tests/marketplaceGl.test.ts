@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { commitImport, undoImport } from "@/lib/marketplace/import";
 import type { ParsedFile, ParsedIncome } from "@/lib/marketplace/parse";
-import { adjLines, adsLines, glTrialBalance, linesFromNet, rebuildGl, suggestOpening } from "@/lib/marketplace/gl";
+import { adjLines, adsLines, glTrialBalance, linesFromNet, openingFromBalance, rebuildGl, suggestOpening } from "@/lib/marketplace/gl";
 
 const tag = Date.now().toString(36).slice(-4).toUpperCase();
 const num = Date.now().toString().slice(-6);
@@ -108,5 +108,31 @@ describe("Buku bayangan marketplace (simulasi)", () => {
   it("saran saldo pembuka: Shopee dari file; TikTok manual (tidak ada saran)", async () => {
     const st = await dl();
     expect(await suggestOpening(st.id, "TTS", "PENJUAL", "2026-11-30")).toBeNull();
+  });
+
+  it("hitung mundur saldo pembuka: saldo pada tanggal+jam tertentu dikurangi mutasi sesudah tanggal pembuka; TikTok pukul 08.00", async () => {
+    const st = await prisma.store.create({ data: { code: `GB${tag}`.slice(0, 6), name: `Tes Mundur ${tag}`, organizationId: (await prisma.organization.findFirstOrThrow()).id } });
+    cleanups.unshift(() => prisma.store.delete({ where: { id: st.id } }));
+    // toko uji bukan MG/DL → akun saldo tidak dikenal
+    await expect(openingFromBalance(st.id, "TTS", "PENJUAL", 1000, new Date("2042-06-01T00:00:00Z"))).rejects.toThrow();
+    const dlst = await dl();
+    const tts = await commitImport(actor, [{ fileName: `gl.mundur.${tag}.xlsx`, storeId: dlst.id, parsed: file("TIKTOK", [
+      ev("ORDER", `${num}B1`, "2043-01-10", { productAmt: 50000, released: 40000, feeDetail: { "Biaya Administrasi": -10000 } }),
+      ev("ORDER", `${num}B2`, "2043-01-12", { productAmt: 30000, released: 25000, feeDetail: { "Biaya Administrasi": -5000 } }),
+    ]) }]);
+    cleanups.push(() => undoImport(actor, tts[0].importId));
+    // data uji lain di toko yang sama (2042) ikut dihitung → ukur relatif terhadap titik awal 1 Jan 2043
+    const base = (await openingFromBalance(dlst.id, "TTS", "PENJUAL", 100000, new Date("2043-01-01T00:00:00+07:00"))).movement;
+    // saldo 100.000 diisi pada 10 Jan 2043 pukul 12.00 → hanya cair 10 Jan (08.00) yang sudah masuk; 12 Jan belum
+    const a = await openingFromBalance(dlst.id, "TTS", "PENJUAL", 100000, new Date("2043-01-10T12:00:00+07:00"));
+    expect(a.movement - base).toBe(40000);
+    expect(a.opening).toBe(100000 - base - 40000);
+    // diisi sebelum pukul 08.00 hari itu → penyelesaian hari itu belum masuk
+    const b = await openingFromBalance(dlst.id, "TTS", "PENJUAL", 100000, new Date("2043-01-10T07:00:00+07:00"));
+    expect(b.movement - base).toBe(0);
+    // setelah semuanya
+    const c = await openingFromBalance(dlst.id, "TTS", "PENJUAL", 100000, new Date("2043-01-13T00:00:00+07:00"));
+    expect(c.movement - base).toBe(65000);
+    expect(c.opening).toBe(100000 - base - 65000);
   });
 });

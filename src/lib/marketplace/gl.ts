@@ -60,7 +60,7 @@ const wib = (d: Date) => new Date(d.getTime() + 7 * 3600000).toISOString().slice
 const atDay = (day: string) => new Date(`${day}T05:00:00Z`); // 12.00 WIB (aman dari batas hari)
 
 export type GlLine = { account: string; debit: number; credit: number; memo?: string };
-export type GlJournal = { key: string; date: Date; storeId: string; channel: string; kind: "SETTLE" | "ADS" | "ADJ" | "WD" | "OPEN"; description: string; lines: GlLine[] };
+export type GlJournal = { key: string; date: Date; at?: Date; storeId: string; channel: string; kind: "SETTLE" | "ADS" | "ADJ" | "WD" | "OPEN"; description: string; lines: GlLine[] };
 
 /** Saldo bersih per akun (debit positif) → baris jurnal; selisih ditaruh di 6-1640 agar selalu seimbang */
 export function linesFromNet(net: Map<string, number>, memos?: Map<string, string>): GlLine[] {
@@ -161,7 +161,7 @@ export async function deriveJournals(): Promise<GlJournal[]> {
         for (const [day, list] of days) {
           const lines = kind === "SETTLE" ? settleLines(list, sp, ch, overrides) : kind === "ADJ" ? adjLines(list, sp, ch, overrides) : adsLines(list, sp, saldoIklan(s.code), ch);
           if (!lines.length) continue;
-          out.push({ key: `${kind}|${s.id}|${ch}|${day}`, date: atDay(day), storeId: s.id, channel: ch, kind: kind as GlJournal["kind"], description: `${kind === "SETTLE" ? "Pencairan pesanan" : kind === "ADJ" ? "Penyesuaian saldo" : "Iklan"} ${label} ${day}`, lines });
+          out.push({ key: `${kind}|${s.id}|${ch}|${day}`, date: atDay(day), at: ch === "TTS" ? new Date(`${day}T08:00:00+07:00`) : new Date(Math.max(...list.map((e) => e.releasedAt.getTime()))), storeId: s.id, channel: ch, kind: kind as GlJournal["kind"], description: `${kind === "SETTLE" ? "Pencairan pesanan" : kind === "ADJ" ? "Penyesuaian saldo" : "Iklan"} ${label} ${day}`, lines });
         }
       }
       // withdraw yang sudah dicatat di Keuangan
@@ -172,7 +172,7 @@ export async function deriveJournals(): Promise<GlJournal[]> {
         const bankCoa = new Map((await prisma.bankAccount.findMany({ select: { id: true, coaAccount: { select: { code: true } } } })).map((b) => [b.id, b.coaAccount.code]));
         for (const r of wd.rows) {
           const bank = (to.get(r.id) && bankCoa.get(to.get(r.id)!)) || GL_UNKNOWN_BANK;
-          out.push({ key: `WD|${r.id}`, date: atDay(wib(r.date)), storeId: s.id, channel: ch, kind: "WD", description: `Withdraw ${label}${r.withdrawRef ? ` (${r.withdrawRef})` : ""}`, lines: [{ account: bank, debit: r.amount, credit: 0 }, { account: sp, debit: 0, credit: r.amount }] });
+          out.push({ key: `WD|${r.id}`, date: atDay(wib(r.date)), at: r.date, storeId: s.id, channel: ch, kind: "WD", description: `Withdraw ${label}${r.withdrawRef ? ` (${r.withdrawRef})` : ""}`, lines: [{ account: bank, debit: r.amount, credit: 0 }, { account: sp, debit: 0, credit: r.amount }] });
         }
       }
     }
@@ -188,6 +188,28 @@ export async function deriveJournals(): Promise<GlJournal[]> {
     out.push({ key: `OPEN|${o.storeId}|${o.channel}|${o.wallet}`, date: atDay(openDate), storeId: o.storeId, channel: o.channel, kind: "OPEN", description: `Saldo pembuka ${o.wallet === "IKLAN" ? "saldo iklan" : "saldo penjual"} ${s.name} · ${o.channel === "SHP" ? "Shopee" : "TikTok"}`, lines: [{ account: acct, debit: v > 0 ? v : 0, credit: v < 0 ? -v : 0 }, { account: "3-9000", debit: v < 0 ? -v : 0, credit: v > 0 ? v : 0 }] });
   }
   return out.sort((a, b) => a.date.getTime() - b.date.getTime() || a.key.localeCompare(b.key));
+}
+
+/**
+ * Hitung mundur saldo pembuka: pengguna mengisi saldo pada tanggal+jam tertentu (mis. dari Seller Center hari ini);
+ * pembuka = saldo itu − mutasi buku bayangan (dari jurnal turunan, tanpa pembuka) yang terjadi setelah tanggal pembuka sampai instan itu.
+ * Mutasi harian dianggap terjadi pada jam peristiwa terakhirnya (TikTok: 08.00 WIB).
+ */
+export async function openingFromBalance(storeId: string, channel: string, wallet: Wallet, balance: number, asOfAt: Date): Promise<{ opening: number; movement: number; count: number }> {
+  const store = await prisma.store.findUniqueOrThrow({ where: { id: storeId }, select: { code: true } });
+  const acct = wallet === "IKLAN" ? saldoIklan(store.code) : saldoPenjual(store.code, channel);
+  if (!acct) throw new Error("Akun saldo tidak dikenal");
+  const openDate = await glOpenDate();
+  const after = new Date(`${openDate}T17:00:00Z`);
+  let movement = 0, count = 0;
+  for (const j of await deriveJournals()) {
+    if (j.kind === "OPEN" || j.storeId !== storeId || j.channel !== channel) continue;
+    const at = j.at ?? j.date;
+    if (at <= after || at > asOfAt) continue;
+    const net = j.lines.filter((l) => l.account === acct).reduce((a, l) => a + l.debit - l.credit, 0);
+    if (net) { movement += net; count++; }
+  }
+  return { opening: balance - movement, movement, count };
 }
 
 /** Bangun ulang buku bayangan: hapus semua jurnal bayangan lalu tulis ulang (tidak menyentuh jurnal nyata) */
