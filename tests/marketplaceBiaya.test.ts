@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, beforeAll } from "vitest";
 import { prisma } from "@/lib/db";
 import { makeXlsx } from "./fixtures/xlsxMake";
 import { parseMarketplaceFile } from "@/lib/marketplace/parse";
@@ -34,6 +34,18 @@ async function store() {
 const inc = (refNo: string, o: Partial<ParsedIncome> = {}): ParsedIncome => ({ kind: "ORDER", refNo, orderedAt: at("2036-03-01"), releasedAt: at("2036-03-05"), released: 0, productAmt: 0, refundAmt: 0, fees: 0, feeDetail: {}, ...o });
 const ord = (orderNo: string, o: Partial<ParsedOrder> = {}): ParsedOrder => ({ orderNo, orderedAt: at("2036-03-01"), paidAt: null, completedAt: null, rawStatus: "Selesai", rawSubstatus: null, rawReturn: null, cancelReason: null, trackingNo: null, shipOption: null, courier: null, paymentMethod: null, city: "KOTA MALANG", province: "Jawa Timur", creatorHandle: null, affiliate: false, subtotal: 0, discount: 0, shippingPaid: 0, total: 10000, refundAmount: 0, returnQty: 0, lines: [{ sku: `AFF${tag}`, variation: null, name: "Produk", qty: 1, unitPrice: 10000, amount: 10000, returnQty: 0 }], ...o });
 const file = (platform: "SHOPEE" | "TIKTOK", kind: "ORDER" | "INCOME", f: Partial<ParsedFile>): ParsedFile => ({ platform, kind, orders: [], incomes: [], withdrawals: [], periodFrom: null, periodTo: null, info: { rows: 0 }, ...f });
+
+
+// Rekening saldo marketplace bawaan (seed) dipakai bersama banyak tes Keuangan; withdraw-nya kini dikenali per toko, jadi
+// dinetralkan selama berkas ini berjalan agar angka saldo hanya berasal dari data uji di sini.
+let seededWalletBanks: string[] = [];
+beforeAll(async () => {
+  seededWalletBanks = (await prisma.bankAccount.findMany({ where: { marketplace: true }, select: { id: true } })).map((b) => b.id);
+  await prisma.bankAccount.updateMany({ where: { id: { in: seededWalletBanks } }, data: { marketplace: false } });
+});
+afterAll(async () => {
+  await prisma.bankAccount.updateMany({ where: { id: { in: seededWalletBanks } }, data: { marketplace: true } });
+});
 
 describe("Pemetaan biaya", () => {
   it("kolom bawaan Shopee & TikTok masuk kategori yang benar; kolom baru tetap 'BELUM' (tidak hilang)", () => {

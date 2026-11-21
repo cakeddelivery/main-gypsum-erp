@@ -9,13 +9,13 @@ import type { Extraction } from "@/lib/extract";
 type Opt = { id: string; name: string };
 type Cat = Opt & { direction: string; bpjs?: boolean };
 type BpjsEmp = { id: string; name: string; amount: number; member: boolean };
-type Init = { id?: string; direction?: string; amount?: number; date?: string; time?: string; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; payableId?: string | null; storeId?: string | null; counterparty?: string | null; note?: string | null; rawText?: string | null; splits?: Split[]; bpjsEmployeeIds?: string[] };
+type Init = { id?: string; direction?: string; amount?: number; date?: string; time?: string; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; payableId?: string | null; withdrawRef?: string | null; storeId?: string | null; counterparty?: string | null; note?: string | null; rawText?: string | null; splits?: Split[]; bpjsEmployeeIds?: string[] };
 type Split = { categoryId: string | null; amount: number | ""; note: string; itemId?: string | null; itemName?: string | null; qty?: number | null };
 
 export function TxForm(p: {
   action: (prev: ActionResult | null, fd: FormData) => Promise<ActionResult>;
   extract?: (text: string) => Promise<Extraction>;
-  banks: Opt[];
+  banks: (Opt & { marketplace?: boolean })[];
   categories: Cat[];
   stores: Opt[];
   /** Toko default; dipakai untuk semua transaksi selain withdraw (operasional & bahan baku dipakai bersama) */
@@ -50,6 +50,8 @@ export function TxForm(p: {
   const setSplit = (k: number, patch: Partial<Split>) => setSplits((o) => o.map((x, i) => (i === k ? { ...x, ...patch } : x)));
   // Toko hanya membedakan withdraw saldo penjual marketplace (transfer internal); selain itu selalu toko default.
   const isTransfer = v.direction === "TRANSFER";
+  // Withdraw dari rekening saldo marketplace: TOKO wajib dipilih sendiri (satu rekening bisa dipakai beberapa toko), ID referensi penarikan opsional
+  const isWd = isTransfer && !!p.banks.find((b) => b.id === v.accountId)?.marketplace;
   // Toko dari nama atau inisial (WD MG / WD DL)
   const storeIn = (text?: string | null) => p.stores.find((s) => text?.toLowerCase().includes(s.name.toLowerCase()) || new RegExp(`\\b${(s as Opt & { code?: string }).code ?? "@@"}\\b`, "i").test(text ?? ""))?.id;
   return (
@@ -101,7 +103,14 @@ export function TxForm(p: {
         </label>
         <label><span className="label">Nominal (IDR)</span><input name="amount" inputMode="numeric" value={v.amount ?? ""} onChange={set("amount")} className="input" required placeholder="0" /></label>
         {isTransfer ? (
-          <label><span className="label">Toko (withdraw)</span><select name="storeId" value={v.storeId ?? p.defaultStoreId ?? ""} onChange={set("storeId")} className="input">{p.stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+          isWd ? (
+            <>
+              <label><span className="label">Toko (withdraw) *</span><select name="storeId" value={v.storeId ?? ""} onChange={set("storeId")} className="input" required><option value="">— pilih toko —</option>{p.stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+              <label><span className="label">ID referensi penarikan</span><input name="withdrawRef" defaultValue={v.withdrawRef ?? ""} className="input" placeholder="opsional (TikTok: ID di Riwayat penarikan)" /></label>
+            </>
+          ) : (
+            <label><span className="label">Toko (withdraw)</span><select name="storeId" value={v.storeId ?? p.defaultStoreId ?? ""} onChange={set("storeId")} className="input">{p.stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label>
+          )
         ) : (
           <input type="hidden" name="storeId" value={p.defaultStoreId ?? v.storeId ?? ""} />
         )}

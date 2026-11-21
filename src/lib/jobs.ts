@@ -302,6 +302,16 @@ export async function runDueJobs(now: Date = new Date()) {
       }
     }
   }
+  // Tanggal 1–3: ingatkan unggah data marketplace bulan lalu (sekali per hari, jam pengingat sinkron)
+  {
+    const { syncConfig, sendMarketplaceMonthlyReminder } = await import("./marketplace/sync");
+    const cfg = await syncConfig();
+    if (cfg.start && Number(date.slice(8)) <= 3 && minutes >= cfg.hour * 60 && !(await ranToday("job_mp_month", date))) {
+      await markRan("job_mp_month", date);
+      const { pushConfigured } = await import("./push");
+      if (pushConfigured()) results.mpMonthly = await logFailure("MP_BULANAN", date, () => sendMarketplaceMonthlyReminder(now));
+    }
+  }
   // Pengingat withdraw marketplace belum dicatat (jam diatur di Penjualan › Marketplace › Saldo; bawaan 15.00)
   {
     const { wdReminderHour, sendMarketplaceWdReminder } = await import("./marketplace/saldo");

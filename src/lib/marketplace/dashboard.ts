@@ -4,6 +4,7 @@ import { dayEnd, dayStart, orderSummary } from "./report";
 import { potonganReport } from "./potongan";
 import { regionCity, CHANNEL_LABEL } from "./rules";
 import { resolveSkuKeys } from "./sku";
+import { bucketKey, buckets } from "./periode";
 
 /** Data dashboard marketplace (hanya baca): omzet harian per kanal, top produk, potongan, kota teratas, ringkasan per toko. */
 const wib = (d: Date) => new Date(d.getTime() + 7 * 3600000).toISOString().slice(0, 10);
@@ -19,8 +20,15 @@ export async function latestMonth() {
   return wib(o?.orderedAt ?? new Date()).slice(0, 7);
 }
 
-export async function dashboardData(f: { month: string; storeId?: string }) {
-  const { from, to, days } = monthBounds(f.month);
+/** Angka ringkas satu periode (untuk pembanding ▲/▼ terhadap periode sebelumnya yang sama panjang) */
+export async function periodTotals(f: { from: string; to: string; storeId?: string }) {
+  const where = { orderedAt: { gte: dayStart(f.from), lt: dayEnd(f.to) }, status: { not: "BATAL" }, ...(f.storeId ? { storeId: f.storeId } : {}) };
+  const [agg, summary] = await Promise.all([prisma.marketplaceOrder.aggregate({ where, _sum: { total: true }, _count: true }), orderSummary({ storeId: f.storeId, from: f.from, to: f.to })]);
+  return { omzet: n(agg._sum.total), orders: agg._count, piutang: summary.piutang, fees: summary.fees };
+}
+
+export async function dashboardData(f: { from: string; to: string; weekly?: boolean; storeId?: string }) {
+  const { from, to } = f;
   const where = { orderedAt: { gte: dayStart(from), lt: dayEnd(to) }, ...(f.storeId ? { storeId: f.storeId } : {}) };
   const [orders, incomes, summary, stores] = await Promise.all([
     prisma.marketplaceOrder.findMany({ where, select: { channel: true, storeId: true, orderedAt: true, total: true, status: true, affiliate: true, city: true, lines: { select: { skuKey: true, qty: true, amount: true } } } }),
@@ -30,17 +38,19 @@ export async function dashboardData(f: { month: string; storeId?: string }) {
   ]);
   const live = orders.filter((o) => o.status !== "BATAL");
   // Omzet & pesanan per hari per kanal; cair per hari
-  const daily = Array.from({ length: days }, (_, i) => ({ label: String(i + 1).padStart(2, "0"), SHP: 0, TTS: 0, pesananSHP: 0, pesananTTS: 0, cair: 0 }));
+  const bks = buckets(from, to, !!f.weekly);
+  const idx = new Map(bks.map((b, i) => [b.key, i]));
+  const daily = bks.map((b) => ({ label: b.label, SHP: 0, TTS: 0, pesananSHP: 0, pesananTTS: 0, cair: 0 }));
   for (const o of live) {
-    const d = Number(wib(o.orderedAt!).slice(8)) - 1;
-    if (daily[d]) {
+    const d = idx.get(bucketKey(wib(o.orderedAt!), !!f.weekly));
+    if (d !== undefined) {
       daily[d][o.channel as "SHP" | "TTS"] += n(o.total);
       daily[d][o.channel === "SHP" ? "pesananSHP" : "pesananTTS"]++;
     }
   }
   for (const i of incomes) {
-    const d = Number(wib(i.releasedAt!).slice(8)) - 1;
-    if (daily[d]) daily[d].cair += n(i.released);
+    const d = idx.get(bucketKey(wib(i.releasedAt!), !!f.weekly));
+    if (d !== undefined) daily[d].cair += n(i.released);
   }
   // Per toko × kanal
   const sn = new Map(stores.map((s) => [s.id, s.name]));

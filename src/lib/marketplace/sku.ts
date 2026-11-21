@@ -5,6 +5,23 @@ import { normSku } from "./rules";
 /** Bawaan (konfirmasi pemilik): SKU TikTok "BWPK" = Extra Packing "Extra Dus + Bubble Wrap". Dipakai hanya bila belum ada pemetaan/penandaan sendiri; bisa diubah di Pemetaan SKU. */
 export const DEFAULT_EXTRA: Record<string, string> = { "BWPK|": "Extra Dus + Bubble Wrap" };
 
+/**
+ * Varian Extra Packing otomatis untuk SKU yang sudah diketahui (bisa diubah di Pemetaan SKU):
+ * BWPK (TikTok) = Extra Dus + Bubble Wrap; BBWP (Shopee) menurut nama variasi: "Bubble + Dus" = Extra Dus + Bubble Wrap, "Bubble Wrap" = Bubble Wrap.
+ */
+export function defaultExtraVariant(key: string): string | null {
+  const [s, v = ""] = key.split("|");
+  const fixed = DEFAULT_EXTRA[key] ?? DEFAULT_EXTRA[`${s}|`];
+  if (fixed) return fixed;
+  if (s === "BBWP") {
+    const x = v.toLowerCase();
+    if (/bubble/.test(x) && /dus/.test(x)) return "Extra Dus + Bubble Wrap";
+    if (/bubble/.test(x)) return "Bubble Wrap";
+    if (/dus/.test(x)) return "Extra Dus";
+  }
+  return null;
+}
+
 export type SkuResolved =
   | { kind: "PRODUK"; itemId: string; itemName: string; by: "PETA" | "OTOMATIS" }
   | { kind: "EXTRA_PACKING"; variant: string | null };
@@ -42,7 +59,7 @@ export async function resolveSkuKeys(keys: string[]): Promise<Map<string, SkuRes
       out.set(key, { kind: "PRODUK", itemId: m.itemId, itemName: m.name, by: "PETA" });
       continue;
     }
-    const def = DEFAULT_EXTRA[key] ?? DEFAULT_EXTRA[`${s}|`];
+    const def = defaultExtraVariant(key);
     if (def) {
       out.set(key, { kind: "EXTRA_PACKING", variant: def });
       continue;

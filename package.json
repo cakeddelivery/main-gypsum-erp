@@ -13,6 +13,7 @@
     "setup:borongan": "tsx scripts/siapkan-borongan.ts",
     "setup:divisi-produk": "tsx scripts/divisi-produk.ts",
     "katalog:produk": "tsx scripts/katalog-produk.ts",
+    "marketplace:saldo-cek": "tsx scripts/marketplace-saldo-cek.ts",
     "marketplace:cek": "tsx scripts/marketplace-cek.ts",
     "single-pack:tautkan": "tsx scripts/tautkan-single-pack.ts",
     "single-pack:cek": "tsx scripts/cek-single-pack.ts",

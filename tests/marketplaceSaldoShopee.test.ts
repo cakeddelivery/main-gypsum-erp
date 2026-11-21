@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, beforeAll } from "vitest";
 import { prisma } from "@/lib/db";
 import { makeXlsx } from "./fixtures/xlsxMake";
 import { commitImport, previewImport, undoImport } from "@/lib/marketplace/import";
@@ -62,6 +62,18 @@ const adsCsv = (seller = "main.gypsum") => Buffer.from([
   "4,11/08/2040 09:00,Pengurangan untuk Iklan Toko (Bidding Manual),-10000,",
   "5,12/08/2040 09:00,ROAS Protection Free Ads Credit Rebate,2500,",
 ].join("\n"), "utf8");
+
+
+// Rekening saldo marketplace bawaan (seed) dipakai bersama banyak tes Keuangan; withdraw-nya kini dikenali per toko, jadi
+// dinetralkan selama berkas ini berjalan agar angka saldo hanya berasal dari data uji di sini.
+let seededWalletBanks: string[] = [];
+beforeAll(async () => {
+  seededWalletBanks = (await prisma.bankAccount.findMany({ where: { marketplace: true }, select: { id: true } })).map((b) => b.id);
+  await prisma.bankAccount.updateMany({ where: { id: { in: seededWalletBanks } }, data: { marketplace: false } });
+});
+afterAll(async () => {
+  await prisma.bankAccount.updateMany({ where: { id: { in: seededWalletBanks } }, data: { marketplace: true } });
+});
 
 describe("Shopee: Buku Saldo Penjual (my_balance_transaction_report)", () => {
   it("dibaca sesuai format asli: meta, header baris 18, kategori, angka float, total masuk/keluar", async () => {

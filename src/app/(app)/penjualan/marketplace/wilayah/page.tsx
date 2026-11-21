@@ -1,19 +1,22 @@
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { regionReport, skuOverview, topCitiesForProduct } from "@/lib/marketplace/report";
+import { PeriodFilter } from "../PeriodFilter";
+import { resolvePeriod } from "@/lib/marketplace/periode";
 import { Badge, Card, Empty, Field, FilterBar, PageHeader, Stat } from "@/components/ui";
 import { RegionTable } from "./RegionTable";
 import { MpNav } from "../MpNav";
 
 export const metadata = { title: "Wilayah Pembeli & Retur" };
-type SP = { toko?: string; kanal?: string; dari?: string; sampai?: string; sku?: string; alasan?: string };
+type SP = { toko?: string; kanal?: string; dari?: string; sampai?: string; periode?: string; bulan?: string; sku?: string; alasan?: string };
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const pc = (v: number) => `${v.toLocaleString("id-ID", { maximumFractionDigits: 1 })}%`;
 
 export default async function WilayahPage({ searchParams }: { searchParams: Promise<SP> }) {
   await requirePerm("sales.view");
   const sp = await searchParams;
-  const f = { storeId: sp.toko || undefined, channel: sp.kanal === "SHP" || sp.kanal === "TTS" ? sp.kanal : undefined, from: DATE.test(sp.dari ?? "") ? sp.dari : undefined, to: DATE.test(sp.sampai ?? "") ? sp.sampai : undefined, skuKey: sp.sku || undefined, reason: sp.alasan || undefined };
+  const period = resolvePeriod(sp);
+  const f = { storeId: sp.toko || undefined, channel: sp.kanal === "SHP" || sp.kanal === "TTS" ? sp.kanal : undefined, from: period.from, to: period.to, skuKey: sp.sku || undefined, reason: sp.alasan || undefined };
   const [stores, skus, reasons, rep] = await Promise.all([
     prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } }),
     skuOverview(),
@@ -25,11 +28,11 @@ export default async function WilayahPage({ searchParams }: { searchParams: Prom
     <div className="space-y-4">
       <PageHeader title="Wilayah Pembeli & Retur" subtitle="Kota/kabupaten dan provinsi pembeli · pesanan batal tidak dihitung · retur diambil dari status marketplace dan retur ERP yang tertaut" />
       <MpNav current="wilayah" />
+      <PeriodFilter sp={sp} period={period} />
       <FilterBar>
         <Field label="Toko"><select name="toko" defaultValue={sp.toko ?? ""} className="input"><option value="">Semua</option>{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
         <Field label="Kanal"><select name="kanal" defaultValue={sp.kanal ?? ""} className="input"><option value="">Semua</option><option value="SHP">Shopee</option><option value="TTS">TikTok</option></select></Field>
-        <Field label="Dari"><input type="date" name="dari" defaultValue={sp.dari ?? ""} className="input" /></Field>
-        <Field label="Sampai"><input type="date" name="sampai" defaultValue={sp.sampai ?? ""} className="input" /></Field>
+        {[["periode", sp.periode], ["bulan", sp.bulan], ["dari", sp.dari], ["sampai", sp.sampai]].map(([k, v]) => (v ? <input key={k} type="hidden" name={k} value={v} /> : null))}
         <Field label="Produk (SKU)"><select name="sku" defaultValue={sp.sku ?? ""} className="input"><option value="">Semua</option>{skus.map((s) => <option key={s.key} value={s.key}>{[s.sample?.sku, s.sample?.variation].filter(Boolean).join(" · ") || s.key}</option>)}</select></Field>
         <Field label="Alasan retur"><select name="alasan" defaultValue={sp.alasan ?? ""} className="input"><option value="">Semua</option>{reasons.map((r) => <option key={r.reason}>{r.reason}</option>)}</select></Field>
       </FilterBar>

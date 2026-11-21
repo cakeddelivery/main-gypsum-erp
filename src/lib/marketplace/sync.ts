@@ -62,19 +62,45 @@ export async function syncStatus(now = new Date()) {
   return out;
 }
 
-/** Pengingat push: Supervisor pada jam yang diatur; Owner (cadangan) 2 jam kemudian bila masih belum diperbarui */
+/** Pengingat push: Supervisor pada jam yang diatur; Owner (cadangan) 2 jam kemudian bila masih belum diperbarui.
+ *  Berbasis matriks kelengkapan: menyebut toko × kanal × jenis × bulan yang belum diunggah (jenis yang "menunggu akses" dijeda). */
 export async function sendMarketplaceSyncReminder(now: Date, audience: "SUPERVISOR" | "OWNER") {
   const st = await syncStatus(now);
-  if (!st.active || !st.stale) return { notifikasi: 0 };
+  if (!st.active) return { notifikasi: 0 };
+  const { completeness, missingLines } = await import("./kelengkapan");
+  const m = await completeness(now);
+  if (!m.missing.length && !st.stale) return { notifikasi: 0 };
   const users = await prisma.user.findMany({ where: { active: true, role: audience }, select: { id: true } });
   const { sendPush } = await import("../push");
   const label = (c: string) => (c === "SHP" ? "Shopee" : "TikTok");
-  const lines = st.rows.filter((r) => r.status !== "OK").map((r) => `${r.store} ${label(r.channel)} ${r.kind === "ORDER" ? "order" : "penghasilan"}${r.lastDate ? ` (terakhir ${r.lastDate})` : " (belum ada)"}`);
+  const lines = m.missing.length ? missingLines(m.missing) : st.rows.filter((r) => r.status !== "OK").map((r) => `${r.store} ${label(r.channel)} ${r.kind === "ORDER" ? "order" : "penghasilan"}${r.lastDate ? ` (terakhir ${r.lastDate})` : " (belum ada)"}`);
   const r = await sendPush(users.map((u) => u.id), {
-    title: audience === "OWNER" ? "Cadangan: data marketplace belum diperbarui" : "Perbarui data marketplace hari ini",
-    body: `${lines.slice(0, 4).join(" · ")}${lines.length > 4 ? ` · +${lines.length - 4} lainnya` : ""}`,
-    url: "/penjualan",
+    title: audience === "OWNER" ? "Cadangan: data marketplace belum lengkap" : "Lengkapi data marketplace",
+    body: `${lines.slice(0, 3).join(" · ")}${lines.length > 3 ? ` · +${lines.length - 3} lainnya` : ""}`,
+    url: "/penjualan/marketplace/impor",
     tag: "mp-sync",
   });
-  return { notifikasi: 1, perangkat: r.sent, audience, stale: st.stale };
+  return { notifikasi: 1, perangkat: r.sent, audience, stale: st.stale, belumLengkap: m.missing.length };
+}
+
+/** Tanggal 1–3 tiap bulan: ingatkan unggah data BULAN LALU (Shopee per bulan: Pesanan/Penghasilan/Saldo Penjual/Iklan; TikTok Penghasilan per 2 bulan) */
+export async function sendMarketplaceMonthlyReminder(now: Date) {
+  const day = Number(todayStr(now).slice(8));
+  if (day < 1 || day > 3) return { notifikasi: 0 };
+  const st = await syncStatus(now);
+  if (!st.active) return { notifikasi: 0 };
+  const { completeness, missingLines } = await import("./kelengkapan");
+  const m = await completeness(now);
+  const prev = addDays(todayStr(now), -day).slice(0, 7); // bulan lalu
+  const last = m.missing.filter((x) => x.month === prev);
+  if (!last.length) return { notifikasi: 0 };
+  const users = await prisma.user.findMany({ where: { active: true, role: { in: ["SUPERVISOR", "OWNER"] } }, select: { id: true } });
+  const { sendPush } = await import("../push");
+  const r = await sendPush(users.map((u) => u.id), {
+    title: "Unggah data bulan lalu",
+    body: `Shopee per bulan: Pesanan/Penghasilan/Saldo Penjual/Iklan; TikTok Penghasilan per 2 bulan. Belum ada: ${missingLines(last).slice(0, 3).join(" · ")}`,
+    url: "/penjualan/marketplace/impor",
+    tag: "mp-bulanan",
+  });
+  return { notifikasi: 1, perangkat: r.sent, bulan: prev, belum: last.length };
 }

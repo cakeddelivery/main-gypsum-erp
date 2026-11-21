@@ -38,6 +38,7 @@ async function readForm(fd: FormData): Promise<TxInput> {
     categoryId: optStr(fd, "categoryId"),
     suggestedCategoryId: optStr(fd, "suggestedCategoryId"),
     storeId: optStr(fd, "storeId"),
+    withdrawRef: fd.has("withdrawRef") ? optStr(fd, "withdrawRef") : undefined,
     counterparty: optStr(fd, "counterparty"),
     note: optStr(fd, "note"),
     rawText: optStr(fd, "rawText"),

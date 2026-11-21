@@ -63,9 +63,9 @@ export function saldoStatus(balance: number, oldest: string | null, today: strin
 const wib = (d: Date) => new Date(d.getTime() + 7 * 3600000).toISOString().slice(0, 10);
 const dateStrWib = wib;
 
-export type WdMatch = { status: "COCOK" | "BELUM_DI_ERP" | "TIDAK_DI_FILE"; refId: string; fileAmount: number | null; erpAmount: number | null; date: Date | null; txId?: string };
+export type WdMatch = { status: "COCOK" | "BELUM_DI_ERP" | "TIDAK_DI_FILE"; refId: string; fileAmount: number | null; erpAmount: number | null; date: Date | null; txId?: string; /** asal toko di rekening bersama: ditetapkan dari file (ID referensi / nominal & tanggal) */ via?: string };
 type FileWd = { refId: string; amount: number; date: Date | null };
-type ErpWd = { id: string; amount: number; date: Date; withdrawRef: string | null; number?: string };
+type ErpWd = { id: string; amount: number; date: Date; withdrawRef: string | null; number?: string; status?: string; via?: string };
 
 /**
  * Pasangkan penarikan di file (TikTok "Riwayat penarikan" / Shopee "Transaksi Saldo Penjual") dengan withdraw di Keuangan.
@@ -75,11 +75,21 @@ export function pairWithdraws(channel: string, file: FileWd[], erp: ErpWd[]): Wd
   const used = new Set<string>();
   const out: WdMatch[] = [];
   const DAY = 86400000;
+  // TikTok: uang baru masuk bank 1–3 hari setelah diminta, jadi tanggal di Keuangan bisa berselisih 0–4 hari dari "Waktu permintaan"
+  const tol = channel === "TTS" ? 4 : 2;
+  const res = new Map<FileWd, ErpWd | undefined>();
+  // 1) TikTok: ID referensi (pasti)
+  if (channel === "TTS") for (const w of file) { const e = erp.find((x) => x.withdrawRef && ref(x.withdrawRef) === ref(w.refId) && !used.has(x.id)); if (e) { used.add(e.id); res.set(w, e); } }
+  // 2) nominal sama & tanggal dalam toleransi (satu lawan satu, yang paling dekat dulu)
   for (const w of file) {
-    const e = channel === "TTS"
-      ? erp.find((x) => x.withdrawRef && ref(x.withdrawRef) === ref(w.refId) && !used.has(x.id))
-      : erp.find((x) => !used.has(x.id) && x.amount === w.amount && w.date && Math.abs(x.date.getTime() - w.date.getTime()) <= 2 * DAY);
-    if (e) used.add(e.id);
+    if (res.has(w)) continue;
+    const cands = erp.filter((x) => !used.has(x.id) && x.amount === w.amount && w.date && Math.abs(x.date.getTime() - w.date.getTime()) <= tol * DAY && (channel === "SHP" || !x.withdrawRef));
+    cands.sort((a, b) => Math.abs(a.date.getTime() - w.date!.getTime()) - Math.abs(b.date.getTime() - w.date!.getTime()));
+    const e = cands[0];
+    if (e) { used.add(e.id); res.set(w, e); }
+  }
+  for (const w of file) {
+    const e = res.get(w);
     out.push({ status: e ? "COCOK" : "BELUM_DI_ERP", refId: channel === "TTS" ? w.refId : `Saldo Penjual ${w.date ? dateStrWib(w.date) : ""}`, fileAmount: w.amount, erpAmount: e?.amount ?? null, date: w.date, txId: e?.id });
   }
   for (const e of erp) if (!used.has(e.id) && (channel === "SHP" || e.withdrawRef)) out.push({ status: "TIDAK_DI_FILE", refId: e.withdrawRef ?? e.number ?? `Keuangan ${dateStrWib(e.date)}`, fileAmount: null, erpAmount: e.amount, date: e.date, txId: e.id });
@@ -89,25 +99,117 @@ export function pairWithdraws(channel: string, file: FileWd[], erp: ErpWd[]): Wd
 type StoreLite = { id: string; name: string; code: string };
 const FAR = new Date("2100-01-01");
 
+/** Rentang tanggal (WIB) yang SUDAH tercakup file penarikan: periode impor yang memuat penarikan + tanggal tiap penarikan di file */
+export type Span = [string, string];
+const inSpans = (spans: Span[], d: string) => spans.some(([a, b]) => d >= a && d <= b);
+
 /**
  * Alokasi FIFO per toko & kanal: tiap penghasilan pesanan mendapat withdraw yang menutupnya.
- * Withdraw = yang tercatat di Keuangan + penarikan di file yang BELUM tercatat di ERP (tetap nyata, mengurangi saldo).
+ *
+ * SATU SUMBER withdraw per tanggal (tidak pernah dikurangkan dua kali):
+ *  - tanggal yang tercakup FILE penarikan (TikTok "Riwayat penarikan" / Shopee Saldo Penjual): file = sumber utama; withdraw di
+ *    Keuangan hanya DICOCOKKAN. Yang tidak cocok tidak dikurangkan lagi, hanya menjadi peringatan (`ignoredErp`).
+ *  - tanggal di luar cakupan file: withdraw tercatat di Keuangan dipakai.
  */
 export async function loadAllocation(s: StoreLite, ch: string, storeCount: number, banks?: Awaited<ReturnType<typeof marketplaceBanks>>) {
   const bks = banks ?? (await marketplaceBanks());
-  const [incomes, rec, fileWd] = await Promise.all([
+  const [incomes, rec, fileWd, imps] = await Promise.all([
     // Setiap baris penyelesaian (event) = satu lot: cair positif, refund/iklan/penyesuaian negatif
-    prisma.marketplaceIncomeEvent.findMany({ where: { income: { storeId: s.id, channel: ch, kind: { not: "ADSUSE" } }, releasedAt: { not: null } }, select: { id: true, incomeId: true, released: true, releasedAt: true }, orderBy: [{ releasedAt: "asc" }, { id: "asc" }] }),
+    prisma.marketplaceIncomeEvent.findMany({ where: { income: { storeId: s.id, channel: ch, kind: { not: "ADSUSE" } }, releasedAt: { not: null } }, select: { id: true, incomeId: true, released: true, releasedAt: true, income: { select: { kind: true } } }, orderBy: [{ releasedAt: "asc" }, { id: "asc" }] }),
     recordedWithdraws(s, ch, bks, storeCount, new Date(0), FAR),
     prisma.marketplaceWithdrawal.findMany({ where: { storeId: s.id, channel: ch, txType: { contains: "withdraw", mode: "insensitive" } } }),
+    prisma.marketplaceImport.findMany({ where: { storeId: s.id, channel: ch, undoneAt: null, kind: ch === "TTS" ? "INCOME" : "BALANCE", periodFrom: { not: null } }, select: { periodFrom: true, periodTo: true, stats: true } }),
   ]);
   const pairs = pairWithdraws(ch, fileWd.map((w) => ({ refId: w.refId, amount: Math.abs(n(w.amount)), date: w.requestedAt })), rec.rows);
+  const spans: Span[] = [];
+  for (const i of imps) {
+    const hadWd = ((i.stats ?? {}) as { withdrawals?: number }).withdrawals ?? 0;
+    if (ch === "TTS" && !hadWd) continue; // file TikTok tanpa sheet penarikan tidak mengklaim cakupan
+    spans.push([i.periodFrom!.toISOString().slice(0, 10), (i.periodTo ?? i.periodFrom)!.toISOString().slice(0, 10)]);
+  }
+  for (const p of pairs) if (p.status !== "TIDAK_DI_FILE" && p.date) spans.push([wib(p.date), wib(p.date)]);
+  const matchedIds = new Set(pairs.filter((p) => p.status === "COCOK" && p.txId).map((p) => p.txId!));
   const withdraws = [
-    ...rec.rows.map((r) => ({ date: wib(r.date), amount: r.amount, ref: r.withdrawRef ?? r.number ?? undefined, inErp: true })),
-    ...pairs.filter((p) => p.status === "BELUM_DI_ERP" && p.date).map((p) => ({ date: wib(p.date!), amount: p.fileAmount ?? 0, ref: p.refId, inErp: false })),
+    // sumber utama: file
+    ...pairs.filter((p) => p.status !== "TIDAK_DI_FILE" && p.date).map((p) => ({ date: wib(p.date!), at: p.date!, amount: p.fileAmount ?? 0, ref: p.refId, inErp: p.status === "COCOK", status: p.status === "COCOK" ? (rec.rows.find((r) => r.id === p.txId)?.status ?? "") : "" })),
+    // Keuangan hanya untuk tanggal di luar cakupan file
+    ...rec.rows.filter((r) => !matchedIds.has(r.id) && !inSpans(spans, wib(r.date))).map((r) => ({ date: wib(r.date), at: r.date, amount: r.amount, ref: r.withdrawRef ?? r.number ?? undefined, inErp: true, status: r.status ?? "" })),
   ];
+  // Tercatat di Keuangan, di tanggal yang file-nya ada, tetapi tidak ada padanan di file → tidak dikurangkan (peringatan)
+  const ignoredErp = rec.rows.filter((r) => !matchedIds.has(r.id) && inSpans(spans, wib(r.date)));
   const fifo = allocateFifo(incomes.map((i) => ({ date: wib(i.releasedAt!), amount: n(i.released), id: i.id })), withdraws.map((w) => ({ date: w.date, amount: w.amount, ref: w.ref })));
-  return { incomes, withdraws, pairs, fifo, noBank: rec.noBank, recordedRows: rec.rows, notInErp: pairs.filter((p) => p.status === "BELUM_DI_ERP") };
+  return { incomes, withdraws, pairs, fifo, noBank: rec.noBank, recordedRows: rec.rows, notInErp: pairs.filter((p) => p.status === "BELUM_DI_ERP"), ignoredErp, spans };
+}
+
+export type WalletDetail = {
+  /** Saldo awal & asalnya: file Saldo Penjual (Shopee: Saldo Akhir − Jumlah baris tertua) atau tidak diketahui (0) */
+  opening: { amount: number; source: "FILE" | "TIDAK_DIKETAHUI"; from: string | null };
+  cair: number; adjust: number; topup: number; gmv: number; withdraw: number;
+  /** saldo awal + cair + penyesuaian − top-up iklan − GMV Pay − withdraw, sejak awal data */
+  estimate: number;
+  /** Saldo resmi menurut marketplace pada tanggal tertentu: Shopee = Saldo Akhir baris terbaru Saldo Penjual; atau titik acuan yang diisi Finance */
+  official: { amount: number; asOf: string; /** jam WIB bila diisi Finance */ at?: string | null; source: "FILE" | "ISIAN"; note?: string | null } | null;
+  /** TikTok: withdraw yang sudah diminta (saldo sudah berkurang) tetapi uangnya belum masuk rekening (1–3 hari) */
+  transit: { amount: number; count: number };
+  /** official − estimasi pada tanggal yang sama (null bila tak ada acuan) */
+  diff: number | null;
+  /** Angka untuk kartu: acuan + mutasi sesudahnya (bila ada acuan), selain itu estimasi */
+  balance: number;
+  basis: "ACUAN" | "ESTIMASI";
+  causes: string[];
+  ignoredErp: { count: number; amount: number };
+  notInErp: { count: number; amount: number };
+};
+
+/**
+ * Rincian saldo dompet marketplace per toko × kanal. Saldo resmi (Saldo Akhir Shopee / isian Finance) dipakai sebagai acuan;
+ * estimasi dari data impor ditampilkan sebagai pembanding berikut kandidat penyebab selisih.
+ */
+export async function walletDetail(s: StoreLite, ch: string, storeCount: number, banks?: Awaited<ReturnType<typeof marketplaceBanks>>, alloc?: Awaited<ReturnType<typeof loadAllocation>>, now = new Date()): Promise<WalletDetail> {
+  const a = alloc ?? (await loadAllocation(s, ch, storeCount, banks));
+  const [first, last, check] = await Promise.all([
+    ch === "SHP" ? prisma.marketplaceBalanceTx.findFirst({ where: { storeId: s.id, channel: ch, balanceAfter: { not: null } }, orderBy: [{ date: "asc" }, { pos: "desc" }] }) : null,
+    ch === "SHP" ? prisma.marketplaceBalanceTx.findFirst({ where: { storeId: s.id, channel: ch, balanceAfter: { not: null } }, orderBy: [{ date: "desc" }, { pos: "asc" }] }) : null,
+    prisma.marketplaceWalletCheck.findFirst({ where: { storeId: s.id, channel: ch }, orderBy: [{ asOf: "desc" }, { createdAt: "desc" }] }),
+  ]);
+  const opening = first ? { amount: n(first.balanceAfter) - n(first.amount), source: "FILE" as const, from: wib(first.date) } : { amount: 0, source: "TIDAK_DIKETAHUI" as const, from: null };
+  const winFrom = opening.from; // data sebelum file Saldo Penjual dimulai sudah termasuk di saldo awal
+  const inWin = (d: string) => !winFrom || d >= winFrom;
+  // TikTok menyelesaikan saldo 1× sehari ±08.00 WIB: semua event hari itu dianggap terjadi pukul 08.00 (acuan sebelum jam itu belum memuatnya)
+  const evAt = (d: Date) => (ch === "TTS" ? new Date(`${wib(d)}T08:00:00+07:00`) : d);
+  const ev = a.incomes.map((e) => ({ day: wib(e.releasedAt!), at: evAt(e.releasedAt!), kind: e.income.kind, v: n(e.released) })).filter((e) => inWin(e.day));
+  const sum = (k: string) => ev.filter((e) => e.kind === k).reduce((x, e) => x + e.v, 0);
+  const wds = a.withdraws.filter((w) => inWin(w.date));
+  const withdraw = wds.reduce((x, w) => x + w.amount, 0);
+  const cair = sum("ORDER"), adjust = sum("ADJUST"), topup = sum("TOPUP"), gmv = sum("ADS");
+  const estimate = opening.amount + ev.reduce((x, e) => x + e.v, 0) - withdraw;
+  // acuan: yang tanggalnya paling baru (isian Finance menang bila sama)
+  const fileAnchor = last ? { amount: n(last.balanceAfter), asOf: wib(last.date), source: "FILE" as const, note: null as string | null } : null;
+  const checkAt = check ? (check.asOfAt ?? new Date(`${check.asOf.toISOString().slice(0, 10)}T23:59:59+07:00`)) : null;
+  const checkAnchor = check ? { amount: n(check.amount), asOf: check.asOf.toISOString().slice(0, 10), at: check.asOfAt ? new Date(check.asOfAt.getTime() + 7 * 3600000).toISOString().slice(11, 16) : null, source: "ISIAN" as const, note: check.note } : null;
+  const official = fileAnchor && checkAnchor ? (checkAnchor.asOf >= fileAnchor.asOf ? checkAnchor : fileAnchor) : (checkAnchor ?? fileAnchor);
+  let diff: number | null = null, balance = estimate, basis: WalletDetail["basis"] = "ESTIMASI";
+  if (official) {
+    // acuan isian Finance: dibandingkan per WAKTU; acuan dari file Saldo Penjual: per hari
+    const byTime = official.source === "ISIAN" && !!checkAt;
+    const upto = (day: string, at: Date) => (byTime ? at <= checkAt! : day <= official.asOf);
+    const estAt = opening.amount + ev.filter((e) => upto(e.day, e.at)).reduce((x, e) => x + e.v, 0) - wds.filter((w) => upto(w.date, w.at)).reduce((x, w) => x + w.amount, 0);
+    diff = official.amount - estAt;
+    balance = official.amount + ev.filter((e) => !upto(e.day, e.at)).reduce((x, e) => x + e.v, 0) - wds.filter((w) => !upto(w.date, w.at)).reduce((x, w) => x + w.amount, 0);
+    basis = "ACUAN";
+  }
+  // Dana dalam perjalanan (TikTok): saldo sudah berkurang saat PERMINTAAN, uang baru masuk bank 1–3 hari kemudian
+  const inTransit = ch === "TTS" ? a.withdraws.filter((w) => w.status === "DALAM_PROSES" || (!w.inErp && now.getTime() - w.at.getTime() <= 4 * 86400000)) : [];
+  const transit = { amount: inTransit.reduce((x, w) => x + w.amount, 0), count: inTransit.length };
+  const ignored = { count: a.ignoredErp.length, amount: a.ignoredErp.reduce((x, r) => x + r.amount, 0) };
+  const notIn = { count: a.notInErp.length, amount: a.notInErp.reduce((x, p) => x + (p.fileAmount ?? 0), 0) };
+  const causes: string[] = [];
+  if (opening.source === "TIDAK_DIKETAHUI" && !official) causes.push(ch === "TTS" ? "Saldo awal TikTok tidak diketahui (file tidak punya saldo berjalan). Isi “Saldo Seller Center” agar estimasi memakai acuan." : "Saldo awal tidak diketahui: unggah file Saldo Penjual (my_balance) mulai awal periode data.");
+  if (opening.source === "TIDAK_DIKETAHUI" && official && diff !== null && diff !== 0) causes.push("Saldo awal sebelum data pertama tidak diketahui (dianggap 0)");
+  if (ignored.count) causes.push(`${ignored.count} withdraw di Keuangan (Rp ${ignored.amount.toLocaleString("id-ID")}) tidak ada padanan di file penarikan pada tanggalnya — TIDAK dikurangkan (cek nominal/tanggal/ID referensi)`);
+  if (notIn.count) causes.push(`${notIn.count} penarikan di file (Rp ${notIn.amount.toLocaleString("id-ID")}) belum tercatat di Keuangan — tetap dikurangkan`);
+  if (diff !== null && Math.abs(diff) > 1) causes.push(`File penghasilan / saldo penjual / iklan / penarikan yang belum diunggah sampai ${official!.asOf} membuat selisih ${diff > 0 ? "positif (saldo asli lebih besar)" : "negatif (ERP lebih besar)"}`);
+  return { opening, cair, adjust, topup, gmv, withdraw, estimate, official, transit, diff, balance, basis, causes, ignoredErp: ignored, notInErp: notIn };
 }
 
 /** Tahap tiap pesanan cair: DITARIK bila withdraw sudah menutup seluruh nilai cairnya */
@@ -153,11 +255,12 @@ export async function saldoPanel(opts: { storeId?: string } = {}) {
       const a = await loadAllocation(s, ch, all.length, banks);
       if (!a.incomes.length && !a.withdraws.length) continue;
       const st = saldoStatus(a.fifo.balance, a.fifo.oldest, today);
+      const wallet = await walletDetail(s, ch, all.length, banks, a);
       const todayRows = a.recordedRows.filter((w) => wib(w.date) === today);
       out.push({
         storeId: s.id, store: s.name, channel: ch, cair: a.incomes.reduce((x, i) => x + n(i.released), 0), recorded: a.withdraws.reduce((x, w) => x + w.amount, 0),
         estimate: a.fifo.balance, since: a.fifo.oldest, ...st, noBank: a.noBank, todayCount: todayRows.length, todayAmount: todayRows.reduce((x, w) => x + w.amount, 0),
-        coverage: a.fifo.coverage.slice(-5).reverse(),
+        coverage: a.fifo.coverage.slice(-5).reverse(), wallet,
         /** withdraw melebihi cair yang diketahui (file penghasilan mungkin belum diunggah) */
         over: a.fifo.over, notInErp: a.notInErp.length, notInErpAmount: a.notInErp.reduce((x, p) => x + (p.fileAmount ?? 0), 0),
       });
@@ -176,7 +279,7 @@ export async function matchWithdrawals(opts: { storeId: string; channel: "SHP" |
   const file = await prisma.marketplaceWithdrawal.findMany({ where: { storeId: s.id, channel: opts.channel, txType: { contains: "withdraw", mode: "insensitive" }, requestedAt: { gte: dayStart(opts.from), lt: dayEnd(opts.to) } } });
   const banks = await marketplaceBanks();
   const erp = (await recordedWithdraws(s, opts.channel, banks, stores.length, dayStart(opts.from), dayEnd(opts.to))).rows;
-  return pairWithdraws(opts.channel, file.map((w) => ({ refId: w.refId, amount: Math.abs(n(w.amount)), date: w.requestedAt })), erp);
+  return pairWithdraws(opts.channel, file.map((w) => ({ refId: w.refId, amount: Math.abs(n(w.amount)), date: w.requestedAt })), erp).map((p) => ({ ...p, via: erp.find((e) => e.id === p.txId)?.via }));
 }
 export const matchTiktokWithdrawals = (o: { storeId: string; from: string; to: string }) => matchWithdrawals({ ...o, channel: "TTS" });
 

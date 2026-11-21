@@ -3221,3 +3221,52 @@ model MarketplaceImportJob {
 
   @@index([status, updatedAt])
 }
+
+/// Jenis file wajib yang untuk sementara TIDAK bisa diunduh (mis. akses Penghasilan Shopee toko tertentu belum diberikan).
+/// Sel matriks jadi abu-abu "menunggu akses" & pengingat jenis itu dijeda sampai tanggal tinjau; Piutang toko itu tetap diberi peringatan.
+model MarketplaceAccessGap {
+  id        String   @id @default(cuid())
+  storeId   String
+  channel   String
+  /// ORDER / INCOME / BALANCE / ADSBILL
+  kind      String
+  note      String?
+  /// Tanggal tinjau ulang; setelah lewat, jenis ini ditagih lagi
+  reviewAt  DateTime @db.Date
+  createdBy String
+  createdAt DateTime @default(now())
+
+  @@unique([storeId, channel, kind])
+}
+
+/// Titik acuan saldo: saldo menurut Seller Center pada tanggal tertentu (diisi Finance; mis. saldo TikTok yang tidak punya saldo berjalan di file).
+/// Saldo setelah tanggal itu = acuan + cair − withdraw sesudahnya. Riwayatnya disimpan; yang terbaru dipakai.
+model MarketplaceWalletCheck {
+  id        String   @id @default(cuid())
+  storeId   String
+  channel   String
+  asOf      DateTime @db.Date
+  /// Saat saldo itu dibaca (jam WIB): TikTok menyelesaikan saldo 1× sehari ±08.00, jadi acuan sebelum jam itu belum memuat penyelesaian hari tersebut
+  asOfAt    DateTime?
+  amount    BigInt
+  note      String?
+  createdBy String
+  createdAt DateTime @default(now())
+
+  @@index([storeId, channel, asOf])
+}
+
+/// Toko pemilik withdraw yang dicatat di rekening saldo marketplace BERSAMA (satu rekening "Saldo Penjual TikTok/Shopee" untuk semua toko).
+/// Ditetapkan dari pencocokan dengan file penarikan (ID referensi / nominal & tanggal). Tidak mengubah transaksi maupun jurnal.
+model MarketplaceWithdrawLink {
+  id           String   @id @default(cuid())
+  txId         String   @unique
+  storeId      String
+  channel      String
+  /// FILE_REF (ID referensi sama) / FILE_NOMINAL (nominal sama & tanggal berdekatan)
+  via          String
+  withdrawalId String?
+  createdAt    DateTime @default(now())
+
+  @@index([storeId, channel])
+}

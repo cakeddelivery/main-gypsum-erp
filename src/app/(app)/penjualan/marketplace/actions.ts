@@ -1,6 +1,7 @@
 "use server";
+import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { action, str } from "@/lib/action";
+import { action, int, optStr, str, FieldError } from "@/lib/action";
 import { assertPerm } from "@/lib/auth";
 import { friendly } from "@/lib/action";
 import { prisma } from "@/lib/db";
@@ -8,13 +9,14 @@ import { audit } from "@/lib/audit";
 import { createInvoice, InvoiceError } from "@/lib/invoice";
 import { commitImport, previewImport, undoImport, MarketplaceImportError, type ImportFile, type Preview } from "@/lib/marketplace/import";
 import { FormatError, parseMarketplaceFile } from "@/lib/marketplace/parse";
+import { linkOrdersToReturns } from "@/lib/marketplace/link";
 import { rebuildGl } from "@/lib/marketplace/gl";
 import { integrityCheck } from "@/lib/marketplace/integrity";
 import { latestMonth } from "@/lib/marketplace/dashboard";
 import { finishJob, runningJob, startJob, stepJob } from "@/lib/marketplace/job";
-import { detectFiles, type Detected } from "@/lib/marketplace/slots";
+import { BRAND_KEY, detectFiles, type Detected } from "@/lib/marketplace/slots";
 import { resolveSkuKeys } from "@/lib/marketplace/sku";
-import { dateStr } from "@/lib/time";
+import { dateStr, todayStr } from "@/lib/time";
 import { FEE_CATEGORIES, normCol } from "@/lib/marketplace/feeMap";
 import { applyActuals, applyProductAffiliate } from "@/lib/marketplace/potongan";
 import { WD_REMINDER_KEY } from "@/lib/marketplace/saldo";
@@ -45,7 +47,8 @@ async function readFiles(fd: FormData): Promise<{ files: ImportFile[]; fileError
       continue;
     }
     try {
-      files.push({ fileName: f.name, storeId: stores[i], parsed: await parseMarketplaceFile(Buffer.from(await f.arrayBuffer())) });
+      const buf = Buffer.from(await f.arrayBuffer());
+      files.push({ fileName: f.name, storeId: stores[i], hash: createHash("sha1").update(buf).digest("hex"), parsed: await parseMarketplaceFile(buf) });
     } catch (e) {
       fileErrors.push({ fileName: f.name, error: e instanceof FormatError ? e.message : "File tidak bisa dibaca. Pastikan ini file Excel asli dari Seller Center." });
     }
@@ -87,16 +90,33 @@ export async function startImportJobAction(total: number, label: string): Promis
   }
 }
 
-export async function saveOneFileAction(fd: FormData): Promise<{ ok: boolean; error?: string; baru?: number; diperbarui?: number; dilewati?: number; importId?: string }> {
+export async function saveOneFileAction(fd: FormData): Promise<{ ok: boolean; error?: string; skipped?: string; baru?: number; diperbarui?: number; dilewati?: number; importId?: string }> {
   const jobId = str(fd, "jobId");
   try {
     const user = await assertPerm("sales.manage");
     const { files, fileErrors } = await readFiles(fd);
     if (fileErrors.length || files.length !== 1) return { ok: false, error: fileErrors[0]?.error ?? "File tidak bisa dibaca" };
-    const [r] = await commitImport(user, files);
-    revalidatePath("/penjualan", "layout");
+    const dup = files[0].hash ? await prisma.marketplaceImport.findFirst({ where: { undoneAt: null, stats: { path: ["fileHash"], equals: files[0].hash } }, select: { fileName: true } }) : null;
+    if (dup) {
+      if (jobId) await stepJob(jobId, Number(str(fd, "done")) || 0, `${files[0].fileName} (sudah diunggah)`);
+      return { ok: true, skipped: `Sudah diunggah sebelumnya (“${dup.fileName}”)`, baru: 0, diperbarui: 0, dilewati: 0 };
+    }
+    const [r] = await commitImport(user, files, { finalize: false }); // tautan retur & buku bayangan dihitung sekali di akhir batch
     if (jobId) await stepJob(jobId, Number(str(fd, "done")) || 0, `${files[0].fileName} ✓`);
     return { ok: true, baru: r.baru, diperbarui: r.diperbarui, dilewati: r.dilewati, importId: r.importId };
+  } catch (e) {
+    return { ok: false, error: e instanceof MarketplaceImportError ? e.message : friendly(e) };
+  }
+}
+
+/** Pratinjau SATU file (tidak menulis apa pun). Dipanggil per file agar jumlah/ukuran total tidak dibatasi body limit. */
+export async function previewOneFileAction(fd: FormData): Promise<{ ok: boolean; error?: string; file?: SerPreview["files"][number] }> {
+  try {
+    await assertPerm("sales.manage");
+    const { files, fileErrors } = await readFiles(fd);
+    if (fileErrors.length || files.length !== 1) return { ok: false, error: fileErrors[0]?.error ?? "File tidak bisa dibaca" };
+    const p = await previewImport(files, { ordersInBatch: str(fd, "ordersInBatch") === "1" });
+    return { ok: true, file: ser(p).files[0] };
   } catch (e) {
     return { ok: false, error: e instanceof MarketplaceImportError ? e.message : friendly(e) };
   }
@@ -116,6 +136,8 @@ export async function finishImportJobAction(id: string, ok: boolean, message: st
         /* cek integritas gagal dihitung: impor tetap sah */
       }
     }
+    await linkOrdersToReturns().catch(() => {});
+    await rebuildGl().catch(() => {}); // buku bayangan (simulasi) sekali per batch
     await finishJob(id, ok, message);
     revalidatePath("/penjualan", "layout");
     return { ok: true, ...res };
@@ -129,6 +151,69 @@ export async function importRunningAction(): Promise<{ running: Awaited<ReturnTy
   const r = await runningJob();
   return { running: r ? { by: r.by, total: r.total, done: r.done, label: r.label } : null };
 }
+
+/** Saldo menurut Seller Center pada tanggal tertentu (titik acuan saldo; TikTok tidak punya saldo berjalan di file) */
+export const saveWalletCheckAction = action(
+  "sales.manage",
+  async (fd, user) => {
+    const storeId = str(fd, "storeId"), channel = str(fd, "channel"), asOf = str(fd, "asOf") || todayStr();
+    const time = /^\d{2}:\d{2}$/.test(str(fd, "time")) ? str(fd, "time") : null; // jam WIB saat saldo dibaca
+    if (!["SHP", "TTS"].includes(channel)) throw new FieldError("channel", "Kanal tidak dikenal");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf) || asOf > todayStr()) throw new FieldError("asOf", "Tanggal tidak boleh di masa depan");
+    const amount = int(fd, "amount");
+    await prisma.store.findUniqueOrThrow({ where: { id: storeId } });
+    const asOfAt = new Date(time ? `${asOf}T${time}:00+07:00` : asOf === todayStr() ? Date.now() : `${asOf}T23:59:59+07:00`);
+    if (asOfAt.getTime() > Date.now() + 60000) throw new FieldError("time", "Waktu tidak boleh di masa depan");
+    await prisma.marketplaceWalletCheck.create({ data: { storeId, channel, asOf: new Date(`${asOf}T00:00:00Z`), asOfAt, amount: BigInt(amount), note: optStr(fd, "note"), createdBy: user.name } });
+    await audit(user, "MARKETPLACE_SALDO_ACUAN", "MarketplaceWalletCheck", `${storeId}|${channel}`, { asOf, amount });
+    return `Saldo menurut Seller Center per ${asOf} tersimpan: Rp ${amount.toLocaleString("id-ID")}`;
+  },
+  ["/penjualan"],
+);
+
+/** Merek di nama produk → toko (dipakai mengenali toko file Order/TikTok tanpa username). Satu baris per toko, dipisah koma. */
+export const saveBrandMapAction = action(
+  "sales.manage",
+  async (fd, user) => {
+    const stores = await prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, select: { id: true } });
+    const map: Record<string, string[]> = {};
+    for (const s of stores) {
+      const names = str(fd, `brand:${s.id}`).split(",").map((x) => x.trim()).filter(Boolean).slice(0, 6);
+      if (names.length) map[s.id] = names;
+    }
+    await prisma.setting.upsert({ where: { key: BRAND_KEY }, create: { key: BRAND_KEY, value: JSON.stringify(map) }, update: { value: JSON.stringify(map) } });
+    await audit(user, "MARKETPLACE_MEREK_TOKO", "Setting", BRAND_KEY, map);
+    return "Pemetaan merek → toko tersimpan";
+  },
+  ["/penjualan"],
+);
+
+/** Tandai jenis file yang aksesnya belum tersedia (sel jadi "menunggu akses", pengingat jenis itu dijeda sampai tanggal tinjau) */
+export const saveAccessGapAction = action(
+  "sales.manage",
+  async (fd, user) => {
+    const storeId = str(fd, "storeId"), channel = str(fd, "channel"), kind = str(fd, "kind"), reviewAt = str(fd, "reviewAt");
+    if (!["SHP", "TTS"].includes(channel) || !["ORDER", "INCOME", "BALANCE", "ADSBILL"].includes(kind)) throw new FieldError("kind", "Jenis file tidak dikenal");
+    if (channel === "TTS" && (kind === "BALANCE" || kind === "ADSBILL")) throw new FieldError("kind", "TikTok hanya punya file Pesanan dan Penghasilan");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(reviewAt) || reviewAt <= todayStr()) throw new FieldError("reviewAt", "Tanggal tinjau ulang harus setelah hari ini");
+    const note = optStr(fd, "note");
+    await prisma.marketplaceAccessGap.upsert({ where: { storeId_channel_kind: { storeId, channel, kind } }, create: { storeId, channel, kind, note, reviewAt: new Date(`${reviewAt}T00:00:00Z`), createdBy: user.name }, update: { note, reviewAt: new Date(`${reviewAt}T00:00:00Z`), createdBy: user.name } });
+    await audit(user, "MARKETPLACE_AKSES_BELUM", "MarketplaceAccessGap", `${storeId}|${channel}|${kind}`, { reviewAt, note });
+    return "Ditandai: akses belum tersedia (pengingat jenis ini dijeda sampai tanggal tinjau)";
+  },
+  ["/penjualan"],
+);
+
+export const clearAccessGapAction = action(
+  "sales.manage",
+  async (fd, user) => {
+    const storeId = str(fd, "storeId"), channel = str(fd, "channel"), kind = str(fd, "kind");
+    await prisma.marketplaceAccessGap.deleteMany({ where: { storeId, channel, kind } });
+    await audit(user, "MARKETPLACE_AKSES_TERSEDIA", "MarketplaceAccessGap", `${storeId}|${channel}|${kind}`, {});
+    return "Akses ditandai sudah tersedia; jenis file ini ditagih lagi";
+  },
+  ["/penjualan"],
+);
 
 const ser = (p: Preview): SerPreview => ({ totals: p.totals, files: p.files.map((f) => ({ ...f, periodFrom: f.periodFrom ? dateStr(f.periodFrom) : null, periodTo: f.periodTo ? dateStr(f.periodTo) : null })) });
 

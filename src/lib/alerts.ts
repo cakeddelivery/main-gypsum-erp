@@ -61,6 +61,10 @@ export async function alertsFor(can: (p: Permission) => boolean, divisionId?: st
   if (can("sales.manage") && can("production.target")) {
     tasks.push(import("./marketplace/sync").then((m) => m.syncStatus()).then((st) => void (st.active && st.stale && out.push({ key: "mp-sync", label: "Data order/penghasilan marketplace belum diperbarui", count: st.stale, href: "/penjualan", tone: st.worst === "MERAH" ? "red" : "amber" }))).catch(() => {}));
   }
+  // Pesanan >14 hari tanpa data penghasilan (hanya toko × kanal yang aksesnya tersedia)
+  if (can("sales.manage") && can("production.target")) {
+    tasks.push(import("./marketplace/kelengkapan").then((m) => m.ordersWithoutIncome()).then((r) => void (r.length && out.push({ key: "mp-no-income", label: "Pesanan >14 hari belum punya data penghasilan", count: r.reduce((a, x) => a + x.count, 0), href: "/penjualan/marketplace/impor", tone: "amber" }))).catch(() => {}));
+  }
   if (can("attendance.manage")) {
     // Validasi absensi sudah otomatis; yang perlu dilihat hanya Alpa kemarin (bila keliru, koreksi di tab Alpa & koreksi)
     tasks.push(prisma.attendance.count({ where: { status: "ALPA", date: dateOnly(addDays(today, -1)), ...(divisionId ? { employee: { divisionId } } : {}) } }).then((c) => void (c && out.push({ key: "att", label: "Alpa kemarin", count: c, href: "/absensi?tab=koreksi", tone: "amber" }))));

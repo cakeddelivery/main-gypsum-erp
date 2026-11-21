@@ -6,13 +6,16 @@ import { fmtDate } from "@/lib/time";
 import { CHANNEL_LABEL, shownStatus, STATUS_LABEL, type ShownStatus } from "@/lib/marketplace/rules";
 import { listOrders, orderSummary, type Tab } from "@/lib/marketplace/report";
 import { unloggedCounts } from "@/lib/marketplace/lookup";
+import { PeriodFilter } from "./PeriodFilter";
+import { resolvePeriod } from "@/lib/marketplace/periode";
 import { Badge, Empty, Field, FilterBar, PageHeader, Stat, Tabs } from "@/components/ui";
 import { Paged } from "@/components/Paged";
+import { PiutangWarning } from "@/components/PiutangWarning";
 import { ImportBannerServer } from "@/components/ImportBannerServer";
 import { MpNav } from "./MpNav";
 
 export const metadata = { title: "Pesanan Marketplace" };
-type SP = { toko?: string; kanal?: string; dari?: string; sampai?: string; tab?: string; q?: string };
+type SP = { toko?: string; kanal?: string; dari?: string; sampai?: string; periode?: string; bulan?: string; tab?: string; q?: string };
 const TONE: Record<ShownStatus, "amber" | "green" | "gray" | "red" | "blue"> = { PIUTANG: "amber", CAIR: "blue", DITARIK: "green", BATAL: "gray", RETUR: "red" };
 const TAB_LABEL: Record<Tab, string> = { ALL: "Semua", PIUTANG: "Piutang", CAIR: "Di saldo", DITARIK: "Ditarik", BATAL: "Batal", RETUR: "Retur/Komplain" };
 const TABS: Tab[] = ["ALL", "PIUTANG", "CAIR", "DITARIK", "BATAL", "RETUR"];
@@ -23,7 +26,11 @@ export default async function MarketplacePage({ searchParams }: { searchParams: 
   const canLog = user.can("retur.manage") || user.can("refund.request");
   const sp = await searchParams;
   const tab = (TABS.includes((sp.tab ?? "") as Tab) ? sp.tab : "ALL") as Tab;
-  const f = { storeId: sp.toko || undefined, channel: sp.kanal === "SHP" || sp.kanal === "TTS" ? sp.kanal : undefined, from: DATE.test(sp.dari ?? "") ? sp.dari : undefined, to: DATE.test(sp.sampai ?? "") ? sp.sampai : undefined, q: sp.q };
+  const period = resolvePeriod(sp);
+  // Tanpa pilihan periode: Piutang / Di saldo / Ditarik & pencarian = semua waktu (piutang lama tidak boleh tersembunyi); tab lain = Bulan ini
+  const explicit = !!(sp.periode || sp.bulan || sp.dari || sp.sampai);
+  const allTime = !explicit && (!!sp.q || tab === "PIUTANG" || tab === "CAIR" || tab === "DITARIK");
+  const f = { storeId: sp.toko || undefined, channel: sp.kanal === "SHP" || sp.kanal === "TTS" ? sp.kanal : undefined, from: allTime ? undefined : period.from, to: allTime ? undefined : period.to, q: sp.q };
   const [stores, sum, rows, noData, unlogged] = await Promise.all([
     prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } }),
     orderSummary(f),
@@ -47,18 +54,19 @@ export default async function MarketplacePage({ searchParams }: { searchParams: 
         <Empty title="Belum ada pesanan marketplace" hint="Unggah file Order & Penghasilan dari Seller Center di menu Impor." action={<Link href="/penjualan/marketplace/impor" className="btn-primary">Impor file</Link>} />
       ) : (
         <>
+          <PiutangWarning stores={stores} storeId={f.storeId} channel={f.channel} />
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
             <Stat label="Piutang (belum cair)" value={idr(sum.piutang)} tone="amber" hint={`${sum.piutangCount} pesanan`} />
-            <Stat label="Saldo di marketplace" value={idr(sum.saldo)} tone="blue" hint="cair, belum ditarik" />
+            <Stat label="Cair, belum ditarik (pesanan di daftar ini)" value={idr(sum.saldo)} tone="blue" hint="bukan saldo dompet: lihat menu Saldo" />
             <Stat label="Sudah ditarik bulan ini" value={idr(sum.withdrawnMonth)} tone="green" hint="withdraw ke rekening" />
             <Stat label="Potongan platform" value={idr(sum.fees)} hint="komponen yang mengurangi saldo" />
             <Stat label="Retur/komplain" value={sum.retur} tone="red" hint={`${unlogged.fromFile} retur dari file · ${unlogged.logged} sudah dicatat di ERP`} />
           </div>
+          <PeriodFilter sp={sp} period={period} allTime={allTime} />
           <FilterBar>
             <Field label="Toko"><select name="toko" defaultValue={sp.toko ?? ""} className="input"><option value="">Semua</option>{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
             <Field label="Kanal"><select name="kanal" defaultValue={sp.kanal ?? ""} className="input"><option value="">Semua</option><option value="SHP">Shopee</option><option value="TTS">TikTok</option></select></Field>
-            <Field label="Dari"><input type="date" name="dari" defaultValue={sp.dari ?? ""} className="input" /></Field>
-            <Field label="Sampai"><input type="date" name="sampai" defaultValue={sp.sampai ?? ""} className="input" /></Field>
+            {[["periode", sp.periode], ["bulan", sp.bulan], ["dari", sp.dari], ["sampai", sp.sampai]].map(([k, v]) => (v ? <input key={k} type="hidden" name={k} value={v} /> : null))}
             <Field label="Cari" className="col-span-2"><input name="q" defaultValue={sp.q ?? ""} placeholder="No. pesanan / resi / SKU" className="input" /></Field>
             <input type="hidden" name="tab" value={tab} />
           </FilterBar>
@@ -68,7 +76,7 @@ export default async function MarketplacePage({ searchParams }: { searchParams: 
           ) : (
             <div className="table-wrap">
               <Paged size={25}>
-                <table className="tbl">
+                <table className="tbl tbl-mp">
                   <thead><tr><th>No. pesanan</th><th>Kanal</th><th>Tgl</th><th>Produk</th><th className="num">Nilai</th><th className="num">Diterima</th><th>Status</th><th></th></tr></thead>
                   <tbody>
                     {rows.map((o) => {

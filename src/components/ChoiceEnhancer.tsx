@@ -75,7 +75,7 @@ export function panelBox(r: { left: number; top: number; bottom: number; width: 
 }
 
 function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
-  host.className = `choice-search ${layoutClasses(sel)}`.trim();
+  host.className = `choice-search ${layoutClasses(sel)}${sel.hasAttribute("data-nowrap") ? " choice-nowrap-host" : ""}`.trim();
   const trigger = document.createElement("button");
   trigger.type = "button";
   trigger.className = "input choice-trigger";
@@ -104,28 +104,53 @@ function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
   list.setAttribute("role", "listbox");
   panel.append(search, list);
 
+  const nowrap = sel.hasAttribute("data-nowrap");
   const fill = () => {
     const q = search.value;
     const rows = choices(sel).filter((o) => matchesQuery(label(o), q));
-    list.replaceChildren(
-      ...(rows.length
-        ? rows.map((o) => {
-            const li = document.createElement("li");
-            li.textContent = label(o);
-            li.setAttribute("role", "option");
-            li.dataset.value = o.value;
-            if (o.disabled) li.setAttribute("aria-disabled", "true");
-            if (o.value === sel.value) li.setAttribute("aria-selected", "true");
-            li.addEventListener("mousedown", (e) => e.preventDefault());
-            li.addEventListener("click", () => {
-              if (o.disabled) return;
-              setValue(sel, o.value);
-              close();
-            });
-            return li;
-          })
-        : [Object.assign(document.createElement("li"), { textContent: "Tidak ditemukan", className: "choice-empty" })]),
-    );
+    const out: HTMLElement[] = [];
+    let group: string | null = null;
+    for (const o of rows) {
+      // Opsi di dalam <optgroup>: judul grup tampil sekali di atas opsinya (tidak bisa dipilih)
+      const g = o.parentElement instanceof HTMLOptGroupElement ? o.parentElement.label : null;
+      if (g && g !== group) {
+        const h = document.createElement("li");
+        h.textContent = g;
+        h.className = "choice-group";
+        h.setAttribute("role", "presentation");
+        out.push(h);
+      }
+      group = g;
+      const li = document.createElement("li");
+      li.textContent = label(o);
+      li.setAttribute("role", "option");
+      li.dataset.value = o.value;
+      if (nowrap) { li.classList.add("choice-nowrap"); li.title = label(o); }
+      if (o.disabled) li.setAttribute("aria-disabled", "true");
+      if (o.value === sel.value) li.setAttribute("aria-selected", "true");
+      li.addEventListener("mousedown", (e) => e.preventDefault());
+      li.addEventListener("click", () => {
+        if (o.disabled) return;
+        setValue(sel, o.value);
+        close();
+      });
+      out.push(li);
+    }
+    list.replaceChildren(...(out.length ? out : [Object.assign(document.createElement("li"), { textContent: "Tidak ditemukan", className: "choice-empty" })]));
+  };
+  /** Panah atas/bawah menggeser sorotan pilihan; Enter memilih yang disorot (atau yang pertama) */
+  const move = (dir: 1 | -1) => {
+    const items = Array.from(list.querySelectorAll<HTMLLIElement>("li[data-value]:not([aria-disabled])"));
+    if (!items.length) return;
+    const cur = items.findIndex((x) => x.classList.contains("choice-active"));
+    items.forEach((x) => x.classList.remove("choice-active"));
+    const next = items[(cur + dir + items.length) % items.length];
+    next.classList.add("choice-active");
+    next.scrollIntoView({ block: "nearest" });
+  };
+  const pickActive = () => {
+    const li = list.querySelector<HTMLLIElement>("li.choice-active") ?? list.querySelector<HTMLLIElement>("li[data-value]:not([aria-disabled])");
+    li?.click();
   };
   const onOutside = (e: Event) => {
     if (!host.contains(e.target as Node)) close();
@@ -134,8 +159,15 @@ function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
     if (panel.hidden) return;
     const vw = Math.min(window.innerWidth, document.documentElement.clientWidth || window.innerWidth);
     const b = panelBox(trigger.getBoundingClientRect(), vw, window.innerHeight);
-    panel.style.width = `${b.width}px`;
-    panel.style.left = `${b.left}px`;
+    // Panel lebih lebar dari pemicunya (data-panel-min, px), rata kanan agar tidak keluar layar
+    const minW = Number(sel.dataset.panelMin) || 0;
+    let width = b.width, left = b.left;
+    if (minW > b.width) {
+      width = Math.min(minW, vw * 0.9);
+      left = Math.max(8, Math.min(trigger.getBoundingClientRect().right - width, vw - width - 8));
+    }
+    panel.style.width = `${width}px`;
+    panel.style.left = `${left}px`;
     panel.style.top = b.top == null ? "" : `${b.top}px`;
     panel.style.bottom = b.bottom == null ? "" : `${b.bottom}px`;
     host.classList.toggle("choice-up", b.up);
@@ -187,6 +219,12 @@ function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
     if (e.key === "ArrowDown" && panel.hidden) {
       e.preventDefault();
       open();
+    } else if (!panel.hidden && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      move(e.key === "ArrowDown" ? 1 : -1);
+    } else if (!panel.hidden && e.key === "Enter") {
+      e.preventDefault();
+      pickActive();
     } else if (e.key === "Escape") close();
     else if (!panel.hidden && !search.hidden && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) search.focus();
   });
@@ -214,11 +252,13 @@ function renderSearch(sel: HTMLSelectElement, host: HTMLDivElement, st: State) {
       e.preventDefault();
       close();
       trigger.focus();
-    } else if (e.key === "Enter") {
-      // Enter memilih hasil pertama, bukan mengirim form
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
-      const first = list.querySelector<HTMLLIElement>("li[data-value]:not([aria-disabled])");
-      if (first) first.click();
+      move(e.key === "ArrowDown" ? 1 : -1);
+    } else if (e.key === "Enter") {
+      // Enter memilih yang disorot (atau hasil pertama), bukan mengirim form
+      e.preventDefault();
+      pickActive();
     }
   });
   host.replaceChildren(trigger, panel);

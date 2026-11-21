@@ -69,7 +69,7 @@ export default async function BukuMarketplace({ searchParams }: { searchParams: 
         <p className="text-sm text-slate-600">Cara nyata sekarang mengakui pendapatan saat <b>withdraw</b> ({idr(n(real._sum.credit))} sejak {openDate}); buku bayangan mengakui saat <b>pencairan pesanan</b> ({idr(tb.pendapatan)} bersih retur). Dua angka ini berbeda cara & waktu, ditampilkan berdampingan dan tidak dijumlahkan.</p>
       </Card>
       <Card title="Saldo pembuka">
-        <p className="mb-2 text-xs text-slate-500">Shopee: usulan dari file (Saldo Akhir / Saldo Iklan). TikTok: isi manual dari saldo Seller Center pada tanggal saldo pembuka (file TikTok tidak punya saldo berjalan).</p>
+        <p className="mb-2 text-xs text-slate-500">Shopee: usulan dari file (Saldo Akhir / Saldo Iklan). TikTok: file tidak punya saldo berjalan. Cara termudah: isi saldo Seller Center SEKARANG lalu isi “Saldo per tanggal” + jam; sistem menghitung mundur sendiri ke tanggal pembuka. Kosongkan tanggal bila yang diisi memang saldo pada tanggal pembuka.</p>
         <div className="space-y-2">
           {rows.map((r, i) => {
             const cur = saved.get(`${r.s.id}|${r.ch}|${r.w}`);
@@ -82,6 +82,8 @@ export default async function BukuMarketplace({ searchParams }: { searchParams: 
                 <input type="hidden" name="source" value={su && !cur ? "FILE" : cur?.source ?? "MANUAL"} />
                 <div className="min-w-[14rem] flex-1"><b>{r.s.name} · {CH[r.ch as "SHP" | "TTS"]} · {r.w === "IKLAN" ? "Saldo iklan" : "Saldo penjual"}</b><div className="text-xs text-slate-500">{r.acct} {GL_ACCOUNTS[r.acct]?.name} {cur ? <Badge tone="green">tersimpan</Badge> : <Badge tone="amber">belum</Badge>}</div>{su && <div className="text-xs text-sky-700">Usulan file: {idr(su.amount)} — {su.note}</div>}</div>
                 <Field label="Saldo"><input name="amount" inputMode="numeric" className="input w-40" defaultValue={v ? v.toLocaleString("id-ID") : ""} placeholder="0" /></Field>
+                <Field label="Saldo per tanggal (opsional)"><input type="date" name="asOfDate" className="input w-40" min={openDate} /></Field>
+                <Field label="Jam WIB"><input type="time" name="asOfTime" className="input w-28" /></Field>
                 <Field label="Catatan"><input name="note" className="input w-44" defaultValue={cur?.note ?? ""} placeholder="mis. Seller Center per tanggal" /></Field>
                 {canPost && <Submit className="btn-secondary" pendingText="…">Simpan</Submit>}
                 <p className="basis-full text-xs text-slate-500">Jurnal bayangan: Dr {r.acct} · Cr 3-9000 Ekuitas Saldo Awal sebesar saldo (negatif = sebaliknya).</p>

@@ -4,21 +4,23 @@ import { idr } from "@/lib/money";
 import { feeVsSettings, productActuals, unmappedColumns } from "@/lib/marketplace/potongan";
 import { CHANNEL_LABEL } from "@/lib/marketplace/rules";
 import { FEE_CATEGORIES } from "@/lib/marketplace/feeMap";
+import { PeriodFilter } from "../PeriodFilter";
+import { resolvePeriod } from "@/lib/marketplace/periode";
 import { Badge, Card, Empty, Field, FilterBar, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { applyActualFeesAction, applyAffiliateAction, mapFeeAction } from "../actions";
 import { MpNav } from "../MpNav";
-import { periodOf } from "../periode";
 
 export const metadata = { title: "Potongan Marketplace" };
 const pc = (v: number) => `${v.toLocaleString("id-ID", { maximumFractionDigits: 2 })}%`;
 
-export default async function PotonganPage({ searchParams }: { searchParams: Promise<{ toko?: string; kanal?: string; dari?: string; sampai?: string }> }) {
+export default async function PotonganPage({ searchParams }: { searchParams: Promise<{ toko?: string; kanal?: string; dari?: string; sampai?: string; periode?: string; bulan?: string }> }) {
   const user = await requirePerm("sales.view");
   const canManage = user.can("sales.manage");
   const sp = await searchParams;
   const channel = sp.kanal === "TTS" ? "TTS" : "SHP";
-  const { from, to } = await periodOf(sp);
+  const period = resolvePeriod(sp);
+  const { from, to } = period;
   const f = { storeId: sp.toko || undefined, channel, from, to };
   const [stores, rep, prods, unmapped] = await Promise.all([prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } }), feeVsSettings(f), productActuals(f), unmappedColumns()]);
   const hidden = (<><input type="hidden" name="channel" value={channel} /><input type="hidden" name="from" value={from} /><input type="hidden" name="to" value={to} /><input type="hidden" name="storeId" value={sp.toko ?? ""} /></>);
@@ -26,18 +28,18 @@ export default async function PotonganPage({ searchParams }: { searchParams: Pro
     <div className="space-y-4">
       <PageHeader title="Potongan Marketplace" subtitle="Dari harga jual sampai uang masuk saldo · tiap potongan dicatat per kategori" />
       <MpNav current="potongan" />
+      <PeriodFilter sp={sp} period={period} />
       <FilterBar>
         <Field label="Toko"><select name="toko" defaultValue={sp.toko ?? ""} className="input"><option value="">Semua</option>{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
         <Field label="Kanal"><select name="kanal" defaultValue={channel} className="input"><option value="SHP">Shopee</option><option value="TTS">TikTok</option></select></Field>
-        <Field label="Dari"><input type="date" name="dari" defaultValue={from} className="input" /></Field>
-        <Field label="Sampai"><input type="date" name="sampai" defaultValue={to} className="input" /></Field>
+        {[["periode", sp.periode], ["bulan", sp.bulan], ["dari", sp.dari], ["sampai", sp.sampai]].map(([k, v]) => (v ? <input key={k} type="hidden" name={k} value={v} /> : null))}
       </FilterBar>
       {unmapped.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{unmapped.length} kolom biaya belum dipetakan ke kategori (belum ikut dijumlah; muncul sebagai selisih belum terjelaskan). Pilih kategorinya di bagian “Kolom biaya belum dipetakan” di bawah.</div>}
       {rep.orders === 0 ? <Empty title="Belum ada pesanan cair pada periode ini" hint="Unggah file penghasilan di menu Impor." /> : (
         <>
           <Card title={`${CHANNEL_LABEL[channel]} · ${rep.orders.toLocaleString("id-ID")} pesanan cair`}>
             <div className="table-wrap">
-              <table className="tbl">
+              <table className="tbl tbl-mp">
                 <thead><tr><th>Komponen</th><th className="num">Rp</th><th className="num">% harga jual</th></tr></thead>
                 <tbody>
                   <tr className="font-medium"><td>Harga jual (gross)</td><td className="num">{idr(rep.gross)}</td><td className="num">100%</td></tr>
@@ -71,7 +73,7 @@ export default async function PotonganPage({ searchParams }: { searchParams: Pro
             <ActionForm action={applyActualFeesAction} confirm="Pakai angka aktual sebagai pengaturan biaya marketplace? Ini hanya mengubah saran harga (Produk › Biaya), bukan transaksi.">{hidden}<Submit className="btn-secondary" pendingText="Menyimpan…">Pakai angka aktual</Submit></ActionForm>
           ) : undefined}>
             <div className="table-wrap">
-              <table className="tbl">
+              <table className="tbl tbl-mp">
                 <thead><tr><th>Biaya</th><th className="num">Pengaturan</th><th className="num">Aktual</th><th className="num">Selisih</th></tr></thead>
                 <tbody>
                   {rep.settingRows.map((r) => <tr key={r.name}><td>{r.name}</td><td className="num">{r.setting === null ? "-" : pc(r.setting)}</td><td className="num">{pc(r.actual)}</td><td className="num">{r.diff === null ? "-" : `${r.diff > 0 ? "+" : ""}${pc(r.diff)}`}</td></tr>)}
@@ -85,7 +87,7 @@ export default async function PotonganPage({ searchParams }: { searchParams: Pro
             <ActionForm action={applyAffiliateAction} confirm="Isi % affiliate tiap produk dengan angka aktual? Hanya mengubah pengaturan produk (Produk › Biaya).">{hidden}<Submit className="btn-secondary" pendingText="Menyimpan…">Pakai angka aktual</Submit></ActionForm>
           ) : undefined}>
             {prods.length === 0 ? <p className="text-sm text-slate-500">Belum cukup data per produk (minimal 10 pesanan per produk, SKU harus sudah dipetakan).</p> : (
-              <div className="table-wrap"><table className="tbl"><thead><tr><th>Produk</th><th className="num">Pesanan</th><th className="num">Omzet</th><th className="num">Komisi affiliate</th><th className="num">% aktual</th></tr></thead>
+              <div className="table-wrap"><table className="tbl tbl-mp"><thead><tr><th>Produk</th><th className="num">Pesanan</th><th className="num">Omzet</th><th className="num">Komisi affiliate</th><th className="num">% aktual</th></tr></thead>
                 <tbody>{prods.map((p) => <tr key={p.itemId}><td>{p.name}</td><td className="num">{p.orders}</td><td className="num">{idr(p.gross)}</td><td className="num">{idr(Math.round(p.affiliate))}</td><td className="num">{pc(p.affiliatePct)}</td></tr>)}</tbody></table></div>
             )}
             <p className="mt-2 text-xs text-slate-500">Biaya per pesanan dialokasikan ke produk sebanding dengan nilai barisnya. Iklan ditampilkan per kanal di tabel potongan di atas.</p>
