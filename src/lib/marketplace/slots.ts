@@ -37,6 +37,8 @@ export type Detected = {
   duplicate?: string;
   /** toko tujuan (dari slot yang dipilih, atau ditebak dari username penjual) */
   storeId?: string;
+  /** alasan toko ditentukan otomatis dari isi (mis. nomor pesanan sudah tercatat di toko itu) */
+  reason?: string;
   /** toko belum bisa ditentukan otomatis (file tanpa nama toko): pengguna memilih toko sekali */
   needStore?: boolean;
   error?: string;
@@ -74,12 +76,23 @@ export async function detectFiles(items: { name: string; buf: Buffer; target?: s
           const stored = sellers.get(sellerKey(storeId, ch));
           if (stored && stored !== seller) d.error = `Penjual di file (“${p.info.seller}”) berbeda dengan toko ${sn.get(storeId) ?? ""} (“${stored}”). Kemungkinan salah toko — taruh di kartu toko yang benar.`;
         }
-      } else if (seller) {
-        const hit = stores.filter((s) => sellers.get(sellerKey(s.id, d.channel!)) === seller);
-        if (hit.length === 1) d.storeId = hit[0].id;
-        else d.needStore = true; // username baru: pilih toko sekali; username diingat saat impor pertama
       } else {
-        d.needStore = true; // file pesanan / TikTok tidak memuat nama toko
+        const hit = seller ? stores.filter((s) => sellers.get(sellerKey(s.id, d.channel!)) === seller) : [];
+        if (hit.length === 1) {
+          d.storeId = hit[0].id;
+          d.reason = `username “${p.info.seller}” = ${hit[0].name}`;
+        } else {
+          // Tanpa username (Order Shopee, TikTok): lihat nomor pesanan yang SUDAH tercatat di toko tertentu
+          const nos = (p.kind === "ORDER" ? p.orders.map((o) => o.orderNo) : p.incomes.filter((i) => i.kind === "ORDER").map((i) => i.refNo)).slice(0, 800);
+          const found = nos.length ? await prisma.marketplaceOrder.groupBy({ by: ["storeId"], where: { channel: d.channel, orderNo: { in: nos } }, _count: true }) : [];
+          if (found.length === 1) {
+            d.storeId = found[0].storeId;
+            d.reason = `${found[0]._count} dari ${nos.length} nomor pesanan sudah tercatat di ${sn.get(found[0].storeId) ?? "toko itu"}`;
+          } else if (found.length > 1) {
+            d.needStore = true;
+            d.reason = `nomor pesanan ada di lebih dari satu toko (${found.map((f) => `${sn.get(f.storeId)}: ${f._count}`).join(", ")}) — periksa`;
+          } else d.needStore = true; // belum pernah tercatat: pilih toko sekali
+        }
       }
     } catch (e) {
       d.error = e instanceof FormatError ? e.message : "File tidak bisa dibaca. Pastikan ini file asli dari Seller Center.";

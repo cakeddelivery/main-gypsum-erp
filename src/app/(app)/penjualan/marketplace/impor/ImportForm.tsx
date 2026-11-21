@@ -24,7 +24,7 @@ const ageDays = (iso: string | null) => (iso ? Math.floor((Date.now() - new Date
 
 /** Satu file di daftar: status dicek sendiri-sendiri; hanya yang "ok" ikut disimpan */
 type Item = {
-  uid: number; file: File; slot: string | null; channel?: "SHP" | "TTS"; kind?: string; hash?: string; from?: string | null; to?: string | null;
+  uid: number; file: File; slot: string | null; reason?: string; channel?: "SHP" | "TTS"; kind?: string; hash?: string; from?: string | null; to?: string | null;
   status: "cek" | "ok" | "salah" | "dobel" | "toko"; msg?: string;
 };
 let seq = 0;
@@ -77,7 +77,7 @@ export function ImportForm({ cards, canManage }: { cards: Card[]; canManage: boo
       const r = await safe(() => detectSlotsAction(f));
       const d = "items" in r ? r.items?.[0] : undefined;
       if (!r.ok || !d) { upd(it.uid, { status: "salah", msg: ("error" in r && r.error) || "Gagal membaca file" }); continue; }
-      const base = { channel: d.channel, kind: d.kind, hash: d.hash, from: d.periodFrom, to: d.periodTo };
+      const base = { channel: d.channel, kind: d.kind, hash: d.hash, from: d.periodFrom, to: d.periodTo, reason: d.reason };
       if (d.error) { upd(it.uid, { ...base, status: "salah", msg: d.error }); continue; }
       if (d.duplicate) { upd(it.uid, { ...base, status: "dobel", msg: d.duplicate }); continue; }
       if (d.hash && seen.has(d.hash)) { upd(it.uid, { ...base, status: "dobel", msg: "Isi sama persis dengan file lain di daftar (mis. unduhan ganda). Dilewati." }); continue; }
@@ -162,6 +162,7 @@ export function ImportForm({ cards, canManage }: { cards: Card[]; canManage: boo
   if (!canManage) return <p className="text-sm text-slate-500">Hanya pengguna dengan izin kelola penjualan yang bisa mengimpor.</p>;
   const p = previews ? { files: previews, totals: { baru: previews.reduce((a, f) => a + f.baru, 0), diperbarui: previews.reduce((a, f) => a + f.diperbarui, 0), dilewati: previews.reduce((a, f) => a + f.dilewati, 0), perluDicek: previews.reduce((a, f) => a + f.unmapped.length + (f.incomeNoOrder ? 1 : 0) + (f.error ? 1 : 0), 0) } } : null;
   const done = prog ? prog.filter((x) => x.state === "ok" || x.state === "gagal" || x.state === "lewat").length : 0;
+  const reasonOf = new Map(items.filter((x) => x.reason).map((x) => [x.file.name, x.reason]));
   const needStore = items.filter((x) => x.status === "toko");
   const problems = items.filter((x) => x.status === "salah" || x.status === "dobel");
   const picker = (slot: string | null, label: string) => (
@@ -184,7 +185,7 @@ export function ImportForm({ cards, canManage }: { cards: Card[]; canManage: boo
       {needStore.length > 0 && (
         <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
           <p className="font-medium text-amber-900">{needStore.length} file belum diketahui tokonya (pesanan/TikTok tidak memuat nama toko):</p>
-          <ul className="list-disc pl-5 text-xs text-amber-900">{needStore.map((x) => <li key={x.uid} className="break-all">{x.file.name} <span className="text-amber-700">({x.channel ? CH[x.channel] : ""} · {x.kind ? KIND[x.kind as keyof typeof KIND] : ""}{x.from ? ` · ${x.from} s/d ${x.to}` : ""})</span></li>)}</ul>
+          <ul className="list-disc pl-5 text-xs text-amber-900">{needStore.map((x) => <li key={x.uid} className="break-all">{x.file.name} <span className="text-amber-700">{x.reason ? `${x.reason} · ` : ""}({x.channel ? CH[x.channel] : ""} · {x.kind ? KIND[x.kind as keyof typeof KIND] : ""}{x.from ? ` · ${x.from} s/d ${x.to}` : ""})</span></li>)}</ul>
           <div className="flex flex-wrap items-center gap-2">
             <select className="input w-auto" value={pickStore} onChange={(e) => setPickStore(e.target.value)} aria-label="Toko">{[...new Map(cards.map((c) => [c.storeId, c.storeName])).entries()].map(([id, n]) => <option key={id} value={id}>{n}</option>)}</select>
             <button type="button" className="btn-primary btn-sm" disabled={working} onClick={() => void assignStore()}>Tetapkan toko untuk semua</button>
@@ -217,7 +218,7 @@ export function ImportForm({ cards, canManage }: { cards: Card[]; canManage: boo
                   <div className="flex flex-wrap items-center gap-2"><b className="flex-1">{sl.label}</b>{picker(id, mine.length ? "Tambah file" : "Pilih file")}</div>
                   <p className="break-all text-xs text-slate-400">Contoh: {sl.example}</p>
                   {mine.map((x) => (
-                    <p key={x.uid} className="flex items-start justify-between gap-2 break-all text-xs text-emerald-700"><span>✓ {x.file.name}{x.from ? ` · ${x.from} s/d ${x.to}` : ""}</span><button type="button" className="shrink-0 underline" disabled={working} onClick={() => { setItems((cur) => cur.filter((y) => y.uid !== x.uid)); reset(); }}>hapus</button></p>
+                    <p key={x.uid} className="flex items-start justify-between gap-2 break-all text-xs text-emerald-700"><span>✓ {x.file.name}{x.from ? ` · ${x.from} s/d ${x.to}` : ""}{x.reason ? <span className="block text-emerald-900/70">toko otomatis: {x.reason}</span> : null}</span><button type="button" className="shrink-0 underline" disabled={working} onClick={() => { setItems((cur) => cur.filter((y) => y.uid !== x.uid)); reset(); }}>hapus</button></p>
                   ))}
                   <p className={`text-xs ${age === null ? "text-slate-400" : age > 3 ? "text-amber-700" : "text-slate-500"}`}>
                     {sl.lastAt ? `Terakhir diunggah ${fmtD(sl.lastAt)}${age ? ` (${age} hari lalu)` : " (hari ini)"}${sl.periodTo ? ` · periode ${fmtD(sl.periodFrom)} – ${fmtD(sl.periodTo)}` : ""}` : "Belum pernah diunggah"}
@@ -257,6 +258,7 @@ export function ImportForm({ cards, canManage }: { cards: Card[]; canManage: boo
           </div>
           {p.files.map((f, i) => (
             <div key={i} className="card space-y-2 p-3 text-sm">
+              {reasonOf.get(f.fileName) && <p className="text-xs text-sky-800">Toko ditentukan otomatis dari isi file: {reasonOf.get(f.fileName)}</p>}
               <div className="flex flex-wrap items-center gap-2">
                 <b className="break-all">{f.fileName}</b>
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs">{CH[f.channel as "SHP" | "TTS"]} · {KIND[f.kind as keyof typeof KIND] ?? f.kind}</span>

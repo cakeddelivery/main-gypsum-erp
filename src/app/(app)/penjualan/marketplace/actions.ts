@@ -1,7 +1,7 @@
 "use server";
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { action, str } from "@/lib/action";
+import { action, optStr, str, FieldError } from "@/lib/action";
 import { assertPerm } from "@/lib/auth";
 import { friendly } from "@/lib/action";
 import { prisma } from "@/lib/db";
@@ -16,7 +16,7 @@ import { latestMonth } from "@/lib/marketplace/dashboard";
 import { finishJob, runningJob, startJob, stepJob } from "@/lib/marketplace/job";
 import { detectFiles, type Detected } from "@/lib/marketplace/slots";
 import { resolveSkuKeys } from "@/lib/marketplace/sku";
-import { dateStr } from "@/lib/time";
+import { dateStr, todayStr } from "@/lib/time";
 import { FEE_CATEGORIES, normCol } from "@/lib/marketplace/feeMap";
 import { applyActuals, applyProductAffiliate } from "@/lib/marketplace/potongan";
 import { WD_REMINDER_KEY } from "@/lib/marketplace/saldo";
@@ -151,6 +151,33 @@ export async function importRunningAction(): Promise<{ running: Awaited<ReturnTy
   const r = await runningJob();
   return { running: r ? { by: r.by, total: r.total, done: r.done, label: r.label } : null };
 }
+
+/** Tandai jenis file yang aksesnya belum tersedia (sel jadi "menunggu akses", pengingat jenis itu dijeda sampai tanggal tinjau) */
+export const saveAccessGapAction = action(
+  "sales.manage",
+  async (fd, user) => {
+    const storeId = str(fd, "storeId"), channel = str(fd, "channel"), kind = str(fd, "kind"), reviewAt = str(fd, "reviewAt");
+    if (!["SHP", "TTS"].includes(channel) || !["ORDER", "INCOME", "BALANCE", "ADSBILL"].includes(kind)) throw new FieldError("kind", "Jenis file tidak dikenal");
+    if (channel === "TTS" && (kind === "BALANCE" || kind === "ADSBILL")) throw new FieldError("kind", "TikTok hanya punya file Pesanan dan Penghasilan");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(reviewAt) || reviewAt <= todayStr()) throw new FieldError("reviewAt", "Tanggal tinjau ulang harus setelah hari ini");
+    const note = optStr(fd, "note");
+    await prisma.marketplaceAccessGap.upsert({ where: { storeId_channel_kind: { storeId, channel, kind } }, create: { storeId, channel, kind, note, reviewAt: new Date(`${reviewAt}T00:00:00Z`), createdBy: user.name }, update: { note, reviewAt: new Date(`${reviewAt}T00:00:00Z`), createdBy: user.name } });
+    await audit(user, "MARKETPLACE_AKSES_BELUM", "MarketplaceAccessGap", `${storeId}|${channel}|${kind}`, { reviewAt, note });
+    return "Ditandai: akses belum tersedia (pengingat jenis ini dijeda sampai tanggal tinjau)";
+  },
+  ["/penjualan"],
+);
+
+export const clearAccessGapAction = action(
+  "sales.manage",
+  async (fd, user) => {
+    const storeId = str(fd, "storeId"), channel = str(fd, "channel"), kind = str(fd, "kind");
+    await prisma.marketplaceAccessGap.deleteMany({ where: { storeId, channel, kind } });
+    await audit(user, "MARKETPLACE_AKSES_TERSEDIA", "MarketplaceAccessGap", `${storeId}|${channel}|${kind}`, {});
+    return "Akses ditandai sudah tersedia; jenis file ini ditagih lagi";
+  },
+  ["/penjualan"],
+);
 
 const ser = (p: Preview): SerPreview => ({ totals: p.totals, files: p.files.map((f) => ({ ...f, periodFrom: f.periodFrom ? dateStr(f.periodFrom) : null, periodTo: f.periodTo ? dateStr(f.periodTo) : null })) });
 

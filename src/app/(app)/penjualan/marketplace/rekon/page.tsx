@@ -59,7 +59,7 @@ export default async function RekonPage({ searchParams }: { searchParams: Promis
                 <ul className="space-y-1.5 text-sm">
                   {g.checks.map((c) => (
                     <li key={c.key}>
-                      <span className={c.ok ? "text-emerald-600" : "font-semibold text-rose-600"}>{c.ok ? "✓" : "✗"}</span> <span className="font-medium">{c.label}</span> <span className="text-slate-500">— {c.detail}</span>
+                      <span className={c.ok ? "text-emerald-600" : c.warn ? "font-semibold text-amber-600" : "font-semibold text-rose-600"}>{c.ok ? "✓" : c.warn ? "⚠" : "✗"}</span> <span className="font-medium">{c.label}</span> <span className="text-slate-500">— {c.detail}</span>
                       {!c.ok && c.items?.length ? <ul className="ml-5 mt-0.5 list-disc text-xs text-slate-600">{c.items.slice(0, 8).map((it) => <li key={it}>{it}</li>)}</ul> : null}
                     </li>
                   ))}

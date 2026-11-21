@@ -3221,3 +3221,20 @@ model MarketplaceImportJob {
 
   @@index([status, updatedAt])
 }
+
+/// Jenis file wajib yang untuk sementara TIDAK bisa diunduh (mis. akses Penghasilan Shopee toko tertentu belum diberikan).
+/// Sel matriks jadi abu-abu "menunggu akses" & pengingat jenis itu dijeda sampai tanggal tinjau; Piutang toko itu tetap diberi peringatan.
+model MarketplaceAccessGap {
+  id        String   @id @default(cuid())
+  storeId   String
+  channel   String
+  /// ORDER / INCOME / BALANCE / ADSBILL
+  kind      String
+  note      String?
+  /// Tanggal tinjau ulang; setelah lewat, jenis ini ditagih lagi
+  reviewAt  DateTime @db.Date
+  createdBy String
+  createdAt DateTime @default(now())
+
+  @@unique([storeId, channel, kind])
+}

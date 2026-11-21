@@ -6,6 +6,9 @@ import { fmtDateTime } from "@/lib/time";
 import { CHANNEL_LABEL } from "@/lib/marketplace/rules";
 import { dashboardData, latestMonth } from "@/lib/marketplace/dashboard";
 import { syncStatus } from "@/lib/marketplace/sync";
+import { completeness } from "@/lib/marketplace/kelengkapan";
+import { Kelengkapan } from "./marketplace/Kelengkapan";
+import { PiutangWarning } from "@/components/PiutangWarning";
 import { Badge, Card, Empty, Field, FilterBar, PageHeader, Stat } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { BarsChart, TrendChart } from "@/components/Charts";
@@ -26,10 +29,11 @@ export default async function PenjualanDashboard({ searchParams }: { searchParam
   const canManage = user.can("sales.manage");
   const sp = await searchParams;
   const month = MONTH.test(sp.bulan ?? "") ? sp.bulan! : await latestMonth();
-  const [stores, d, sync] = await Promise.all([
+  const [stores, d, sync, matrix] = await Promise.all([
     prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } }),
     dashboardData({ month, storeId: sp.toko || undefined }),
     syncStatus(),
+    completeness(),
   ]);
   const noData = d.orders === 0 && d.batal === 0;
   const [y, m] = month.split("-").map(Number);
@@ -45,6 +49,7 @@ export default async function PenjualanDashboard({ searchParams }: { searchParam
       <ImportBannerServer />
       <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Angka marketplace = data operasional dari file; tidak masuk jurnal. Pendapatan akuntansi dicatat dari withdraw — jangan dijumlahkan dengan laporan Laba.</p>
 
+      <Kelengkapan m={matrix} canManage={canManage} stores={stores} compact />
       {(sync.active || canManage) && (
         <Card title="Pembaruan data harian">
           {sync.active ? (
@@ -78,6 +83,7 @@ export default async function PenjualanDashboard({ searchParams }: { searchParam
 
       {noData ? <Empty title="Belum ada pesanan pada bulan ini" hint="Pilih bulan lain atau unggah file order di menu Impor." action={<Link href="/penjualan/marketplace/impor" className="btn-primary">Impor data</Link>} /> : (
         <>
+          <PiutangWarning stores={stores} storeId={sp.toko || undefined} />
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat label="Omzet marketplace" value={idr(d.omzet)} tone="blue" hint={`${d.orders.toLocaleString("id-ID")} pesanan · rata-rata ${idr(d.avg)}`} />
             <Stat label="Piutang (belum cair)" value={idr(d.summary.piutang)} tone="amber" hint={`${d.summary.piutangCount} pesanan`} href="/penjualan/marketplace?tab=PIUTANG" />

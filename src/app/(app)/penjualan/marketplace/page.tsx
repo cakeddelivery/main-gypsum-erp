@@ -8,6 +8,7 @@ import { listOrders, orderSummary, type Tab } from "@/lib/marketplace/report";
 import { unloggedCounts } from "@/lib/marketplace/lookup";
 import { Badge, Empty, Field, FilterBar, PageHeader, Stat, Tabs } from "@/components/ui";
 import { Paged } from "@/components/Paged";
+import { PiutangWarning } from "@/components/PiutangWarning";
 import { ImportBannerServer } from "@/components/ImportBannerServer";
 import { MpNav } from "./MpNav";
 
@@ -47,6 +48,7 @@ export default async function MarketplacePage({ searchParams }: { searchParams: 
         <Empty title="Belum ada pesanan marketplace" hint="Unggah file Order & Penghasilan dari Seller Center di menu Impor." action={<Link href="/penjualan/marketplace/impor" className="btn-primary">Impor file</Link>} />
       ) : (
         <>
+          <PiutangWarning stores={stores} storeId={f.storeId} channel={f.channel} />
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
             <Stat label="Piutang (belum cair)" value={idr(sum.piutang)} tone="amber" hint={`${sum.piutangCount} pesanan`} />
             <Stat label="Saldo di marketplace" value={idr(sum.saldo)} tone="blue" hint="cair, belum ditarik" />

@@ -10,12 +10,13 @@ import { dayEnd, dayStart } from "./report";
 import { monthBounds } from "./dashboard";
 import { platformOf, CHANNEL_LABEL } from "./rules";
 import { resolveSkuKeys } from "./sku";
+import { accessGaps, KIND_LABEL } from "./kelengkapan";
 
 /**
  * Cek integritas data marketplace (HANYA BACA). Setiap pemeriksaan: ok / gagal + penjelasan + contoh baris.
  * Tujuan: tidak ada data dobel/tidak valid; angka bisa dipertanggungjawabkan terhadap file asli dan keuangan.
  */
-export type Check = { key: string; label: string; ok: boolean; detail: string; items?: string[] };
+export type Check = { key: string; label: string; ok: boolean; detail: string; items?: string[]; /** ⚠ data wajib belum tersedia: tidak bisa divalidasi (bukan ✓, bukan gagal hitung) */ warn?: boolean };
 export type Group = { storeId: string; store: string; channel: string; checks: Check[] };
 const idr = (v: number) => `Rp ${Math.round(v).toLocaleString("id-ID")}`;
 const TOL = 1; // toleransi pembulatan Rp 1
@@ -27,6 +28,7 @@ export async function integrityCheck(f: { month: string; storeId?: string }) {
   const banks = await marketplaceBanks();
   const overrides = await feeOverrides();
   const groups: Group[] = [];
+  const gaps = await accessGaps();
   for (const s of stores.filter((x) => !f.storeId || x.id === f.storeId)) {
     for (const ch of ["SHP", "TTS"]) {
       const platform = platformOf(ch);
@@ -116,6 +118,9 @@ export async function integrityCheck(f: { month: string; storeId?: string }) {
         const bb = await bookBalance(s.id, ch);
         if (bb) checks.push({ key: "i", label: "Saldo menurut Shopee = estimasi ERP", ok: Math.abs(bb.diff) <= TOL, detail: `per ${bb.asOf}: Shopee ${idr(bb.shopee)} vs ERP ${idr(bb.erp)} (selisih ${idr(bb.diff)})`, items: Math.abs(bb.diff) > TOL ? [`saldo awal ${idr(bb.opening)} (${bb.from}) + cair/penyesuaian/isi saldo iklan ${idr(bb.events)} − withdraw ${idr(bb.withdraws)}`] : [] });
       }
+      // k. data wajib yang aksesnya belum tersedia → pemeriksaan di atas tidak bisa memvalidasi (⚠, bukan ✓)
+      const mine = gaps.filter((g) => g.storeId === s.id && g.channel === ch);
+      if (mine.length) checks.push({ key: "k", label: "Data wajib tersedia untuk validasi", ok: false, warn: true, detail: `${mine.length} jenis file belum tersedia — pemeriksaan terkait tidak bisa memvalidasi`, items: mine.map((g) => `${KIND_LABEL[g.kind]}: ${g.paused ? "menunggu akses" : "perlu ditinjau"} (tinjau ${g.reviewAt})${g.note ? ` — ${g.note}` : ""}${g.kind === "INCOME" ? " · Piutang tidak bisa divalidasi" : ""}`) });
       groups.push({ storeId: s.id, store: s.name, channel: ch, checks });
     }
   }
