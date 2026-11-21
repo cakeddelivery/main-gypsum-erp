@@ -15,7 +15,7 @@ import { linkOrdersToReturns } from "./link";
 export class MarketplaceImportError extends Error {}
 
 type Actor = { id: string; name: string };
-export type ImportFile = { fileName: string; storeId: string; parsed: ParsedFile };
+export type ImportFile = { fileName: string; storeId: string; parsed: ParsedFile; /** sidik isi file (sha1) untuk mengenali unggahan ganda, mis. "(1)", "(2)" */ hash?: string };
 
 export type FilePreview = {
   fileName: string;
@@ -88,7 +88,7 @@ async function checkStore(storeId: string) {
   return s;
 }
 
-export async function previewImport(files: ImportFile[]): Promise<Preview> {
+export async function previewImport(files: ImportFile[], opts: { ordersInBatch?: boolean } = {}): Promise<Preview> {
   if (!files.length) throw new MarketplaceImportError("Pilih minimal satu file");
   const out: FilePreview[] = [];
   // pesanan yang ikut diunggah bersamaan (agar penghasilan tidak dianggap "tanpa order")
@@ -165,7 +165,7 @@ export async function previewImport(files: ImportFile[]): Promise<Preview> {
         for (const part of chunk(sf.map((x) => x.orderNo))) for (const e of await prisma.marketplaceSellerFee.findMany({ where: { storeId: f.storeId, channel, orderNo: { in: part } }, select: { orderNo: true } })) haveF.add(e.orderNo);
         p.extras = { shipDisc: sd.length, shipDiscBaru: sd.filter((x) => !haveD.has(x.orderNo)).length, sellerFee: sf.length, sellerFeeBaru: sf.filter((x) => !haveF.has(x.orderNo)).length };
       }
-      p.incomeNoOrder = orderRefs.filter((r) => !have.has(r) && !inUpload.has(`${f.storeId}|${channel}|${r}`)).length;
+      p.incomeNoOrder = opts.ordersInBatch ? 0 : orderRefs.filter((r) => !have.has(r) && !inUpload.has(`${f.storeId}|${channel}|${r}`)).length;
       let cair = 0;
       for (const part of chunk(orderRefs)) cair += await prisma.marketplaceOrder.count({ where: { storeId: f.storeId, channel, orderNo: { in: part }, incomeId: null, status: { not: "BATAL" } } });
       if (cair) p.changes["Piutang → Cair"] = cair;
@@ -375,7 +375,7 @@ export async function flagRefundAfterPaid(tx: Tx | typeof prisma, storeId: strin
     AND EXISTS (SELECT 1 FROM "MarketplaceIncomeEvent" e WHERE e."incomeId" = i."id" AND e."released" > 0)`;
 }
 
-export async function commitImport(actor: Actor, files: ImportFile[]) {
+export async function commitImport(actor: Actor, files: ImportFile[], opts: { finalize?: boolean } = {}) {
   if (!files.length) throw new MarketplaceImportError("Pilih minimal satu file");
   const results: { importId: string; fileName: string; baru: number; diperbarui: number; dilewati: number }[] = [];
   // pesanan dulu, penghasilan sesudahnya (tautan terisi otomatis di akhir)
@@ -410,7 +410,7 @@ export async function commitImport(actor: Actor, files: ImportFile[]) {
         // Ringkasan TikTok = Σ SEMUA baris Detail pesanan (pesanan + iklan GMV + penyesuaian); Shopee "Total Penghasilan" = baris Order saja
         const fileTotal = f.parsed.incomes.filter((i) => f.parsed.platform === "TIKTOK" || i.kind === "ORDER").reduce((a, i) => a + i.released, 0);
         const extra = { total: f.parsed.kind === "ORDER" ? f.parsed.orders.length : f.parsed.kind === "BALANCE" ? (f.parsed.balanceTx?.length ?? 0) : f.parsed.incomes.length, lines: f.parsed.orders.reduce((a, o) => a + o.lines.length, 0), ...(f.parsed.kind !== "ORDER" ? { fileTotal, summaryTotal: f.parsed.info.summaryTotal ?? null, summaryLabel: f.parsed.info.summaryLabel ?? null, seller: f.parsed.info.seller ?? null, summaryRows: f.parsed.info.summaryRows ?? null, sheets: f.parsed.info.sheets ?? null, shipDisc: sd.length, sellerFee: sf.length } : {}) };
-        await tx.marketplaceImport.update({ where: { id: imp.id }, data: { stats: { ...stats, ...extra } } });
+        await tx.marketplaceImport.update({ where: { id: imp.id }, data: { stats: { ...stats, ...extra, fileHash: f.hash ?? null } } });
         await linkIncome(tx, f.storeId, channel);
         if (guard.remember) await tx.setting.upsert({ where: { key: sellerKey(f.storeId, channel) }, create: { key: sellerKey(f.storeId, channel), value: guard.remember }, update: { value: guard.remember } });
         return { importId: imp.id, fileName: f.fileName, ...stats };
@@ -419,7 +419,7 @@ export async function commitImport(actor: Actor, files: ImportFile[]) {
     );
     results.push(r);
   }
-  await linkOrdersToReturns().catch(() => {});
+  if (opts.finalize !== false) await linkOrdersToReturns().catch(() => {}); // impor banyak file: dijalankan sekali di akhir batch
   await audit(actor, "MARKETPLACE_IMPOR", "MarketplaceImport", results.map((r) => r.importId).filter(Boolean).join(","), results.map((r) => `${r.fileName}: +${r.baru} ~${r.diperbarui} =${r.dilewati}`));
   return results;
 }

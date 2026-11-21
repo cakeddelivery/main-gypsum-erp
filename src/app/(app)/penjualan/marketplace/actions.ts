@@ -1,4 +1,5 @@
 "use server";
+import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { action, str } from "@/lib/action";
 import { assertPerm } from "@/lib/auth";
@@ -8,6 +9,7 @@ import { audit } from "@/lib/audit";
 import { createInvoice, InvoiceError } from "@/lib/invoice";
 import { commitImport, previewImport, undoImport, MarketplaceImportError, type ImportFile, type Preview } from "@/lib/marketplace/import";
 import { FormatError, parseMarketplaceFile } from "@/lib/marketplace/parse";
+import { linkOrdersToReturns } from "@/lib/marketplace/link";
 import { rebuildGl } from "@/lib/marketplace/gl";
 import { integrityCheck } from "@/lib/marketplace/integrity";
 import { latestMonth } from "@/lib/marketplace/dashboard";
@@ -45,7 +47,8 @@ async function readFiles(fd: FormData): Promise<{ files: ImportFile[]; fileError
       continue;
     }
     try {
-      files.push({ fileName: f.name, storeId: stores[i], parsed: await parseMarketplaceFile(Buffer.from(await f.arrayBuffer())) });
+      const buf = Buffer.from(await f.arrayBuffer());
+      files.push({ fileName: f.name, storeId: stores[i], hash: createHash("sha1").update(buf).digest("hex"), parsed: await parseMarketplaceFile(buf) });
     } catch (e) {
       fileErrors.push({ fileName: f.name, error: e instanceof FormatError ? e.message : "File tidak bisa dibaca. Pastikan ini file Excel asli dari Seller Center." });
     }
@@ -87,16 +90,33 @@ export async function startImportJobAction(total: number, label: string): Promis
   }
 }
 
-export async function saveOneFileAction(fd: FormData): Promise<{ ok: boolean; error?: string; baru?: number; diperbarui?: number; dilewati?: number; importId?: string }> {
+export async function saveOneFileAction(fd: FormData): Promise<{ ok: boolean; error?: string; skipped?: string; baru?: number; diperbarui?: number; dilewati?: number; importId?: string }> {
   const jobId = str(fd, "jobId");
   try {
     const user = await assertPerm("sales.manage");
     const { files, fileErrors } = await readFiles(fd);
     if (fileErrors.length || files.length !== 1) return { ok: false, error: fileErrors[0]?.error ?? "File tidak bisa dibaca" };
-    const [r] = await commitImport(user, files);
-    revalidatePath("/penjualan", "layout");
+    const dup = files[0].hash ? await prisma.marketplaceImport.findFirst({ where: { undoneAt: null, stats: { path: ["fileHash"], equals: files[0].hash } }, select: { fileName: true } }) : null;
+    if (dup) {
+      if (jobId) await stepJob(jobId, Number(str(fd, "done")) || 0, `${files[0].fileName} (sudah diunggah)`);
+      return { ok: true, skipped: `Sudah diunggah sebelumnya (“${dup.fileName}”)`, baru: 0, diperbarui: 0, dilewati: 0 };
+    }
+    const [r] = await commitImport(user, files, { finalize: false }); // tautan retur & buku bayangan dihitung sekali di akhir batch
     if (jobId) await stepJob(jobId, Number(str(fd, "done")) || 0, `${files[0].fileName} ✓`);
     return { ok: true, baru: r.baru, diperbarui: r.diperbarui, dilewati: r.dilewati, importId: r.importId };
+  } catch (e) {
+    return { ok: false, error: e instanceof MarketplaceImportError ? e.message : friendly(e) };
+  }
+}
+
+/** Pratinjau SATU file (tidak menulis apa pun). Dipanggil per file agar jumlah/ukuran total tidak dibatasi body limit. */
+export async function previewOneFileAction(fd: FormData): Promise<{ ok: boolean; error?: string; file?: SerPreview["files"][number] }> {
+  try {
+    await assertPerm("sales.manage");
+    const { files, fileErrors } = await readFiles(fd);
+    if (fileErrors.length || files.length !== 1) return { ok: false, error: fileErrors[0]?.error ?? "File tidak bisa dibaca" };
+    const p = await previewImport(files, { ordersInBatch: str(fd, "ordersInBatch") === "1" });
+    return { ok: true, file: ser(p).files[0] };
   } catch (e) {
     return { ok: false, error: e instanceof MarketplaceImportError ? e.message : friendly(e) };
   }
@@ -116,6 +136,8 @@ export async function finishImportJobAction(id: string, ok: boolean, message: st
         /* cek integritas gagal dihitung: impor tetap sah */
       }
     }
+    await linkOrdersToReturns().catch(() => {});
+    await rebuildGl().catch(() => {}); // buku bayangan (simulasi) sekali per batch
     await finishJob(id, ok, message);
     revalidatePath("/penjualan", "layout");
     return { ok: true, ...res };

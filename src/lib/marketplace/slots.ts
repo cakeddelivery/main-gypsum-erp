@@ -1,21 +1,22 @@
+import { createHash } from "node:crypto";
 import { prisma } from "@/lib/db";
 import { dateStr } from "@/lib/time";
 import { FormatError, parseMarketplaceFile, type FileKind } from "./parse";
 
-export type SlotDef = { key: FileKind; label: string; example: string; steps: string[] };
+export type SlotDef = { key: FileKind; label: string; example: string; steps: string[]; /** fakta unduhan (per bulan / multi-bulan / nama ganda) */ note: string };
 export type ChannelCode = "SHP" | "TTS";
 
 /** Slot impor per kanal (nama slot & petunjuk unduh dari Seller Center) */
 export const SLOTS: Record<ChannelCode, SlotDef[]> = {
   SHP: [
-    { key: "ORDER", label: "Pesanan", example: "Order.all.20261101_20261130.xlsx", steps: ["Seller Centre → Pesanan Saya → Semua", "Atur tanggal pesanan → Ekspor", "Unduh file Order.all…xlsx"] },
-    { key: "INCOME", label: "Penghasilan", example: "Income.sudah_dilepas.<toko>.20261101_20261130.xlsx", steps: ["Seller Centre → Penghasilan Saya → Sudah Dilepas", "Atur periode → Unduh (Laporan Penghasilan)", "Unduh file Income.sudah_dilepas…xlsx"] },
-    { key: "BALANCE", label: "Saldo Penjual", example: "my_balance_transaction_report.<toko>.20261101_20261130.xlsx", steps: ["Seller Centre → Penghasilan Saya → Saldo Penjual", "Atur periode → Unduh Laporan Transaksi", "Unduh file my_balance_transaction_report…xlsx"] },
-    { key: "ADSBILL", label: "Saldo Iklan", example: "<toko>_adwords_bill_20261101_20261130.csv", steps: ["Seller Centre → Iklan Shopee → Saldo / Isi Saldo Iklan", "Buka Riwayat transaksi → atur periode → Unduh", "Unduh file …_adwords_bill_….csv"] },
+    { key: "ORDER", label: "Pesanan", example: "Order.all.20261101_20261130.xlsx", steps: ["Seller Centre → Pesanan Saya → Semua", "Atur tanggal pesanan → Ekspor", "Unduh file Order.all…xlsx"], note: "Shopee hanya bisa mengunduh PER BULAN. Boleh pilih beberapa bulan sekaligus (Agu, Sep, Okt, Nov): urutan otomatis dari yang lama ke baru, periode dibaca dari isi file." },
+    { key: "INCOME", label: "Penghasilan", example: "Income.sudah_dilepas.<toko>.20261101_20261130.xlsx", steps: ["Seller Centre → Penghasilan Saya → Sudah Dilepas", "Atur periode → Unduh (Laporan Penghasilan)", "Unduh file Income.sudah_dilepas…xlsx"], note: "Per bulan. Beberapa bulan boleh sekaligus; periode yang tumpang tindih aman (tidak dobel)." },
+    { key: "BALANCE", label: "Saldo Penjual", example: "my_balance_transaction_report.<toko>.20261101_20261130.xlsx", steps: ["Seller Centre → Penghasilan Saya → Saldo Penjual", "Atur periode → Unduh Laporan Transaksi", "Unduh file my_balance_transaction_report…xlsx"], note: "Per bulan. Beberapa bulan boleh sekaligus; periode yang tumpang tindih aman." },
+    { key: "ADSBILL", label: "Saldo Iklan", example: "<toko>_adwords_bill_20261101_20261130.csv", steps: ["Seller Centre → Iklan Shopee → Saldo / Isi Saldo Iklan", "Buka Riwayat transaksi → atur periode → Unduh", "Unduh file …_adwords_bill_….csv"], note: "Diunduh per tanggal unduh; nama file bisa berakhiran “(1)”, “(2)” untuk unduhan yang sama. File berisi sama persis otomatis dilewati dengan pesan “sudah diunggah”." },
   ],
   TTS: [
-    { key: "ORDER", label: "Semua pesanan", example: "Semua pesanan-2026-11-30-10_15.xlsx", steps: ["Seller Center TikTok Shop → Pesanan → Semua pesanan", "Atur rentang tanggal → Ekspor pesanan", "Unduh file Semua pesanan…xlsx"] },
-    { key: "INCOME", label: "Penghasilan", example: "income_20261130123000(UTC).xlsx", steps: ["Seller Center TikTok Shop → Keuangan → Penghasilan", "Pilih periode / sudah diselesaikan → Ekspor", "Unduh file income_…xlsx"] },
+    { key: "ORDER", label: "Semua pesanan", example: "Semua pesanan-2026-11-30-10_15.xlsx", steps: ["Seller Center TikTok Shop → Pesanan → Semua pesanan", "Atur rentang tanggal → Ekspor pesanan", "Unduh file Semua pesanan…xlsx"], note: "Boleh lebih dari 1 bulan dalam satu file. Periode dibaca dari isi file, bukan dari nama; beberapa file sekaligus juga boleh." },
+    { key: "INCOME", label: "Penghasilan", example: "income_20261130123000(UTC).xlsx", steps: ["Seller Center TikTok Shop → Keuangan → Penghasilan", "Pilih periode / sudah diselesaikan → Ekspor", "Unduh file income_…xlsx"], note: "Penghasilan TikTok efektif per 2 bulan: satu file bisa memuat 2 bulan. Periode dibaca dari isi file; tumpang tindih aman." },
   ],
 };
 
@@ -30,8 +31,14 @@ export type Detected = {
   seller?: string;
   periodFrom?: string | null;
   periodTo?: string | null;
+  /** sidik isi file; file identik (mis. unduhan "(1)", "(2)") dikenali dari sini */
+  hash?: string;
+  /** sudah pernah diunggah (isi identik) → dilewati, bukan galat */
+  duplicate?: string;
   /** toko tujuan (dari slot yang dipilih, atau ditebak dari username penjual) */
   storeId?: string;
+  /** toko belum bisa ditentukan otomatis (file tanpa nama toko): pengguna memilih toko sekali */
+  needStore?: boolean;
   error?: string;
 };
 
@@ -46,7 +53,9 @@ export async function detectFiles(items: { name: string; buf: Buffer; target?: s
   const sellers = new Map(settings.map((s) => [s.key, s.value]));
   const out: Detected[] = [];
   for (const it of items) {
-    const d: Detected = { fileName: it.name };
+    const d: Detected = { fileName: it.name, hash: createHash("sha1").update(it.buf).digest("hex") };
+    const done = await prisma.marketplaceImport.findFirst({ where: { undoneAt: null, stats: { path: ["fileHash"], equals: d.hash } }, select: { fileName: true, createdAt: true } });
+    if (done) d.duplicate = `Sudah diunggah (isi sama persis dengan “${done.fileName}”, ${dateStr(done.createdAt)}). Dilewati.`;
     try {
       const p = await parseMarketplaceFile(it.buf);
       d.channel = CHANNEL_BY_PLATFORM[p.platform];
@@ -68,9 +77,9 @@ export async function detectFiles(items: { name: string; buf: Buffer; target?: s
       } else if (seller) {
         const hit = stores.filter((s) => sellers.get(sellerKey(s.id, d.channel!)) === seller);
         if (hit.length === 1) d.storeId = hit[0].id;
-        else if (!hit.length) d.error = `Username “${p.info.seller}” belum dikenal. Jatuhkan file ini langsung ke slot toko yang benar (pertama kali; username akan diingat).`;
+        else d.needStore = true; // username baru: pilih toko sekali; username diingat saat impor pertama
       } else {
-        d.error = "File ini tidak memuat nama toko (mis. file pesanan/TikTok). Jatuhkan langsung ke slot di kartu toko yang benar.";
+        d.needStore = true; // file pesanan / TikTok tidak memuat nama toko
       }
     } catch (e) {
       d.error = e instanceof FormatError ? e.message : "File tidak bisa dibaca. Pastikan ini file asli dari Seller Center.";
