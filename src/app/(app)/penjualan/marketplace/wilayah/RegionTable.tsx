@@ -28,7 +28,7 @@ export function RegionTable({ rows, first, size = 15 }: { rows: Row[]; first: st
   const hasProv = rows[0]?.province !== undefined;
   return (
     <div className="table-wrap">
-      <table className="tbl">
+      <table className="tbl tbl-mp">
         <thead><tr>{th("name", first)}{hasProv && th("province", "Provinsi")}{th("orders", "Pesanan", true)}{th("retur", "Retur", true)}{th("rusak", "Rusak", true)}{th("pct", "% retur", true)}<th></th></tr></thead>
         <tbody>
           {shown.map((r) => (

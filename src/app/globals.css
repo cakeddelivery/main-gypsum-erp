@@ -40,6 +40,10 @@ dialog { @apply bg-white text-slate-800; }
   .tbl td { @apply whitespace-nowrap px-3 py-2 align-top; }
   .tbl tbody tr { @apply hover:bg-slate-50; }
   .num { @apply text-right tabular-nums; }
+  /* Tabel laporan marketplace: kolom angka RATA TENGAH (judul & angka lurus), kolom teks pertama tetap rata kiri */
+  .tbl-mp th.num, .tbl-mp td.num { @apply text-center tabular-nums; }
+  .tbl-mp th:first-child, .tbl-mp td:first-child { @apply text-left; }
+  .tbl-mp th.num > button, .tbl-mp th.num > a { @apply mx-auto; }
   .link { @apply text-brand-600 hover:underline; }
   /* Kolom pilihan (ChoiceEnhancer): ≤3 opsi = tombol, >3 opsi = dropdown dengan pencarian */
   .choice-native { position: absolute !important; width: 1px !important; height: 1px !important; padding: 0 !important; opacity: 0; pointer-events: none; overflow: hidden; }

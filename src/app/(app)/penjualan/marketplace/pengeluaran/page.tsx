@@ -40,7 +40,7 @@ export default async function PengeluaranPage({ searchParams }: { searchParams: 
       {data.length === 0 ? <Empty title="Belum ada data penghasilan pada bulan ini" hint="Unggah file penghasilan, saldo penjual, dan saldo iklan di menu Impor." /> : data.map(({ r, lost, disc }) => (
         <Card key={r.channel} title={`${r.label} · total pengeluaran ${idr(r.total)} (${pc(r.totalPct)} dari harga jual ${idr(r.gross)})`}>
           {r.overs.length > 0 && <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800"><b>OVERCOST:</b> {r.rows.filter((x) => x.over).map((x) => x.label).join(", ")}</div>}
-          <div className="table-wrap"><table className="tbl">
+          <div className="table-wrap"><table className="tbl tbl-mp">
             <thead><tr><th>Sektor</th><th className="num">Rp</th><th className="num">% harga jual</th><th className="num">Bulan lalu</th><th className="num">Δ</th><th className="num">Target</th><th></th></tr></thead>
             <tbody>
               {r.rows.filter((x) => x.value !== 0 || x.prevValue !== 0).map((x) => (

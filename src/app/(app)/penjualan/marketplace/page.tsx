@@ -76,7 +76,7 @@ export default async function MarketplacePage({ searchParams }: { searchParams: 
           ) : (
             <div className="table-wrap">
               <Paged size={25}>
-                <table className="tbl">
+                <table className="tbl tbl-mp">
                   <thead><tr><th>No. pesanan</th><th>Kanal</th><th>Tgl</th><th>Produk</th><th className="num">Nilai</th><th className="num">Diterima</th><th>Status</th><th></th></tr></thead>
                   <tbody>
                     {rows.map((o) => {

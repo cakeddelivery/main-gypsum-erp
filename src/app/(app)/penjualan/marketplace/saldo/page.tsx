@@ -48,7 +48,7 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
                     <p className="text-sm">Saldo (kartu dashboard): <b className="tabular-nums">{idr(w.balance)}</b> <span className="text-xs text-slate-500">{w.basis === "ACUAN" ? `dari acuan ${w.official!.asOf} (${w.official!.source === "FILE" ? "Saldo Akhir file Saldo Penjual" : "isian Finance"}) + mutasi sesudahnya` : "estimasi dari data impor (belum ada acuan)"}</span></p>
                   </div>
                   <div className="mt-2 grid gap-4 lg:grid-cols-2">
-                    <div className="table-wrap"><table className="tbl">
+                    <div className="table-wrap"><table className="tbl tbl-mp">
                       <tbody>
                         {line(`Saldo awal (${w.opening.source === "FILE" ? `file Saldo Penjual, ${w.opening.from}` : "tidak diketahui, dianggap 0"})`, w.opening.amount, "+")}
                         {line("Cair pesanan", w.cair, "+")}
@@ -82,7 +82,7 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
       )}
       {rows.length === 0 ? <Empty title="Belum ada data cair" hint="Unggah file penghasilan di menu Impor." /> : (
         <Card title="Saldo berjalan (sejak data pertama)">
-          <div className="table-wrap"><table className="tbl">
+          <div className="table-wrap"><table className="tbl tbl-mp">
             <thead><tr><th>Toko</th><th>Kanal</th><th className="num">Cair bersih</th><th className="num">Withdraw tercatat</th><th className="num">Belum ditarik</th><th>Status</th></tr></thead>
             <tbody>{rows.map((r) => (
               <tr key={r.storeId + r.channel}>
@@ -102,7 +102,7 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
       )}
       {books.length > 0 && (
         <Card title="Saldo menurut Shopee vs estimasi ERP">
-          <div className="table-wrap"><table className="tbl">
+          <div className="table-wrap"><table className="tbl tbl-mp">
             <thead><tr><th>Toko</th><th>Per tanggal</th><th className="num">Saldo menurut Shopee</th><th className="num">Estimasi ERP</th><th className="num">Selisih</th></tr></thead>
             <tbody>{books.map(({ store, b }) => <tr key={store}><td>{store}</td><td>{b!.asOf}</td><td className="num">{idr(b!.shopee)}</td><td className="num">{idr(b!.erp)}</td><td className="num">{Math.abs(b!.diff) <= 1 ? <Badge tone="green">Sama</Badge> : <Badge tone="red">{idr(b!.diff)}</Badge>}</td></tr>)}</tbody>
           </table></div>
@@ -111,7 +111,7 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
       )}
       {matches.map((m) => (
         <Card key={m.key} title={`Penarikan di file vs Keuangan · ${m.name}`}>
-          <div className="table-wrap"><table className="tbl">
+          <div className="table-wrap"><table className="tbl tbl-mp">
             <thead><tr><th>Referensi</th><th>Tanggal</th><th className="num">Di file</th><th className="num">Di ERP</th><th>Status</th></tr></thead>
             <tbody>{m.list.map((w) => <tr key={w.refId + w.status}><td className="font-mono text-xs">{w.refId}</td><td>{fmtDateTime(w.date)}</td><td className="num">{w.fileAmount === null ? "-" : idr(w.fileAmount)}</td><td className="num">{w.erpAmount === null ? "-" : idr(w.erpAmount)}</td><td><Badge tone={TONE[w.status]}>{LABEL[w.status]}</Badge></td></tr>)}</tbody>
           </table></div>

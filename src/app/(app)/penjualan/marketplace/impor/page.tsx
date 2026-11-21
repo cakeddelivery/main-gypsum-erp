@@ -38,7 +38,7 @@ export default async function ImporPage() {
         ) : (
           <div className="table-wrap">
             <Paged size={10}>
-              <table className="tbl">
+              <table className="tbl tbl-mp">
                 <thead><tr><th>Waktu</th><th>File</th><th>Toko / kanal</th><th>Hasil</th><th></th></tr></thead>
                 <tbody>
                   {batches.map((b) => {

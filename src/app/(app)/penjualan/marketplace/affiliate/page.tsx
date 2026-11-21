@@ -16,7 +16,7 @@ const pc = (v: number) => `${v.toLocaleString("id-ID", { maximumFractionDigits: 
 type Row = { name: string; orders: number; omzet: number; komisi: number; pct: number };
 function T({ rows, first, label = (x: string) => x }: { rows: Row[]; first: string; label?: (x: string) => string }) {
   return (
-    <div className="table-wrap"><Paged size={12}><table className="tbl">
+    <div className="table-wrap"><Paged size={12}><table className="tbl tbl-mp">
       <thead><tr><th>{first}</th><th className="num">Pesanan</th><th className="num">Omzet</th><th className="num">Komisi</th><th className="num">% komisi</th></tr></thead>
       <tbody>{rows.map((r) => <tr key={r.name}><td>{label(r.name)}</td><td className="num">{r.orders}</td><td className="num">{idr(r.omzet)}</td><td className="num">{idr(Math.round(r.komisi))}</td><td className="num">{pc(r.pct)}</td></tr>)}</tbody>
     </table></Paged></div>

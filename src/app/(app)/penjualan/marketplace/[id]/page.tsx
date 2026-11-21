@@ -50,7 +50,7 @@ export default async function OrderDetail({ params }: { params: Promise<{ id: st
       </div>
       <Card title="Produk">
         <div className="table-wrap">
-          <table className="tbl">
+          <table className="tbl tbl-mp">
             <thead><tr><th>SKU / produk</th><th className="num">Qty</th><th className="num">Harga</th><th className="num">Jumlah</th><th>Dikenali sebagai</th></tr></thead>
             <tbody>
               {o.lines.map((l) => {

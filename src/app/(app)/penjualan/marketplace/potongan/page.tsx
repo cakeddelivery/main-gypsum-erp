@@ -39,7 +39,7 @@ export default async function PotonganPage({ searchParams }: { searchParams: Pro
         <>
           <Card title={`${CHANNEL_LABEL[channel]} · ${rep.orders.toLocaleString("id-ID")} pesanan cair`}>
             <div className="table-wrap">
-              <table className="tbl">
+              <table className="tbl tbl-mp">
                 <thead><tr><th>Komponen</th><th className="num">Rp</th><th className="num">% harga jual</th></tr></thead>
                 <tbody>
                   <tr className="font-medium"><td>Harga jual (gross)</td><td className="num">{idr(rep.gross)}</td><td className="num">100%</td></tr>
@@ -73,7 +73,7 @@ export default async function PotonganPage({ searchParams }: { searchParams: Pro
             <ActionForm action={applyActualFeesAction} confirm="Pakai angka aktual sebagai pengaturan biaya marketplace? Ini hanya mengubah saran harga (Produk › Biaya), bukan transaksi.">{hidden}<Submit className="btn-secondary" pendingText="Menyimpan…">Pakai angka aktual</Submit></ActionForm>
           ) : undefined}>
             <div className="table-wrap">
-              <table className="tbl">
+              <table className="tbl tbl-mp">
                 <thead><tr><th>Biaya</th><th className="num">Pengaturan</th><th className="num">Aktual</th><th className="num">Selisih</th></tr></thead>
                 <tbody>
                   {rep.settingRows.map((r) => <tr key={r.name}><td>{r.name}</td><td className="num">{r.setting === null ? "-" : pc(r.setting)}</td><td className="num">{pc(r.actual)}</td><td className="num">{r.diff === null ? "-" : `${r.diff > 0 ? "+" : ""}${pc(r.diff)}`}</td></tr>)}
@@ -87,7 +87,7 @@ export default async function PotonganPage({ searchParams }: { searchParams: Pro
             <ActionForm action={applyAffiliateAction} confirm="Isi % affiliate tiap produk dengan angka aktual? Hanya mengubah pengaturan produk (Produk › Biaya).">{hidden}<Submit className="btn-secondary" pendingText="Menyimpan…">Pakai angka aktual</Submit></ActionForm>
           ) : undefined}>
             {prods.length === 0 ? <p className="text-sm text-slate-500">Belum cukup data per produk (minimal 10 pesanan per produk, SKU harus sudah dipetakan).</p> : (
-              <div className="table-wrap"><table className="tbl"><thead><tr><th>Produk</th><th className="num">Pesanan</th><th className="num">Omzet</th><th className="num">Komisi affiliate</th><th className="num">% aktual</th></tr></thead>
+              <div className="table-wrap"><table className="tbl tbl-mp"><thead><tr><th>Produk</th><th className="num">Pesanan</th><th className="num">Omzet</th><th className="num">Komisi affiliate</th><th className="num">% aktual</th></tr></thead>
                 <tbody>{prods.map((p) => <tr key={p.itemId}><td>{p.name}</td><td className="num">{p.orders}</td><td className="num">{idr(p.gross)}</td><td className="num">{idr(Math.round(p.affiliate))}</td><td className="num">{pc(p.affiliatePct)}</td></tr>)}</tbody></table></div>
             )}
             <p className="mt-2 text-xs text-slate-500">Biaya per pesanan dialokasikan ke produk sebanding dengan nilai barisnya. Iklan ditampilkan per kanal di tabel potongan di atas.</p>

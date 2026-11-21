@@ -74,7 +74,7 @@ export default async function SkuPage({ searchParams }: { searchParams: Promise<
         {list.length === 0 ? <Empty title={tab === "belum" ? "Semua SKU sudah dikenali" : "Tidak ada SKU"} hint="Ubah filter toko, kanal, atau kata cari bila perlu." /> : (
           <div className="table-wrap">
             <Paged size={10}>
-              <table className="tbl">
+              <table className="tbl tbl-mp">
                 <thead><tr><th>SKU · produk marketplace</th><th>Toko</th><th className="num">Pesanan</th><th>Dipetakan ke</th></tr></thead>
                 <tbody>
                   {list.map((r) => {

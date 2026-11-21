@@ -34,7 +34,7 @@ export default async function RekonPage({ searchParams }: { searchParams: Promis
       {rows.length === 0 ? <Empty title="Belum ada data cair pada periode ini" hint="Unggah file penghasilan di menu Impor." /> : (
         <Card>
           <div className="table-wrap">
-            <table className="tbl">
+            <table className="tbl tbl-mp">
               <thead><tr><th>Toko</th><th>Kanal</th><th className="num">Pesanan cair</th><th className="num">Total cair</th><th className="num">Iklan GMV</th><th className="num">Penyesuaian</th><th className="num">Withdraw tercatat</th><th className="num">Selisih</th><th></th></tr></thead>
               <tbody>
                 {rows.map((r) => (

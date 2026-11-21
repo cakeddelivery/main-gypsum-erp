@@ -85,7 +85,7 @@ export default async function PenjualanDashboard({ searchParams }: { searchParam
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
             <Card title="Per toko & kanal">
-              <div className="table-wrap"><table className="tbl">
+              <div className="table-wrap"><table className="tbl tbl-mp">
                 <thead><tr><th>Toko</th><th>Kanal</th><th className="num">Pesanan</th><th className="num">Omzet</th><th className="num">Batal</th><th className="num">Retur</th></tr></thead>
                 <tbody>{d.perStore.map((s) => <tr key={s.store + s.channel}><td>{s.store}</td><td>{CHANNEL_LABEL[s.channel]}</td><td className="num">{s.orders}</td><td className="num">{idr(s.omzet)}</td><td className="num">{s.batal}</td><td className="num">{s.retur}</td></tr>)}</tbody>
               </table></div>
@@ -94,11 +94,11 @@ export default async function PenjualanDashboard({ searchParams }: { searchParam
           </div>
           <div className="grid gap-4 lg:grid-cols-2">
             <Card title="Produk terlaris (omzet)">
-              <div className="table-wrap"><table className="tbl"><thead><tr><th>Produk</th><th className="num">Qty</th><th className="num">Omzet</th></tr></thead>
+              <div className="table-wrap"><table className="tbl tbl-mp"><thead><tr><th>Produk</th><th className="num">Qty</th><th className="num">Omzet</th></tr></thead>
                 <tbody>{d.topProducts.map((p) => <tr key={p.name}><td className="max-w-[16rem] truncate" title={p.name}>{p.name}</td><td className="num">{p.qty}</td><td className="num">{idr(p.omzet)}</td></tr>)}</tbody></table></div>
             </Card>
             <Card title="Kota pembeli terbanyak" actions={<Link href="/penjualan/marketplace/wilayah" className="link text-sm">Laporan wilayah</Link>}>
-              <div className="table-wrap"><table className="tbl"><thead><tr><th>Kota/Kab.</th><th className="num">Pesanan</th></tr></thead>
+              <div className="table-wrap"><table className="tbl tbl-mp"><thead><tr><th>Kota/Kab.</th><th className="num">Pesanan</th></tr></thead>
                 <tbody>{d.topCities.map((c) => <tr key={c.name}><td>{c.name}</td><td className="num">{c.orders}</td></tr>)}</tbody></table></div>
             </Card>
           </div>
