@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, beforeAll } from "vitest";
 import { prisma } from "@/lib/db";
 import { makeXlsx } from "./fixtures/xlsxMake";
 import { FormatError, parseMarketplaceFile, parseNum } from "@/lib/marketplace/parse";
@@ -68,6 +68,18 @@ afterAll(async () => {
   await prisma.marketplaceSkuClass.deleteMany({ where: { key: { contains: tag } } });
   await prisma.returnCase.deleteMany({ where: { trackingNo: { contains: tag } } });
   await prisma.item.deleteMany({ where: { sku: { startsWith: `MPT-${tag}` } } });
+});
+
+
+// Rekening saldo marketplace bawaan (seed) dipakai bersama banyak tes Keuangan; withdraw-nya kini dikenali per toko, jadi
+// dinetralkan selama berkas ini berjalan agar angka saldo hanya berasal dari data uji di sini.
+let seededWalletBanks: string[] = [];
+beforeAll(async () => {
+  seededWalletBanks = (await prisma.bankAccount.findMany({ where: { marketplace: true }, select: { id: true } })).map((b) => b.id);
+  await prisma.bankAccount.updateMany({ where: { id: { in: seededWalletBanks } }, data: { marketplace: false } });
+});
+afterAll(async () => {
+  await prisma.bankAccount.updateMany({ where: { id: { in: seededWalletBanks } }, data: { marketplace: true } });
 });
 
 describe("Marketplace: aturan murni", () => {

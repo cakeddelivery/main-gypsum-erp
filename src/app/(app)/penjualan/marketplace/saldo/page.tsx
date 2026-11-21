@@ -25,7 +25,7 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
   const [stores, rows, hour] = await Promise.all([prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } }), saldoPanel({ storeId: sp.toko || undefined }), wdReminderHour()]);
   const books = (await Promise.all(stores.filter((x) => !sp.toko || x.id === sp.toko).map(async (x) => ({ store: x.name, b: await bookBalance(x.id, "SHP") })))).filter((x) => x.b);
   const pairs = [...new Map(rows.map((r) => [`${r.storeId}|${r.channel}`, r])).values()];
-  const matches = (await Promise.all(pairs.map(async (r) => ({ key: r.storeId + r.channel, name: `${r.store} · ${CHANNEL_LABEL[r.channel]}`, list: await matchWithdrawals({ storeId: r.storeId, channel: r.channel as "SHP" | "TTS", from, to }) })))).filter((m) => m.list.length);
+  const matches = (await Promise.all(pairs.map(async (r) => ({ key: r.storeId + r.channel, storeId: r.storeId, channel: r.channel, name: `${r.store} · ${CHANNEL_LABEL[r.channel]}`, list: await matchWithdrawals({ storeId: r.storeId, channel: r.channel as "SHP" | "TTS", from, to }) })))).filter((m) => m.list.length);
   return (
     <div className="space-y-4">
       <PageHeader title="Saldo Marketplace" subtitle="Cair (impor) − potongan iklan − withdraw tercatat di Keuangan = saldo belum ditarik · hanya laporan" actions={<Link href="/finance" className="btn-secondary">Keuangan</Link>} />
@@ -118,14 +118,22 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
           <p className="mt-2 text-xs text-slate-500">Dari file “Transaksi Saldo Penjual” (Saldo Akhir baris terbaru). Estimasi ERP = saldo awal periode + cair + penyesuaian − isi saldo iklan − withdraw. Selisih berarti ada file penghasilan/withdraw yang belum diimpor.</p>
         </Card>
       )}
-      {matches.map((m) => (
+      {matches.map((m) => {
+        const inFile = m.list.filter((w) => w.fileAmount !== null), ok = m.list.filter((w) => w.status === "COCOK"), missing = m.list.filter((w) => w.status === "BELUM_DI_ERP"), extra = m.list.filter((w) => w.status === "TIDAK_DI_FILE");
+        const sum = (l: typeof m.list) => l.reduce((a, w) => a + (w.fileAmount ?? w.erpAmount ?? 0), 0);
+        const wib = (d: Date | null) => (d ? new Date(d.getTime() + 7 * 3600000).toISOString().slice(0, 10) : "");
+        return (
         <Card key={m.key} title={`Penarikan di file vs Keuangan · ${m.name}`}>
+          <p className="mb-2 text-sm">Withdraw di file <b>{inFile.length}</b> ({idr(sum(inFile))}) · tercatat di ERP <b>{ok.length}</b> ({idr(sum(ok))}) · belum tercatat <b className={missing.length ? "text-amber-700" : ""}>{missing.length}</b> ({idr(sum(missing))}){extra.length > 0 && <> · tercatat tanpa padanan di file <b className="text-rose-700">{extra.length}</b> ({idr(sum(extra))})</>}</p>
           <div className="table-wrap"><table className="tbl tbl-mp">
-            <thead><tr><th>Referensi</th><th>Tanggal</th><th className="num">Di file</th><th className="num">Di ERP</th><th>Status</th></tr></thead>
-            <tbody>{m.list.map((w) => <tr key={w.refId + w.status}><td className="font-mono text-xs">{w.refId}</td><td>{fmtDateTime(w.date)}</td><td className="num">{w.fileAmount === null ? "-" : idr(w.fileAmount)}</td><td className="num">{w.erpAmount === null ? "-" : idr(w.erpAmount)}</td><td><Badge tone={TONE[w.status]}>{LABEL[w.status]}</Badge></td></tr>)}</tbody>
+            <thead><tr><th>Referensi</th><th>Tanggal</th><th className="num">Di file</th><th className="num">Di ERP</th><th>Status</th><th></th></tr></thead>
+            <tbody>{m.list.map((w) => <tr key={w.refId + w.status + (w.txId ?? "")}><td className="font-mono text-xs">{w.refId}</td><td>{fmtDateTime(w.date)}</td><td className="num">{w.fileAmount === null ? "-" : idr(w.fileAmount)}</td><td className="num">{w.erpAmount === null ? "-" : idr(w.erpAmount)}</td><td><Badge tone={TONE[w.status]}>{LABEL[w.status]}</Badge>{w.via && w.via.startsWith("FILE") && <div className="text-xs text-sky-700">toko ditetapkan dari file</div>}</td>
+              <td>{w.status === "BELUM_DI_ERP" && user.can("finance.create") && <Link className="btn-secondary btn-sm" href={`/finance?${new URLSearchParams({ baru: "1", wd: "1", nominal: String(w.fileAmount ?? 0), tanggal: wib(w.date), toko: m.storeId, kanal: m.channel, ref: w.refId.startsWith("Saldo Penjual") ? "" : w.refId })}`}>Catat withdraw ini</Link>}</td></tr>)}</tbody>
           </table></div>
+          <p className="mt-2 text-xs text-slate-500">“Catat withdraw ini” membuka form Transaksi dengan nominal, tanggal, toko, dan ID referensi terisi; withdraw tidak pernah dibuat otomatis. Withdraw di rekening saldo bersama (satu rekening untuk semua toko) dikenali milik toko mana dari padanan file (ID referensi, atau nominal sama & tanggal 0–{m.channel === "TTS" ? 4 : 2} hari).</p>
         </Card>
-      ))}
+        );
+      })}
       {user.can("sales.manage") && (
         <Card title="Pengingat harian">
           <ActionForm action={saveWdHourAction} className="flex flex-wrap items-end gap-2">

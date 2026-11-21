@@ -1,8 +1,9 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, beforeAll } from "vitest";
 import { prisma } from "@/lib/db";
 import { commitImport, undoImport } from "@/lib/marketplace/import";
 import type { ParsedFile, ParsedIncome } from "@/lib/marketplace/parse";
-import { pairWithdraws, saldoPanel, walletDetail } from "@/lib/marketplace/saldo";
+import { createTransaction } from "@/lib/finance";
+import { matchWithdrawals, pairWithdraws, saldoPanel, walletDetail } from "@/lib/marketplace/saldo";
 
 const tag = Date.now().toString(36).slice(-4).toUpperCase();
 const actor = { id: "t", name: "Tester" };
@@ -30,6 +31,18 @@ async function mg() {
 const file = (platform: "SHOPEE" | "TIKTOK", kind: "INCOME", f: Partial<ParsedFile>): ParsedFile => ({ platform, kind, orders: [], incomes: [], withdrawals: [], periodFrom: null, periodTo: null, info: { rows: 0 }, ...f });
 const ev = (refNo: string, d: string, released: number): ParsedIncome => ({ kind: "ORDER", refNo, orderedAt: at(d), releasedAt: at(d), released, productAmt: released, refundAmt: 0, fees: 0, feeDetail: {} });
 const walletOf = async (storeId: string, ch: "SHP" | "TTS") => (await saldoPanel({ storeId })).find((x) => x.channel === ch)!.wallet;
+
+
+// Rekening saldo marketplace bawaan (seed) dipakai bersama banyak tes Keuangan; withdraw-nya kini dikenali per toko, jadi
+// dinetralkan selama berkas ini berjalan agar angka saldo hanya berasal dari data uji di sini.
+let seededWalletBanks: string[] = [];
+beforeAll(async () => {
+  seededWalletBanks = (await prisma.bankAccount.findMany({ where: { marketplace: true }, select: { id: true } })).map((b) => b.id);
+  await prisma.bankAccount.updateMany({ where: { id: { in: seededWalletBanks } }, data: { marketplace: false } });
+});
+afterAll(async () => {
+  await prisma.bankAccount.updateMany({ where: { id: { in: seededWalletBanks } }, data: { marketplace: true } });
+});
 
 describe("Rincian saldo marketplace: saldo awal, satu sumber withdraw, acuan", () => {
   it("Shopee: saldo awal dari baris tertua Saldo Penjual (≠ 0) dan Saldo Akhir terbaru = angka resmi", async () => {
@@ -138,5 +151,54 @@ describe("Rincian saldo marketplace: saldo awal, satu sumber withdraw, acuan", (
     expect(st("TTS", "2054-01-01")).toBe("COCOK"); // 4 hari
     expect(st("TTS", "2053-12-31")).toBe("BELUM_DI_ERP"); // 5 hari
     expect(st("SHP", "2054-01-02")).toBe("BELUM_DI_ERP"); // Shopee 3 hari > 2
+  });
+
+  it("rekening saldo BERSAMA (satu 'Saldo Penjual TikTok' untuk semua toko): toko withdraw ditetapkan dari padanan file; tersimpan; tak mengubah transaksi", async () => {
+    const dlS = await dl(), mgS = await mg();
+    const coa = await prisma.coaAccount.findFirstOrThrow();
+    const bank = await prisma.bankAccount.create({ data: { code: `SHB${tag}`, name: `Saldo Penjual TikTok ${tag}`, coaAccountId: coa.id, marketplace: true, aliases: "tiktok" } });
+    cleanups.push(() => prisma.bankAccount.delete({ where: { id: bank.id } }));
+    const mkTx = (n: number, ref: string | null, amount: number, date: string, storeId: string | null) => prisma.financeTransaction.create({ data: { number: `TX-SHB-${tag}-${n}`, source: "MANUAL", direction: "TRANSFER", amount: BigInt(amount), date: at(date), accountId: bank.id, status: "DIBUKUKAN", fingerprint: `fp-shb-${tag}-${n}`, createdBy: "t", withdrawRef: ref, storeId } });
+    const a = await mkTx(1, null, 40000, "2055-02-03", null); // tanpa toko & tanpa ref → dari file DL (nominal & tanggal)
+    const b = await mkTx(2, null, 70000, "2055-02-04", mgS.id); // toko tercatat MG, file MG cocok
+    const c = await mkTx(3, `REFC${tag}`, 25000, "2055-02-05", mgS.id); // tercatat MG tetapi ID referensi ada di file DL → DL (file lebih dipercaya)
+    cleanups.push(() => prisma.marketplaceWithdrawLink.deleteMany({ where: { txId: { in: [a.id, b.id, c.id] } } }));
+    cleanups.push(() => prisma.financeTransaction.deleteMany({ where: { id: { in: [a.id, b.id, c.id] } } }));
+    const wd = (refId: string, amount: number, d: string) => ({ txType: "Withdrawal", refId, requestedAt: at(d), doneAt: at(d), amount: -amount, status: "Berhasil" });
+    const inc = (n: number) => ev(`SH${tag}${n}`, "2055-02-01", 500000);
+    const [rd] = await commitImport(actor, [{ fileName: `shb.dl.${tag}.xlsx`, storeId: dlS.id, parsed: file("TIKTOK", "INCOME", { incomes: [inc(1)], withdrawals: [wd(`WDDL1${tag}`, 40000, "2055-02-03"), wd(`REFC${tag}`, 25000, "2055-02-05"), wd(`WDDL3${tag}`, 90000, "2055-02-06")] }) }]);
+    const [rm] = await commitImport(actor, [{ fileName: `shb.mg.${tag}.xlsx`, storeId: mgS.id, parsed: file("TIKTOK", "INCOME", { incomes: [inc(2)], withdrawals: [wd(`WDMG1${tag}`, 70000, "2055-02-04")] }) }]);
+    cleanups.push(() => undoImport(actor, rm.importId));
+    cleanups.push(() => undoImport(actor, rd.importId));
+    const [tx0, j0] = await Promise.all([prisma.financeTransaction.count(), prisma.journal.count()]);
+    const mDl = await matchWithdrawals({ storeId: dlS.id, channel: "TTS", from: "2055-02-01", to: "2055-02-28" });
+    const mMg = await matchWithdrawals({ storeId: mgS.id, channel: "TTS", from: "2055-02-01", to: "2055-02-28" });
+    const by = (m: typeof mDl, refId: string) => m.find((x) => x.refId === refId);
+    expect(by(mDl, `WDDL1${tag}`)).toMatchObject({ status: "COCOK", erpAmount: 40000, via: "FILE_NOMINAL" });
+    expect(by(mDl, `REFC${tag}`)).toMatchObject({ status: "COCOK", erpAmount: 25000, via: "FILE_REF" }); // meski transaksi mencatat MG
+    expect(by(mDl, `WDDL3${tag}`)).toMatchObject({ status: "BELUM_DI_ERP" }); // benar-benar belum dicatat
+    expect(by(mMg, `WDMG1${tag}`)).toMatchObject({ status: "COCOK", erpAmount: 70000 });
+    expect(mMg.some((x) => x.erpAmount === 25000 || x.erpAmount === 40000)).toBe(false); // tidak ikut ke MG
+    // penetapan dari file tersimpan; transaksi & jurnal tidak berubah
+    const links = await prisma.marketplaceWithdrawLink.findMany({ where: { txId: { in: [a.id, c.id] } } });
+    expect(links.map((l) => l.via).sort()).toEqual(["FILE_NOMINAL", "FILE_REF"]);
+    expect(links.every((l) => l.storeId === dlS.id)).toBe(true);
+    expect((await prisma.financeTransaction.findUniqueOrThrow({ where: { id: c.id } })).storeId).toBe(mgS.id);
+    expect(await Promise.all([prisma.financeTransaction.count(), prisma.journal.count()])).toEqual([tx0, j0]);
+    // hanya 90.000 yang memang belum dicatat (bukan semua penarikan DL)
+    expect(mDl.filter((x) => x.status === "BELUM_DI_ERP")).toHaveLength(1);
+  });
+
+  it("withdraw baru dari rekening saldo marketplace TIDAK diberi toko default: harus dipilih (PERLU_DITINJAU bila tanpa toko)", async () => {
+    const coa = await prisma.coaAccount.findFirstOrThrow();
+    const wallet = await prisma.bankAccount.create({ data: { code: `SHW${tag}`, name: `Saldo Penjual Shopee ${tag}`, coaAccountId: coa.id, marketplace: true, aliases: "shopee" } });
+    const dest = await prisma.bankAccount.create({ data: { code: `SHD${tag}`, name: `Seabank uji ${tag}`, coaAccountId: coa.id } });
+    cleanups.push(() => prisma.bankAccount.deleteMany({ where: { id: { in: [wallet.id, dest.id] } } }));
+    const def = await prisma.setting.upsert({ where: { key: "default_store_id" }, create: { key: "default_store_id", value: (await mg()).id }, update: {} });
+    void def;
+    const { transaction } = await createTransaction({ direction: "TRANSFER", amount: 12000, date: at("2055-03-01"), accountId: wallet.id, toAccountId: dest.id }, "MANUAL", { id: "t", name: "Tester" }, { submit: true });
+    cleanups.push(() => prisma.financeTransaction.delete({ where: { id: transaction.id } }));
+    expect(transaction.storeId).toBeNull();
+    expect(transaction.status).toBe("PERLU_DITINJAU");
   });
 });

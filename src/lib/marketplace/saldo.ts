@@ -63,9 +63,9 @@ export function saldoStatus(balance: number, oldest: string | null, today: strin
 const wib = (d: Date) => new Date(d.getTime() + 7 * 3600000).toISOString().slice(0, 10);
 const dateStrWib = wib;
 
-export type WdMatch = { status: "COCOK" | "BELUM_DI_ERP" | "TIDAK_DI_FILE"; refId: string; fileAmount: number | null; erpAmount: number | null; date: Date | null; txId?: string };
+export type WdMatch = { status: "COCOK" | "BELUM_DI_ERP" | "TIDAK_DI_FILE"; refId: string; fileAmount: number | null; erpAmount: number | null; date: Date | null; txId?: string; /** asal toko di rekening bersama: ditetapkan dari file (ID referensi / nominal & tanggal) */ via?: string };
 type FileWd = { refId: string; amount: number; date: Date | null };
-type ErpWd = { id: string; amount: number; date: Date; withdrawRef: string | null; number?: string; status?: string };
+type ErpWd = { id: string; amount: number; date: Date; withdrawRef: string | null; number?: string; status?: string; via?: string };
 
 /**
  * Pasangkan penarikan di file (TikTok "Riwayat penarikan" / Shopee "Transaksi Saldo Penjual") dengan withdraw di Keuangan.
@@ -279,7 +279,7 @@ export async function matchWithdrawals(opts: { storeId: string; channel: "SHP" |
   const file = await prisma.marketplaceWithdrawal.findMany({ where: { storeId: s.id, channel: opts.channel, txType: { contains: "withdraw", mode: "insensitive" }, requestedAt: { gte: dayStart(opts.from), lt: dayEnd(opts.to) } } });
   const banks = await marketplaceBanks();
   const erp = (await recordedWithdraws(s, opts.channel, banks, stores.length, dayStart(opts.from), dayEnd(opts.to))).rows;
-  return pairWithdraws(opts.channel, file.map((w) => ({ refId: w.refId, amount: Math.abs(n(w.amount)), date: w.requestedAt })), erp);
+  return pairWithdraws(opts.channel, file.map((w) => ({ refId: w.refId, amount: Math.abs(n(w.amount)), date: w.requestedAt })), erp).map((p) => ({ ...p, via: erp.find((e) => e.id === p.txId)?.via }));
 }
 export const matchTiktokWithdrawals = (o: { storeId: string; from: string; to: string }) => matchWithdrawals({ ...o, channel: "TTS" });
 

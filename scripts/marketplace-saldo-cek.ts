@@ -6,7 +6,7 @@
  * marketplace (Saldo Akhir file Saldo Penjual Shopee / isian Finance) → selisih + kandidat penyebab.
  */
 import { prisma } from "../src/lib/db";
-import { saldoPanel } from "../src/lib/marketplace/saldo";
+import { matchWithdrawals, saldoPanel } from "../src/lib/marketplace/saldo";
 
 const idr = (v: number) => `Rp ${Math.round(v).toLocaleString("id-ID")}`;
 async function main() {
@@ -30,6 +30,9 @@ async function main() {
     if (w.diff !== null) console.log(`  Selisih (acuan − estimasi)    : ${idr(w.diff)}`);
     console.log(`  Saldo untuk kartu dashboard   : ${idr(w.balance)} (${w.basis === "ACUAN" ? "acuan + mutasi sesudahnya" : "estimasi"})`);
     console.log(`  Withdraw Keuangan tanpa padanan di file (tidak dikurangkan): ${w.ignoredErp.count} (${idr(w.ignoredErp.amount)}) · penarikan file belum di Keuangan: ${w.notInErp.count} (${idr(w.notInErp.amount)})`);
+    const m = await matchWithdrawals({ storeId: r.storeId, channel: r.channel as "SHP" | "TTS", from: "2020-01-01", to: "2099-12-31" });
+    const fileRows = m.filter((x) => x.fileAmount !== null), ok = m.filter((x) => x.status === "COCOK"), miss = m.filter((x) => x.status === "BELUM_DI_ERP"), fromFile = ok.filter((x) => x.via?.startsWith("FILE"));
+    console.log(`  Withdraw: file ${fileRows.length} · tercatat di ERP ${ok.length} (${fromFile.length} di rekening bersama ditetapkan tokonya dari file) · belum tercatat ${miss.length} (${idr(miss.reduce((a, x) => a + (x.fileAmount ?? 0), 0))})`);
     for (const c of w.causes) console.log(`  ! ${c}`);
     console.log();
   }

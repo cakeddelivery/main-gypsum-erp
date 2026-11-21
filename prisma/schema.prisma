@@ -3255,3 +3255,18 @@ model MarketplaceWalletCheck {
 
   @@index([storeId, channel, asOf])
 }
+
+/// Toko pemilik withdraw yang dicatat di rekening saldo marketplace BERSAMA (satu rekening "Saldo Penjual TikTok/Shopee" untuk semua toko).
+/// Ditetapkan dari pencocokan dengan file penarikan (ID referensi / nominal & tanggal). Tidak mengubah transaksi maupun jurnal.
+model MarketplaceWithdrawLink {
+  id           String   @id @default(cuid())
+  txId         String   @unique
+  storeId      String
+  channel      String
+  /// FILE_REF (ID referensi sama) / FILE_NOMINAL (nominal sama & tanggal berdekatan)
+  via          String
+  withdrawalId String?
+  createdAt    DateTime @default(now())
+
+  @@index([storeId, channel])
+}

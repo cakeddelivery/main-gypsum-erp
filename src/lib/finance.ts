@@ -154,7 +154,9 @@ export async function createTransaction(input: TxInput, source: TxSource, actor:
       const existing = await tx.financeTransaction.findUnique({ where: { idempotencyKey: input.idempotencyKey } });
       if (existing) return { transaction: existing, duplicate: null, replayed: true };
     }
-    if (!input.storeId && !input.askStore) {
+    // Withdraw dari rekening saldo marketplace lewat formulir web: toko TIDAK diisi otomatis (satu rekening bisa dipakai beberapa toko) → harus dipilih. Bot Telegram sudah menanyakan toko (askStore).
+    const fromMarketplace = source === "MANUAL" && input.direction === "TRANSFER" && !!input.accountId && !!(await tx.bankAccount.findUnique({ where: { id: input.accountId }, select: { marketplace: true } }))?.marketplace;
+    if (!input.storeId && !input.askStore && !fromMarketplace) {
       const def = await tx.setting.findUnique({ where: { key: "default_store_id" } });
       input.storeId = def?.value ?? null;
     }
