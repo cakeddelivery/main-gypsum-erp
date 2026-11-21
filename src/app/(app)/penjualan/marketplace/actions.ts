@@ -1,7 +1,7 @@
 "use server";
 import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
-import { action, optStr, str, FieldError } from "@/lib/action";
+import { action, int, optStr, str, FieldError } from "@/lib/action";
 import { assertPerm } from "@/lib/auth";
 import { friendly } from "@/lib/action";
 import { prisma } from "@/lib/db";
@@ -151,6 +151,22 @@ export async function importRunningAction(): Promise<{ running: Awaited<ReturnTy
   const r = await runningJob();
   return { running: r ? { by: r.by, total: r.total, done: r.done, label: r.label } : null };
 }
+
+/** Saldo menurut Seller Center pada tanggal tertentu (titik acuan saldo; TikTok tidak punya saldo berjalan di file) */
+export const saveWalletCheckAction = action(
+  "sales.manage",
+  async (fd, user) => {
+    const storeId = str(fd, "storeId"), channel = str(fd, "channel"), asOf = str(fd, "asOf") || todayStr();
+    if (!["SHP", "TTS"].includes(channel)) throw new FieldError("channel", "Kanal tidak dikenal");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf) || asOf > todayStr()) throw new FieldError("asOf", "Tanggal tidak boleh di masa depan");
+    const amount = int(fd, "amount");
+    await prisma.store.findUniqueOrThrow({ where: { id: storeId } });
+    await prisma.marketplaceWalletCheck.create({ data: { storeId, channel, asOf: new Date(`${asOf}T00:00:00Z`), amount: BigInt(amount), note: optStr(fd, "note"), createdBy: user.name } });
+    await audit(user, "MARKETPLACE_SALDO_ACUAN", "MarketplaceWalletCheck", `${storeId}|${channel}`, { asOf, amount });
+    return `Saldo menurut Seller Center per ${asOf} tersimpan: Rp ${amount.toLocaleString("id-ID")}`;
+  },
+  ["/penjualan"],
+);
 
 /** Merek di nama produk → toko (dipakai mengenali toko file Order/TikTok tanpa username). Satu baris per toko, dipisah koma. */
 export const saveBrandMapAction = action(

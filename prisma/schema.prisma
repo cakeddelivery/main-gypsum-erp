@@ -3238,3 +3238,18 @@ model MarketplaceAccessGap {
 
   @@unique([storeId, channel, kind])
 }
+
+/// Titik acuan saldo: saldo menurut Seller Center pada tanggal tertentu (diisi Finance; mis. saldo TikTok yang tidak punya saldo berjalan di file).
+/// Saldo setelah tanggal itu = acuan + cair − withdraw sesudahnya. Riwayatnya disimpan; yang terbaru dipakai.
+model MarketplaceWalletCheck {
+  id        String   @id @default(cuid())
+  storeId   String
+  channel   String
+  asOf      DateTime @db.Date
+  amount    BigInt
+  note      String?
+  createdBy String
+  createdAt DateTime @default(now())
+
+  @@index([storeId, channel, asOf])
+}

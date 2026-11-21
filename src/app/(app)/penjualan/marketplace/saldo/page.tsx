@@ -9,7 +9,8 @@ import { PeriodFilter } from "../PeriodFilter";
 import { resolvePeriod } from "@/lib/marketplace/periode";
 import { Badge, Card, Empty, Field, FilterBar, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
-import { saveWdHourAction } from "../actions";
+import { saveWalletCheckAction, saveWdHourAction } from "../actions";
+import { todayStr } from "@/lib/time";
 import { MpNav } from "../MpNav";
 
 export const metadata = { title: "Saldo Marketplace" };
@@ -34,6 +35,51 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
         <Field label="Toko"><select name="toko" defaultValue={sp.toko ?? ""} className="input"><option value="">Semua</option>{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
         {[["periode", sp.periode], ["bulan", sp.bulan], ["dari", sp.dari], ["sampai", sp.sampai]].map(([k, v]) => (v ? <input key={k} type="hidden" name={k} value={v} /> : null))}
       </FilterBar>
+      {rows.length > 0 && (
+        <Card title="Rincian saldo per toko × kanal">
+          <div className="space-y-3">
+            {rows.map((r) => {
+              const w = r.wallet;
+              const line = (label: string, v: number, sign: "+" | "−" | "=") => <tr key={label}><td className="text-slate-600">{sign} {label}</td><td className="num">{idr(v)}</td></tr>;
+              return (
+                <div key={r.storeId + r.channel} className="rounded-lg border border-slate-200 p-3">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="font-semibold">{r.store} · {CHANNEL_LABEL[r.channel]}</p>
+                    <p className="text-sm">Saldo (kartu dashboard): <b className="tabular-nums">{idr(w.balance)}</b> <span className="text-xs text-slate-500">{w.basis === "ACUAN" ? `dari acuan ${w.official!.asOf} (${w.official!.source === "FILE" ? "Saldo Akhir file Saldo Penjual" : "isian Finance"}) + mutasi sesudahnya` : "estimasi dari data impor (belum ada acuan)"}</span></p>
+                  </div>
+                  <div className="mt-2 grid gap-4 lg:grid-cols-2">
+                    <div className="table-wrap"><table className="tbl">
+                      <tbody>
+                        {line(`Saldo awal (${w.opening.source === "FILE" ? `file Saldo Penjual, ${w.opening.from}` : "tidak diketahui, dianggap 0"})`, w.opening.amount, "+")}
+                        {line("Cair pesanan", w.cair, "+")}
+                        {line("Penyesuaian", w.adjust, "+")}
+                        {line("Top-up saldo iklan", w.topup, "+")}
+                        {line("Potongan GMV Pay", w.gmv, "+")}
+                        {line(`Withdraw (${w.notInErp.count ? "file" : "file / Keuangan"})`, -w.withdraw, "+")}
+                        <tr className="font-semibold"><td>= Estimasi ERP (sejak awal data)</td><td className="num">{idr(w.estimate)}</td></tr>
+                      </tbody>
+                    </table></div>
+                    <div className="space-y-1 text-sm">
+                      <p>Saldo menurut marketplace: <b>{w.official ? idr(w.official.amount) : "belum ada acuan"}</b>{w.official && <span className="text-xs text-slate-500"> per {w.official.asOf} ({w.official.source === "FILE" ? "Saldo Akhir file" : `isian${w.official.note ? `: ${w.official.note}` : ""}`})</span>}</p>
+                      {w.diff !== null && <p>Selisih acuan − estimasi: {Math.abs(w.diff) <= 1 ? <Badge tone="green">Sama</Badge> : <b className="text-rose-700">{idr(w.diff)}</b>}</p>}
+                      {w.causes.length > 0 && <ul className="list-disc pl-4 text-xs text-amber-800">{w.causes.map((c) => <li key={c}>{c}</li>)}</ul>}
+                      {user.can("sales.manage") && (
+                        <ActionForm action={saveWalletCheckAction} className="mt-2 flex flex-wrap items-end gap-2 border-t pt-2">
+                          <input type="hidden" name="storeId" value={r.storeId} /><input type="hidden" name="channel" value={r.channel} />
+                          <Field label="Saldo menurut Seller Center"><input name="amount" inputMode="numeric" className="input w-36" placeholder="mis. 423.381" required /></Field>
+                          <Field label="Tanggal"><input type="date" name="asOf" defaultValue={todayStr()} max={todayStr()} className="input" /></Field>
+                          <Submit className="btn-secondary" pendingText="…">Simpan acuan</Submit>
+                        </ActionForm>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-2 text-xs text-slate-500">Satu sumber withdraw per tanggal: bila file penarikan ada untuk tanggal itu, file yang dipakai dan Keuangan hanya dicocokkan; withdraw Keuangan tanpa padanan di file tidak dikurangkan lagi (jadi peringatan). Shopee memakai Saldo Akhir baris terbaru file Saldo Penjual sebagai angka resmi; TikTok tidak punya saldo berjalan, isi saldo Seller Center sebagai acuan.</p>
+        </Card>
+      )}
       {rows.length === 0 ? <Empty title="Belum ada data cair" hint="Unggah file penghasilan di menu Impor." /> : (
         <Card title="Saldo berjalan (sejak data pertama)">
           <div className="table-wrap"><table className="tbl">
