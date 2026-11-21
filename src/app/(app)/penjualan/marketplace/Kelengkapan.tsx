@@ -12,6 +12,21 @@ const ICON: Record<string, string> = { OK: "✓", PARTIAL: "⚠", MISSING: "✗"
 const dd = (d: string | null) => (d ? d.slice(8) : "");
 const title = (c: Cell) => ({ OK: `Lengkap sampai tanggal ${dd(c.through)}`, PARTIAL: `Sebagian bulan, baru sampai tanggal ${dd(c.through)}`, MISSING: "Belum ada", WAIT: c.note ?? "Menunggu akses", NA: "-" })[c.status];
 
+/** Form menandai jenis file yang aksesnya belum tersedia (dipakai di popup Kelengkapan & Pengaturan dashboard) */
+export function AccessGapForm({ stores }: { stores: { id: string; name: string }[] }) {
+  return (
+        <ModalForm action={saveAccessGapAction} className="grid gap-3">
+          <Field label="Toko"><select name="storeId" className="input" required>{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
+          <Field label="Kanal"><select name="channel" className="input" required><option value="SHP">Shopee</option><option value="TTS">TikTok</option></select></Field>
+          <Field label="Jenis file"><select name="kind" className="input" required>{Object.entries(KIND_LABEL).map(([k, l]) => <option key={k} value={k}>{l}{k === "BALANCE" || k === "ADSBILL" ? " (hanya Shopee)" : ""}</option>)}</select></Field>
+          <Field label="Catatan"><input name="note" className="input" placeholder="mis. menunggu pemilik akun memberi akses Finance" /></Field>
+          <Field label="Tinjau ulang pada" hint="Sebelum tanggal ini pengingat jenis ini dijeda. Sesudahnya ditagih lagi."><input type="date" name="reviewAt" className="input" defaultValue={addDays(todayStr(), 7)} min={addDays(todayStr(), 1)} required /></Field>
+          <p className="text-xs text-amber-700">Piutang toko ini tetap diberi peringatan “tidak bisa divalidasi” selama Penghasilan belum ada, dan Cek Integritas menandainya ⚠ (bukan ✓).</p>
+          <Submit>Simpan</Submit>
+        </ModalForm>
+  );
+}
+
 /** Matriks kelengkapan data per bulan (toko × kanal × bulan × jenis file) + penandaan "akses belum tersedia". */
 export function Kelengkapan({ m, canManage, stores, compact = false }: { m: Matrix; canManage: boolean; stores: { id: string; name: string }[]; compact?: boolean }) {
   const miss = m.missing.length;
@@ -51,15 +66,7 @@ export function Kelengkapan({ m, canManage, stores, compact = false }: { m: Matr
   return (
     <Card title={`Kelengkapan data per bulan${miss ? ` · ${miss} belum lengkap` : m.rows.length ? " · lengkap" : ""}`} actions={canManage && !compact ? (
       <Modal trigger="Tandai akses belum tersedia" triggerClass="btn-secondary btn-sm" title="Akses belum tersedia" subtitle="Jenis file ini tidak bisa diunduh untuk sementara (mis. akses Penghasilan Shopee belum diberikan)">
-        <ModalForm action={saveAccessGapAction} className="grid gap-3">
-          <Field label="Toko"><select name="storeId" className="input" required>{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
-          <Field label="Kanal"><select name="channel" className="input" required><option value="SHP">Shopee</option><option value="TTS">TikTok</option></select></Field>
-          <Field label="Jenis file"><select name="kind" className="input" required>{Object.entries(KIND_LABEL).map(([k, l]) => <option key={k} value={k}>{l}{k === "BALANCE" || k === "ADSBILL" ? " (hanya Shopee)" : ""}</option>)}</select></Field>
-          <Field label="Catatan"><input name="note" className="input" placeholder="mis. menunggu pemilik akun memberi akses Finance" /></Field>
-          <Field label="Tinjau ulang pada" hint="Sebelum tanggal ini pengingat jenis ini dijeda. Sesudahnya ditagih lagi."><input type="date" name="reviewAt" className="input" defaultValue={addDays(todayStr(), 7)} min={addDays(todayStr(), 1)} required /></Field>
-          <p className="text-xs text-amber-700">Piutang toko ini tetap diberi peringatan “tidak bisa divalidasi” selama Penghasilan belum ada, dan Cek Integritas menandainya ⚠ (bukan ✓).</p>
-          <Submit>Simpan</Submit>
-        </ModalForm>
+        <AccessGapForm stores={stores} />
       </Modal>
     ) : undefined}>
       {body}

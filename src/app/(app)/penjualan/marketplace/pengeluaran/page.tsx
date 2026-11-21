@@ -1,7 +1,8 @@
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { idr } from "@/lib/money";
-import { latestMonth } from "@/lib/marketplace/dashboard";
+import { resolvePeriod } from "@/lib/marketplace/periode";
+import { PeriodFilter } from "../PeriodFilter";
 import { lostOrdersWithoutCompensation, pengeluaranReport, shipDiscrepancyReport } from "@/lib/marketplace/pengeluaran";
 import { Badge, Card, Empty, Field, FilterBar, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
@@ -11,15 +12,16 @@ import { ImportBannerServer } from "@/components/ImportBannerServer";
 import { MpNav } from "../MpNav";
 
 export const metadata = { title: "Pengeluaran Marketplace" };
-const MONTH = /^\d{4}-\d{2}$/;
 const pc = (v: number) => `${v.toLocaleString("id-ID", { maximumFractionDigits: 2 })}%`;
 const SRC = { ATUR: "diatur", PENGATURAN: "Produk › Biaya", RATA3: "rata-rata 3 bln +20%" } as const;
 
-export default async function PengeluaranPage({ searchParams }: { searchParams: Promise<{ bulan?: string; toko?: string }> }) {
+export default async function PengeluaranPage({ searchParams }: { searchParams: Promise<{ periode?: string; bulan?: string; toko?: string }> }) {
   const user = await requirePerm("sales.view");
   const canManage = user.can("sales.manage");
   const sp = await searchParams;
-  const month = MONTH.test(sp.bulan ?? "") ? sp.bulan! : await latestMonth();
+  // Laporan bulanan: hanya Bulan ini / Bulan lalu / Pilih bulan
+  const period = resolvePeriod({ periode: sp.periode === "bulan-lalu" ? "bulan-lalu" : sp.periode === "bulan-ini" ? "bulan-ini" : undefined, bulan: sp.bulan });
+  const month = period.from.slice(0, 7);
   const storeId = sp.toko || undefined;
   const stores = await prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } });
   const reports = await Promise.all((["SHP", "TTS"] as const).map(async (ch) => ({ r: await pengeluaranReport({ month, storeId, channel: ch }), lost: await lostOrdersWithoutCompensation({ month, storeId, channel: ch }), disc: await shipDiscrepancyReport({ month, storeId, channel: ch }) })));
@@ -30,8 +32,9 @@ export default async function PengeluaranPage({ searchParams }: { searchParams: 
       <MpNav current="pengeluaran" />
       <ImportBannerServer />
       <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Angka marketplace = data operasional dari file; tidak masuk jurnal. Persentase dihitung dari harga jual (gross) pesanan yang cair pada bulan itu.</p>
+      <PeriodFilter sp={sp} period={period} monthly />
       <FilterBar>
-        <Field label="Bulan"><input type="month" name="bulan" defaultValue={month} className="input" /></Field>
+        {sp.periode && <input type="hidden" name="periode" value={sp.periode} />}{sp.bulan && <input type="hidden" name="bulan" value={sp.bulan} />}
         <Field label="Toko"><select name="toko" defaultValue={sp.toko ?? ""} className="input"><option value="">Semua</option>{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
       </FilterBar>
       {data.length === 0 ? <Empty title="Belum ada data penghasilan pada bulan ini" hint="Unggah file penghasilan, saldo penjual, dan saldo iklan di menu Impor." /> : data.map(({ r, lost, disc }) => (

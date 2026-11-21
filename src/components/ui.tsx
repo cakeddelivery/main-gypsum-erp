@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { LinkPending } from "./LinkPending";
+import { FilterFields } from "./FilterFields";
 import { Suspense } from "react";
 import { FilterMemory } from "./FilterMemory";
 
@@ -105,7 +106,9 @@ export function Tabs({ tabs, current }: { tabs: { href: string; label: string; c
 export function FilterBar({ children }: { children: React.ReactNode }) {
   return (
     <form className="no-print keep-cols mb-4 grid grid-cols-2 items-end gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:flex sm:flex-wrap" method="get">
-      {children}
+      <Suspense fallback={children}>
+        <FilterFields>{children}</FilterFields>
+      </Suspense>
       <button className="btn-secondary col-span-2" type="submit">
         Terapkan
       </button>

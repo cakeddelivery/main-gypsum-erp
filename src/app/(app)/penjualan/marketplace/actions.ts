@@ -14,7 +14,7 @@ import { rebuildGl } from "@/lib/marketplace/gl";
 import { integrityCheck } from "@/lib/marketplace/integrity";
 import { latestMonth } from "@/lib/marketplace/dashboard";
 import { finishJob, runningJob, startJob, stepJob } from "@/lib/marketplace/job";
-import { detectFiles, type Detected } from "@/lib/marketplace/slots";
+import { BRAND_KEY, detectFiles, type Detected } from "@/lib/marketplace/slots";
 import { resolveSkuKeys } from "@/lib/marketplace/sku";
 import { dateStr, todayStr } from "@/lib/time";
 import { FEE_CATEGORIES, normCol } from "@/lib/marketplace/feeMap";
@@ -151,6 +151,23 @@ export async function importRunningAction(): Promise<{ running: Awaited<ReturnTy
   const r = await runningJob();
   return { running: r ? { by: r.by, total: r.total, done: r.done, label: r.label } : null };
 }
+
+/** Merek di nama produk → toko (dipakai mengenali toko file Order/TikTok tanpa username). Satu baris per toko, dipisah koma. */
+export const saveBrandMapAction = action(
+  "sales.manage",
+  async (fd, user) => {
+    const stores = await prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, select: { id: true } });
+    const map: Record<string, string[]> = {};
+    for (const s of stores) {
+      const names = str(fd, `brand:${s.id}`).split(",").map((x) => x.trim()).filter(Boolean).slice(0, 6);
+      if (names.length) map[s.id] = names;
+    }
+    await prisma.setting.upsert({ where: { key: BRAND_KEY }, create: { key: BRAND_KEY, value: JSON.stringify(map) }, update: { value: JSON.stringify(map) } });
+    await audit(user, "MARKETPLACE_MEREK_TOKO", "Setting", BRAND_KEY, map);
+    return "Pemetaan merek → toko tersimpan";
+  },
+  ["/penjualan"],
+);
 
 /** Tandai jenis file yang aksesnya belum tersedia (sel jadi "menunggu akses", pengingat jenis itu dijeda sampai tanggal tinjau) */
 export const saveAccessGapAction = action(

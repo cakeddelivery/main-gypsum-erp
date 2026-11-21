@@ -63,6 +63,10 @@ dialog { @apply bg-white text-slate-800; }
   .choice-list li { @apply cursor-pointer rounded-md px-2.5 py-2 text-sm leading-snug text-slate-700 hover:bg-slate-100; overflow-wrap: anywhere; }
   .choice-list li[aria-selected="true"] { @apply bg-brand-50 font-semibold text-brand-700; }
   .choice-list li[aria-disabled="true"] { @apply cursor-not-allowed opacity-50; }
+  .choice-list li.choice-group { @apply cursor-default px-2.5 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-slate-500 hover:bg-transparent; }
+  .choice-list li.choice-nowrap { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+  .choice-list li.choice-active { @apply bg-slate-100; }
+  .choice-nowrap-host .choice-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
   .choice-list li.choice-empty { @apply cursor-default text-slate-400 hover:bg-transparent; }
 }
 

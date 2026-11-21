@@ -97,8 +97,17 @@ export async function skuOverview() {
   const res = await resolveSkuKeys(groups.map((g) => g.skuKey));
   const samples = await prisma.marketplaceOrderLine.findMany({ where: { skuKey: { in: groups.map((g) => g.skuKey) } }, distinct: ["skuKey"], select: { skuKey: true, sku: true, variation: true, name: true, order: { select: { channel: true } } } });
   const sm = new Map(samples.map((s) => [s.skuKey, s]));
+  // toko yang memakai SKU ini (untuk saran produk di toko yang benar & filter toko)
+  const stores = await prisma.$queryRaw<{ skuKey: string; storeId: string; code: string; channel: string }[]>`SELECT DISTINCT l."skuKey", o."storeId", s."code", o."channel" FROM "MarketplaceOrderLine" l JOIN "MarketplaceOrder" o ON o."id" = l."orderId" JOIN "Store" s ON s."id" = o."storeId"`;
+  const byKey = new Map<string, { storeIds: string[]; codes: string[]; channels: string[] }>();
+  for (const r of stores) {
+    const e = byKey.get(r.skuKey) ?? { storeIds: [], codes: [], channels: [] };
+    if (!e.storeIds.includes(r.storeId)) { e.storeIds.push(r.storeId); e.codes.push(r.code); }
+    if (!e.channels.includes(r.channel)) e.channels.push(r.channel);
+    byKey.set(r.skuKey, e);
+  }
   return groups
-    .map((g) => ({ key: g.skuKey, orders: g._count.orderId, qty: g._sum.qty ?? 0, sample: sm.get(g.skuKey), resolved: res.get(g.skuKey) as SkuResolved | undefined }))
+    .map((g) => ({ key: g.skuKey, orders: g._count.orderId, qty: g._sum.qty ?? 0, sample: sm.get(g.skuKey), resolved: res.get(g.skuKey) as SkuResolved | undefined, storeIds: byKey.get(g.skuKey)?.storeIds ?? [], storeCodes: byKey.get(g.skuKey)?.codes ?? [], channels: byKey.get(g.skuKey)?.channels ?? [] }))
     .sort((a, b) => Number(!!a.resolved) - Number(!!b.resolved) || b.orders - a.orders);
 }
 

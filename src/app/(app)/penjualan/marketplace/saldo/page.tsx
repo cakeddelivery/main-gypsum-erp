@@ -5,20 +5,22 @@ import { idr } from "@/lib/money";
 import { fmtDateTime } from "@/lib/time";
 import { CHANNEL_LABEL } from "@/lib/marketplace/rules";
 import { bookBalance, matchWithdrawals, saldoPanel, wdReminderHour } from "@/lib/marketplace/saldo";
+import { PeriodFilter } from "../PeriodFilter";
+import { resolvePeriod } from "@/lib/marketplace/periode";
 import { Badge, Card, Empty, Field, FilterBar, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { saveWdHourAction } from "../actions";
 import { MpNav } from "../MpNav";
-import { periodOf } from "../periode";
 
 export const metadata = { title: "Saldo Marketplace" };
 const TONE = { COCOK: "green", BELUM_DI_ERP: "amber", TIDAK_DI_FILE: "red" } as const;
 const LABEL = { COCOK: "Cocok", BELUM_DI_ERP: "Belum tercatat di ERP", TIDAK_DI_FILE: "Tercatat, tidak ada di file" } as const;
 
-export default async function SaldoPage({ searchParams }: { searchParams: Promise<{ toko?: string; dari?: string; sampai?: string }> }) {
+export default async function SaldoPage({ searchParams }: { searchParams: Promise<{ toko?: string; dari?: string; sampai?: string; periode?: string; bulan?: string }> }) {
   const user = await requirePerm("sales.view");
   const sp = await searchParams;
-  const { from, to } = await periodOf(sp);
+  const period = resolvePeriod(sp);
+  const { from, to } = period;
   const [stores, rows, hour] = await Promise.all([prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } }), saldoPanel({ storeId: sp.toko || undefined }), wdReminderHour()]);
   const books = (await Promise.all(stores.filter((x) => !sp.toko || x.id === sp.toko).map(async (x) => ({ store: x.name, b: await bookBalance(x.id, "SHP") })))).filter((x) => x.b);
   const pairs = [...new Map(rows.map((r) => [`${r.storeId}|${r.channel}`, r])).values()];
@@ -27,10 +29,10 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
     <div className="space-y-4">
       <PageHeader title="Saldo Marketplace" subtitle="Cair (impor) − potongan iklan − withdraw tercatat di Keuangan = saldo belum ditarik · hanya laporan" actions={<Link href="/finance" className="btn-secondary">Keuangan</Link>} />
       <MpNav current="saldo" />
+      <PeriodFilter sp={sp} period={period} />
       <FilterBar>
         <Field label="Toko"><select name="toko" defaultValue={sp.toko ?? ""} className="input"><option value="">Semua</option>{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
-        <Field label="Dari"><input type="date" name="dari" defaultValue={from} className="input" /></Field>
-        <Field label="Sampai"><input type="date" name="sampai" defaultValue={to} className="input" /></Field>
+        {[["periode", sp.periode], ["bulan", sp.bulan], ["dari", sp.dari], ["sampai", sp.sampai]].map(([k, v]) => (v ? <input key={k} type="hidden" name={k} value={v} /> : null))}
       </FilterBar>
       {rows.length === 0 ? <Empty title="Belum ada data cair" hint="Unggah file penghasilan di menu Impor." /> : (
         <Card title="Saldo berjalan (sejak data pertama)">

@@ -36,7 +36,7 @@ async function dl() {
   return made;
 }
 const HEAD = ["No. Pesanan", "Status Pesanan", "SKU Induk", "Nama Produk", "Jumlah", "Harga Setelah Diskon", "Subtotal Pesanan", "Total Pembayaran", "Waktu Pesanan Dibuat"];
-const orderFile = (rows: [string, string][]) => xlsx({ orders: [HEAD, ...rows.map(([no, at]) => [no, "Selesai", "SKU-X", "Gypsum X", 1, 50000, 50000, 50000, at])] });
+const orderFile = (rows: [string, string][], sku = "SKU-X") => xlsx({ orders: [HEAD, ...rows.map(([no, at]) => [no, "Selesai", sku, "Gypsum X", 1, 50000, 50000, 50000, at])] });
 const incomeFile = (rows: [string, string][]) => xlsx({ Penghasilan: [["Laporan"], ["No.", "No. Pesanan", "Lihat Berdasarkan", "Waktu Pesanan Dibuat", "Tanggal Dana Dilepaskan", "Total Penghasilan", "Harga Produk", "Jumlah Pengembalian Dana ke Pembeli", "Biaya Administrasi"], ...rows.map(([no, at], i) => [i + 1, no, "Order", at, at, 45000, 50000, 0, -5000])] });
 
 describe("Impor banyak file: per file, duplikat, multi-bulan", () => {
@@ -79,7 +79,7 @@ describe("Impor banyak file: per file, duplikat, multi-bulan", () => {
 
   it("file tanpa nama toko → minta pilih toko (bukan galat); slot salah jenis ditolak", async () => {
     const st = await dl();
-    const buf = await orderFile([[`${num}Z1`, "2044-05-01 10:00"]]);
+    const buf = await orderFile([[`${num}Z1`, "2044-05-01 10:00"]], `UNIQ${num}`); // SKU yang belum pernah dikenal di toko mana pun
     const auto = await detectFiles([{ name: "x.xlsx", buf }]);
     expect(auto[0]).toMatchObject({ channel: "SHP", kind: "ORDER", needStore: true });
     expect(auto[0].error).toBeUndefined();

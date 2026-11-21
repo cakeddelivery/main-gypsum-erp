@@ -4,21 +4,23 @@ import { idr } from "@/lib/money";
 import { feeVsSettings, productActuals, unmappedColumns } from "@/lib/marketplace/potongan";
 import { CHANNEL_LABEL } from "@/lib/marketplace/rules";
 import { FEE_CATEGORIES } from "@/lib/marketplace/feeMap";
+import { PeriodFilter } from "../PeriodFilter";
+import { resolvePeriod } from "@/lib/marketplace/periode";
 import { Badge, Card, Empty, Field, FilterBar, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { applyActualFeesAction, applyAffiliateAction, mapFeeAction } from "../actions";
 import { MpNav } from "../MpNav";
-import { periodOf } from "../periode";
 
 export const metadata = { title: "Potongan Marketplace" };
 const pc = (v: number) => `${v.toLocaleString("id-ID", { maximumFractionDigits: 2 })}%`;
 
-export default async function PotonganPage({ searchParams }: { searchParams: Promise<{ toko?: string; kanal?: string; dari?: string; sampai?: string }> }) {
+export default async function PotonganPage({ searchParams }: { searchParams: Promise<{ toko?: string; kanal?: string; dari?: string; sampai?: string; periode?: string; bulan?: string }> }) {
   const user = await requirePerm("sales.view");
   const canManage = user.can("sales.manage");
   const sp = await searchParams;
   const channel = sp.kanal === "TTS" ? "TTS" : "SHP";
-  const { from, to } = await periodOf(sp);
+  const period = resolvePeriod(sp);
+  const { from, to } = period;
   const f = { storeId: sp.toko || undefined, channel, from, to };
   const [stores, rep, prods, unmapped] = await Promise.all([prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } }), feeVsSettings(f), productActuals(f), unmappedColumns()]);
   const hidden = (<><input type="hidden" name="channel" value={channel} /><input type="hidden" name="from" value={from} /><input type="hidden" name="to" value={to} /><input type="hidden" name="storeId" value={sp.toko ?? ""} /></>);
@@ -26,11 +28,11 @@ export default async function PotonganPage({ searchParams }: { searchParams: Pro
     <div className="space-y-4">
       <PageHeader title="Potongan Marketplace" subtitle="Dari harga jual sampai uang masuk saldo · tiap potongan dicatat per kategori" />
       <MpNav current="potongan" />
+      <PeriodFilter sp={sp} period={period} />
       <FilterBar>
         <Field label="Toko"><select name="toko" defaultValue={sp.toko ?? ""} className="input"><option value="">Semua</option>{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
         <Field label="Kanal"><select name="kanal" defaultValue={channel} className="input"><option value="SHP">Shopee</option><option value="TTS">TikTok</option></select></Field>
-        <Field label="Dari"><input type="date" name="dari" defaultValue={from} className="input" /></Field>
-        <Field label="Sampai"><input type="date" name="sampai" defaultValue={to} className="input" /></Field>
+        {[["periode", sp.periode], ["bulan", sp.bulan], ["dari", sp.dari], ["sampai", sp.sampai]].map(([k, v]) => (v ? <input key={k} type="hidden" name={k} value={v} /> : null))}
       </FilterBar>
       {unmapped.length > 0 && <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{unmapped.length} kolom biaya belum dipetakan ke kategori (belum ikut dijumlah; muncul sebagai selisih belum terjelaskan). Pilih kategorinya di bagian “Kolom biaya belum dipetakan” di bawah.</div>}
       {rep.orders === 0 ? <Empty title="Belum ada pesanan cair pada periode ini" hint="Unggah file penghasilan di menu Impor." /> : (

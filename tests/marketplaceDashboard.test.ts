@@ -36,10 +36,14 @@ describe("Dashboard marketplace", () => {
       { fileName: `dash.inc.${tag}.xlsx`, storeId: st.id, parsed: file("SHOPEE", "INCOME", { incomes: [inc(`1${num}A`, 9000, "2037-02-05")] }) },
     ]);
     for (const r of rs.reverse()) cleanups.push(() => undoImport(actor, r.importId));
-    const d = await dashboardData({ month: "2037-02", storeId: st.id });
+    const d = await dashboardData({ from: "2037-02-01", to: "2037-02-28", storeId: st.id });
     expect(d.orders).toBe(3);
     expect(d.batal).toBe(1);
     expect(d.omzet).toBe(60000);
+    // periode panjang (> 92 hari) → grafik per minggu; omzet tetap sama
+    const w = await dashboardData({ from: "2037-01-01", to: "2037-12-31", weekly: true, storeId: st.id });
+    expect(w.daily.length).toBeLessThan(60);
+    expect(w.daily.reduce((a, x) => a + x.SHP + x.TTS, 0)).toBe(60000);
     expect(d.daily).toHaveLength(28);
     expect(d.daily[1]).toMatchObject({ SHP: 10000, TTS: 20000, pesananSHP: 1, pesananTTS: 1 }); // 2 Feb
     expect(d.daily[2]).toMatchObject({ SHP: 30000, pesananSHP: 1 });
