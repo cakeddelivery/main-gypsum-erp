@@ -24,7 +24,7 @@ const ageDays = (iso: string | null) => (iso ? Math.floor((Date.now() - new Date
 
 /** Satu file di daftar: status dicek sendiri-sendiri; hanya yang "ok" ikut disimpan */
 type Item = {
-  uid: number; file: File; slot: string | null; reason?: string; channel?: "SHP" | "TTS"; kind?: string; hash?: string; from?: string | null; to?: string | null;
+  uid: number; file: File; slot: string | null; reason?: string; via?: string; confidence?: string; overlap?: string; channel?: "SHP" | "TTS"; kind?: string; hash?: string; from?: string | null; to?: string | null;
   status: "cek" | "ok" | "salah" | "dobel" | "toko"; msg?: string;
 };
 let seq = 0;
@@ -77,7 +77,7 @@ export function ImportForm({ cards, canManage }: { cards: Card[]; canManage: boo
       const r = await safe(() => detectSlotsAction(f));
       const d = "items" in r ? r.items?.[0] : undefined;
       if (!r.ok || !d) { upd(it.uid, { status: "salah", msg: ("error" in r && r.error) || "Gagal membaca file" }); continue; }
-      const base = { channel: d.channel, kind: d.kind, hash: d.hash, from: d.periodFrom, to: d.periodTo, reason: d.reason };
+      const base = { channel: d.channel, kind: d.kind, hash: d.hash, from: d.periodFrom, to: d.periodTo, reason: d.reason, via: d.via, confidence: d.confidence, overlap: d.overlap };
       if (d.error) { upd(it.uid, { ...base, status: "salah", msg: d.error }); continue; }
       if (d.duplicate) { upd(it.uid, { ...base, status: "dobel", msg: d.duplicate }); continue; }
       if (d.hash && seen.has(d.hash)) { upd(it.uid, { ...base, status: "dobel", msg: "Isi sama persis dengan file lain di daftar (mis. unduhan ganda). Dilewati." }); continue; }
@@ -85,6 +85,21 @@ export function ImportForm({ cards, canManage }: { cards: Card[]; canManage: boo
       if (d.needStore || !d.storeId) { upd(it.uid, { ...base, status: "toko", msg: "Toko belum bisa ditentukan dari isi file. Pilih toko di bawah." }); continue; }
       upd(it.uid, { ...base, slot: target ?? `${d.storeId}|${d.channel}|${d.kind}`, status: "ok" });
     }
+    setWork(null);
+  };
+
+  /** Ubah toko satu file dari tabel konfirmasi: dicek ulang di server (username / pesanan di toko lain → ditahan dengan pesan) */
+  const changeStore = async (it: Item, storeId: string) => {
+    if (!storeId || !it.channel || !it.kind) return;
+    reset();
+    setWork(`Memeriksa ${it.file.name}…`);
+    const f = new FormData();
+    f.append("file", it.file); f.append("target", `${storeId}|${it.channel}|${it.kind}`);
+    const r = await safe(() => detectSlotsAction(f));
+    const d = "items" in r ? r.items?.[0] : undefined;
+    if (!r.ok || !d) upd(it.uid, { status: "salah", msg: ("error" in r && r.error) || "Gagal membaca file" });
+    else if (d.error) upd(it.uid, { status: "salah", msg: d.error, slot: null });
+    else upd(it.uid, { slot: `${storeId}|${it.channel}|${it.kind}`, status: "ok", msg: undefined, via: "MANUAL", confidence: undefined, reason: "dipilih manual", overlap: d.overlap });
     setWork(null);
   };
 
@@ -164,7 +179,6 @@ export function ImportForm({ cards, canManage }: { cards: Card[]; canManage: boo
   const done = prog ? prog.filter((x) => x.state === "ok" || x.state === "gagal" || x.state === "lewat").length : 0;
   const reasonOf = new Map(items.filter((x) => x.reason).map((x) => [x.file.name, x.reason]));
   const needStore = items.filter((x) => x.status === "toko");
-  const problems = items.filter((x) => x.status === "salah" || x.status === "dobel");
   const picker = (slot: string | null, label: string) => (
     <label className="btn-secondary btn-sm cursor-pointer">{label}<input type="file" accept=".xlsx,.csv" multiple hidden disabled={working} onChange={(e) => { const l = e.target.files ? [...e.target.files] : []; e.target.value = ""; void addFiles(l, slot); }} /></label>
   );
@@ -182,6 +196,54 @@ export function ImportForm({ cards, canManage }: { cards: Card[]; canManage: boo
       </div>
       {work && <div className="rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-800"><p>{work}</p><div className="mt-2 h-2 overflow-hidden rounded bg-sky-100"><div className="h-2 w-1/3 animate-pulse rounded bg-sky-500" /></div></div>}
 
+      {items.length > 0 && (
+        <div className="card p-3">
+          <p className="mb-2 text-sm font-semibold">Konfirmasi file ({items.length})</p>
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead><tr><th>File</th><th>Jenis · periode</th><th>Toko (terdeteksi)</th><th>Status</th><th /></tr></thead>
+              <tbody>
+                {items.map((x) => {
+                  const slot = x.slot?.split("|");
+                  const unknown = x.status === "toko";
+                  return (
+                    <tr key={x.uid}>
+                      <td className="max-w-[14rem] break-all text-xs">{x.file.name}<div className="text-slate-400">{(x.file.size / 1024).toFixed(0)} KB</div></td>
+                      <td className="text-xs">{x.status === "cek" ? "membaca…" : x.channel ? <>{CH[x.channel]} · {KIND[x.kind as keyof typeof KIND] ?? x.kind}<div className="text-slate-500">{x.from ? `${x.from} s/d ${x.to}` : ""}</div></> : "-"}</td>
+                      <td className="text-xs">
+                        {x.status === "dobel" || x.status === "salah" || x.status === "cek" ? <span className="text-slate-400">-</span> : (
+                          <>
+                            <select className="input w-auto min-w-[9rem]" disabled={working} value={slot?.[0] ?? ""} onChange={(e) => void changeStore(x, e.target.value)} aria-label="Toko">
+                              {unknown && <option value="">— pilih toko —</option>}
+                              {[...new Map(cards.map((c) => [c.storeId, c.storeName])).entries()].map(([id, n]) => <option key={id} value={id}>{n}</option>)}
+                            </select>
+                            {x.via && <div className="mt-0.5 text-slate-600">{x.confidence ? <b className={x.confidence === "TINGGI" ? "text-emerald-700" : x.confidence === "SEDANG" ? "text-amber-700" : "text-rose-700"}>Yakin {x.confidence.toLowerCase()}</b> : null} {x.reason}</div>}
+                            {unknown && x.reason && <div className="mt-0.5 text-amber-800">{x.reason}</div>}
+                          </>
+                        )}
+                      </td>
+                      <td className="text-xs">
+                        {x.status === "dobel" ? <span className="text-slate-600">↷ Dobel identik — dilewati<div className="text-slate-500">{x.msg}</div></span>
+                          : x.status === "salah" ? <span className="font-medium text-rose-700">⛔ Ditahan<div className="font-normal">{x.msg}</div></span>
+                          : unknown ? <span className="text-amber-800">⚠ Toko belum dipilih</span>
+                          : x.status === "cek" ? "…"
+                          : x.overlap ? <span className="text-sky-800">Tumpang tindih periode<div className="text-slate-500">{x.overlap}</div></span> : <span className="text-emerald-700">Baru</span>}
+                      </td>
+                      <td><button type="button" className="btn-secondary btn-sm" disabled={working} onClick={() => { setItems((c) => c.filter((y) => y.uid !== x.uid)); reset(); }}>Hapus</button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button type="button" className="btn-primary" disabled={working || !!needStore.length || !ordered.length} onClick={() => void save()}>Simpan semua ({ordered.length})</button>
+            <button type="button" className="btn-secondary" disabled={working || !!needStore.length || !ordered.length} onClick={() => void preview()}>Pratinjau dulu</button>
+            {needStore.length > 0 && <span className="text-xs text-amber-800">Pilih toko untuk {needStore.length} file dulu.</span>}
+          </div>
+        </div>
+      )}
+
       {needStore.length > 0 && (
         <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm">
           <p className="font-medium text-amber-900">{needStore.length} file belum diketahui tokonya (pesanan/TikTok tidak memuat nama toko):</p>
@@ -194,12 +256,6 @@ export function ImportForm({ cards, canManage }: { cards: Card[]; canManage: boo
           <p className="text-xs text-amber-800">Dicek ulang di server: pesanan yang sudah tercatat di toko lain atau username yang tidak cocok akan ditolak.</p>
         </div>
       )}
-      {problems.length > 0 && (
-        <ul className="space-y-1 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs">
-          {problems.map((x) => <li key={x.uid} className={x.status === "salah" ? "text-rose-700" : "text-slate-600"}>{x.status === "salah" ? "⛔" : "↷"} <b className="break-all">{x.file.name}</b>: {x.msg} <button type="button" className="ml-1 underline" onClick={() => setItems((c) => c.filter((y) => y.uid !== x.uid))}>hapus</button></li>)}
-        </ul>
-      )}
-
       <div className="grid gap-3 lg:grid-cols-2">
         {cards.map((c) => (
           <div key={`${c.storeId}|${c.channel}`} className="card space-y-2 p-3">
@@ -235,9 +291,6 @@ export function ImportForm({ cards, canManage }: { cards: Card[]; canManage: boo
           </div>
         ))}
       </div>
-      {ordered.length > 0 && !p && !prog && (
-        <div className="flex items-center gap-2"><button type="button" className="btn-primary" disabled={working} onClick={() => void preview()}>{work ? "Membaca…" : `Pratinjau ${ordered.length} file`}</button></div>
-      )}
 
       {prog && (
         <div className="card space-y-2 p-3 text-sm">
