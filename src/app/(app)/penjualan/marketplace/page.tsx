@@ -57,7 +57,7 @@ export default async function MarketplacePage({ searchParams }: { searchParams: 
           <PiutangWarning stores={stores} storeId={f.storeId} channel={f.channel} />
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
             <Stat label="Piutang (belum cair)" value={idr(sum.piutang)} tone="amber" hint={`${sum.piutangCount} pesanan`} />
-            <Stat label="Saldo di marketplace" value={idr(sum.saldo)} tone="blue" hint="cair, belum ditarik" />
+            <Stat label="Cair, belum ditarik (pesanan di daftar ini)" value={idr(sum.saldo)} tone="blue" hint="bukan saldo dompet: lihat menu Saldo" />
             <Stat label="Sudah ditarik bulan ini" value={idr(sum.withdrawnMonth)} tone="green" hint="withdraw ke rekening" />
             <Stat label="Potongan platform" value={idr(sum.fees)} hint="komponen yang mengurangi saldo" />
             <Stat label="Retur/komplain" value={sum.retur} tone="red" hint={`${unlogged.fromFile} retur dari file · ${unlogged.logged} sudah dicatat di ERP`} />

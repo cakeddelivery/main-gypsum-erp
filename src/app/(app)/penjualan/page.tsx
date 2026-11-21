@@ -8,7 +8,7 @@ import { dashboardData, periodTotals } from "@/lib/marketplace/dashboard";
 import { deltaPct, resolvePeriod } from "@/lib/marketplace/periode";
 import { PeriodFilter } from "./marketplace/PeriodFilter";
 import { syncStatus } from "@/lib/marketplace/sync";
-import { wdReminderHour } from "@/lib/marketplace/saldo";
+import { saldoPanel, wdReminderHour } from "@/lib/marketplace/saldo";
 import { loadBrands } from "@/lib/marketplace/slots";
 import { PengaturanMarketplace } from "./marketplace/PengaturanMarketplace";
 import { completeness } from "@/lib/marketplace/kelengkapan";
@@ -32,13 +32,14 @@ export default async function PenjualanDashboard({ searchParams }: { searchParam
   const sp = await searchParams;
   const period = resolvePeriod(sp);
   const storeFilter = sp.toko || undefined;
-  const [stores, d, prev, sync, matrix, wdHour] = await Promise.all([
+  const [stores, d, prev, sync, matrix, wdHour, wallet] = await Promise.all([
     prisma.store.findMany({ where: { active: true, code: { in: ["MG", "DL"] } }, orderBy: { code: "asc" }, select: { id: true, name: true } }),
     dashboardData({ from: period.from, to: period.to, weekly: period.weekly, storeId: storeFilter }),
     periodTotals({ from: period.prevFrom, to: period.prevTo, storeId: storeFilter }),
     syncStatus(),
     completeness(),
     wdReminderHour(),
+    saldoPanel({ storeId: storeFilter }),
   ]);
   const brands = await loadBrands(stores);
   const noData = d.orders === 0 && d.batal === 0;
@@ -69,7 +70,7 @@ export default async function PenjualanDashboard({ searchParams }: { searchParam
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
             <Stat label="Omzet marketplace" value={idr(d.omzet)} tone="blue" hint={<><div>{`${d.orders.toLocaleString("id-ID")} pesanan · rata-rata ${idr(d.avg)}`}</div><Delta cur={d.omzet} prev={prev.omzet} /><Delta cur={d.orders} prev={prev.orders} label="pesanan" /></>} />
             <Stat label="Piutang (belum cair)" value={idr(d.summary.piutang)} tone="amber" hint={<><div>{`${d.summary.piutangCount} pesanan`}</div><Delta cur={d.summary.piutang} prev={prev.piutang} badUp /></>} href="/penjualan/marketplace?tab=PIUTANG" />
-            <Stat label="Saldo di marketplace" value={idr(d.summary.saldo)} hint="cair, belum ditarik" href="/penjualan/marketplace/saldo" />
+            <Stat label="Saldo di marketplace (estimasi ERP)" value={idr(wallet.reduce((a, r) => a + r.estimate, 0))} hint={<><div>per hari ini · tidak ikut filter periode</div>{(["SHP", "TTS"] as const).map((c) => { const v = wallet.filter((r) => r.channel === c).reduce((a, r) => a + r.estimate, 0); return <div key={c}>{CHANNEL_LABEL[c]} {idr(v)}</div>; })}</>} href="/penjualan/marketplace/saldo" />
             <Stat label="Sudah ditarik (periode ini)" value={idr(d.summary.withdrawnMonth)} tone="green" />
             <Stat label="Potongan platform" value={idr(d.summary.fees)} hint={<>{d.omzet ? <div>{`${pc((d.summary.fees / d.omzet) * 100)} dari omzet`}</div> : null}<Delta cur={d.summary.fees} prev={prev.fees} badUp /></>} href="/penjualan/marketplace/potongan" />
             <Stat label="Retur" value={`${d.retur}`} tone="red" hint={d.orders ? `${pc((d.retur / d.orders) * 100)} dari pesanan` : undefined} href="/penjualan/marketplace?tab=RETUR" />
