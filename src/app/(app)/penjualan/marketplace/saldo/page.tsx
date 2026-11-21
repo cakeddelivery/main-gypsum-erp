@@ -35,15 +35,43 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
         <Field label="Toko"><select name="toko" defaultValue={sp.toko ?? ""} className="input"><option value="">Semua</option>{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
         {[["periode", sp.periode], ["bulan", sp.bulan], ["dari", sp.dari], ["sampai", sp.sampai]].map(([k, v]) => (v ? <input key={k} type="hidden" name={k} value={v} /> : null))}
       </FilterBar>
-      <Card title="Beda cara kerja saldo Shopee dan TikTok">
-        <ul className="list-disc space-y-1 pl-5 text-sm text-slate-600">
-          <li><b>TikTok</b>: saldo masuk (penyelesaian) <b>1× sehari sekitar pukul 08.00 WIB</b>. Isian “Saldo Seller Center” yang dibaca sebelum jam itu belum memuat penyelesaian hari tersebut, jadi ERP menambahkannya sesudahnya; yang dibaca sesudah 08.00 sudah memuatnya.</li>
-          <li><b>TikTok withdraw</b> ke rekening bank tidak langsung masuk (1–3 hari). Saldo TikTok berkurang pada <b>waktu permintaan</b> withdraw (kolom “Waktu permintaan” di Riwayat penarikan), bukan saat uang masuk bank. Selama belum masuk, nilainya tampil sebagai <b>dana dalam perjalanan</b> dan dicocokkan dengan status withdraw di Keuangan (Dalam Proses → Uang diterima). Pencocokan file ↔ Keuangan memakai toleransi tanggal 0–4 hari.</li>
-          <li><b>Shopee</b>: saldo masuk <b>per pesanan</b> saat pembeli konfirmasi diterima atau otomatis selesai (bisa berkali-kali sehari) dan sudah tercermin di file Saldo Penjual; penarikan umumnya langsung. Saldo resmi = Saldo Akhir baris terbaru file itu.</li>
-        </ul>
-      </Card>
       {rows.length > 0 && (
-        <Card title="Rincian saldo per toko × kanal">
+        <div className="grid gap-3 lg:grid-cols-2">
+          {rows.map((r) => {
+            const w = r.wallet;
+            const m = matches.find((x) => x.key === r.storeId + r.channel);
+            const miss = m ? m.list.filter((x) => x.status === "BELUM_DI_ERP") : [];
+            const inFile = m ? m.list.filter((x) => x.fileAmount !== null).length : 0;
+            const ok = m ? m.list.filter((x) => x.status === "COCOK").length : 0;
+            const sumMiss = miss.reduce((a, x) => a + (x.fileAmount ?? 0), 0);
+            return (
+              <div key={"top" + r.storeId + r.channel} className="card space-y-3 p-4">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <p className="font-semibold">{r.store} · {CHANNEL_LABEL[r.channel]}</p>
+                  <p className="text-xl font-bold tabular-nums">{idr(w.balance)}</p>
+                </div>
+                <p className="text-xs text-slate-500">{w.basis === "ACUAN" ? `Dari acuan ${w.official!.asOf}${w.official!.at ? ` ${w.official!.at} WIB` : ""} (${w.official!.source === "FILE" ? "Saldo Akhir file" : "isian"}) + mutasi sesudahnya` : "Estimasi dari data impor — belum ada acuan Seller Center"}{w.diff !== null && (Math.abs(w.diff) <= 1 ? <> · <Badge tone="green">Sama dengan acuan</Badge></> : <> · selisih acuan − estimasi <b className="text-rose-700">{idr(w.diff)}</b></>)}</p>
+                {r.channel === "TTS" && w.transit.count > 0 && <p className="text-xs text-amber-800">Dana dalam perjalanan: {idr(w.transit.amount)} ({w.transit.count} withdraw)</p>}
+                {user.can("sales.manage") && (
+                  <ActionForm action={saveWalletCheckAction} className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:flex-wrap sm:items-end">
+                    <input type="hidden" name="storeId" value={r.storeId} /><input type="hidden" name="channel" value={r.channel} />
+                    <Field label="Saldo menurut Seller Center"><input name="amount" inputMode="numeric" className="input w-full sm:w-40" placeholder="mis. 423.381" required /></Field>
+                    <Field label="Tanggal"><input type="date" name="asOf" defaultValue={todayStr()} max={todayStr()} className="input w-full sm:w-auto" /></Field>
+                    <Field label="Jam WIB" hint="kosong = sekarang"><input type="time" name="time" className="input w-full sm:w-28" /></Field>
+                    <Submit className="btn-secondary w-full sm:w-auto" pendingText="…">Simpan acuan</Submit>
+                  </ActionForm>
+                )}
+                <div className="border-t pt-3 text-sm">
+                  <p>Withdraw di file <b>{inFile}</b> · tercatat di Keuangan <b>{ok}</b> · belum tercatat <b className={miss.length ? "text-amber-700" : ""}>{miss.length}</b>{miss.length > 0 && <> ({idr(sumMiss)})</>}</p>
+                  {miss.length > 0 && <a href={`#wd-${r.storeId}${r.channel}`} className="btn-secondary mt-2 inline-block w-full text-center sm:w-auto">Lihat & catat yang belum tercatat</a>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {rows.length > 0 && (
+        <Card title="Rincian hitungan saldo per toko × kanal">
           <div className="space-y-3">
             {rows.map((r) => {
               const w = r.wallet;
@@ -71,15 +99,6 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
                       <p>Saldo menurut marketplace: <b>{w.official ? idr(w.official.amount) : "belum ada acuan"}</b>{w.official && <span className="text-xs text-slate-500"> per {w.official.asOf}{w.official.at ? ` pukul ${w.official.at} WIB` : ""} ({w.official.source === "FILE" ? "Saldo Akhir file" : `isian${w.official.note ? `: ${w.official.note}` : ""}`})</span>}</p>
                       {w.diff !== null && <p>Selisih acuan − estimasi: {Math.abs(w.diff) <= 1 ? <Badge tone="green">Sama</Badge> : <b className="text-rose-700">{idr(w.diff)}</b>}</p>}
                       {w.causes.length > 0 && <ul className="list-disc pl-4 text-xs text-amber-800">{w.causes.map((c) => <li key={c}>{c}</li>)}</ul>}
-                      {user.can("sales.manage") && (
-                        <ActionForm action={saveWalletCheckAction} className="mt-2 flex flex-wrap items-end gap-2 border-t pt-2">
-                          <input type="hidden" name="storeId" value={r.storeId} /><input type="hidden" name="channel" value={r.channel} />
-                          <Field label="Saldo menurut Seller Center"><input name="amount" inputMode="numeric" className="input w-36" placeholder="mis. 423.381" required /></Field>
-                          <Field label="Tanggal"><input type="date" name="asOf" defaultValue={todayStr()} max={todayStr()} className="input" /></Field>
-                          <Field label="Jam WIB" hint="saat saldo dibaca; kosong = sekarang"><input type="time" name="time" className="input w-28" /></Field>
-                          <Submit className="btn-secondary" pendingText="…">Simpan acuan</Submit>
-                        </ActionForm>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -91,31 +110,26 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
       )}
       {rows.length === 0 ? <Empty title="Belum ada data cair" hint="Unggah file penghasilan di menu Impor." /> : (
         <Card title="Saldo berjalan (sejak data pertama)">
-          <div className="table-wrap"><table className="tbl tbl-mp">
-            <thead><tr><th>Toko</th><th>Kanal</th><th className="num">Cair bersih</th><th className="num">Withdraw tercatat</th><th className="num">Belum ditarik</th><th>Status</th></tr></thead>
-            <tbody>{rows.map((r) => (
-              <tr key={r.storeId + r.channel}>
-                <td>{r.store}</td><td>{CHANNEL_LABEL[r.channel]}</td><td className="num">{idr(r.cair)}</td><td className="num">{idr(r.recorded)}</td><td className="num font-medium">{idr(r.estimate)}</td>
-                <td>
-                  {r.status === "KOSONG" ? <Badge tone="gray">Sudah ditarik</Badge> : r.status === "NORMAL" ? <Badge tone="green">Normal · dari hari ini</Badge> : r.status === "PERINGATAN" ? <Badge tone="amber">Peringatan · sejak {r.since} ({r.ageDays} hari)</Badge> : <Badge tone="red">Merah · sejak {r.since} ({r.ageDays} hari)</Badge>}
-                  {r.todayCount > 0 && <div className="text-xs text-slate-500">Hari ini: {r.todayCount} withdraw · {idr(r.todayAmount)}</div>}
-                  {r.coverage.slice(0, 3).map((c) => <div key={c.date + c.amount} className="text-xs text-slate-500">Withdraw {c.date} ({idr(c.amount)}) {c.covers ? `menutup cair ${c.covers.from === c.covers.to ? c.covers.from : `${c.covers.from} s/d ${c.covers.to}`}` : "belum ada cair yang ditutup"}</div>)}
-                  {r.over > 0 && <div className="text-xs text-rose-700">Withdraw melebihi cair yang diketahui Rp {r.over.toLocaleString("id-ID")} — unggah file penghasilan yang belum masuk, atau cek nominal withdraw.</div>}
-                  {r.notInErp > 0 && <div className="text-xs text-amber-700">{r.notInErp} penarikan di file (Rp {r.notInErpAmount.toLocaleString("id-ID")}) belum tercatat di Keuangan; tetap dihitung mengurangi saldo.</div>}
-                  {r.noBank && <div className="text-xs text-amber-700">Rekening saldo marketplace belum ada di Keuangan</div>}
-                </td>
-              </tr>))}</tbody>
-          </table></div>
-          <p className="mt-2 text-xs text-slate-500">Withdraw boleh digabung beberapa hari: tiap withdraw menutup cair yang paling lama lebih dulu. Normal = saldo hanya dari hari ini · Peringatan = ada cair 1–3 hari belum ditarik · Merah = lebih dari 3 hari. Withdraw dicatat di Keuangan seperti biasa; halaman ini tidak membuat transaksi.</p>
+          <div className="grid gap-3 lg:grid-cols-2">{rows.map((r) => (
+            <div key={r.storeId + r.channel} className="rounded-lg border border-slate-200 p-3 text-sm">
+              <div className="flex flex-wrap items-baseline justify-between gap-2"><b>{r.store} · {CHANNEL_LABEL[r.channel]}</b><b className="tabular-nums">{idr(r.wallet.balance)}</b></div>
+              <div className="mt-1 text-xs text-slate-500">Cair bersih {idr(r.wallet.cair)} · Withdraw (satu sumber) {idr(r.wallet.withdraw)} · belum ditarik sesuai tanggal: {idr(r.estimate)}</div>
+              <div className="mt-2">
+                {r.status === "KOSONG" ? <Badge tone="gray">Sudah ditarik</Badge> : r.status === "NORMAL" ? <Badge tone="green">Normal · dari hari ini</Badge> : r.status === "PERINGATAN" ? <Badge tone="amber">Peringatan · sejak {r.since} ({r.ageDays} hari)</Badge> : <Badge tone="red">Merah · sejak {r.since} ({r.ageDays} hari)</Badge>}
+              </div>
+              {r.todayCount > 0 && <div className="text-xs text-slate-500">Hari ini: {r.todayCount} withdraw · {idr(r.todayAmount)}</div>}
+              {r.coverage.slice(0, 3).map((c) => <div key={c.date + c.amount} className="text-xs text-slate-500">Withdraw {c.date} ({idr(c.amount)}) {c.covers ? `menutup cair ${c.covers.from === c.covers.to ? c.covers.from : `${c.covers.from} s/d ${c.covers.to}`}` : "belum ada cair yang ditutup"}</div>)}
+              {r.over > 0 && <div className="text-xs text-rose-700">Withdraw melebihi cair yang diketahui Rp {r.over.toLocaleString("id-ID")} — unggah file penghasilan yang belum masuk, atau cek nominal withdraw.</div>}
+              {r.notInErp > 0 && <div className="text-xs text-amber-700">{r.notInErp} penarikan di file (Rp {r.notInErpAmount.toLocaleString("id-ID")}) belum tercatat di Keuangan; tetap dihitung mengurangi saldo.</div>}
+              {r.noBank && <div className="text-xs text-amber-700">Rekening saldo marketplace belum ada di Keuangan</div>}
+            </div>))}</div>
+          <p className="mt-2 text-xs text-slate-500">Angka utama = saldo dari satu fungsi (saldo awal + acuan + satu sumber withdraw), sama dengan dashboard Penjualan. “Belum ditarik sesuai tanggal” hanya untuk status umur saldo (FIFO). Normal = saldo hanya dari hari ini · Peringatan = ada cair 1–3 hari belum ditarik · Merah = lebih dari 3 hari.</p>
         </Card>
       )}
       {books.length > 0 && (
         <Card title="Saldo menurut Shopee vs estimasi ERP">
-          <div className="table-wrap"><table className="tbl tbl-mp">
-            <thead><tr><th>Toko</th><th>Per tanggal</th><th className="num">Saldo menurut Shopee</th><th className="num">Estimasi ERP</th><th className="num">Selisih</th></tr></thead>
-            <tbody>{books.map(({ store, b }) => <tr key={store}><td>{store}</td><td>{b!.asOf}</td><td className="num">{idr(b!.shopee)}</td><td className="num">{idr(b!.erp)}</td><td className="num">{Math.abs(b!.diff) <= 1 ? <Badge tone="green">Sama</Badge> : <Badge tone="red">{idr(b!.diff)}</Badge>}</td></tr>)}</tbody>
-          </table></div>
-          <p className="mt-2 text-xs text-slate-500">Dari file “Transaksi Saldo Penjual” (Saldo Akhir baris terbaru). Estimasi ERP = saldo awal periode + cair + penyesuaian − isi saldo iklan − withdraw. Selisih berarti ada file penghasilan/withdraw yang belum diimpor.</p>
+          <div className="grid gap-2 sm:grid-cols-2">{books.map(({ store, b }) => <div key={store} className="rounded-lg border border-slate-200 p-3 text-sm"><b>{store}</b> <span className="text-xs text-slate-500">per {b!.asOf}</span><div className="mt-1 flex justify-between"><span>Saldo menurut Shopee</span><b className="tabular-nums">{idr(b!.shopee)}</b></div><div className="flex justify-between"><span>Estimasi ERP</span><span className="tabular-nums">{idr(b!.erp)}</span></div><div className="flex justify-between"><span>Selisih</span>{Math.abs(b!.diff) <= 1 ? <Badge tone="green">Sama</Badge> : <Badge tone="red">{idr(b!.diff)}</Badge>}</div></div>)}</div>
+          <p className="mt-2 text-xs text-slate-500">Dari file “Transaksi Saldo Penjual” (Saldo Akhir baris terbaru). Selisih berarti ada file penghasilan/withdraw yang belum diimpor.</p>
         </Card>
       )}
       {matches.map((m) => {
@@ -123,7 +137,7 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
         const sum = (l: typeof m.list) => l.reduce((a, w) => a + (w.fileAmount ?? w.erpAmount ?? 0), 0);
         const wib = (d: Date | null) => (d ? new Date(d.getTime() + 7 * 3600000).toISOString().slice(0, 10) : "");
         return (
-        <Card key={m.key} title={`Penarikan di file vs Keuangan · ${m.name}`}>
+        <div key={m.key} id={`wd-${m.key}`}><Card title={`Penarikan di file vs Keuangan · ${m.name}`}>
           <p className="mb-2 text-sm">Withdraw di file <b>{inFile.length}</b> ({idr(sum(inFile))}) · tercatat di ERP <b>{ok.length}</b> ({idr(sum(ok))}) · belum tercatat <b className={missing.length ? "text-amber-700" : ""}>{missing.length}</b> ({idr(sum(missing))}){extra.length > 0 && <> · tercatat tanpa padanan di file <b className="text-rose-700">{extra.length}</b> ({idr(sum(extra))})</>}</p>
           <div className="table-wrap"><table className="tbl tbl-mp">
             <thead><tr><th>Referensi</th><th>Tanggal</th><th className="num">Di file</th><th className="num">Di ERP</th><th>Status</th><th></th></tr></thead>
@@ -131,9 +145,16 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
               <td>{w.status === "BELUM_DI_ERP" && user.can("finance.create") && <Link className="btn-secondary btn-sm" href={`/finance?${new URLSearchParams({ baru: "1", wd: "1", nominal: String(w.fileAmount ?? 0), tanggal: wib(w.date), toko: m.storeId, kanal: m.channel, ref: w.refId.startsWith("Saldo Penjual") ? "" : w.refId })}`}>Catat withdraw ini</Link>}</td></tr>)}</tbody>
           </table></div>
           <p className="mt-2 text-xs text-slate-500">“Catat withdraw ini” membuka form Transaksi dengan nominal, tanggal, toko, dan ID referensi terisi; withdraw tidak pernah dibuat otomatis. Withdraw di rekening saldo bersama (satu rekening untuk semua toko) dikenali milik toko mana dari padanan file (ID referensi, atau nominal sama & tanggal 0–{m.channel === "TTS" ? 4 : 2} hari).</p>
-        </Card>
+        </Card></div>
         );
       })}
+      <details className="card p-4 text-sm"><summary className="cursor-pointer font-semibold">Beda cara kerja saldo Shopee dan TikTok</summary><div className="mt-2">
+        <ul className="list-disc space-y-1 pl-5 text-sm text-slate-600">
+          <li><b>TikTok</b>: saldo masuk (penyelesaian) <b>1× sehari sekitar pukul 08.00 WIB</b>. Isian “Saldo Seller Center” yang dibaca sebelum jam itu belum memuat penyelesaian hari tersebut, jadi ERP menambahkannya sesudahnya; yang dibaca sesudah 08.00 sudah memuatnya.</li>
+          <li><b>TikTok withdraw</b> ke rekening bank tidak langsung masuk (1–3 hari). Saldo TikTok berkurang pada <b>waktu permintaan</b> withdraw (kolom “Waktu permintaan” di Riwayat penarikan), bukan saat uang masuk bank. Selama belum masuk, nilainya tampil sebagai <b>dana dalam perjalanan</b> dan dicocokkan dengan status withdraw di Keuangan (Dalam Proses → Uang diterima). Pencocokan file ↔ Keuangan memakai toleransi tanggal 0–4 hari.</li>
+          <li><b>Shopee</b>: saldo masuk <b>per pesanan</b> saat pembeli konfirmasi diterima atau otomatis selesai (bisa berkali-kali sehari) dan sudah tercermin di file Saldo Penjual; penarikan umumnya langsung. Saldo resmi = Saldo Akhir baris terbaru file itu.</li>
+        </ul>
+      </div></details>
       {user.can("sales.manage") && (
         <Card title="Pengingat harian">
           <ActionForm action={saveWdHourAction} className="flex flex-wrap items-end gap-2">
