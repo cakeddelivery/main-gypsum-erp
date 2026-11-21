@@ -3246,6 +3246,8 @@ model MarketplaceWalletCheck {
   storeId   String
   channel   String
   asOf      DateTime @db.Date
+  /// Saat saldo itu dibaca (jam WIB): TikTok menyelesaikan saldo 1× sehari ±08.00, jadi acuan sebelum jam itu belum memuat penyelesaian hari tersebut
+  asOfAt    DateTime?
   amount    BigInt
   note      String?
   createdBy String

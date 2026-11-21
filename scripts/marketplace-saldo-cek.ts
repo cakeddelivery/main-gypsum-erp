@@ -25,7 +25,8 @@ async function main() {
     console.log(`  + Potongan GMV Pay            : ${idr(w.gmv)}`);
     console.log(`  − Withdraw (satu sumber)      : ${idr(w.withdraw)}`);
     console.log(`  = Estimasi ERP sejak awal     : ${idr(w.estimate)}`);
-    console.log(`  Saldo menurut marketplace     : ${w.official ? `${idr(w.official.amount)} per ${w.official.asOf} (${w.official.source === "FILE" ? "Saldo Akhir file" : "isian Finance"})` : "belum ada acuan"}`);
+    if (r.channel === "TTS") console.log(`  Dana dalam perjalanan (withdraw diminta, belum masuk rekening): ${idr(w.transit.amount)} (${w.transit.count} withdraw)`);
+    console.log(`  Saldo menurut marketplace     : ${w.official ? `${idr(w.official.amount)} per ${w.official.asOf}${w.official.at ? ` ${w.official.at} WIB` : ""} (${w.official.source === "FILE" ? "Saldo Akhir file" : "isian Finance"})` : "belum ada acuan"}`);
     if (w.diff !== null) console.log(`  Selisih (acuan − estimasi)    : ${idr(w.diff)}`);
     console.log(`  Saldo untuk kartu dashboard   : ${idr(w.balance)} (${w.basis === "ACUAN" ? "acuan + mutasi sesudahnya" : "estimasi"})`);
     console.log(`  Withdraw Keuangan tanpa padanan di file (tidak dikurangkan): ${w.ignoredErp.count} (${idr(w.ignoredErp.amount)}) · penarikan file belum di Keuangan: ${w.notInErp.count} (${idr(w.notInErp.amount)})`);

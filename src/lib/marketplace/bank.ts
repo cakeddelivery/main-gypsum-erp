@@ -20,11 +20,11 @@ const bankFor = (b: { name: string; aliases: string }, ch: string, s: Store, sin
 /** Withdraw yang sudah dicatat di Keuangan pada rentang waktu, per toko & kanal */
 export async function recordedWithdraws(s: Store, ch: string, banks: Awaited<ReturnType<typeof marketplaceBanks>>, storeCount: number, from: Date, to: Date) {
   const ids = banks.filter((b) => bankFor(b, ch, s, storeCount === 1)).map((b) => b.id);
-  if (!ids.length) return { rows: [] as { id: string; amount: number; date: Date; withdrawRef: string | null; number?: string }[], noBank: true };
+  if (!ids.length) return { rows: [] as { id: string; amount: number; date: Date; withdrawRef: string | null; number?: string; status?: string }[], noBank: true };
   const rows = await prisma.financeTransaction.findMany({
     where: { direction: "TRANSFER", accountId: { in: ids }, status: { in: ["DIBUKUKAN", "DALAM_PROSES"] }, deletedAt: null, date: { gte: from, lt: to }, OR: [{ storeId: s.id }, { storeId: null }] },
-    select: { id: true, amount: true, date: true, withdrawRef: true, number: true },
+    select: { id: true, amount: true, date: true, withdrawRef: true, number: true, status: true },
   });
-  return { rows: rows.map((r) => ({ id: r.id, amount: n(r.amount), date: r.date, withdrawRef: r.withdrawRef, number: r.number })), noBank: false };
+  return { rows: rows.map((r) => ({ id: r.id, amount: n(r.amount), date: r.date, withdrawRef: r.withdrawRef, number: r.number, status: r.status as string })), noBank: false };
 }
 

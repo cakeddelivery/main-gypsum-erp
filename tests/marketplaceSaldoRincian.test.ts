@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { commitImport, undoImport } from "@/lib/marketplace/import";
 import type { ParsedFile, ParsedIncome } from "@/lib/marketplace/parse";
-import { saldoPanel } from "@/lib/marketplace/saldo";
+import { pairWithdraws, saldoPanel, walletDetail } from "@/lib/marketplace/saldo";
 
 const tag = Date.now().toString(36).slice(-4).toUpperCase();
 const actor = { id: "t", name: "Tester" };
@@ -60,17 +60,17 @@ describe("Rincian saldo marketplace: saldo awal, satu sumber withdraw, acuan", (
     const bank = await prisma.bankAccount.create({ data: { code: `SRB${tag}`, name: `Saldo TikTok DL ${tag}`, coaAccountId: coa.id, marketplace: true, aliases: "tiktok" } });
     cleanups.push(() => prisma.bankAccount.delete({ where: { id: bank.id } }));
     const mkTx = (n: number, ref: string | null, amount: number, date: string) => prisma.financeTransaction.create({ data: { number: `TX-SRB-${tag}-${n}`, source: "MANUAL", direction: "TRANSFER", amount: BigInt(amount), date: at(date), accountId: bank.id, status: "DIBUKUKAN", fingerprint: `fp-srb-${tag}-${n}`, createdBy: "t", withdrawRef: ref, storeId: st.id } });
-    const dupe = await mkTx(1, null, 60000, "2050-04-02"); // withdraw yang SAMA dengan file, tetapi tanpa ID referensi → tak cocok
+    const dupe = await mkTx(1, null, 59000, "2050-04-02"); // di tanggal yang tercakup file, tetapi nominalnya tidak berpadanan dengan penarikan file mana pun → tak cocok
     const later = await mkTx(2, null, 10000, "2050-04-20"); // jauh sesudah cakupan file → dipakai
     cleanups.push(() => prisma.financeTransaction.deleteMany({ where: { id: { in: [dupe.id, later.id] } } }));
     const wd = { txType: "Withdrawal", refId: `WD-${tag}`, requestedAt: at("2050-04-02"), doneAt: at("2050-04-02"), amount: -60000, status: "Berhasil" };
     const [r] = await commitImport(actor, [{ fileName: `tts.inc.${tag}.xlsx`, storeId: st.id, parsed: file("TIKTOK", "INCOME", { incomes: [ev(`T${tag}1`, "2050-04-01", 100000), ev(`T${tag}2`, "2050-04-19", 50000)], withdrawals: [wd], periodFrom: at("2050-04-01"), periodTo: at("2050-04-03") }) }]);
     cleanups.push(() => undoImport(actor, r.importId));
     const w = await walletOf(st.id, "TTS");
-    // cair 150.000 − withdraw file 60.000 − withdraw Keuangan di luar cakupan 10.000 = 80.000 (bukan 20.000 bila 60.000 dikurangkan dua kali)
+    // cair 150.000 − withdraw file 60.000 − withdraw Keuangan di luar cakupan 10.000 = 80.000 (59.000 tanpa padanan di file tidak dikurangkan)
     expect(w.withdraw).toBe(70000);
     expect(w.estimate).toBe(80000);
-    expect(w.ignoredErp).toMatchObject({ count: 1, amount: 60000 });
+    expect(w.ignoredErp).toMatchObject({ count: 1, amount: 59000 });
     expect(w.causes.join(" ")).toMatch(/tidak ada padanan di file penarikan/);
     expect(w.basis).toBe("ESTIMASI");
     expect(w.opening.source).toBe("TIDAK_DIKETAHUI");
@@ -88,5 +88,55 @@ describe("Rincian saldo marketplace: saldo awal, satu sumber withdraw, acuan", (
     expect(w.balance).toBe(145000); // 120.000 + cair 5 Mei 25.000
     expect(w.diff).toBe(20000);
     expect(w.basis).toBe("ACUAN");
+  });
+
+  it("TikTok: penyelesaian ±08.00 — acuan diisi sebelum 08.00 belum memuat penyelesaian hari itu; sesudahnya sudah termasuk", async () => {
+    const st = await mg();
+    const [r] = await commitImport(actor, [{ fileName: `tts.inc3.${tag}.xlsx`, storeId: st.id, parsed: file("TIKTOK", "INCOME", { incomes: [ev(`V${tag}1`, "2052-06-02", 50000)] }) }]);
+    cleanups.push(() => undoImport(actor, r.importId));
+    const mk = (time: string, amount: bigint) => prisma.marketplaceWalletCheck.create({ data: { storeId: st.id, channel: "TTS", asOf: new Date("2052-06-02T00:00:00Z"), asOfAt: new Date(`2052-06-02T${time}:00+07:00`), amount, createdBy: "t" } });
+    const early = await mk("07:00", 100000n); // sebelum penyelesaian 08.00: saldo di Seller Center belum memuat 50.000
+    cleanups.push(() => prisma.marketplaceWalletCheck.delete({ where: { id: early.id } }));
+    expect((await walletOf(st.id, "TTS")).balance).toBe(150000); // 100.000 + penyelesaian hari itu
+    const late = await mk("09:00", 150000n); // sesudah penyelesaian: sudah termasuk
+    cleanups.push(() => prisma.marketplaceWalletCheck.delete({ where: { id: late.id } }));
+    const w = await walletOf(st.id, "TTS");
+    expect(w.official).toMatchObject({ amount: 150000, at: "09:00" });
+    expect(w.balance).toBe(150000);
+  });
+
+  it("TikTok: withdraw mengurangi saldo saat PERMINTAAN; dana dalam perjalanan = withdraw Dalam Proses di Keuangan / file belum tercatat ≤ 4 hari", async () => {
+    // toko khusus uji agar tidak tercampur data uji lain
+    const org = await prisma.organization.findFirstOrThrow();
+    const st = await prisma.store.create({ data: { code: `ZT${tag}`, name: `Toko Uji ZT${tag}`, organizationId: org.id } });
+    cleanups.unshift(() => prisma.store.delete({ where: { id: st.id } }));
+    const coa = await prisma.coaAccount.findFirstOrThrow();
+    const bank = await prisma.bankAccount.create({ data: { code: `SRT${tag}`, name: `Saldo TikTok Toko Uji ZT${tag}`, coaAccountId: coa.id, marketplace: true, aliases: "tiktok" } });
+    cleanups.push(() => prisma.bankAccount.delete({ where: { id: bank.id } }));
+    const tx = await prisma.financeTransaction.create({ data: { number: `TX-SRT-${tag}`, source: "MANUAL", direction: "TRANSFER", amount: 40000n, date: at("2053-07-03"), accountId: bank.id, status: "DALAM_PROSES", fingerprint: `fp-srt-${tag}`, createdBy: "t", withdrawRef: `WDA${tag}`, storeId: st.id } });
+    cleanups.push(() => prisma.financeTransaction.delete({ where: { id: tx.id } }));
+    const wd = (refId: string, amount: number, d: string) => ({ txType: "Withdrawal", refId, requestedAt: at(d), doneAt: at(d), amount: -amount, status: "Sedang diproses" });
+    const [r] = await commitImport(actor, [{ fileName: `tts.inc4.${tag}.xlsx`, storeId: st.id, parsed: file("TIKTOK", "INCOME", { incomes: [ev(`X${tag}1`, "2053-07-01", 100000)], withdrawals: [wd(`WDA${tag}`, 40000, "2053-07-02"), wd(`WDB${tag}`, 10000, "2053-07-04")], periodFrom: at("2053-07-01"), periodTo: at("2053-07-04") }) }]);
+    cleanups.push(() => undoImport(actor, r.importId));
+    const stores = await prisma.store.findMany({ select: { id: true, name: true, code: true } });
+    const w = await walletDetail(stores.find((x) => x.id === st.id)!, "TTS", stores.length, undefined, undefined, new Date("2053-07-05T05:00:00Z"));
+    // saldo = 100.000 − 40.000 − 10.000 (keduanya berkurang saat diminta); dalam perjalanan: WDA (Dalam Proses di Keuangan) + WDB (file, belum tercatat, ≤ 4 hari)
+    expect(w.withdraw).toBe(50000);
+    expect(w.estimate).toBe(50000);
+    expect(w.transit).toMatchObject({ amount: 50000, count: 2 });
+    // sebulan kemudian: uang sudah lama masuk → file yang belum tercatat tidak lagi dianggap di perjalanan; yang Dalam Proses di Keuangan tetap
+    const later = await walletDetail(stores.find((x) => x.id === st.id)!, "TTS", stores.length, undefined, undefined, new Date("2053-08-05T05:00:00Z"));
+    expect(later.transit).toMatchObject({ amount: 40000, count: 1 });
+  });
+
+  it("pencocokan withdraw TikTok file ↔ Keuangan tanpa ID: toleransi tanggal 0–4 hari (Shopee 2 hari)", () => {
+    const d = (day: string) => new Date(`${day}T05:00:00Z`);
+    const erp = [{ id: "e1", amount: 60000, date: d("2054-01-05"), withdrawRef: null }];
+    const file = (day: string) => [{ refId: "WDX", amount: 60000, date: d(day) }];
+    const st = (ch: "TTS" | "SHP", day: string) => pairWithdraws(ch, file(day), erp).find((x) => x.fileAmount !== null)!.status;
+    expect(st("TTS", "2054-01-02")).toBe("COCOK"); // 3 hari
+    expect(st("TTS", "2054-01-01")).toBe("COCOK"); // 4 hari
+    expect(st("TTS", "2053-12-31")).toBe("BELUM_DI_ERP"); // 5 hari
+    expect(st("SHP", "2054-01-02")).toBe("BELUM_DI_ERP"); // Shopee 3 hari > 2
   });
 });

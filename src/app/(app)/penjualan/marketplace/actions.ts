@@ -157,11 +157,14 @@ export const saveWalletCheckAction = action(
   "sales.manage",
   async (fd, user) => {
     const storeId = str(fd, "storeId"), channel = str(fd, "channel"), asOf = str(fd, "asOf") || todayStr();
+    const time = /^\d{2}:\d{2}$/.test(str(fd, "time")) ? str(fd, "time") : null; // jam WIB saat saldo dibaca
     if (!["SHP", "TTS"].includes(channel)) throw new FieldError("channel", "Kanal tidak dikenal");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf) || asOf > todayStr()) throw new FieldError("asOf", "Tanggal tidak boleh di masa depan");
     const amount = int(fd, "amount");
     await prisma.store.findUniqueOrThrow({ where: { id: storeId } });
-    await prisma.marketplaceWalletCheck.create({ data: { storeId, channel, asOf: new Date(`${asOf}T00:00:00Z`), amount: BigInt(amount), note: optStr(fd, "note"), createdBy: user.name } });
+    const asOfAt = new Date(time ? `${asOf}T${time}:00+07:00` : asOf === todayStr() ? Date.now() : `${asOf}T23:59:59+07:00`);
+    if (asOfAt.getTime() > Date.now() + 60000) throw new FieldError("time", "Waktu tidak boleh di masa depan");
+    await prisma.marketplaceWalletCheck.create({ data: { storeId, channel, asOf: new Date(`${asOf}T00:00:00Z`), asOfAt, amount: BigInt(amount), note: optStr(fd, "note"), createdBy: user.name } });
     await audit(user, "MARKETPLACE_SALDO_ACUAN", "MarketplaceWalletCheck", `${storeId}|${channel}`, { asOf, amount });
     return `Saldo menurut Seller Center per ${asOf} tersimpan: Rp ${amount.toLocaleString("id-ID")}`;
   },

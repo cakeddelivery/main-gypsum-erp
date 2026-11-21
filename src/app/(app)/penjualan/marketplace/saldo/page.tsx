@@ -35,6 +35,13 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
         <Field label="Toko"><select name="toko" defaultValue={sp.toko ?? ""} className="input"><option value="">Semua</option>{stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}</select></Field>
         {[["periode", sp.periode], ["bulan", sp.bulan], ["dari", sp.dari], ["sampai", sp.sampai]].map(([k, v]) => (v ? <input key={k} type="hidden" name={k} value={v} /> : null))}
       </FilterBar>
+      <Card title="Beda cara kerja saldo Shopee dan TikTok">
+        <ul className="list-disc space-y-1 pl-5 text-sm text-slate-600">
+          <li><b>TikTok</b>: saldo masuk (penyelesaian) <b>1× sehari sekitar pukul 08.00 WIB</b>. Isian “Saldo Seller Center” yang dibaca sebelum jam itu belum memuat penyelesaian hari tersebut, jadi ERP menambahkannya sesudahnya; yang dibaca sesudah 08.00 sudah memuatnya.</li>
+          <li><b>TikTok withdraw</b> ke rekening bank tidak langsung masuk (1–3 hari). Saldo TikTok berkurang pada <b>waktu permintaan</b> withdraw (kolom “Waktu permintaan” di Riwayat penarikan), bukan saat uang masuk bank. Selama belum masuk, nilainya tampil sebagai <b>dana dalam perjalanan</b> dan dicocokkan dengan status withdraw di Keuangan (Dalam Proses → Uang diterima). Pencocokan file ↔ Keuangan memakai toleransi tanggal 0–4 hari.</li>
+          <li><b>Shopee</b>: saldo masuk <b>per pesanan</b> saat pembeli konfirmasi diterima atau otomatis selesai (bisa berkali-kali sehari) dan sudah tercermin di file Saldo Penjual; penarikan umumnya langsung. Saldo resmi = Saldo Akhir baris terbaru file itu.</li>
+        </ul>
+      </Card>
       {rows.length > 0 && (
         <Card title="Rincian saldo per toko × kanal">
           <div className="space-y-3">
@@ -57,10 +64,11 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
                         {line("Potongan GMV Pay", w.gmv, "+")}
                         {line(`Withdraw (${w.notInErp.count ? "file" : "file / Keuangan"})`, -w.withdraw, "+")}
                         <tr className="font-semibold"><td>= Estimasi ERP (sejak awal data)</td><td className="num">{idr(w.estimate)}</td></tr>
+                        {r.channel === "TTS" && <tr className="text-amber-800"><td>↳ Dana dalam perjalanan (withdraw diminta, belum masuk rekening; {w.transit.count} withdraw)</td><td className="num">{idr(w.transit.amount)}</td></tr>}
                       </tbody>
                     </table></div>
                     <div className="space-y-1 text-sm">
-                      <p>Saldo menurut marketplace: <b>{w.official ? idr(w.official.amount) : "belum ada acuan"}</b>{w.official && <span className="text-xs text-slate-500"> per {w.official.asOf} ({w.official.source === "FILE" ? "Saldo Akhir file" : `isian${w.official.note ? `: ${w.official.note}` : ""}`})</span>}</p>
+                      <p>Saldo menurut marketplace: <b>{w.official ? idr(w.official.amount) : "belum ada acuan"}</b>{w.official && <span className="text-xs text-slate-500"> per {w.official.asOf}{w.official.at ? ` pukul ${w.official.at} WIB` : ""} ({w.official.source === "FILE" ? "Saldo Akhir file" : `isian${w.official.note ? `: ${w.official.note}` : ""}`})</span>}</p>
                       {w.diff !== null && <p>Selisih acuan − estimasi: {Math.abs(w.diff) <= 1 ? <Badge tone="green">Sama</Badge> : <b className="text-rose-700">{idr(w.diff)}</b>}</p>}
                       {w.causes.length > 0 && <ul className="list-disc pl-4 text-xs text-amber-800">{w.causes.map((c) => <li key={c}>{c}</li>)}</ul>}
                       {user.can("sales.manage") && (
@@ -68,6 +76,7 @@ export default async function SaldoPage({ searchParams }: { searchParams: Promis
                           <input type="hidden" name="storeId" value={r.storeId} /><input type="hidden" name="channel" value={r.channel} />
                           <Field label="Saldo menurut Seller Center"><input name="amount" inputMode="numeric" className="input w-36" placeholder="mis. 423.381" required /></Field>
                           <Field label="Tanggal"><input type="date" name="asOf" defaultValue={todayStr()} max={todayStr()} className="input" /></Field>
+                          <Field label="Jam WIB" hint="saat saldo dibaca; kosong = sekarang"><input type="time" name="time" className="input w-28" /></Field>
                           <Submit className="btn-secondary" pendingText="…">Simpan acuan</Submit>
                         </ActionForm>
                       )}

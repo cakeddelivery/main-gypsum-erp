@@ -65,7 +65,7 @@ const dateStrWib = wib;
 
 export type WdMatch = { status: "COCOK" | "BELUM_DI_ERP" | "TIDAK_DI_FILE"; refId: string; fileAmount: number | null; erpAmount: number | null; date: Date | null; txId?: string };
 type FileWd = { refId: string; amount: number; date: Date | null };
-type ErpWd = { id: string; amount: number; date: Date; withdrawRef: string | null; number?: string };
+type ErpWd = { id: string; amount: number; date: Date; withdrawRef: string | null; number?: string; status?: string };
 
 /**
  * Pasangkan penarikan di file (TikTok "Riwayat penarikan" / Shopee "Transaksi Saldo Penjual") dengan withdraw di Keuangan.
@@ -75,11 +75,21 @@ export function pairWithdraws(channel: string, file: FileWd[], erp: ErpWd[]): Wd
   const used = new Set<string>();
   const out: WdMatch[] = [];
   const DAY = 86400000;
+  // TikTok: uang baru masuk bank 1–3 hari setelah diminta, jadi tanggal di Keuangan bisa berselisih 0–4 hari dari "Waktu permintaan"
+  const tol = channel === "TTS" ? 4 : 2;
+  const res = new Map<FileWd, ErpWd | undefined>();
+  // 1) TikTok: ID referensi (pasti)
+  if (channel === "TTS") for (const w of file) { const e = erp.find((x) => x.withdrawRef && ref(x.withdrawRef) === ref(w.refId) && !used.has(x.id)); if (e) { used.add(e.id); res.set(w, e); } }
+  // 2) nominal sama & tanggal dalam toleransi (satu lawan satu, yang paling dekat dulu)
   for (const w of file) {
-    const e = channel === "TTS"
-      ? erp.find((x) => x.withdrawRef && ref(x.withdrawRef) === ref(w.refId) && !used.has(x.id))
-      : erp.find((x) => !used.has(x.id) && x.amount === w.amount && w.date && Math.abs(x.date.getTime() - w.date.getTime()) <= 2 * DAY);
-    if (e) used.add(e.id);
+    if (res.has(w)) continue;
+    const cands = erp.filter((x) => !used.has(x.id) && x.amount === w.amount && w.date && Math.abs(x.date.getTime() - w.date.getTime()) <= tol * DAY && (channel === "SHP" || !x.withdrawRef));
+    cands.sort((a, b) => Math.abs(a.date.getTime() - w.date!.getTime()) - Math.abs(b.date.getTime() - w.date!.getTime()));
+    const e = cands[0];
+    if (e) { used.add(e.id); res.set(w, e); }
+  }
+  for (const w of file) {
+    const e = res.get(w);
     out.push({ status: e ? "COCOK" : "BELUM_DI_ERP", refId: channel === "TTS" ? w.refId : `Saldo Penjual ${w.date ? dateStrWib(w.date) : ""}`, fileAmount: w.amount, erpAmount: e?.amount ?? null, date: w.date, txId: e?.id });
   }
   for (const e of erp) if (!used.has(e.id) && (channel === "SHP" || e.withdrawRef)) out.push({ status: "TIDAK_DI_FILE", refId: e.withdrawRef ?? e.number ?? `Keuangan ${dateStrWib(e.date)}`, fileAmount: null, erpAmount: e.amount, date: e.date, txId: e.id });
@@ -121,9 +131,9 @@ export async function loadAllocation(s: StoreLite, ch: string, storeCount: numbe
   const matchedIds = new Set(pairs.filter((p) => p.status === "COCOK" && p.txId).map((p) => p.txId!));
   const withdraws = [
     // sumber utama: file
-    ...pairs.filter((p) => p.status !== "TIDAK_DI_FILE" && p.date).map((p) => ({ date: wib(p.date!), amount: p.fileAmount ?? 0, ref: p.refId, inErp: p.status === "COCOK" })),
+    ...pairs.filter((p) => p.status !== "TIDAK_DI_FILE" && p.date).map((p) => ({ date: wib(p.date!), at: p.date!, amount: p.fileAmount ?? 0, ref: p.refId, inErp: p.status === "COCOK", status: p.status === "COCOK" ? (rec.rows.find((r) => r.id === p.txId)?.status ?? "") : "" })),
     // Keuangan hanya untuk tanggal di luar cakupan file
-    ...rec.rows.filter((r) => !matchedIds.has(r.id) && !inSpans(spans, wib(r.date))).map((r) => ({ date: wib(r.date), amount: r.amount, ref: r.withdrawRef ?? r.number ?? undefined, inErp: true })),
+    ...rec.rows.filter((r) => !matchedIds.has(r.id) && !inSpans(spans, wib(r.date))).map((r) => ({ date: wib(r.date), at: r.date, amount: r.amount, ref: r.withdrawRef ?? r.number ?? undefined, inErp: true, status: r.status ?? "" })),
   ];
   // Tercatat di Keuangan, di tanggal yang file-nya ada, tetapi tidak ada padanan di file → tidak dikurangkan (peringatan)
   const ignoredErp = rec.rows.filter((r) => !matchedIds.has(r.id) && inSpans(spans, wib(r.date)));
@@ -138,7 +148,9 @@ export type WalletDetail = {
   /** saldo awal + cair + penyesuaian − top-up iklan − GMV Pay − withdraw, sejak awal data */
   estimate: number;
   /** Saldo resmi menurut marketplace pada tanggal tertentu: Shopee = Saldo Akhir baris terbaru Saldo Penjual; atau titik acuan yang diisi Finance */
-  official: { amount: number; asOf: string; source: "FILE" | "ISIAN"; note?: string | null } | null;
+  official: { amount: number; asOf: string; /** jam WIB bila diisi Finance */ at?: string | null; source: "FILE" | "ISIAN"; note?: string | null } | null;
+  /** TikTok: withdraw yang sudah diminta (saldo sudah berkurang) tetapi uangnya belum masuk rekening (1–3 hari) */
+  transit: { amount: number; count: number };
   /** official − estimasi pada tanggal yang sama (null bila tak ada acuan) */
   diff: number | null;
   /** Angka untuk kartu: acuan + mutasi sesudahnya (bila ada acuan), selain itu estimasi */
@@ -153,7 +165,7 @@ export type WalletDetail = {
  * Rincian saldo dompet marketplace per toko × kanal. Saldo resmi (Saldo Akhir Shopee / isian Finance) dipakai sebagai acuan;
  * estimasi dari data impor ditampilkan sebagai pembanding berikut kandidat penyebab selisih.
  */
-export async function walletDetail(s: StoreLite, ch: string, storeCount: number, banks?: Awaited<ReturnType<typeof marketplaceBanks>>, alloc?: Awaited<ReturnType<typeof loadAllocation>>): Promise<WalletDetail> {
+export async function walletDetail(s: StoreLite, ch: string, storeCount: number, banks?: Awaited<ReturnType<typeof marketplaceBanks>>, alloc?: Awaited<ReturnType<typeof loadAllocation>>, now = new Date()): Promise<WalletDetail> {
   const a = alloc ?? (await loadAllocation(s, ch, storeCount, banks));
   const [first, last, check] = await Promise.all([
     ch === "SHP" ? prisma.marketplaceBalanceTx.findFirst({ where: { storeId: s.id, channel: ch, balanceAfter: { not: null } }, orderBy: [{ date: "asc" }, { pos: "desc" }] }) : null,
@@ -163,7 +175,9 @@ export async function walletDetail(s: StoreLite, ch: string, storeCount: number,
   const opening = first ? { amount: n(first.balanceAfter) - n(first.amount), source: "FILE" as const, from: wib(first.date) } : { amount: 0, source: "TIDAK_DIKETAHUI" as const, from: null };
   const winFrom = opening.from; // data sebelum file Saldo Penjual dimulai sudah termasuk di saldo awal
   const inWin = (d: string) => !winFrom || d >= winFrom;
-  const ev = a.incomes.map((e) => ({ day: wib(e.releasedAt!), kind: e.income.kind, v: n(e.released) })).filter((e) => inWin(e.day));
+  // TikTok menyelesaikan saldo 1× sehari ±08.00 WIB: semua event hari itu dianggap terjadi pukul 08.00 (acuan sebelum jam itu belum memuatnya)
+  const evAt = (d: Date) => (ch === "TTS" ? new Date(`${wib(d)}T08:00:00+07:00`) : d);
+  const ev = a.incomes.map((e) => ({ day: wib(e.releasedAt!), at: evAt(e.releasedAt!), kind: e.income.kind, v: n(e.released) })).filter((e) => inWin(e.day));
   const sum = (k: string) => ev.filter((e) => e.kind === k).reduce((x, e) => x + e.v, 0);
   const wds = a.withdraws.filter((w) => inWin(w.date));
   const withdraw = wds.reduce((x, w) => x + w.amount, 0);
@@ -171,16 +185,22 @@ export async function walletDetail(s: StoreLite, ch: string, storeCount: number,
   const estimate = opening.amount + ev.reduce((x, e) => x + e.v, 0) - withdraw;
   // acuan: yang tanggalnya paling baru (isian Finance menang bila sama)
   const fileAnchor = last ? { amount: n(last.balanceAfter), asOf: wib(last.date), source: "FILE" as const, note: null as string | null } : null;
-  const checkAnchor = check ? { amount: n(check.amount), asOf: check.asOf.toISOString().slice(0, 10), source: "ISIAN" as const, note: check.note } : null;
+  const checkAt = check ? (check.asOfAt ?? new Date(`${check.asOf.toISOString().slice(0, 10)}T23:59:59+07:00`)) : null;
+  const checkAnchor = check ? { amount: n(check.amount), asOf: check.asOf.toISOString().slice(0, 10), at: check.asOfAt ? new Date(check.asOfAt.getTime() + 7 * 3600000).toISOString().slice(11, 16) : null, source: "ISIAN" as const, note: check.note } : null;
   const official = fileAnchor && checkAnchor ? (checkAnchor.asOf >= fileAnchor.asOf ? checkAnchor : fileAnchor) : (checkAnchor ?? fileAnchor);
   let diff: number | null = null, balance = estimate, basis: WalletDetail["basis"] = "ESTIMASI";
   if (official) {
-    const upto = (d: string) => d <= official.asOf;
-    const estAt = opening.amount + ev.filter((e) => upto(e.day)).reduce((x, e) => x + e.v, 0) - wds.filter((w) => upto(w.date)).reduce((x, w) => x + w.amount, 0);
+    // acuan isian Finance: dibandingkan per WAKTU; acuan dari file Saldo Penjual: per hari
+    const byTime = official.source === "ISIAN" && !!checkAt;
+    const upto = (day: string, at: Date) => (byTime ? at <= checkAt! : day <= official.asOf);
+    const estAt = opening.amount + ev.filter((e) => upto(e.day, e.at)).reduce((x, e) => x + e.v, 0) - wds.filter((w) => upto(w.date, w.at)).reduce((x, w) => x + w.amount, 0);
     diff = official.amount - estAt;
-    balance = official.amount + ev.filter((e) => !upto(e.day)).reduce((x, e) => x + e.v, 0) - wds.filter((w) => !upto(w.date)).reduce((x, w) => x + w.amount, 0);
+    balance = official.amount + ev.filter((e) => !upto(e.day, e.at)).reduce((x, e) => x + e.v, 0) - wds.filter((w) => !upto(w.date, w.at)).reduce((x, w) => x + w.amount, 0);
     basis = "ACUAN";
   }
+  // Dana dalam perjalanan (TikTok): saldo sudah berkurang saat PERMINTAAN, uang baru masuk bank 1–3 hari kemudian
+  const inTransit = ch === "TTS" ? a.withdraws.filter((w) => w.status === "DALAM_PROSES" || (!w.inErp && now.getTime() - w.at.getTime() <= 4 * 86400000)) : [];
+  const transit = { amount: inTransit.reduce((x, w) => x + w.amount, 0), count: inTransit.length };
   const ignored = { count: a.ignoredErp.length, amount: a.ignoredErp.reduce((x, r) => x + r.amount, 0) };
   const notIn = { count: a.notInErp.length, amount: a.notInErp.reduce((x, p) => x + (p.fileAmount ?? 0), 0) };
   const causes: string[] = [];
@@ -189,7 +209,7 @@ export async function walletDetail(s: StoreLite, ch: string, storeCount: number,
   if (ignored.count) causes.push(`${ignored.count} withdraw di Keuangan (Rp ${ignored.amount.toLocaleString("id-ID")}) tidak ada padanan di file penarikan pada tanggalnya — TIDAK dikurangkan (cek nominal/tanggal/ID referensi)`);
   if (notIn.count) causes.push(`${notIn.count} penarikan di file (Rp ${notIn.amount.toLocaleString("id-ID")}) belum tercatat di Keuangan — tetap dikurangkan`);
   if (diff !== null && Math.abs(diff) > 1) causes.push(`File penghasilan / saldo penjual / iklan / penarikan yang belum diunggah sampai ${official!.asOf} membuat selisih ${diff > 0 ? "positif (saldo asli lebih besar)" : "negatif (ERP lebih besar)"}`);
-  return { opening, cair, adjust, topup, gmv, withdraw, estimate, official, diff, balance, basis, causes, ignoredErp: ignored, notInErp: notIn };
+  return { opening, cair, adjust, topup, gmv, withdraw, estimate, official, transit, diff, balance, basis, causes, ignoredErp: ignored, notInErp: notIn };
 }
 
 /** Tahap tiap pesanan cair: DITARIK bila withdraw sudah menutup seluruh nilai cairnya */
