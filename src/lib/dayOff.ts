@@ -1,4 +1,4 @@
-import type { Role } from "@prisma/client";
+import type { Prisma, Role } from "@prisma/client";
 import { prisma } from "./db";
 import { audit } from "./audit";
 import { addDays, dateOnly, fmtDay, todayStr } from "./time";
@@ -58,7 +58,32 @@ async function telegramTo(userIds: string[], text: string) {
   await Promise.all(ids.map((i) => sendTelegram(i.chatId!, text, { type: "LIBUR_MINGGU_DEPAN" }).catch(() => {})));
 }
 
-/** Karyawan mengajukan libur minggu depan (atau menyatakan tidak libur → pengingat berhenti) */
+/** Hapus jadwal hari-hari libur yang disetujui (hari yang sudah absen masuk dibiarkan); kembalikan jumlah jadwal dihapus */
+async function removeScheduleForDays(tx: Prisma.TransactionClient, employeeId: string, dates: string[]) {
+  let removed = 0;
+  for (const day of dates) {
+    const d = dateOnly(day);
+    const att = await tx.attendance.findUnique({ where: { employeeId_date: { employeeId, date: d } } });
+    if (att?.checkIn) continue; // sudah terlanjur masuk: jadwal dibiarkan
+    removed += (await tx.shiftSchedule.deleteMany({ where: { employeeId, date: d } })).count;
+  }
+  return removed;
+}
+
+/** Info (bukan permintaan persetujuan) ke Owner: libur Supervisor disetujui sendiri */
+async function infoOwnerSelfApproved(user: Actor, who: string, dates: string[], reason: string | null, id: string) {
+  const owners = (await prisma.user.findMany({ where: { active: true, role: "OWNER", id: { not: user.id } }, select: { id: true } })).map((u) => u.id);
+  if (!owners.length) return;
+  const body = `${who} · ${rangeText(dates)}${reason ? `: ${reason}` : ""} — disetujui sendiri (Supervisor), jadwal sudah libur.`;
+  await sendPush(owners, { title: "Libur Supervisor (disetujui sendiri)", body, url: "/absensi?tab=izin", tag: `libur-${id}` }).catch(() => {});
+  await telegramTo(owners, `ℹ️ <b>Libur Supervisor (disetujui sendiri)</b>\n${esc(who)}\n${esc(rangeText(dates))}${reason ? `\nAlasan: ${esc(reason)}` : ""}\n\nInfo saja, tidak perlu persetujuan.`);
+}
+
+/**
+ * Karyawan mengajukan libur minggu depan (atau menyatakan tidak libur → pengingat berhenti).
+ * Supervisor mengatur jadwalnya sendiri: pengajuan liburnya OTOMATIS DISETUJUI (jadwal hari itu langsung dihapus), tercatat
+ * audit "disetujui sendiri (Supervisor)" dan Owner mendapat notifikasi info (bukan permintaan persetujuan).
+ */
 export async function submitDayOff(user: Actor, input: DayOffInput & { reason?: string | null }, now = new Date()) {
   if (!user.employeeId) throw new Error("Akun Anda belum ditautkan ke data karyawan");
   const today = todayStr(now);
@@ -70,11 +95,24 @@ export async function submitDayOff(user: Actor, input: DayOffInput & { reason?: 
   if (clash) throw new Error("Anda sudah mengajukan untuk minggu depan. Batalkan pengajuan lama dulu bila ingin mengubah.");
   const dates = input.none ? [] : [...new Set(input.dates)].sort();
   const emp = await prisma.employee.findUniqueOrThrow({ where: { id: user.employeeId }, select: { name: true, division: { select: { name: true } } } });
-  const r = await prisma.dayOffRequest.create({
-    // "Tidak libur" tidak perlu persetujuan
-    data: { employeeId: user.employeeId, userId: user.id, weekStart: week, dates, reason: input.reason?.trim().slice(0, 300) || null, ...(dates.length ? {} : { status: "DISETUJUI", decidedBy: "Otomatis", decidedAt: new Date() }) },
+  const selfApprove = user.role === "SUPERVISOR" && dates.length > 0;
+  let removed = 0;
+  const r = await prisma.$transaction(async (tx) => {
+    const created = await tx.dayOffRequest.create({
+      // "Tidak libur" tidak perlu persetujuan; libur Supervisor disetujui sendiri
+      data: { employeeId: user.employeeId!, userId: user.id, weekStart: week, dates, reason: input.reason?.trim().slice(0, 300) || null, ...(dates.length ? {} : { status: "DISETUJUI", decidedBy: "Otomatis", decidedAt: new Date() }), ...(selfApprove ? { status: "DISETUJUI", decidedBy: `${user.name} (disetujui sendiri, Supervisor)`, decidedAt: new Date() } : {}) },
+    });
+    if (selfApprove) {
+      removed = await removeScheduleForDays(tx, user.employeeId!, dates);
+      await audit(user, "LIBUR_DISETUJUI", "DayOffRequest", created.id, { tanggal: dates, jadwalDihapus: removed, catatan: "disetujui sendiri (Supervisor)" }, tx);
+    }
+    return created;
   });
-  await audit(user, "LIBUR_DIAJUKAN", "DayOffRequest", r.id, { minggu: w.weekStart, tanggal: dates });
+  await audit(user, "LIBUR_DIAJUKAN", "DayOffRequest", r.id, { minggu: w.weekStart, tanggal: dates, ...(selfApprove ? { disetujuiSendiri: true } : {}) });
+  if (selfApprove) {
+    await infoOwnerSelfApproved(user, emp.name, dates, r.reason, r.id);
+    return r;
+  }
   if (dates.length) {
     const ids = await approverIds(user.id);
     const body = `${emp.name} (${emp.division.name}) · ${rangeText(dates)}${r.reason ? `: ${r.reason}` : ""}`;
@@ -89,7 +127,8 @@ export async function decideDayOff(user: Actor, id: string, approve: boolean, re
   if (!canDecideLeave(user.role)) throw new Error("Hanya Supervisor atau Owner yang dapat menyetujui libur");
   const req = await prisma.dayOffRequest.findUniqueOrThrow({ where: { id }, include: { employee: { select: { id: true, name: true } } } });
   if (req.status !== "MENUNGGU") throw new Error("Pengajuan ini sudah diputuskan");
-  if (user.employeeId && req.employeeId === user.employeeId && user.role !== "OWNER") throw new Error("Pengajuan Anda sendiri harus disetujui atasan lain");
+  // Owner & Supervisor boleh memutuskan pengajuan liburnya sendiri (Supervisor mengatur jadwalnya sendiri; tercatat disetujui sendiri)
+  const self = !!user.employeeId && req.employeeId === user.employeeId;
   if (!approve && !rejectReason?.trim()) throw new Error("Tulis alasan penolakan");
   let removed = 0;
   await prisma.$transaction(async (tx) => {
@@ -99,14 +138,10 @@ export async function decideDayOff(user: Actor, id: string, approve: boolean, re
     });
     if (!upd.count) throw new Error("Pengajuan ini sudah diputuskan");
     if (!approve) return;
-    for (const day of req.dates) {
-      const d = dateOnly(day);
-      const att = await tx.attendance.findUnique({ where: { employeeId_date: { employeeId: req.employeeId, date: d } } });
-      if (att?.checkIn) continue; // sudah terlanjur masuk: jadwal dibiarkan
-      removed += (await tx.shiftSchedule.deleteMany({ where: { employeeId: req.employeeId, date: d } })).count;
-    }
-    await audit(user, "LIBUR_DISETUJUI", "DayOffRequest", id, { tanggal: req.dates, jadwalDihapus: removed }, tx);
+    removed = await removeScheduleForDays(tx, req.employeeId, req.dates);
+    await audit(user, "LIBUR_DISETUJUI", "DayOffRequest", id, { tanggal: req.dates, jadwalDihapus: removed, ...(self ? { catatan: `disetujui sendiri (${user.role === "SUPERVISOR" ? "Supervisor" : "Owner"})` } : {}) }, tx);
   });
+  if (approve && self && user.role === "SUPERVISOR") await infoOwnerSelfApproved(user, req.employee.name, req.dates, req.reason, id);
   if (!approve) await audit(user, "LIBUR_DITOLAK", "DayOffRequest", id, { alasan: rejectReason });
   const when = rangeText(req.dates);
   const title = approve ? "Libur minggu depan disetujui ✅" : "Libur minggu depan ditolak";
