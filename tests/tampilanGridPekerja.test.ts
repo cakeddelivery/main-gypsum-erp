@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { BagiForm, LaporForm, TerimaJenisForm } from "../src/app/(app)/borongan/KirimanForms";
+import { BagiForm, LaporForm, TerimaJenisForm, UbahJumlahForm } from "../src/app/(app)/borongan/KirimanForms";
 import type { ShipmentView } from "@/lib/boronganFlow";
 
 const V = ["Cowok", "Cewek", "Hewan", "Transport"];
@@ -44,5 +44,14 @@ describe("Form kiriman borongan: grid pekerja rapi", () => {
     const terima = renderToStaticMarkup(createElement(TerimaJenisForm, { view, pointId: "p1" }));
     expect(count(terima, /name="c:t\d"/g)).toBe(4);
     expect(count(terima, /width:60px/g)).toBe(4);
+  });
+  it("Ubah jumlah kiriman: tabel Jenis | Sekarang | Baru | Min. + alasan wajib; BagiForm memberi petunjuk bila sisa ≠ 0 (Owner/Supervisor)", () => {
+    const ubah = renderToStaticMarkup(createElement(UbahJumlahForm, { view }));
+    expect(count(ubah, /name="t:t\d"/g)).toBe(4);
+    expect(ubah).toMatch(/<input[^>]*required=""[^>]*name="reason"/);
+    expect(ubah).toMatch(/<th[^>]*>Min\.<\/th>/);
+    const bagi = renderToStaticMarkup(createElement(BagiForm, { view, workers, canEditQty: true }));
+    expect(bagi).toContain("Ubah jumlah kiriman");
+    expect(renderToStaticMarkup(createElement(BagiForm, { view, workers }))).not.toContain("Ubah jumlah kiriman");
   });
 });

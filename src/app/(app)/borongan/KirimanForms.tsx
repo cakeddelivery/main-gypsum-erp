@@ -235,7 +235,40 @@ export function KeringForm({ tasks, today }: { tasks: { id: string; short: strin
 
 // ---------------- 2. PEMBAGIAN ----------------
 
-export function BagiForm({ view, workers }: { view: ShipmentView; workers: { id: string; name: string; pointId: string; taskIds: string[] }[] }) {
+/** Ubah jumlah yang dikirim per jenis (Owner/Supervisor): batas minimal = yang sudah dibagi ke pekerja */
+export function UbahJumlahForm({ view }: { view: ShipmentView }) {
+  const min = (taskId: string) => view.cells.filter((c) => c.taskId === taskId).reduce((a, c) => a + c.dibagi, 0);
+  const [val, setVal] = useState<Record<string, string>>(() => Object.fromEntries(view.tasks.map((t) => [t.id, String(t.qty)])));
+  const bad = view.tasks.some((t) => toInt(val[t.id]) < min(t.id));
+  const changed = view.tasks.some((t) => toInt(val[t.id]) !== t.qty);
+  return (
+    <div className="space-y-3">
+      <input type="hidden" name="shipmentId" value={view.id} />
+      <p className="text-xs text-slate-500">Ubah jumlah patung yang <b>dikirim</b> per jenis. Tidak boleh kurang dari yang sudah dibagi ke pekerja (batas minimal). Stok bahan menyesuaikan otomatis (selisih saja): dikurangi → kembali ke gudang, ditambah → keluar lagi dari gudang. Tercatat di riwayat dengan nilai lama → baru.</p>
+      <div className="overflow-hidden rounded-xl border border-slate-200 p-2">
+        <table className="w-full table-fixed text-sm tabular-nums">
+          <colgroup><col /><col style={{ width: 64 }} /><col style={{ width: 72 }} /><col style={{ width: 72 }} /></colgroup>
+          <thead><tr className="text-xs text-slate-500"><th className="text-left font-semibold">Jenis</th><th className="text-right font-semibold">Sekarang</th><th className="text-center font-semibold">Baru</th><th className="text-right font-semibold">Min.</th></tr></thead>
+          <tbody>
+            {view.tasks.map((t) => (
+              <tr key={t.id} className="border-t border-slate-100">
+                <td className="py-1 font-semibold text-slate-800">{t.short}</td>
+                <td className="py-1 text-right text-slate-500">{f(t.qty)}</td>
+                <td className="py-1 text-center"><NumIn name={`t:${t.id}`} label={`Jumlah baru ${t.short}`} value={val[t.id] ?? ""} onChange={(v) => setVal((x) => ({ ...x, [t.id]: v }))} /></td>
+                <td className={`py-1 text-right ${toInt(val[t.id]) < min(t.id) ? "font-bold text-rose-700" : "text-slate-500"}`}>{f(min(t.id))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {bad && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">Ada jenis yang lebih kecil dari yang sudah dibagi.</p>}
+      <label className="block"><span className="label">Alasan (wajib)</span><input name="reason" className="input" required minLength={3} placeholder="mis. patung kering yang dikirim ternyata 600, bukan 700" /></label>
+      <Submit confirm={changed ? "Ubah jumlah kiriman? Stok bahan disesuaikan dan tercatat di riwayat." : undefined}>Simpan perubahan jumlah</Submit>
+    </div>
+  );
+}
+
+export function BagiForm({ view, workers, canEditQty = false }: { view: ShipmentView; workers: { id: string; name: string; pointId: string; taskIds: string[] }[]; /** Owner/Supervisor: petunjuk ubah jumlah kiriman bila sisa ≠ 0 */ canEditQty?: boolean }) {
   const init = Object.fromEntries(view.cells.map((c) => [`a:${c.pointId}:${c.workerId}:${c.taskId}`, String(c.dibagi)]));
   const [val, setVal] = useState<Record<string, string>>(init);
   const sum = (taskId: string) => Object.entries(val).filter(([k]) => k.endsWith(`:${taskId}`)).reduce((a, [, v]) => a + toInt(v), 0);
@@ -284,6 +317,7 @@ export function BagiForm({ view, workers }: { view: ShipmentView; workers: { id:
         </table>
       </div>
       {over && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">Pembagian melebihi jumlah kiriman.</p>}
+      {left !== 0 && canEditQty && <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Sisa tidak sama dengan nol karena jumlah kirimannya keliru? Simpan/tutup form ini, lalu pilih <b>Ubah jumlah kiriman</b> di kartu kiriman (Owner/Supervisor).</p>}
       <Submit confirm={left > 0 ? `Masih ada ${f(left)} pcs yang belum dibagi. Tetap simpan?` : undefined}>Simpan pembagian</Submit>
     </div>
   );

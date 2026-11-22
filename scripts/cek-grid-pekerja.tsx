@@ -34,11 +34,12 @@ const workers = [
 ];
 
 (async () => {
-  const { BagiForm, LaporForm, TerimaJenisForm } = await import("../src/app/(app)/borongan/KirimanForms");
+  const { BagiForm, LaporForm, TerimaJenisForm, UbahJumlahForm } = await import("../src/app/(app)/borongan/KirimanForms");
   const pages: [string, string][] = [
     ["Pembagian", renderToStaticMarkup(<BagiForm view={view} workers={workers} />)],
     ["Lapor hasil", renderToStaticMarkup(<LaporForm view={view} pointId="p1" workers={workers} />)],
     ["Terima per warna", renderToStaticMarkup(<TerimaJenisForm view={view} pointId="p1" />)],
+    ["Ubah jumlah kiriman", renderToStaticMarkup(<UbahJumlahForm view={view} />)],
   ];
   const browser = await chromium.launch();
   let bad = 0;
