@@ -15,7 +15,7 @@ import { reconcileAfterSchedule } from "@/lib/attendanceAuto";
 import { MAX_PROOF_BYTES, MAX_PROOF_TEXT, saveProof } from "@/lib/storage";
 import { sniffMime } from "@/lib/imageCompress";
 import { withField } from "@/lib/fieldError";
-import { canSetOwnSchedule } from "@/lib/scheduleAccess";
+import { canSetOwnSchedule, ownRecordBlocked } from "@/lib/scheduleAccess";
 
 export const checkIn = action(
   "attendance.self",
@@ -69,9 +69,10 @@ export const deleteWorkSite = action(
   ["/absensi"],
 );
 
-async function guardEmployee(employeeId: string, user: { role: string; divisionId: string | null; employeeId: string | null }) {
-  // Absensi sendiri tidak boleh diatur/divalidasi sendiri (dasar potongan gaji), kecuali Owner
-  if (user.role !== "OWNER" && user.employeeId && employeeId === user.employeeId) throw new Error("Absensi Anda sendiri harus diatur/divalidasi oleh atasan lain");
+async function guardEmployee(employeeId: string, user: { role: string; divisionId: string | null; employeeId: string | null }, opts: { schedule?: boolean } = {}) {
+  // Absensi sendiri tidak boleh diatur/divalidasi sendiri (dasar potongan gaji), kecuali Owner.
+  // JADWAL sendiri boleh diatur Owner & Supervisor (canSetOwnSchedule) tanpa menunggu atasan
+  if (ownRecordBlocked(user, employeeId, opts)) throw new Error("Absensi Anda sendiri harus diatur/divalidasi oleh atasan lain");
   if (user.role !== "KAPTEN_DIVISI" || !user.divisionId) return;
   const e = await prisma.employee.findUniqueOrThrow({ where: { id: employeeId } });
   if (e.divisionId !== user.divisionId) throw new ForbiddenError();
@@ -164,12 +165,12 @@ export const saveScheduleCells = action(
       throw new Error("Data jadwal tidak valid");
     }
     const all = parseChanges(raw);
-    // Jadwal sendiri diatur atasan (Owner); Supervisor boleh mengatur jadwalnya sendiri. Baris yang dikunci dilewati,
+    // Jadwal sendiri diatur Owner/Supervisor tanpa menunggu atasan; peran lain dikunci. Baris yang dikunci dilewati,
     // perubahan karyawan lain tetap tersimpan
     const self = !canSetOwnSchedule(user.role) && user.employeeId ? all.filter((c) => c.employeeId === user.employeeId) : [];
     const changes = all.filter((c) => !self.includes(c));
     if (!changes.length) return self.length ? "Jadwal Anda sendiri diatur Owner, tidak ada perubahan lain" : "Tidak ada perubahan";
-    for (const employeeId of new Set(changes.map((c) => c.employeeId))) await guardEmployee(employeeId, user);
+    for (const employeeId of new Set(changes.map((c) => c.employeeId))) await guardEmployee(employeeId, user, { schedule: true });
     const r = await applyScheduleChanges(changes);
     // Jadwal hari yang sudah lewat diubah → status absensi otomatis hari itu ikut dihitung ulang
     await reconcileAfterSchedule(changes.map((c) => c.date), [...new Set(changes.map((c) => c.employeeId))]);
@@ -230,8 +231,9 @@ export const submitDayOffRequest = action(
   async (fd, user) => {
     const none = str(fd, "none") === "1";
     const dates = fd.getAll("date").map(String);
-    await submitDayOff(user, { dates, none, reason: optStr(fd, "reason") });
-    return none ? "Tercatat: tidak ada libur minggu depan" : "Pengajuan libur terkirim. Menunggu persetujuan Supervisor/Owner.";
+    const r = await submitDayOff(user, { dates, none, reason: optStr(fd, "reason") });
+    if (none) return "Tercatat: tidak ada libur minggu depan";
+    return user.role === "SUPERVISOR" && r.status === "DISETUJUI" ? "Libur minggu depan tercatat dan langsung disetujui (jadwal sudah libur). Owner diberi info." : "Pengajuan libur terkirim. Menunggu persetujuan Supervisor/Owner.";
   },
   ["/absensi"],
 );
