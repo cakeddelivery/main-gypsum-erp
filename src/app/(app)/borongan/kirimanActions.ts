@@ -2,7 +2,7 @@
 import { action, optStr, str } from "@/lib/action";
 import { prisma } from "@/lib/db";
 import { BoronganError, boronganScope } from "@/lib/borongan";
-import { cancelPickup, cancelShipment, createPickup, createShipment, receivePickup, resolvePickup, saveAllots, saveWorkReport } from "@/lib/boronganFlow";
+import { cancelPickup, cancelShipment, createPickup, createShipment, receiveByColor, receivePickup, resolvePickup, saveAllots, saveWorkReport } from "@/lib/boronganFlow";
 import { todayStr } from "@/lib/time";
 import { autoClaims } from "@/lib/boronganClaim";
 import { FieldError } from "@/lib/fieldError";
@@ -131,6 +131,22 @@ export const terimaSetoran = action(
     // Setiap 7× setoran Assembling per titik, klaim upah dibuat otomatis
     if (!r.short) await autoClaims(r.pointIds);
     return r.short ? `${r.number} diterima dengan hitungan kurang. Upah ditahan, driver & Supervisor diberi notifikasi.` : `${r.number} cocok, barang masuk gudang`;
+  },
+  [...PATHS, "/gaji/borongan"],
+);
+
+/** Penerimaan hasil per jenis (c:<jenis>) untuk kiriman "hasil diisi saat penerimaan" */
+export const terimaHasilJenis = action(
+  [...PERMS],
+  async (fd, user) => {
+    const counts = [...fd.entries()].filter(([k]) => k.startsWith("c:")).map(([k, v]) => ({ taskId: k.slice(2), qty: String(v).trim() === "" ? -1 : int(v) }));
+    const empty = counts.find((c) => c.qty < 0);
+    if (empty) throw new FieldError(`c:${empty.taskId}`, "Isi jumlah diterima jenis ini (0 bila tidak ada)");
+    const scope = await boronganScope(prisma, user);
+    const r = await receiveByColor(str(fd, "shipmentId"), str(fd, "pointId"), counts, user, scope, { reason: optStr(fd, "reason") ?? "" });
+    await backupAudit(scope, user, "terima hasil per jenis", str(fd, "shipmentId"), "divisi penerima");
+    if (r.waiting === "laporan") return `${r.number} diterima, hasil masuk stok. ${r.note}`;
+    return r.mismatch ? `${r.number} tersimpan. ${r.note} — selisih dikirim ke koordinator & Supervisor.` : `${r.number} tersimpan, cocok dengan laporan koordinator`;
   },
   [...PATHS, "/gaji/borongan"],
 );

@@ -184,7 +184,7 @@ const shipmentInclude = {
 type ShipmentRow = Prisma.BoronganShipmentGetPayload<{ include: typeof shipmentInclude }>;
 
 export type CellView = { pointId: string; workerId: string; worker: string; taskId: string; dibagi: number; diambil: number; good: number; reject: number; reported: boolean; done: boolean };
-export type PickupView = { id: string; number: string; date: string; status: PickupStatus; driver: string | null; holdNote: string | null; lines: { id: string; pointId: string; workerId: string; worker: string; taskId: string; qty: number; reject: number; done: boolean }[]; counts: { taskId: string; qty: number }[] };
+export type PickupView = { id: string; number: string; date: string; status: PickupStatus; driver: string | null; holdNote: string | null; note?: string | null; lines: { id: string; pointId: string; workerId: string; worker: string; taskId: string; qty: number; reject: number; done: boolean }[]; counts: { taskId: string; qty: number }[] };
 export type ShipmentView = {
   id: string; number: string; date: string; mode: ShipmentMode; driver: string | null; state: ShipmentState; note: string | null; createdBy: string; cancelled: boolean; waitingSupport: boolean;
   /** Ditutup administratif (tanpa stok/upah): catatan penutupan, null = tidak */
@@ -198,6 +198,12 @@ export type ShipmentView = {
   pickups: PickupView[];
   reports: { pointId: string; at: string; by: string; checked: boolean }[];
   totals: { sent: number; allotted: number; received: number; reject: number; atWorkers: number; gap: number | null };
+  /** Hasil diisi saat penerimaan (jumlah per jenis saat kirim = target, boleh 0) */
+  resultAtReceipt?: boolean;
+  /** Hasil diisi saat penerimaan, upah belum final: menunggu laporan koordinator ("laporan") atau penerimaan divisi ("penerimaan") */
+  waiting?: "laporan" | "penerimaan" | null;
+  /** Kroscek per titik & jenis: setoran laporan koordinator vs diterima divisi (null = belum diterima) */
+  crosscheck?: { pointId: string; taskId: string; reported: number; received: number | null }[];
 };
 
 /** Laporan terakhir per titik (kumulatif) */
@@ -223,8 +229,11 @@ export async function buildViews(rows: ShipmentRow[]): Promise<ShipmentView[]> {
       const mine = active.flatMap((p) => p.lines.filter((l) => l.workerId === a.workerId && l.taskId === a.taskId));
       return { pointId: a.pointId, workerId: a.workerId, worker: a.worker.name, taskId: a.taskId, dibagi: a.qty, diambil: mine.reduce((x, l) => x + l.qty, 0), good: rep?.good ?? 0, reject: rep?.reject ?? 0, reported: !!rep, done: mine.some((l) => l.done) };
     });
-    // Ditutup administratif (npm run borongan:tutup-semua) = selesai walau ada sel belum "Selesai semua"
-    const state = s.closedAt ? "SELESAI" : shipmentState(s.allots, s.pickups);
+    // Ditutup administratif (npm run borongan:tutup-semua) = selesai walau ada sel belum "Selesai semua".
+    // Hasil diisi saat penerimaan: SELESAI bila upah sudah final (penerimaan + laporan koordinator ada → baris setoran terbentuk)
+    const free = s.resultAtReceipt;
+    const finalized = active.some((p) => p.lines.length > 0);
+    const state = s.closedAt ? "SELESAI" : free ? (finalized ? "SELESAI" : active.length || s.reports.length ? "SEBAGIAN" : "DI_PEKERJA") : shipmentState(s.allots, s.pickups);
     const sent = s.tasks.reduce((a, t) => a + t.qty, 0);
     const received = active.filter((p) => p.status !== "DIBAWA").reduce((a, p) => a + p.lines.reduce((x, l) => x + l.qty, 0), 0);
     const reject = cells.reduce((a, c) => a + c.reject, 0);
@@ -241,11 +250,20 @@ export async function buildViews(rows: ShipmentRow[]): Promise<ShipmentView[]> {
       lines: s.lines.map((l) => ({ itemId: l.itemId, name: items.find((i) => i.id === l.itemId)?.name ?? "?", unit: items.find((i) => i.id === l.itemId)?.unit ?? "", qty: Number(l.qty), support: l.support })),
       cells,
       pickups: s.pickups.map((p) => ({
-        id: p.id, number: p.number, date: dateStr(p.date), status: p.status, driver: p.driver?.name ?? null, holdNote: p.holdNote,
+        id: p.id, number: p.number, date: dateStr(p.date), status: p.status, driver: p.driver?.name ?? null, holdNote: p.holdNote, note: p.note,
         lines: p.lines.map((l) => ({ id: l.id, pointId: l.pointId, workerId: l.workerId, worker: l.worker.name, taskId: l.taskId, qty: l.qty, reject: l.reject, done: l.done })),
         counts: p.counts.map((c) => ({ taskId: c.taskId, qty: c.qty })),
       })),
       reports: [...reps.values()].map((r) => ({ pointId: r.pointId, at: r.createdAt.toISOString(), by: r.createdBy, checked: r.checked })),
+      resultAtReceipt: s.resultAtReceipt,
+      // Menunggu pihak lain: penerimaan ada tapi laporan koordinator belum/belum lengkap → "laporan"; laporan ada tapi belum diterima → "penerimaan"
+      waiting: free && !s.closedAt && !finalized ? (active.length ? "laporan" : s.reports.length ? "penerimaan" : null) : null,
+      crosscheck: s.resultAtReceipt
+        ? s.pointIds.flatMap((pid) => s.tasks.map((t) => {
+            const got = active.flatMap((p) => p.counts.filter((c) => c.taskId === t.taskId));
+            return { pointId: pid, taskId: t.taskId, reported: (reps.get(pid)?.lines ?? []).filter((l) => l.taskId === t.taskId).reduce((a, l) => a + l.good, 0), received: got.length ? got.reduce((a, c) => a + c.qty, 0) : null };
+          }))
+        : undefined,
       totals: { sent, allotted: s.allots.reduce((a, x) => a + x.qty, 0), received, reject, atWorkers: Math.max(0, sent - taken - reject), gap: state === "SELESAI" ? sent - taken - reject : null },
     };
   });
@@ -278,7 +296,8 @@ export const isCoordinatorScope = (scope: Scope) => !scope.all && !scope.driver 
 export function forCoordinator(v: ShipmentView, pointIds: string[]): ShipmentView | null {
   const own = (id: string) => pointIds.includes(id);
   const cells = v.cells.filter((c) => own(c.pointId) && c.dibagi > 0);
-  if (!cells.length) return null;
+  // Hasil diisi saat penerimaan: koordinator melihat kiriman titiknya walau belum ada pembagian (ia yang melapor per pekerja)
+  if (!cells.length && !(v.resultAtReceipt && v.points.some((p) => own(p.id)))) return null;
   const taskIds = new Set(cells.map((c) => c.taskId));
   const pickups = v.pickups
     .map((p) => ({ ...p, lines: p.lines.filter((l) => own(l.pointId)), counts: p.lines.every((l) => own(l.pointId)) ? p.counts : [] }))
@@ -288,16 +307,17 @@ export function forCoordinator(v: ShipmentView, pointIds: string[]): ShipmentVie
   const taken = cells.reduce((a, c) => a + c.diambil, 0);
   const reject = cells.reduce((a, c) => a + c.reject, 0);
   const received = active.filter((p) => p.status !== "DIBAWA").reduce((a, p) => a + p.lines.reduce((x, l) => x + l.qty, 0), 0);
-  const state = v.closed ? "SELESAI" : shipmentState(cells.map((c) => ({ workerId: c.workerId, taskId: c.taskId, qty: c.dibagi })), active);
+  const state = v.closed ? "SELESAI" : v.resultAtReceipt ? v.state : shipmentState(cells.map((c) => ({ workerId: c.workerId, taskId: c.taskId, qty: c.dibagi })), active);
   return {
     ...v,
     state,
     points: v.points.filter((p) => own(p.id)),
-    tasks: v.tasks.filter((t) => taskIds.has(t.id)).map((t) => ({ ...t, qty: cells.filter((c) => c.taskId === t.id).reduce((a, c) => a + c.dibagi, 0) })),
+    tasks: v.tasks.filter((t) => v.resultAtReceipt || taskIds.has(t.id)).map((t) => ({ ...t, qty: cells.filter((c) => c.taskId === t.id).reduce((a, c) => a + c.dibagi, 0) })),
     lines: [],
     cells,
     pickups,
     reports: v.reports.filter((r) => own(r.pointId)),
+    crosscheck: v.crosscheck?.filter((c) => own(c.pointId)),
     totals: { sent, allotted: sent, received, reject, atWorkers: Math.max(0, sent - taken - reject), gap: state === "SELESAI" ? sent - taken - reject : null },
   };
 }
@@ -340,9 +360,11 @@ async function loadTasks(tx: Tx, tasksIn: { taskId: string }[]) {
  * Titik, driver, bahan resep + bahan pendukung (kit tugas), lalu stok keluar gudang → mobil driver / titik.
  * Dipakai kirim langsung (Cat Plastik, Cat Giftbox) dan saat kiriman Assembling dilengkapi.
  */
-async function dispatchTx(tx: Tx, number: string, day: string, input: Omit<ShipmentInput, "tasks" | "date">, tasks: TaskWithInputs[], tasksIn: { taskId: string; qty: number }[], actor: Actor) {
+async function dispatchTx(tx: Tx, number: string, day: string, input: Omit<ShipmentInput, "tasks" | "date">, tasks: TaskWithInputs[], tasksIn: { taskId: string; qty: number }[], actor: Actor, opts: { resultAtReceipt?: boolean } = {}) {
   const pointIds = [...new Set(input.pointIds.filter(Boolean))];
   if (!pointIds.length) throw withField(new BoronganError("Pilih titik tujuan"), "pointId");
+  // Hasil diisi saat penerimaan: tanpa pembagian, jadi bahan langsung tercatat di titik (satu titik per kiriman)
+  if (opts.resultAtReceipt && pointIds.length !== 1) throw new BoronganError("Kiriman bahan (hasil diisi saat penerimaan) hanya ke satu titik");
   if (input.mode === "LANGSUNG" && pointIds.length !== 1) throw new BoronganError("Kiriman yang diantar langsung hanya ke satu titik");
   const points = await tx.boronganPoint.findMany({ where: { id: { in: pointIds }, active: true } });
   if (points.length !== pointIds.length) throw new BoronganError("Titik tujuan tidak aktif");
@@ -363,15 +385,17 @@ async function dispatchTx(tx: Tx, number: string, day: string, input: Omit<Shipm
     qty.set(itemId, { qty: Math.round((cur.qty + q) * 1000) / 1000, support: cur.support && support });
   };
   for (const t of tasks) for (const inp of t.inputs) add(inp.itemId, bomStockQty(inp.qty, inp.item) * tasksIn.find((x) => x.taskId === t.id)!.qty, false);
-  // Bahan pendukung hanya dari kit tugas yang dikirim (mis. Assembling tidak membawa cat Cat Giftbox)
+  // Bahan pendukung hanya dari kit tugas yang dikirim (mis. Assembling tidak membawa cat Cat Giftbox).
+  // Hasil diisi saat penerimaan: bahan resep (tanpa jumlah pcs) juga diisi manual
   const kit = new Set(Object.entries(await taskKits(tx)).filter(([id]) => tasks.some((t) => t.id === id)).flatMap(([, ids]) => ids));
+  if (opts.resultAtReceipt) for (const t of tasks) for (const inp of t.inputs) kit.add(inp.itemId);
   for (const s of input.support ?? []) {
     if (s.qty < 0) throw new BoronganError("Jumlah bahan tidak boleh minus");
     if (s.qty > 0 && !kit.has(s.itemId)) throw new BoronganError("Ada bahan pendukung yang bukan kit jenis pekerjaan ini. Muat ulang halaman.");
     add(s.itemId, s.qty, true);
   }
   const items = await tx.item.findMany({ where: { id: { in: [...qty.keys()] } } });
-  const to = input.mode === "DRIVER" ? await driverLocation(tx) : points[0].locationId;
+  const to = input.mode === "DRIVER" && !opts.resultAtReceipt ? await driverLocation(tx) : points[0].locationId;
   const rows: Prisma.BoronganShipmentLineCreateWithoutShipmentInput[] = [];
   for (const [itemId, l] of qty) {
     const item = items.find((i) => i.id === itemId);
@@ -397,18 +421,23 @@ async function notifyDispatched(s: { number: string; driverId: string | null; mo
 /** Kirim langsung (Cat Plastik oleh tim Assembling, Cat Giftbox oleh tim Giftbox, atau Supervisor/pengelola) */
 export async function createShipment(input: ShipmentInput, actor: Actor, scope: Scope) {
   if (!canShip(scope)) throw new BoronganError("Kiriman bahan dicatat Supervisor / tim divisi pengirim");
-  const tasksIn = cleanTasks(input.tasks);
+  // Tugas "hasil diisi saat penerimaan" (mis. Cat Plastik): jumlah per jenis = target, boleh kosong; saat kirim cukup bahan
+  const asked = [...new Map(input.tasks.map((t) => [t.taskId, t])).values()];
+  const flagged = asked.length > 0 && (await prisma.pieceTask.count({ where: { id: { in: asked.map((t) => t.taskId) }, resultAtReceipt: true } })) === asked.length;
+  // Tanpa jumlah pcs (form kirim hanya bahan): baris jenis disimpan dengan qty 0
+  const tasksIn = flagged ? asked.map((t) => ({ taskId: t.taskId, qty: 0 })) : cleanTasks(input.tasks);
   const s = await prisma.$transaction(async (tx) => {
     const tasks = await loadTasks(tx, tasksIn);
     const group = taskGroupName(tasks[0].name);
     if (tasks.some((t) => isAssemblingName(t.name))) throw new BoronganError("Kiriman Assembling diawali isian patung kering oleh Cetak/Oven, lalu dilengkapi Assembling/Supervisor");
     if (!canShipGroup(scope, group)) throw new BoronganError(/^cat plastik/i.test(group) ? "Kiriman Cat Plastik dicatat tim Assembling / Supervisor" : /^cat giftbox/i.test(group) ? "Kiriman Cat Giftbox dicatat tim Giftbox / Supervisor" : "Kiriman bahan dicatat Supervisor");
     const number = await dailyNumber(tx, "KRM", input.date);
-    const d = await dispatchTx(tx, number, input.date, input, tasks, tasksIn, actor);
+    const d = await dispatchTx(tx, number, input.date, input, tasks, tasksIn, actor, { resultAtReceipt: flagged });
+    if (flagged && !d.rows.length) throw withField(new BoronganError("Isi bahan yang dikirim (jumlah hasil per jenis boleh kosong)"), "s");
     const s = await tx.boronganShipment.create({
-      data: { number, date: dateOnly(input.date), mode: input.mode, pointIds: d.pointIds, driverId: d.driverId, note: input.note ?? null, createdBy: actor.name, createdById: actor.id, tasks: { create: tasksIn.map((t) => ({ taskId: t.taskId, qty: t.qty })) }, lines: { create: d.rows } },
+      data: { number, date: dateOnly(input.date), mode: input.mode, pointIds: d.pointIds, driverId: d.driverId, note: input.note ?? null, createdBy: actor.name, createdById: actor.id, resultAtReceipt: flagged, tasks: { create: tasksIn.map((t) => ({ taskId: t.taskId, qty: t.qty })) }, lines: { create: d.rows } },
     });
-    await audit(actor, "KIRIMAN_BORONGAN", "BoronganShipment", s.id, { number, mode: input.mode, titik: d.points.map((p) => p.code), jenis: tasksIn }, tx);
+    await audit(actor, "KIRIMAN_BORONGAN", "BoronganShipment", s.id, { number, mode: input.mode, titik: d.points.map((p) => p.code), jenis: tasksIn, hasilSaatPenerimaan: flagged || undefined }, tx);
     return s;
   }, { timeout: 30000 });
   await notifyDispatched(s, tasksIn.reduce((a, t) => a + t.qty, 0));
@@ -548,7 +577,7 @@ export async function saveAllots(shipmentId: string, rows: AllotInput[], actor: 
     }
     for (const t of s.tasks) {
       const sum = [...clean.values()].filter((r) => r.taskId === t.taskId).reduce((a, r) => a + r.qty, 0);
-      if (sum > t.qty) throw new BoronganError(`${shortTaskName(t.task.name)} dibagi ${sum.toLocaleString("id-ID")}, melebihi kiriman ${t.qty.toLocaleString("id-ID")}`);
+      if (!s.resultAtReceipt && sum > t.qty) throw new BoronganError(`${shortTaskName(t.task.name)} dibagi ${sum.toLocaleString("id-ID")}, melebihi kiriman ${t.qty.toLocaleString("id-ID")}`);
     }
     // Tidak boleh kurang dari yang sudah diambil driver
     const taken = new Map<string, number>();
@@ -606,6 +635,10 @@ export type ReportInput = { workerId: string; taskId: string; good: number; reje
 
 export async function saveWorkReport(shipmentId: string, pointId: string, rows: ReportInput[], checked: boolean, actor: Actor, scope: Scope, opts: { reason?: string } = {}) {
   const rep = await saveWorkReportTx(shipmentId, pointId, rows, checked, actor, scope, opts);
+  if (rep.free?.mismatch) {
+    const divs = await prisma.pieceTask.findMany({ where: { id: { in: rep.free.taskIds } }, select: { divisionId: true } });
+    await notifyFreeMismatch(rep.free.kiriman, rep.free.number ?? "", rep.free.note, pointId, [...new Set(divs.map((d) => d.divisionId).filter((x): x is string => !!x))]);
+  }
   // Driver: setoran titik ini siap diambil
   const s = await prisma.boronganShipment.findUnique({ where: { id: shipmentId }, select: { number: true, mode: true, driver: { select: { userId: true } } } });
   const point = await prisma.boronganPoint.findUnique({ where: { id: pointId }, select: { name: true } });
@@ -623,6 +656,35 @@ async function saveWorkReportTx(shipmentId: string, pointId: string, rows: Repor
     if (!s.pointIds.includes(pointId)) throw new BoronganError("Titik ini bukan tujuan kiriman");
     const only = await coordinatorOnly(tx, pointId);
     if (!canReport(scope, { taskIds: s.tasks.map((t) => t.taskId) }, pointId, only)) throw new BoronganError(only ? "Laporan hasil dicatat koordinator titik" : "Laporan hasil titik ini dicatat koordinator pencatat / tim divisi / Supervisor");
+    if (s.resultAtReceipt) {
+      // Laporan yang sudah disimpan TERKUNCI: hanya Owner/Supervisor (hak kelola borongan) dengan alasan + audit nilai lama → baru
+      if (await tx.boronganWorkReport.count({ where: { shipmentId, pointId } })) opts = { ...opts, reason: adminReason(scope, opts.reason, "Laporan hasil") };
+      // Hasil diisi saat penerimaan: tanpa pembagian; koordinator melapor per pekerja aktif titik itu (jadi kroscek penerimaan).
+      // Sel (allot) dibuat/diselaraskan dari laporan = setoran + reject.
+      const taskIds = s.tasks.map((t) => t.taskId);
+      const want = new Map<string, ReportInput>();
+      for (const r of rows) {
+        if (![r.good, r.reject].every((n) => Number.isInteger(n) && n >= 0)) throw new BoronganError("Setoran dan reject harus bilangan bulat, tidak minus");
+        if (!taskIds.includes(r.taskId)) throw new BoronganError("Jenis pekerjaan bukan bagian kiriman ini");
+        if (r.good + r.reject > 0) want.set(`${r.workerId}:${r.taskId}`, r);
+      }
+      const workers = await tx.boronganPerson.findMany({ where: { id: { in: [...new Set([...want.values()].map((r) => r.workerId))] } } });
+      for (const r of want.values()) {
+        const w = workers.find((x) => x.id === r.workerId);
+        if (!w || w.role !== "PEKERJA" || !w.active || w.pointId !== pointId) throw new BoronganError("Pekerja tidak terdaftar aktif di titik ini");
+        if (w.taskIds.length && !w.taskIds.includes(r.taskId)) throw new BoronganError(`${w.name} tidak mengerjakan jenis ini`);
+      }
+      for (const a of s.allots) if (!want.has(`${a.workerId}:${a.taskId}`)) want.set(`${a.workerId}:${a.taskId}`, { workerId: a.workerId, taskId: a.taskId, good: 0, reject: 0 });
+      for (const r of want.values()) {
+        await tx.boronganAllot.upsert({
+          where: { shipmentId_workerId_taskId: { shipmentId, workerId: r.workerId, taskId: r.taskId } },
+          create: { shipmentId, pointId, workerId: r.workerId, taskId: r.taskId, qty: r.good + r.reject, updatedBy: actor.name },
+          update: { qty: r.good + r.reject, updatedBy: actor.name },
+        });
+      }
+      s.allots = await tx.boronganAllot.findMany({ where: { shipmentId, pointId } });
+      if (!s.allots.length) throw new BoronganError("Isi setoran minimal satu pekerja");
+    }
     if (!s.allots.length) throw new BoronganError("Kiriman ini belum dibagi ke pekerja di titik ini");
     const lines: ReportInput[] = [];
     for (const a of s.allots) {
@@ -650,7 +712,9 @@ async function saveWorkReportTx(shipmentId: string, pointId: string, rows: Repor
     const sebelum = Object.fromEntries(lines.map((l) => [label(l), `${prevMap.get(key(l))?.good ?? 0}/${prevMap.get(key(l))?.reject ?? 0}`]));
     const sesudah = Object.fromEntries(lines.map((l) => [label(l), `${l.good}/${l.reject}`]));
     await audit(actor, "LAPORAN_HASIL_BORONGAN", "BoronganShipment", shipmentId, { number: s.number, titik: pointId, setoran: lines.reduce((a, l) => a + l.good, 0), reject: lines.reduce((a, l) => a + l.reject, 0), sebelum, sesudah, formatNilai: "setoran/reject", ...(reason ? { alasan: reason } : {}) }, tx);
-    return rep;
+    // Hasil diisi saat penerimaan: kroscek & upah dihitung ulang bila penerimaan sudah ada
+    const free = s.resultAtReceipt ? { ...(await settleFree(tx, shipmentId, actor)), kiriman: s.number, taskIds: s.tasks.map((t) => t.taskId) } : null;
+    return Object.assign(rep, { free });
   });
 }
 
@@ -772,12 +836,13 @@ async function postPickupResults(tx: Tx, pickupId: string, held: boolean, actor:
  * Barang hasil pindah dari titik ke gudang sebanyak yang dihitung divisi (maksimal setoran driver per jenis).
  * Berbasis selisih terhadap yang sudah dipindah dengan ref AMB:<nomor>, jadi aman dipanggil ulang setelah koreksi.
  */
-async function syncPickupOutput(tx: Tx, pickupId: string, counted: Map<string, number>, actor: Actor) {
+async function syncPickupOutput(tx: Tx, pickupId: string, counted: Map<string, number>, actor: Actor, fallbackPointId?: string) {
   const p = await tx.boronganPickup.findUniqueOrThrow({ where: { id: pickupId }, include: { lines: true } });
   const ref = `AMB:${p.number}`;
+  // Penerimaan "hasil diisi saat penerimaan" bisa mendahului laporan koordinator (belum ada baris): hasil dipindah dari titik tunggal kiriman
   const [tasks, points, moves] = await Promise.all([
-    tx.pieceTask.findMany({ where: { id: { in: [...new Set(p.lines.map((l) => l.taskId))] } }, include: { outputItem: true } }),
-    tx.boronganPoint.findMany({ where: { id: { in: [...new Set(p.lines.map((l) => l.pointId))] } } }),
+    tx.pieceTask.findMany({ where: { id: { in: [...new Set([...p.lines.map((l) => l.taskId), ...(fallbackPointId ? [...counted.keys()] : [])])] } }, include: { outputItem: true } }),
+    tx.boronganPoint.findMany({ where: { id: { in: [...new Set([...p.lines.map((l) => l.pointId), ...(fallbackPointId ? [fallbackPointId] : [])])] } } }),
     tx.stockMovement.findMany({ where: { ref } }),
   ]);
   for (const t of tasks) {
@@ -791,6 +856,7 @@ async function syncPickupOutput(tx: Tx, pickupId: string, counted: Map<string, n
       left -= q;
       want.set(l.pointId, (want.get(l.pointId) ?? 0) + q);
     }
+    if (fallbackPointId && !p.lines.some((x) => x.taskId === t.id) && left > 0) want.set(fallbackPointId, left);
     for (const pt of points) {
       const have = moves.filter((m) => m.itemId === t.outputItem!.id).reduce((a, m) => a + (m.fromLocationId === pt.locationId ? Number(m.qty) : m.toLocationId === pt.locationId ? -Number(m.qty) : 0), 0);
       const delta = (want.get(pt.id) ?? 0) - have;
@@ -833,6 +899,119 @@ export async function receivePickup(pickupId: string, counts: { taskId: string; 
     await notify([out.driverUser, ...sup], payload);
     await notify(await coordinatorUsers(out.pointIds), { ...payload, title: `Setoran ${out.number} dihitung kurang oleh divisi` });
   }
+  return out;
+}
+
+/** Pihak yang sudah menyimpan terkunci: hanya Owner/Supervisor (hak kelola borongan) yang boleh mengubah, dengan alasan wajib */
+function adminReason(scope: Scope, reason: string | undefined, what: string) {
+  if (!fullAccess(scope)) throw new BoronganError(`${what} sudah disimpan dan terkunci. Perubahan hanya oleh Owner/Supervisor (hak kelola borongan) dengan alasan.`);
+  const r = reason?.trim() ?? "";
+  if (r.length < 3) throw withField(new BoronganError(`${what} sudah terkunci: tulis alasan perubahan`), "reason");
+  return r;
+}
+
+export type FreeSettle = { waiting: "laporan" | "penerimaan" | null; note: string; mismatch: boolean; number: string | null };
+
+/**
+ * Hitung ulang kiriman "hasil diisi saat penerimaan" (urutan BEBAS: laporan koordinator dan penerimaan divisi boleh yang mana dulu).
+ *  - Stok: hasil masuk gudang saat PENERIMAAN (dari titik tunggal kiriman), apa pun status laporan koordinator.
+ *  - Upah final baru dihitung setelah KEDUANYA ada: upah = yang DITERIMA, dibagi menurut porsi laporan koordinator per jenis.
+ *    Penerimaan ada, laporan belum → "menunggu laporan koordinator" (klaim belum bisa); laporan ada, penerimaan belum → "menunggu penerimaan".
+ *  - Dipanggil setiap kali salah satu pihak menyimpan/diubah: setoran lama pengambilan ini dibalik lalu diposting ulang.
+ */
+async function settleFree(tx: Tx, shipmentId: string, actor: Actor): Promise<FreeSettle> {
+  const s = await tx.boronganShipment.findUniqueOrThrow({ where: { id: shipmentId }, include: { tasks: { include: { task: { select: { id: true, name: true } } } }, pickups: { where: { status: { not: "DIBATALKAN" } }, include: { counts: true, results: true }, orderBy: { createdAt: "asc" } } } });
+  const pointId = s.pointIds[0];
+  const pickup = s.pickups[0];
+  const rep = await tx.boronganWorkReport.findFirst({ where: { shipmentId, pointId }, include: { lines: true }, orderBy: { createdAt: "desc" } });
+  if (!pickup) return { waiting: rep ? "penerimaan" : null, note: rep ? "Menunggu penerimaan divisi" : "", mismatch: false, number: null };
+  const tasks = s.tasks.map((t) => t.task);
+  const name = (id: string) => shortTaskName(tasks.find((t) => t.id === id)?.name ?? "");
+  const counted = new Map(pickup.counts.map((c) => [c.taskId, c.qty]));
+  // Stok: hasil masuk gudang saat penerimaan (selisih terhadap yang sudah dipindah, aman dipanggil ulang)
+  await syncPickupOutput(tx, pickup.id, counted, actor, pointId);
+  const good = (id: string) => (rep?.lines ?? []).filter((l) => l.taskId === id).reduce((a, l) => a + l.good, 0);
+  const missing = tasks.filter((t) => (counted.get(t.id) ?? 0) > 0 && good(t.id) <= 0);
+  if (!rep || missing.length) {
+    const note = !rep ? "Menunggu laporan koordinator (upah belum dihitung)" : `Menunggu laporan koordinator: setoran ${missing.map((t) => name(t.id)).join(", ")} per pekerja belum dilaporkan (upah belum dihitung)`;
+    await tx.boronganPickup.update({ where: { id: pickup.id }, data: { note } });
+    // Hasil upah lama (bila sebelumnya sudah dihitung) dibalik agar tidak basi
+    if (pickup.results.length) await dropFreeResults(tx, pickup, actor);
+    await tx.boronganPickupLine.deleteMany({ where: { pickupId: pickup.id } });
+    return { waiting: "laporan", note, mismatch: false, number: pickup.number };
+  }
+  const diff = tasks.map((t) => ({ taskId: t.id, reported: good(t.id), received: counted.get(t.id) ?? 0 }));
+  const note = `Kroscek: ${diff.map((d) => `${name(d.taskId)} diterima ${d.received} / lapor ${d.reported}${d.received !== d.reported ? ` (${d.received - d.reported > 0 ? "+" : ""}${d.received - d.reported})` : ""}`).join(", ")}`;
+  const lines: { workerId: string; taskId: string; qty: number; reject: number }[] = [];
+  for (const t of tasks) {
+    const reps = rep.lines.filter((l) => l.taskId === t.id);
+    const split = splitByWeights(counted.get(t.id) ?? 0, reps.map((l) => [l.workerId, l.good] as [string, number]));
+    for (const l of reps) lines.push({ workerId: l.workerId, taskId: t.id, qty: split.get(l.workerId) ?? 0, reject: l.reject });
+  }
+  if (pickup.results.length) await dropFreeResults(tx, pickup, actor);
+  await tx.boronganPickupLine.deleteMany({ where: { pickupId: pickup.id } });
+  await tx.boronganPickupLine.createMany({ data: lines.map((l) => ({ pickupId: pickup.id, pointId, workerId: l.workerId, taskId: l.taskId, qty: l.qty, reject: l.reject, done: true })) });
+  await postPickupResults(tx, pickup.id, false, actor);
+  await syncPickupOutput(tx, pickup.id, counted, actor, pointId);
+  await tx.boronganPickup.update({ where: { id: pickup.id }, data: { note } });
+  return { waiting: null, note, mismatch: diff.some((d) => d.received !== d.reported), number: pickup.number };
+}
+
+/** Balik setoran (upah, stok bahan, jurnal) pengambilan ini; ditolak bila sudah dibayar atau sudah masuk klaim upah */
+async function dropFreeResults(tx: Tx, pickup: { number: string; results: { id: string; settlementId: string | null; claimId: string | null }[] }, actor: Actor) {
+  if (pickup.results.some((r) => r.settlementId)) throw new BoronganError("Upah hasil ini sudah dibayar, tidak bisa diubah");
+  if (pickup.results.some((r) => r.claimId)) throw new BoronganError("Upah hasil ini sudah masuk klaim upah. Tolak/batalkan klaimnya dulu, lalu ubah.");
+  for (const r of pickup.results) await unpostResultTx(tx, r.id, actor, `Hitung ulang ${pickup.number}`);
+}
+
+async function notifyFreeMismatch(kiriman: string, number: string, note: string, pointId: string, divisionIds: string[]) {
+  const staff = (await prisma.user.findMany({ where: { active: true, OR: [{ role: { in: ["SUPERVISOR", "OWNER"] } }, { divisionId: { in: divisionIds } }] }, select: { id: true } })).map((u) => u.id);
+  await notify([...staff, ...(await coordinatorUsers([pointId]))], { title: `Selisih hasil ${kiriman}`, body: `${note}. Upah mengikuti yang diterima.`, url: "/borongan?tab=kiriman", tag: `kroscek-${number}` });
+}
+
+/**
+ * Penerimaan kiriman "hasil diisi saat penerimaan" (mis. Cat Plastik Beringin): divisi penerima (Assembling) menghitung hasil
+ * PER JENIS (merah/biru/kuning). Urutan bebas terhadap laporan koordinator (lihat settleFree). Setelah disimpan, penerimaan
+ * TERKUNCI: hanya Owner/Supervisor (hak kelola borongan) yang boleh mengubah, dengan alasan + audit nilai lama → baru; kroscek & upah dihitung ulang.
+ */
+export async function receiveByColor(shipmentId: string, pointId: string, counts: { taskId: string; qty: number }[], actor: Actor, scope: Scope, opts: { day?: string; reason?: string } = {}) {
+  const day = opts.day ?? todayStr();
+  const out = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "BoronganShipment" WHERE id = ${shipmentId} FOR UPDATE`;
+    const s = await tx.boronganShipment.findUniqueOrThrow({ where: { id: shipmentId }, include: { tasks: { include: { task: { select: { id: true, name: true, divisionId: true } } } }, pickups: { where: { status: { not: "DIBATALKAN" } }, include: { counts: true } } } });
+    if (s.cancelledAt) throw new BoronganError(`${s.number} sudah dibatalkan`);
+    if (!s.resultAtReceipt) throw new BoronganError("Kiriman ini memakai alur ambil setoran per pekerja");
+    if (s.pointIds[0] !== pointId) throw new BoronganError("Titik ini bukan tujuan kiriman");
+    const tasks = s.tasks.map((t) => t.task);
+    if (!canReceive(scope, tasks)) throw new BoronganError("Hasil diterima oleh divisi penerima (Assembling / Giftbox) atau Supervisor/Owner");
+    const counted = new Map<string, number>();
+    for (const c of counts) {
+      if (!tasks.some((t) => t.id === c.taskId)) continue;
+      if (!Number.isInteger(c.qty) || c.qty < 0) throw new BoronganError("Jumlah diterima harus bilangan bulat, tidak minus");
+      counted.set(c.taskId, c.qty);
+    }
+    if (counted.size !== tasks.length) throw new BoronganError("Isi jumlah diterima setiap jenis (0 bila tidak ada)");
+    const name = (id: string) => shortTaskName(tasks.find((t) => t.id === id)?.name ?? "");
+    const existing = s.pickups[0];
+    let pickupId: string;
+    let reason = "";
+    if (existing) {
+      reason = adminReason(scope, opts.reason, "Penerimaan hasil");
+      const before = Object.fromEntries(existing.counts.map((c) => [name(c.taskId), c.qty]));
+      pickupId = existing.id;
+      await tx.boronganPickupCount.deleteMany({ where: { pickupId } });
+      await tx.boronganPickupCount.createMany({ data: [...counted].map(([taskId, qty]) => ({ pickupId, taskId, qty })) });
+      await audit(actor, "TERIMA_HASIL_DIKOREKSI", "BoronganPickup", pickupId, { number: existing.number, kiriman: s.number, alasan: reason, sebelum: before, sesudah: Object.fromEntries([...counted].map(([k, v]) => [name(k), v])) }, tx);
+    } else {
+      const number = await dailyNumber(tx, "AMB", day);
+      const p = await tx.boronganPickup.create({ data: { number, shipmentId, date: dateOnly(day), status: "DITERIMA", createdBy: actor.name, createdById: actor.id, receivedAt: new Date(), receivedBy: actor.name, receivedById: actor.id, counts: { create: [...counted].map(([taskId, qty]) => ({ taskId, qty })) } } });
+      pickupId = p.id;
+      await audit(actor, "TERIMA_HASIL_PER_JENIS", "BoronganPickup", pickupId, { number, kiriman: s.number, titik: pointId, diterima: Object.fromEntries([...counted].map(([k, v]) => [name(k), v])) }, tx);
+    }
+    const r = await settleFree(tx, shipmentId, actor);
+    return { ...r, kiriman: s.number, number: r.number ?? "", divisionIds: [...new Set(tasks.map((t) => t.divisionId).filter((x): x is string => !!x))] };
+  }, { timeout: 60000 });
+  if (out.mismatch) await notifyFreeMismatch(out.kiriman, out.number, out.note, pointId, out.divisionIds);
   return out;
 }
 

@@ -182,7 +182,7 @@ export const saveTask = action(
     const name = str(fd, "name");
     if (!name) throw withField(new BoronganError("Nama tugas wajib diisi"), "name");
     const inputs = lines(fd).filter((l) => l.itemId && l.qty > 0);
-    const data = { name, divisionId: optStr(fd, "divisionId"), ratePerPcs: BigInt(total), workerRate: BigInt(split.workerRate), coordinatorRate: BigInt(split.coordinatorRate), driverRate: BigInt(split.driverRate), outputItemId: optStr(fd, "outputItemId"), active: fd.get("active") !== "off" };
+    const data = { name, divisionId: optStr(fd, "divisionId"), ratePerPcs: BigInt(total), workerRate: BigInt(split.workerRate), coordinatorRate: BigInt(split.coordinatorRate), driverRate: BigInt(split.driverRate), outputItemId: optStr(fd, "outputItemId"), active: fd.get("active") !== "off", resultAtReceipt: fd.get("resultAtReceipt") === "on" };
     const t = await prisma.$transaction(async (tx) => {
       const t = id
         ? await tx.pieceTask.update({ where: { id }, data })
@@ -192,7 +192,7 @@ export const saveTask = action(
       return t;
     });
     if (fd.has("kitSent")) await saveTaskKit(prisma, t.id, fd.getAll("kitIds").map(String));
-    await audit(user, "TUGAS_BORONGAN", "PieceTask", t.id, { name, ...split, inputs: inputs.length });
+    await audit(user, "TUGAS_BORONGAN", "PieceTask", t.id, { name, ...split, inputs: inputs.length, hasilSaatPenerimaan: data.resultAtReceipt });
     return `Tugas ${t.name} tersimpan (budget Rp${total}/pcs)`;
   },
   [...PATHS, "/gaji/borongan"],

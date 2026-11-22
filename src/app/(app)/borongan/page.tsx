@@ -520,6 +520,10 @@ function TaskForm({ task, items, divisions, kit = [] }: { task?: TaskRow; items:
           {items.map((i) => <label key={i.id} className="flex min-h-9 items-center gap-2 text-sm"><input type="checkbox" name="kitIds" value={i.id} defaultChecked={kit.includes(i.id)} className="h-4 w-4 shrink-0" /><span className="break-words">{i.name}</span></label>)}
         </div>
       </fieldset>
+      <label className="flex items-start gap-2 rounded-lg border border-slate-200 p-3 text-sm">
+        <input type="checkbox" name="resultAtReceipt" defaultChecked={task?.resultAtReceipt} className="mt-0.5 h-4 w-4 shrink-0" />
+        <span><b>Hasil diisi saat penerimaan</b><span className="block text-xs text-slate-500">Mis. Cat Plastik merah/biru/kuning: saat kirim cukup bahan (jumlah per jenis boleh kosong). Koordinator melapor hasil per pekerja, divisi penerima menghitung hasil per jenis; laporan koordinator jadi kroscek dan upah mengikuti yang diterima. Hanya untuk kiriman baru.</span></span>
+      </label>
       {task && <Field label="Status"><select name="active" defaultValue={task.active ? "on" : "off"} className="input"><option value="on">Aktif</option><option value="off">Nonaktif</option></select></Field>}
       <Submit>Simpan</Submit>
     </ModalForm>
