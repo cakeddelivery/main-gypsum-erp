@@ -63,7 +63,7 @@ const Diff = ({ n, done }: { n: number; done: boolean }) => (done ? (n ? <span c
 
 export type KirimGroupOpt = {
   key: string; name: string;
-  tasks: { id: string; short: string; bom: { itemId: string; name: string; unit: string; per: number }[] }[];
+  tasks: { id: string; short: string; bom: { itemId: string; name: string; unit: string; per: number }[]; /** Hasil diisi saat penerimaan: jumlah per jenis opsional */ resultAtReceipt?: boolean }[];
   points: { id: string; name: string; viaDriver: boolean }[];
   support: { id: string; name: string; unit: string; stock: number }[];
 };
@@ -75,10 +75,14 @@ export type KirimGroupOpt = {
 export function KirimForm({ groups, drivers, today, fixed }: { groups: KirimGroupOpt[]; drivers: { id: string; name: string }[]; today: string; fixed?: { shipmentId: string; groupKey: string; qty: Record<string, number> } }) {
   const [key, setKey] = useState(fixed?.groupKey ?? groups[0]?.key ?? "");
   const g = groups.find((x) => x.key === key);
-  const [pts, setPts] = useState<string[]>([]);
+  // Jenis pekerjaan dengan satu titik tujuan (mis. Cat Plastik → Beringin): titik langsung terpilih
+  const onlyPoint = (x?: KirimGroupOpt) => (x?.points.length === 1 ? [x.points[0].id] : []);
+  const [pts, setPts] = useState<string[]>(() => onlyPoint(groups.find((x) => x.key === (fixed?.groupKey ?? groups[0]?.key))));
   const [qty, setQty] = useState<Record<string, string>>(() => (fixed ? Object.fromEntries(Object.entries(fixed.qty).map(([k, v]) => [k, String(v)])) : {}));
   const chosen = g?.points.filter((p) => pts.includes(p.id)) ?? [];
-  const direct = chosen.length === 1 && !chosen[0].viaDriver;
+  // Cara kirim bawaan mengikuti setelan titik: titik "langsung" (tanpa driver, mis. Beringin) → Diantar langsung
+  const direct = chosen.length ? chosen.length === 1 && !chosen[0].viaDriver : !!g?.points.length && g.points.every((p) => !p.viaDriver);
+  const optional = !fixed && !!g?.tasks.length && g.tasks.every((t) => t.resultAtReceipt);
   const [modeRaw, setMode] = useState<"DRIVER" | "LANGSUNG" | null>(null);
   const mode = modeRaw ?? (direct ? "LANGSUNG" : "DRIVER");
   const total = g?.tasks.reduce((a, t) => a + toInt(qty[t.id]), 0) ?? 0;
@@ -98,7 +102,7 @@ export function KirimForm({ groups, drivers, today, fixed }: { groups: KirimGrou
       <div className="grid gap-3 sm:grid-cols-2">
         {fixed ? <p className="text-sm">Jenis pekerjaan: <b>{g?.name}</b></p> : (
           <label className="block"><span className="label">Jenis pekerjaan</span>
-            <select className="input" value={key} onChange={(e) => { setKey(e.target.value); setPts([]); setQty({}); setMode(null); }}>{groups.map((x) => <option key={x.key} value={x.key}>{x.name}</option>)}</select>
+            <select className="input" value={key} onChange={(e) => { setKey(e.target.value); setPts(onlyPoint(groups.find((x) => x.key === e.target.value))); setQty({}); setMode(null); }}>{groups.map((x) => <option key={x.key} value={x.key}>{x.name}</option>)}</select>
           </label>
         )}
         <label className="block"><span className="label">Tanggal</span><input type="date" name="date" defaultValue={today} className="input" /></label>
@@ -128,7 +132,8 @@ export function KirimForm({ groups, drivers, today, fixed }: { groups: KirimGrou
         <label className="block"><span className="label">Driver</span><select name="driverId" className="input" defaultValue={drivers[0].id}>{drivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
       )}
       <div className="rounded-xl border border-slate-200 p-3">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{fixed ? "Patung kering dari Cetak/Oven (pcs)" : "Jumlah per jenis (pcs)"}</p>
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{fixed ? "Patung kering dari Cetak/Oven (pcs)" : optional ? "Target per jenis (opsional, boleh kosong)" : "Jumlah per jenis (pcs)"}</p>
+        {optional && <p className="mb-2 text-xs text-slate-500">Hasil per jenis baru diketahui setelah dikerjakan: diisi saat <b>penerimaan</b> oleh divisi penerima. Saat kirim cukup isi bahan di bawah.</p>}
         <div className="grid grid-cols-2 gap-2 keep-cols sm:grid-cols-4">
           {g?.tasks.filter((t) => !fixed || fixed.qty[t.id]).map((t) => fixed ? (
             <div key={t.id} className="rounded-lg bg-slate-50 px-3 py-2"><span className="block text-xs font-medium text-slate-600">{t.short}</span><b className="tabular-nums">{f(fixed.qty[t.id])}</b></div>
@@ -155,7 +160,7 @@ export function KirimForm({ groups, drivers, today, fixed }: { groups: KirimGrou
         </div>
       )}
       <label className="block"><span className="label">Catatan</span><input name="note" className="input" /></label>
-      <p className="text-xs text-slate-500">{mode === "DRIVER" ? "Bahan keluar gudang dan tercatat di mobil driver. Saat driver membagi ke pekerja, bahan tercatat pindah ke titik." : "Bahan keluar gudang langsung ke titik. Pembagian & pengambilan dicatat tim divisi / Supervisor."} Tidak ada lagi konfirmasi terima di titik.</p>
+      <p className="text-xs text-slate-500">{optional ? "Bahan keluar gudang ke titik. Koordinator titik melapor hasil per pekerja; divisi penerima mengisi hasil per jenis saat penerimaan (kroscek)." : mode === "DRIVER" ? "Bahan keluar gudang dan tercatat di mobil driver. Saat driver membagi ke pekerja, bahan tercatat pindah ke titik." : "Bahan keluar gudang langsung ke titik. Pembagian & pengambilan dicatat tim divisi / Supervisor."} Tidak ada lagi konfirmasi terima di titik.</p>
       <Submit>{fixed ? "Lengkapi & kirim" : "Simpan & kirim"}</Submit>
     </div>
   );
@@ -237,7 +242,8 @@ export function BagiForm({ view, workers }: { view: ShipmentView; workers: { id:
 
 // ---------------- 3. LAPOR HASIL ----------------
 
-export function LaporForm({ view, pointId }: { view: ShipmentView; pointId: string }) {
+export function LaporForm({ view, pointId, workers = [] }: { view: ShipmentView; pointId: string; /** Hasil diisi saat penerimaan: semua pekerja aktif titik (tanpa pembagian) */ workers?: { id: string; name: string; pointId: string | null; taskIds: string[] }[] }) {
+  if (view.resultAtReceipt) return <LaporBebasForm view={view} pointId={pointId} workers={workers.filter((w) => w.pointId === pointId)} />;
   const groups = byWorker(view.cells, pointId);
   const [val, setVal] = useState<Record<string, string>>(() => Object.fromEntries(view.cells.filter((c) => c.pointId === pointId && c.reported).flatMap((c) => [[`g:${c.workerId}:${c.taskId}`, String(c.good)], [`r:${c.workerId}:${c.taskId}`, String(c.reject)]])));
   const anyReject = Object.entries(val).some(([k, v]) => k.startsWith("r:") && toInt(v) > 0);
@@ -267,6 +273,36 @@ export function LaporForm({ view, pointId }: { view: ShipmentView; pointId: stri
       </label>
       {anyReject && <p className="text-xs text-slate-500">Reject dihitung pekerja dan dicek koordinator. Reject tidak dibayar dan tidak memotong upah.</p>}
       <p className="text-xs text-slate-500">Angka diisi total sejak kiriman ini dibagi. Boleh lapor lagi besok dengan nomor kiriman yang sama.</p>
+      <Submit>Kirim laporan</Submit>
+    </div>
+  );
+}
+
+/** Lapor hasil tanpa pembagian (tugas "hasil diisi saat penerimaan", mis. Cat Plastik): setoran & reject per pekerja per jenis */
+function LaporBebasForm({ view, pointId, workers }: { view: ShipmentView; pointId: string; workers: { id: string; name: string; taskIds: string[] }[] }) {
+  const [val, setVal] = useState<Record<string, string>>(() => Object.fromEntries(view.cells.filter((c) => c.pointId === pointId && c.reported).flatMap((c) => [[`g:${c.workerId}:${c.taskId}`, String(c.good)], [`r:${c.workerId}:${c.taskId}`, String(c.reject)]])));
+  const total = (t: Task) => Object.entries(val).filter(([k]) => k.startsWith("g:") && k.endsWith(`:${t.id}`)).reduce((a, [, v]) => a + toInt(v), 0);
+  const anyReject = Object.entries(val).some(([k, v]) => k.startsWith("r:") && toInt(v) > 0);
+  return (
+    <div className="space-y-3">
+      <input type="hidden" name="shipmentId" value={view.id} /><input type="hidden" name="pointId" value={pointId} />
+      <p className="text-xs text-slate-500">Isi setoran <b>bagus</b> & reject tiap pekerja per jenis. Angka ini menjadi kroscek terhadap hitungan divisi penerima; upah mengikuti jumlah yang diterima divisi, dibagi menurut porsi laporan ini.</p>
+      {!workers.length && <p className="text-sm text-slate-500">Belum ada pekerja aktif di titik ini.</p>}
+      {workers.map((w) => {
+        const ok = (t: Task) => !w.taskIds.length || w.taskIds.includes(t.id);
+        const input = (p: "g" | "r", t: Task) => {
+          if (!ok(t)) return null;
+          const k = `${p}:${w.id}:${t.id}`;
+          return <NumIn name={k} label={`${p === "g" ? "Setoran" : "Reject"} ${w.name} ${t.short}`} value={val[k] ?? ""} onChange={(v) => setVal((x) => ({ ...x, [k]: v }))} />;
+        };
+        return <WorkerCard key={w.id} name={w.name} tasks={view.tasks} rows={[{ label: "Setoran", cells: view.tasks.map((t) => input("g", t)) }, { label: "Reject", cells: view.tasks.map((t) => input("r", t)) }]} />;
+      })}
+      <div className="rounded-xl bg-slate-50 p-3 text-sm">{view.tasks.map((t) => <div key={t.id} className="flex justify-between"><span>{t.short}</span><b className="tabular-nums">{f(total(t))} pcs</b></div>)}</div>
+      <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold">
+        <input type="checkbox" name="checked" className="h-5 w-5" /> Reject sudah dicek koordinator
+      </label>
+      {anyReject && <p className="text-xs text-slate-500">Reject tidak dibayar dan tidak memotong upah.</p>}
+      <p className="text-xs text-slate-500">Angka diisi total sejak kiriman ini. Boleh lapor lagi sebelum hasil diterima divisi.</p>
       <Submit>Kirim laporan</Submit>
     </div>
   );
@@ -334,6 +370,21 @@ export function TerimaForm({ pickup, tasks }: { pickup: PickupView; tasks: Task[
       ]} />
       {filled && <p className={`rounded-lg px-3 py-2 text-sm ${short ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-700"}`}>{short ? "Hitungan kurang dari setoran driver: upah pengambilan ini ditahan, driver & Supervisor diberi notifikasi." : "Cocok: barang masuk gudang, upah per pekerja mengikuti setoran driver."}</p>}
       <Submit>Simpan penerimaan</Submit>
+    </div>
+  );
+}
+
+/** Penerimaan hasil per jenis (tugas "hasil diisi saat penerimaan"): divisi menghitung total tiap jenis dari titik ini */
+export function TerimaJenisForm({ view, pointId }: { view: ShipmentView; pointId: string }) {
+  const [val, setVal] = useState<Record<string, string>>({});
+  const total = view.tasks.reduce((a, t) => a + toInt(val[t.id]), 0);
+  return (
+    <div className="space-y-3">
+      <input type="hidden" name="shipmentId" value={view.id} /><input type="hidden" name="pointId" value={pointId} />
+      <p className="text-xs text-slate-500">Hitung hasil yang <b>diterima</b> per jenis (0 bila tidak ada). Laporan koordinator dipakai sebagai kroscek; selisih dikirim ke koordinator, Supervisor & Owner. Upah pekerja mengikuti yang diterima.</p>
+      <WorkerCard name="Diterima divisi" tasks={view.tasks} rows={[{ label: "Diterima", cells: view.tasks.map((t) => <NumIn key={t.id} name={`c:${t.id}`} label={`Diterima ${t.short}`} value={val[t.id] ?? ""} onChange={(v) => setVal((x) => ({ ...x, [t.id]: v }))} />) }]} />
+      <p className="text-right text-sm">Total diterima <b>{f(total)} pcs</b></p>
+      <Submit confirm="Simpan penerimaan? Hasil masuk stok dan upah dihitung dari jumlah ini.">Simpan penerimaan</Submit>
     </div>
   );
 }

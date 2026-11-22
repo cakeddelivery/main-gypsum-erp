@@ -496,6 +496,9 @@ model PieceTask {
   workerRate      BigInt                   @default(0)
   coordinatorRate BigInt                   @default(0)
   driverRate      BigInt                   @default(0)
+  /// Hasil per jenis (mis. Cat Plastik merah/biru/kuning) baru diketahui setelah dikerjakan: saat kirim cukup bahan
+  /// (jumlah per jenis opsional), hasil diisi saat penerimaan divisi; laporan koordinator jadi kroscek
+  resultAtReceipt Boolean                  @default(false)
   /// Barang hasil kerja (mis. Giftbox Sudah Dicat) yang bertambah di stok titik
   outputItemId    String?
   outputItem      Item?                    @relation(fields: [outputItemId], references: [id])
@@ -2537,6 +2540,8 @@ model BoronganShipment {
   waitingSupport Boolean                @default(false)
   completedBy    String?
   completedAt    DateTime?
+  /// Kiriman bertugas "hasil diisi saat penerimaan" (disalin dari tugas saat kirim; kiriman lama tetap false)
+  resultAtReceipt Boolean               @default(false)
   /// Ditutup administratif (mis. cut-over stok 20 Nov): status SELESAI tanpa mutasi stok / upah / jurnal
   closedAt       DateTime?
   closedBy       String?
