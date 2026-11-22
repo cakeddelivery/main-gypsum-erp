@@ -14,5 +14,7 @@ class NameSequencer extends BaseSequencer {
 
 export default defineConfig({
   resolve: { alias: { "@": path.resolve(__dirname, "src"), "server-only": path.resolve(__dirname, "tests/server-only-stub.ts") } },
+  // Komponen React (.tsx) dirender di tes lewat runtime JSX otomatis (tsconfig memakai "preserve" untuk Next)
+  esbuild: { jsx: "automatic" },
   test: { environment: "node", fileParallelism: false, testTimeout: 30000, setupFiles: ["./tests/setup.ts"], sequence: { sequencer: NameSequencer } },
 });

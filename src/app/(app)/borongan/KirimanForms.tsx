@@ -19,24 +19,57 @@ function NumIn({ name, value, onChange, label }: { name: string; value: string; 
   return <input name={name} aria-label={label} inputMode="numeric" value={value} onChange={(e) => onChange(e.target.value.replace(/[^\d]/g, ""))} placeholder="0" className="input h-8 w-14 px-1 text-center text-sm font-semibold tabular-nums" />;
 }
 
+/**
+ * Grid rapi: judul kolom jenis (Cowok/Cewek/…) SEKALI di atas; tiap pekerja satu baris, isian sama lebar (kolom 60px, angka tengah,
+ * tabular-nums), nama di kolom kiri (maks. 2 baris, tooltip nama lengkap). Muat di HP 390px tanpa gulir samping (≤ 4 jenis);
+ * lebih banyak jenis menggulir di dalam kartu. Pekerja yang tidak menerima jenis kiriman ini diberi keterangan, bukan baris kosong.
+ */
+export function WorkerGrid({ tasks, rows, head = "Pekerja" }: { tasks: Task[]; head?: string; rows: { key: string; name: string; sub?: React.ReactNode; cells: (React.ReactNode | null)[] | null }[] }) {
+  return (
+    <div className="overflow-x-auto" data-grid="pekerja">
+      <table className="w-full table-fixed border-collapse text-sm tabular-nums">
+        <colgroup><col />{tasks.map((t) => <col key={t.id} style={{ width: 60 }} />)}</colgroup>
+        <thead>
+          <tr className="text-xs text-slate-500">
+            <th className="px-1 pb-1 text-left font-semibold">{head}</th>
+            {tasks.map((t) => <th key={t.id} className="px-0.5 pb-1 text-center font-semibold">{t.short}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.key} className="border-t border-slate-100">
+              <td className="px-1 py-1.5 align-middle">
+                <div className="line-clamp-2 break-words text-sm font-semibold leading-tight text-slate-800" title={r.name}>{r.name}</div>
+                {r.sub}
+              </td>
+              {r.cells ? r.cells.map((c, i) => <td key={tasks[i].id} className="px-0.5 py-1 text-center align-middle">{c ?? <span className="text-slate-300">—</span>}</td>) : <td colSpan={tasks.length} className="px-1 py-1.5 text-xs italic text-slate-500">tidak menerima tugas ini</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /** Satu tabel per pekerja */
 export function WorkerCard({ name, sub, tasks, rows, footer }: { name: string; sub?: React.ReactNode; tasks: Task[]; rows: { label: string; muted?: boolean; foot?: boolean; cells: (React.ReactNode | null)[] }[]; footer?: React.ReactNode }) {
   return (
     <div className="overflow-hidden rounded-xl border border-slate-200 bg-white">
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b border-slate-200 px-3 py-2 text-sm font-bold text-slate-900"><span className="break-words">{name}</span>{sub}</div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm tabular-nums">
+      <div className="overflow-x-auto pr-1.5" data-grid="pekerja">
+        <table className="w-full table-fixed text-sm tabular-nums">
+          <colgroup><col />{tasks.map((t) => <col key={t.id} style={{ width: 60 }} />)}</colgroup>
           <thead>
             <tr className="bg-slate-50 text-xs text-slate-500">
               <th className="sticky left-0 bg-slate-50 px-2 py-1.5 text-left font-semibold">Status</th>
-              {tasks.map((t) => <th key={t.id} className="px-1 py-1.5 text-center font-semibold">{t.short}</th>)}
+              {tasks.map((t) => <th key={t.id} className="px-0.5 py-1.5 text-center font-semibold">{t.short}</th>)}
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.label} className={`border-t border-slate-100 ${r.foot ? "bg-slate-50 font-bold" : ""}`}>
-                <td className={`sticky left-0 whitespace-nowrap px-2 py-1.5 text-left font-semibold ${r.foot ? "bg-slate-50" : "bg-white"} ${r.muted ? "text-slate-500" : "text-slate-800"}`}>{r.label}</td>
-                {r.cells.map((c, i) => <td key={tasks[i].id} className={`px-1 py-1 text-center ${r.muted ? "text-slate-500" : ""}`}>{c ?? <span className="text-slate-400">—</span>}</td>)}
+                <td className={`sticky left-0 break-words px-2 py-1.5 text-left font-semibold leading-tight ${r.foot ? "bg-slate-50" : "bg-white"} ${r.muted ? "text-slate-500" : "text-slate-800"}`}>{r.label}</td>
+                {r.cells.map((c, i) => <td key={tasks[i].id} className={`px-0.5 py-1 text-center ${r.muted ? "text-slate-500" : ""}`}>{c ?? <span className="text-slate-400">—</span>}</td>)}
               </tr>
             ))}
           </tbody>
@@ -217,31 +250,38 @@ export function BagiForm({ view, workers }: { view: ShipmentView; workers: { id:
           <div key={p.id} className="rounded-xl border border-slate-200 p-3">
             <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">{p.name}</p>
             {!list.length ? <p className="text-sm text-slate-500">Belum ada pekerja aktif di titik ini.</p> : (
-              <div className="divide-y divide-slate-100">
-                {list.map((w) => {
-                  const ts = view.tasks.filter((t) => !w.taskIds.length || w.taskIds.includes(t.id));
-                  return (
-                    <div key={w.id} className="py-2">
-                      <div className="mb-1 break-words text-sm font-semibold text-slate-800">{w.name}</div>
-                      <div className="flex flex-wrap gap-2">
-                        {ts.map((t) => {
-                          const k = `a:${p.id}:${w.id}:${t.id}`;
-                          return <label key={t.id} className="flex items-center gap-1 text-xs text-slate-600">{t.short}<NumIn name={k} label={`${w.name} ${t.short}`} value={val[k] ?? ""} onChange={(v) => setVal((x) => ({ ...x, [k]: v }))} /></label>;
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              <WorkerGrid tasks={view.tasks} rows={list.map((w) => {
+                // Pekerja yang jenis pekerjaannya diatur (tab Orang) hanya menerima jenis itu; tanpa satu pun yang cocok → keterangan
+                const ok = (t: Task) => !w.taskIds.length || w.taskIds.includes(t.id);
+                if (!view.tasks.some(ok)) return { key: w.id, name: w.name, cells: null };
+                return { key: w.id, name: w.name, cells: view.tasks.map((t) => {
+                  if (!ok(t)) return null;
+                  const k = `a:${p.id}:${w.id}:${t.id}`;
+                  return <NumIn name={k} label={`${w.name} ${t.short}`} value={val[k] ?? ""} onChange={(v) => setVal((x) => ({ ...x, [k]: v }))} />;
+                }) };
+              })} />
             )}
           </div>
         );
       })}
-      <div className="rounded-xl bg-slate-50 p-3 text-sm">
-        {view.tasks.map((t) => {
-          const d = sum(t.id);
-          return <div key={t.id} className="flex justify-between gap-2"><span>{t.short}</span><span className="tabular-nums">dibagi <b>{f(d)}</b> dari {f(t.qty)} · <span className={d > t.qty ? "font-bold text-rose-700" : d < t.qty ? "font-bold text-amber-700" : "text-emerald-700"}>sisa {f(t.qty - d)}</span></span></div>;
-        })}
+      <div className="overflow-hidden rounded-xl bg-slate-50 p-3" data-grid="ringkasan">
+        <table className="w-full table-fixed text-sm tabular-nums">
+          <colgroup><col /><col style={{ width: 64 }} /><col style={{ width: 64 }} /><col style={{ width: 64 }} /></colgroup>
+          <thead><tr className="text-xs text-slate-500"><th className="text-left font-semibold">Jenis</th><th className="text-right font-semibold">Dibagi</th><th className="text-right font-semibold">Kiriman</th><th className="text-right font-semibold">Sisa</th></tr></thead>
+          <tbody>
+            {view.tasks.map((t) => {
+              const d = sum(t.id);
+              return (
+                <tr key={t.id} className="border-t border-slate-200">
+                  <td className="py-0.5">{t.short}</td>
+                  <td className="py-0.5 text-right font-bold">{f(d)}</td>
+                  <td className="py-0.5 text-right">{f(t.qty)}</td>
+                  <td className={`py-0.5 text-right font-bold ${d > t.qty ? "text-rose-700" : d < t.qty ? "text-amber-700" : "text-emerald-700"}`}>{f(t.qty - d)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
       {over && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">Pembagian melebihi jumlah kiriman.</p>}
       <Submit confirm={left > 0 ? `Masih ada ${f(left)} pcs yang belum dibagi. Tetap simpan?` : undefined}>Simpan pembagian</Submit>
@@ -299,6 +339,7 @@ function LaporBebasForm({ view, pointId, workers }: { view: ShipmentView; pointI
       {!workers.length && <p className="text-sm text-slate-500">Belum ada pekerja aktif di titik ini.</p>}
       {workers.map((w) => {
         const ok = (t: Task) => !w.taskIds.length || w.taskIds.includes(t.id);
+        if (!view.tasks.some(ok)) return <div key={w.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm"><b className="break-words" title={w.name}>{w.name}</b> <span className="text-xs italic text-slate-500">tidak menerima tugas ini</span></div>;
         const input = (p: "g" | "r", t: Task) => {
           if (!ok(t)) return null;
           const k = `${p}:${w.id}:${t.id}`;
