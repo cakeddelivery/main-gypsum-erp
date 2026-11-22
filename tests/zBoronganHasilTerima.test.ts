@@ -92,6 +92,16 @@ describe("Cat Plastik Beringin: kirim bahan tanpa jumlah → lapor Mita → teri
     await expect(receiveByColor(shipmentId, ctx.point.id, [{ taskId: ctx.merah, qty: 1 }, { taskId: ctx.biru, qty: 0 }], actor, all)).rejects.toThrow(/sudah diterima/);
   });
 
+  it("tanpa jumlah pcs: bahan resep diisi manual (diizinkan), jumlah per jenis yang terkirim diabaikan (0), bahan ke titik", async () => {
+    const mentah = await saveItemRecord({ name: `Patung mentah ${tag}`, type: "BAHAN_BAKU", category: "Bahan Pendukung", unit: "pcs", hppFactor: 1, minStock: 0, price: 100, openingQty: 20 }, actor);
+    await prisma.pieceTaskInput.create({ data: { taskId: ctx.biru, itemId: mentah.id, qty: 1 } });
+    const s = await createShipment({ date: "2026-11-22", mode: "LANGSUNG", pointIds: [ctx.point.id], tasks: [{ taskId: ctx.merah, qty: 50 }, { taskId: ctx.biru, qty: 0 }], support: [{ itemId: mentah.id, qty: 7 }] }, actor, all);
+    const t = await prisma.boronganShipmentTask.findMany({ where: { shipmentId: s.id } });
+    expect(t.every((x) => x.qty === 0)).toBe(true);
+    expect(await at(mentah.id, ctx.point.locationId)).toBe(7);
+    await prisma.boronganShipment.update({ where: { id: s.id }, data: { cancelledAt: new Date(), cancelledBy: "uji" } });
+  });
+
   it("penerimaan ditolak bila koordinator belum lapor jenis yang diterima", async () => {
     const s = await createShipment({ date: "2026-11-22", mode: "LANGSUNG", pointIds: [ctx.point.id], tasks: [{ taskId: ctx.merah, qty: 0 }, { taskId: ctx.biru, qty: 0 }], support: [{ itemId: ctx.cat, qty: 1 }] }, actor, all);
     await expect(receiveByColor(s.id, ctx.point.id, [{ taskId: ctx.merah, qty: 5 }, { taskId: ctx.biru, qty: 0 }], actor, all)).rejects.toThrow(/belum melaporkan/);

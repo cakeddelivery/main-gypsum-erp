@@ -353,9 +353,11 @@ async function loadTasks(tx: Tx, tasksIn: { taskId: string }[]) {
  * Titik, driver, bahan resep + bahan pendukung (kit tugas), lalu stok keluar gudang → mobil driver / titik.
  * Dipakai kirim langsung (Cat Plastik, Cat Giftbox) dan saat kiriman Assembling dilengkapi.
  */
-async function dispatchTx(tx: Tx, number: string, day: string, input: Omit<ShipmentInput, "tasks" | "date">, tasks: TaskWithInputs[], tasksIn: { taskId: string; qty: number }[], actor: Actor) {
+async function dispatchTx(tx: Tx, number: string, day: string, input: Omit<ShipmentInput, "tasks" | "date">, tasks: TaskWithInputs[], tasksIn: { taskId: string; qty: number }[], actor: Actor, opts: { resultAtReceipt?: boolean } = {}) {
   const pointIds = [...new Set(input.pointIds.filter(Boolean))];
   if (!pointIds.length) throw withField(new BoronganError("Pilih titik tujuan"), "pointId");
+  // Hasil diisi saat penerimaan: tanpa pembagian, jadi bahan langsung tercatat di titik (satu titik per kiriman)
+  if (opts.resultAtReceipt && pointIds.length !== 1) throw new BoronganError("Kiriman bahan (hasil diisi saat penerimaan) hanya ke satu titik");
   if (input.mode === "LANGSUNG" && pointIds.length !== 1) throw new BoronganError("Kiriman yang diantar langsung hanya ke satu titik");
   const points = await tx.boronganPoint.findMany({ where: { id: { in: pointIds }, active: true } });
   if (points.length !== pointIds.length) throw new BoronganError("Titik tujuan tidak aktif");
@@ -376,15 +378,17 @@ async function dispatchTx(tx: Tx, number: string, day: string, input: Omit<Shipm
     qty.set(itemId, { qty: Math.round((cur.qty + q) * 1000) / 1000, support: cur.support && support });
   };
   for (const t of tasks) for (const inp of t.inputs) add(inp.itemId, bomStockQty(inp.qty, inp.item) * tasksIn.find((x) => x.taskId === t.id)!.qty, false);
-  // Bahan pendukung hanya dari kit tugas yang dikirim (mis. Assembling tidak membawa cat Cat Giftbox)
+  // Bahan pendukung hanya dari kit tugas yang dikirim (mis. Assembling tidak membawa cat Cat Giftbox).
+  // Hasil diisi saat penerimaan: bahan resep (tanpa jumlah pcs) juga diisi manual
   const kit = new Set(Object.entries(await taskKits(tx)).filter(([id]) => tasks.some((t) => t.id === id)).flatMap(([, ids]) => ids));
+  if (opts.resultAtReceipt) for (const t of tasks) for (const inp of t.inputs) kit.add(inp.itemId);
   for (const s of input.support ?? []) {
     if (s.qty < 0) throw new BoronganError("Jumlah bahan tidak boleh minus");
     if (s.qty > 0 && !kit.has(s.itemId)) throw new BoronganError("Ada bahan pendukung yang bukan kit jenis pekerjaan ini. Muat ulang halaman.");
     add(s.itemId, s.qty, true);
   }
   const items = await tx.item.findMany({ where: { id: { in: [...qty.keys()] } } });
-  const to = input.mode === "DRIVER" ? await driverLocation(tx) : points[0].locationId;
+  const to = input.mode === "DRIVER" && !opts.resultAtReceipt ? await driverLocation(tx) : points[0].locationId;
   const rows: Prisma.BoronganShipmentLineCreateWithoutShipmentInput[] = [];
   for (const [itemId, l] of qty) {
     const item = items.find((i) => i.id === itemId);
@@ -413,15 +417,15 @@ export async function createShipment(input: ShipmentInput, actor: Actor, scope: 
   // Tugas "hasil diisi saat penerimaan" (mis. Cat Plastik): jumlah per jenis = target, boleh kosong; saat kirim cukup bahan
   const asked = [...new Map(input.tasks.map((t) => [t.taskId, t])).values()];
   const flagged = asked.length > 0 && (await prisma.pieceTask.count({ where: { id: { in: asked.map((t) => t.taskId) }, resultAtReceipt: true } })) === asked.length;
-  if (flagged && asked.some((t) => !Number.isInteger(t.qty) || t.qty < 0)) throw new BoronganError("Jumlah per jenis harus bilangan bulat");
-  const tasksIn = flagged ? asked.map((t) => ({ taskId: t.taskId, qty: Math.max(0, t.qty) })) : cleanTasks(input.tasks);
+  // Tanpa jumlah pcs (form kirim hanya bahan): baris jenis disimpan dengan qty 0
+  const tasksIn = flagged ? asked.map((t) => ({ taskId: t.taskId, qty: 0 })) : cleanTasks(input.tasks);
   const s = await prisma.$transaction(async (tx) => {
     const tasks = await loadTasks(tx, tasksIn);
     const group = taskGroupName(tasks[0].name);
     if (tasks.some((t) => isAssemblingName(t.name))) throw new BoronganError("Kiriman Assembling diawali isian patung kering oleh Cetak/Oven, lalu dilengkapi Assembling/Supervisor");
     if (!canShipGroup(scope, group)) throw new BoronganError(/^cat plastik/i.test(group) ? "Kiriman Cat Plastik dicatat tim Assembling / Supervisor" : /^cat giftbox/i.test(group) ? "Kiriman Cat Giftbox dicatat tim Giftbox / Supervisor" : "Kiriman bahan dicatat Supervisor");
     const number = await dailyNumber(tx, "KRM", input.date);
-    const d = await dispatchTx(tx, number, input.date, input, tasks, tasksIn, actor);
+    const d = await dispatchTx(tx, number, input.date, input, tasks, tasksIn, actor, { resultAtReceipt: flagged });
     if (flagged && !d.rows.length) throw withField(new BoronganError("Isi bahan yang dikirim (jumlah hasil per jenis boleh kosong)"), "s");
     const s = await tx.boronganShipment.create({
       data: { number, date: dateOnly(input.date), mode: input.mode, pointIds: d.pointIds, driverId: d.driverId, note: input.note ?? null, createdBy: actor.name, createdById: actor.id, resultAtReceipt: flagged, tasks: { create: tasksIn.map((t) => ({ taskId: t.taskId, qty: t.qty })) }, lines: { create: d.rows } },

@@ -55,13 +55,25 @@ async function kirimGroups(): Promise<KirimGroupOpt[]> {
     const ids = ts.map((t) => t.id);
     const pts = points.filter((p) => !cfg[p.id]?.tasks.length || cfg[p.id].tasks.some((id) => ids.includes(id)));
     if (!pts.length) continue;
+    // Hasil diisi saat penerimaan (mis. Cat Plastik): tanpa jumlah pcs, jadi bahan resep juga diisi manual sebagai bahan kiriman
+    const free = ts.every((t) => t.resultAtReceipt);
     const bomIds = new Set(ts.flatMap((t) => t.inputs.map((i) => i.itemId)));
-    const support = [...new Set(ts.flatMap((t) => kits[t.id] ?? []))].filter((id) => !bomIds.has(id)).map((id) => kitItems.find((i) => i.id === id)).filter((i): i is (typeof kitItems)[number] => !!i);
+    const bomItems = free ? ts.flatMap((t) => t.inputs.map((i) => ({ id: i.item.id, name: i.item.name, unit: i.item.unit }))) : [];
+    const support = [...new Map([...bomItems, ...[...new Set(ts.flatMap((t) => kits[t.id] ?? []))].filter((id) => free || !bomIds.has(id)).map((id) => kitItems.find((i) => i.id === id)).filter((i): i is (typeof kitItems)[number] => !!i)].map((i) => [i.id, i])).values()];
+    // Saran jumlah bahan: kiriman terakhir ke titik yang sama untuk jenis pekerjaan ini
+    const suggest: Record<string, { number: string; qty: Record<string, number> }> = {};
+    if (free) {
+      for (const p of pts) {
+        const last = await prisma.boronganShipment.findFirst({ where: { cancelledAt: null, pointIds: { has: p.id }, tasks: { some: { taskId: { in: ids } } } }, orderBy: [{ date: "desc" }, { createdAt: "desc" }], select: { number: true, lines: { select: { itemId: true, qty: true } } } });
+        if (last) suggest[p.id] = { number: last.number, qty: Object.fromEntries(last.lines.map((l) => [l.itemId, Number(l.qty)])) };
+      }
+    }
     out.push({
       key: name.toLowerCase().replace(/[^a-z0-9]+/g, "-"), name,
       tasks: byColumn(ts, (t) => t.name).map((t) => ({ id: t.id, short: shortTaskName(t.name), resultAtReceipt: t.resultAtReceipt, bom: t.inputs.map((i) => ({ itemId: i.itemId, name: i.item.name, unit: i.item.unit, per: bomStockQty(i.qty, i.item) })) })),
       points: pts.map((p) => ({ id: p.id, name: p.name, viaDriver: p.viaDriver })),
       support: support.map((i) => ({ id: i.id, name: i.name, unit: i.unit, stock: Math.round((stock.get(i.id) ?? 0) * 1000) / 1000 })),
+      ...(free ? { suggest } : {}),
     });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name, "id"));

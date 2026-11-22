@@ -66,6 +66,8 @@ export type KirimGroupOpt = {
   tasks: { id: string; short: string; bom: { itemId: string; name: string; unit: string; per: number }[]; /** Hasil diisi saat penerimaan: jumlah per jenis opsional */ resultAtReceipt?: boolean }[];
   points: { id: string; name: string; viaDriver: boolean }[];
   support: { id: string; name: string; unit: string; stock: number }[];
+  /** Hasil diisi saat penerimaan: saran jumlah bahan per titik dari kiriman terakhir */
+  suggest?: Record<string, { number: string; qty: Record<string, number> }>;
 };
 
 /**
@@ -83,6 +85,8 @@ export function KirimForm({ groups, drivers, today, fixed }: { groups: KirimGrou
   // Cara kirim bawaan mengikuti setelan titik: titik "langsung" (tanpa driver, mis. Beringin) → Diantar langsung
   const direct = chosen.length ? chosen.length === 1 && !chosen[0].viaDriver : !!g?.points.length && g.points.every((p) => !p.viaDriver);
   const optional = !fixed && !!g?.tasks.length && g.tasks.every((t) => t.resultAtReceipt);
+  const sugKey = chosen.length === 1 ? chosen[0].id : "";
+  const sug = optional && sugKey ? g?.suggest?.[sugKey] : undefined;
   const [modeRaw, setMode] = useState<"DRIVER" | "LANGSUNG" | null>(null);
   const mode = modeRaw ?? (direct ? "LANGSUNG" : "DRIVER");
   const total = g?.tasks.reduce((a, t) => a + toInt(qty[t.id]), 0) ?? 0;
@@ -131,9 +135,12 @@ export function KirimForm({ groups, drivers, today, fixed }: { groups: KirimGrou
       {mode === "DRIVER" && drivers.length > 0 && (
         <label className="block"><span className="label">Driver</span><select name="driverId" className="input" defaultValue={drivers[0].id}>{drivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
       )}
+      {optional ? (
+        // Hasil per jenis baru diketahui setelah dikerjakan: tanpa jumlah pcs; jenis pekerjaan tetap dicatat (qty 0)
+        <>{g!.tasks.map((t) => <input key={t.id} type="hidden" name={`t:${t.id}`} value="0" />)}</>
+      ) : (
       <div className="rounded-xl border border-slate-200 p-3">
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{fixed ? "Patung kering dari Cetak/Oven (pcs)" : optional ? "Target per jenis (opsional, boleh kosong)" : "Jumlah per jenis (pcs)"}</p>
-        {optional && <p className="mb-2 text-xs text-slate-500">Hasil per jenis baru diketahui setelah dikerjakan: diisi saat <b>penerimaan</b> oleh divisi penerima. Saat kirim cukup isi bahan di bawah.</p>}
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{fixed ? "Patung kering dari Cetak/Oven (pcs)" : "Jumlah per jenis (pcs)"}</p>
         <div className="grid grid-cols-2 gap-2 keep-cols sm:grid-cols-4">
           {g?.tasks.filter((t) => !fixed || fixed.qty[t.id]).map((t) => fixed ? (
             <div key={t.id} className="rounded-lg bg-slate-50 px-3 py-2"><span className="block text-xs font-medium text-slate-600">{t.short}</span><b className="tabular-nums">{f(fixed.qty[t.id])}</b></div>
@@ -146,14 +153,16 @@ export function KirimForm({ groups, drivers, today, fixed }: { groups: KirimGrou
         <p className="mt-2 text-right text-sm">Total <b>{f(total)} pcs</b></p>
         {bom.length > 0 && <p className="text-xs text-slate-500">Bahan resep ikut keluar otomatis: {bom.map((b) => `${b.name} ${f(Math.round(b.qty * 1000) / 1000)} ${b.unit}`).join(" · ")}</p>}
       </div>
+      )}
       {!!g?.support.length && (
         <div className="rounded-xl border border-slate-200 p-3">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Bahan pendukung</p>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{optional ? "Bahan yang dikirim" : "Bahan pendukung"}</p>
+          {optional && <p className="mb-2 text-xs text-slate-500">Hasil merah/biru/kuning diisi saat <b>penerimaan</b>. {sug ? <>Jumlah terisi saran dari kiriman terakhir <b>{sug.number}</b> — ubah bila perlu.</> : "Isi jumlah bahan yang dikirim."}</p>}
           <div className="space-y-2">
             {g.support.map((i) => (
-              <label key={i.id} className="flex items-center gap-2">
+              <label key={`${i.id}:${sugKey}`} className="flex items-center gap-2">
                 <span className="min-w-0 flex-1 break-words text-sm">{i.name} <span className="text-xs text-slate-500">· stok {f(i.stock)} {i.unit}</span></span>
-                <input name={`s:${i.id}`} inputMode="decimal" placeholder="0" className="input w-24 text-right tabular-nums" />
+                <input name={`s:${i.id}`} inputMode="decimal" placeholder="0" defaultValue={sug?.qty[i.id] != null ? String(sug.qty[i.id]).replace(".", ",") : undefined} className="input w-24 text-right tabular-nums" />
               </label>
             ))}
           </div>
