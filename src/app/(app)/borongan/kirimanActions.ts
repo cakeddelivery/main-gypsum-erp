@@ -143,9 +143,10 @@ export const terimaHasilJenis = action(
     const empty = counts.find((c) => c.qty < 0);
     if (empty) throw new FieldError(`c:${empty.taskId}`, "Isi jumlah diterima jenis ini (0 bila tidak ada)");
     const scope = await boronganScope(prisma, user);
-    const r = await receiveByColor(str(fd, "shipmentId"), str(fd, "pointId"), counts, user, scope);
+    const r = await receiveByColor(str(fd, "shipmentId"), str(fd, "pointId"), counts, user, scope, { reason: optStr(fd, "reason") ?? "" });
     await backupAudit(scope, user, "terima hasil per jenis", str(fd, "shipmentId"), "divisi penerima");
-    return r.mismatch ? `${r.number} diterima. ${r.note} — selisih dikirim ke koordinator & Supervisor.` : `${r.number} diterima, cocok dengan laporan koordinator`;
+    if (r.waiting === "laporan") return `${r.number} diterima, hasil masuk stok. ${r.note}`;
+    return r.mismatch ? `${r.number} tersimpan. ${r.note} — selisih dikirim ke koordinator & Supervisor.` : `${r.number} tersimpan, cocok dengan laporan koordinator`;
   },
   [...PATHS, "/gaji/borongan"],
 );

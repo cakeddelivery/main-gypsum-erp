@@ -109,7 +109,8 @@ export async function KirimanTab({ scope, userId, filter }: { scope: Scope; user
   const toReceive = all.flatMap((s) => s.pickups.filter((p) => p.status === "DIBAWA" && canReceive(scope, s.tasks.filter((t) => p.lines.some((l) => l.taskId === t.id)))).map((p) => ({ s, p })));
   // Hasil diisi saat penerimaan (mis. Cat Plastik): titik yang sudah dilapor koordinator tapi belum diterima divisi
   const notReceived = (s: ShipmentView, pointId: string) => (s.crosscheck ?? []).filter((c) => c.pointId === pointId).every((c) => c.received == null);
-  const toCount = all.filter((s) => s.resultAtReceipt && canReceive(scope, s.tasks)).flatMap((s) => s.points.filter((p) => notReceived(s, p.id) && s.reports.some((r) => r.pointId === p.id)).map((p) => ({ s, p })));
+  // Urutan bebas: penerimaan boleh lebih dulu dari laporan koordinator
+  const toCount = all.filter((s) => s.resultAtReceipt && canReceive(scope, s.tasks)).flatMap((s) => s.points.filter((p) => notReceived(s, p.id)).map((p) => ({ s, p })));
   // Koreksi / lepas tahanan: Owner (Supervisor hanya memantau)
   const held = scope.owner ? all.flatMap((s) => s.pickups.filter((p) => p.status === "KURANG").map((p) => ({ s, p }))) : [];
   const running = all.filter((s) => !s.waitingSupport && (s.state !== "SELESAI" || s.pickups.some((p) => p.status === "DIBAWA")));
@@ -180,7 +181,7 @@ export async function KirimanTab({ scope, userId, filter }: { scope: Scope; user
             <div key={`${s.id}:${p.id}`} className="card flex flex-wrap items-center gap-2 p-3">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2"><Chip>{s.number}</Chip><span className="text-xs text-slate-500">{p.name}</span></div>
-                <div className="mt-1 text-sm text-slate-700">{s.group} · laporan koordinator sudah masuk · {fmtDay(dateOnly(s.date))}</div>
+                <div className="mt-1 text-sm text-slate-700">{s.group} · {s.reports.some((r) => r.pointId === p.id) ? "laporan koordinator sudah masuk" : "laporan koordinator belum masuk (boleh diterima dulu)"} · {fmtDay(dateOnly(s.date))}</div>
               </div>
               <Modal trigger={`Terima hasil${bk(scope, "divisi penerima").label}`} triggerClass="btn-primary btn-sm" title="Penerimaan hasil per jenis" subtitle={`${s.number} · ${p.name}`} wide>
                 <ModalForm action={terimaHasilJenis} className="space-y-3" confirm={bk(scope, "divisi penerima").confirm}>{bk(scope, "divisi penerima").note}<TerimaJenisForm view={s} pointId={p.id} /></ModalForm>
@@ -237,8 +238,9 @@ export async function KirimanTab({ scope, userId, filter }: { scope: Scope; user
           const bagi = !free && canDistribute(scope, { mode: s.mode, taskIds: ids }) && (!hasAmb || fullAccess(scope));
           const ambil = !free && canPickup(scope, { mode: s.mode, taskIds: ids }) && s.cells.some((c) => !c.done);
           const bWho = s.mode === "DRIVER" ? "Driver" : "tim divisi";
-          const lapor = s.points.filter((p) => (free ? notReceived(s, p.id) : s.cells.some((c) => c.pointId === p.id)) && canReport(scope, { taskIds: ids }, p.id, p.coordinatorOnly ?? p.coordinator));
-          const terimaJenis = free && canReceive(scope, s.tasks) ? s.points.filter((p) => notReceived(s, p.id) && s.reports.some((r) => r.pointId === p.id)) : [];
+          // Hasil diisi saat penerimaan: laporan & penerimaan terkunci setelah disimpan; hanya Owner/Supervisor yang boleh mengubah (alasan wajib)
+          const lapor = s.points.filter((p) => (free ? !s.reports.some((r) => r.pointId === p.id) || fullAccess(scope) : s.cells.some((c) => c.pointId === p.id)) && canReport(scope, { taskIds: ids }, p.id, p.coordinatorOnly ?? p.coordinator));
+          const terimaJenis = free && canReceive(scope, s.tasks) ? s.points.filter((p) => notReceived(s, p.id) || fullAccess(scope)) : [];
           const activePickups = s.pickups.filter((p) => p.status !== "DIBATALKAN");
           const allotted = s.totals.allotted;
           return (
@@ -264,7 +266,8 @@ export async function KirimanTab({ scope, userId, filter }: { scope: Scope; user
                       })}
                     </tbody>
                   </table>
-                  <p className="px-2 py-1 text-xs text-slate-500">Hasil diisi saat penerimaan{s.totals.sent ? ` · target ${f(s.totals.sent)} pcs` : ""} · upah mengikuti yang diterima divisi.</p>
+                  <p className="px-2 py-1 text-xs text-slate-500">Hasil diisi saat penerimaan · upah mengikuti yang diterima divisi, dihitung setelah laporan koordinator <b>dan</b> penerimaan sama-sama ada · setelah disimpan terkunci (ubah: Owner/Supervisor dengan alasan).</p>
+                  {s.waiting && <p className="mx-2 mb-2 rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800">{s.waiting === "laporan" ? "Menunggu laporan koordinator — upah & klaim belum bisa" : "Menunggu penerimaan divisi — upah & klaim belum bisa"}</p>}
                 </div>
               ) : (
               <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 text-sm keep-cols sm:grid-cols-4">
@@ -303,13 +306,13 @@ export async function KirimanTab({ scope, userId, filter }: { scope: Scope; user
                   </Modal>
                 )}
                 {lapor.map((p) => (
-                  <Modal key={p.id} trigger={`Lapor hasil${s.points.length > 1 ? ` ${p.name}` : ""}${bk(scope, "Koordinator").label}`} triggerClass="btn-secondary btn-sm" title={`Lapor hasil · ${p.name}`} subtitle={s.number} wide>
-                    <ModalForm action={laporHasil} className="space-y-3" confirm={bk(scope, "Koordinator").confirm}>{bk(scope, "Koordinator").note}{scope.backup && <label className="block"><span className="label">Alasan koreksi (wajib bila sudah dihitung divisi)</span><input name="reason" className="input" /></label>}<LaporForm view={s} pointId={p.id} workers={workers} /></ModalForm>
+                  <Modal key={p.id} trigger={`${free && s.reports.some((r) => r.pointId === p.id) ? "Ubah laporan" : "Lapor hasil"}${s.points.length > 1 ? ` ${p.name}` : ""}${bk(scope, "Koordinator").label}`} triggerClass="btn-secondary btn-sm" title={`Lapor hasil · ${p.name}`} subtitle={s.number} wide>
+                    <ModalForm action={laporHasil} className="space-y-3" confirm={bk(scope, "Koordinator").confirm}>{bk(scope, "Koordinator").note}{scope.backup && <label className="block"><span className="label">{free && s.reports.some((r) => r.pointId === p.id) ? "Alasan perubahan (wajib, laporan sudah terkunci)" : "Alasan koreksi (wajib bila sudah dihitung divisi)"}</span><input name="reason" className="input" required={free && s.reports.some((r) => r.pointId === p.id)} /></label>}<LaporForm view={s} pointId={p.id} workers={workers} /></ModalForm>
                   </Modal>
                 ))}
                 {terimaJenis.map((p) => (
-                  <Modal key={`t${p.id}`} trigger={`Terima hasil${s.points.length > 1 ? ` ${p.name}` : ""}${bk(scope, "divisi penerima").label}`} triggerClass="btn-primary btn-sm" title={`Penerimaan hasil per jenis · ${p.name}`} subtitle={s.number} wide>
-                    <ModalForm action={terimaHasilJenis} className="space-y-3" confirm={bk(scope, "divisi penerima").confirm}>{bk(scope, "divisi penerima").note}<TerimaJenisForm view={s} pointId={p.id} /></ModalForm>
+                  <Modal key={`t${p.id}`} trigger={`${notReceived(s, p.id) ? "Terima hasil" : "Ubah penerimaan"}${s.points.length > 1 ? ` ${p.name}` : ""}${bk(scope, "divisi penerima").label}`} triggerClass={notReceived(s, p.id) ? "btn-primary btn-sm" : "btn-secondary btn-sm"} title={`Penerimaan hasil per jenis · ${p.name}`} subtitle={s.number} wide>
+                    <ModalForm action={terimaHasilJenis} className="space-y-3" confirm={bk(scope, "divisi penerima").confirm}>{bk(scope, "divisi penerima").note}<TerimaJenisForm view={s} pointId={p.id} edit={!notReceived(s, p.id)} /></ModalForm>
                   </Modal>
                 ))}
                 {ambil && (

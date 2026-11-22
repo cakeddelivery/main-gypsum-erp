@@ -384,16 +384,17 @@ export function TerimaForm({ pickup, tasks }: { pickup: PickupView; tasks: Task[
 }
 
 /** Penerimaan hasil per jenis (tugas "hasil diisi saat penerimaan"): divisi menghitung total tiap jenis dari titik ini */
-export function TerimaJenisForm({ view, pointId }: { view: ShipmentView; pointId: string }) {
-  const [val, setVal] = useState<Record<string, string>>({});
+export function TerimaJenisForm({ view, pointId, edit = false }: { view: ShipmentView; pointId: string; /** Sudah pernah disimpan (terkunci): hanya Owner/Supervisor, alasan wajib */ edit?: boolean }) {
+  const [val, setVal] = useState<Record<string, string>>(() => (edit ? Object.fromEntries((view.crosscheck ?? []).filter((c) => c.pointId === pointId && c.received != null).map((c) => [c.taskId, String(c.received)])) : {}));
   const total = view.tasks.reduce((a, t) => a + toInt(val[t.id]), 0);
   return (
     <div className="space-y-3">
       <input type="hidden" name="shipmentId" value={view.id} /><input type="hidden" name="pointId" value={pointId} />
-      <p className="text-xs text-slate-500">Hitung hasil yang <b>diterima</b> per jenis (0 bila tidak ada). Laporan koordinator dipakai sebagai kroscek; selisih dikirim ke koordinator, Supervisor & Owner. Upah pekerja mengikuti yang diterima.</p>
+      <p className="text-xs text-slate-500">Hitung hasil yang <b>diterima</b> per jenis (0 bila tidak ada). Boleh diisi sebelum koordinator melapor; upah dihitung setelah keduanya ada. Laporan koordinator dipakai sebagai kroscek; selisih dikirim ke koordinator, Supervisor & Owner. Upah pekerja mengikuti yang diterima.</p>
+      {edit && <label className="block"><span className="label">Alasan perubahan (wajib, penerimaan sudah terkunci)</span><input name="reason" className="input" required minLength={3} /></label>}
       <WorkerCard name="Diterima divisi" tasks={view.tasks} rows={[{ label: "Diterima", cells: view.tasks.map((t) => <NumIn key={t.id} name={`c:${t.id}`} label={`Diterima ${t.short}`} value={val[t.id] ?? ""} onChange={(v) => setVal((x) => ({ ...x, [t.id]: v }))} />) }]} />
       <p className="text-right text-sm">Total diterima <b>{f(total)} pcs</b></p>
-      <Submit confirm="Simpan penerimaan? Hasil masuk stok dan upah dihitung dari jumlah ini.">Simpan penerimaan</Submit>
+      <Submit confirm={edit ? "Ubah penerimaan? Kroscek & upah dihitung ulang; perubahan tercatat di audit." : "Simpan penerimaan? Setelah disimpan terkunci (ubah hanya Owner/Supervisor dengan alasan)."}>{edit ? "Simpan perubahan" : "Simpan penerimaan"}</Submit>
     </div>
   );
 }
