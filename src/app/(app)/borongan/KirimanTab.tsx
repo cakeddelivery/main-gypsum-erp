@@ -13,8 +13,8 @@ import { Badge, Empty } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
-import { AmbilForm, BagiForm, KeringForm, KirimForm, KoreksiForm, LaporForm, TerimaForm, TerimaJenisForm, type KirimGroupOpt } from "./KirimanForms";
-import { ambilSetoran, batalAmbil, batalKiriman, isiPatungKering, kirimBahan, laporHasil, lengkapiKiriman, simpanPembagian, terimaHasilJenis, terimaSetoran, tindakTahanan } from "./kirimanActions";
+import { AmbilForm, BagiForm, KeringForm, KirimForm, KoreksiForm, LaporForm, TerimaForm, TerimaJenisForm, UbahJumlahForm, type KirimGroupOpt } from "./KirimanForms";
+import { ambilSetoran, batalAmbil, batalKiriman, isiPatungKering, kirimBahan, laporHasil, lengkapiKiriman, simpanPembagian, terimaHasilJenis, terimaSetoran, tindakTahanan, ubahJumlahKiriman } from "./kirimanActions";
 
 const f = (n: number) => n.toLocaleString("id-ID");
 const Chip = ({ children }: { children: React.ReactNode }) => <span className="inline-block break-all rounded-md bg-brand-50 px-2 py-0.5 font-mono text-xs font-semibold text-brand-700">{children}</span>;
@@ -235,6 +235,8 @@ export async function KirimanTab({ scope, userId, filter }: { scope: Scope; user
           const hasAmb = s.pickups.some((p) => p.status !== "DIBATALKAN");
           // Hasil diisi saat penerimaan: tanpa pembagian & ambil setoran; koordinator lapor per pekerja, divisi menerima per jenis
           const free = !!s.resultAtReceipt;
+          // Ubah jumlah kiriman: Owner/Supervisor (hak kelola borongan), selama belum selesai/ditutup
+          const ubahQty = !free && fullAccess(scope) && s.state !== "SELESAI" && !s.closed;
           const bagi = !free && canDistribute(scope, { mode: s.mode, taskIds: ids }) && (!hasAmb || fullAccess(scope));
           const ambil = !free && canPickup(scope, { mode: s.mode, taskIds: ids }) && s.cells.some((c) => !c.done);
           const bWho = s.mode === "DRIVER" ? "Driver" : "tim divisi";
@@ -300,9 +302,14 @@ export async function KirimanTab({ scope, userId, filter }: { scope: Scope; user
                 </ul>
               )}
               <div className="flex flex-wrap gap-2 pt-1">
+                {ubahQty && (
+                  <Modal trigger="Ubah jumlah kiriman" triggerClass={allotted < s.totals.sent ? "btn-primary btn-sm" : "btn-secondary btn-sm"} title="Ubah jumlah kiriman" subtitle={`${s.number} · ${s.group}`} wide>
+                    <ModalForm action={ubahJumlahKiriman} className="space-y-3"><UbahJumlahForm view={s} /></ModalForm>
+                  </Modal>
+                )}
                 {bagi && (
                   <Modal trigger={`${allotted ? "Ubah pembagian" : "Bagi ke pekerja"}${bk(scope, bWho).label}`} triggerClass={allotted ? "btn-secondary btn-sm" : "btn-primary btn-sm"} title="Pembagian ke pekerja" subtitle={`${s.number} · ${s.group}`} wide>
-                    <ModalForm action={simpanPembagian} className="space-y-3" confirm={bk(scope, bWho).confirm}>{bk(scope, bWho).note}{hasAmb && <label className="block"><span className="label">Alasan perubahan (wajib, pembagian sudah dikunci pengambilan)</span><input name="reason" className="input" required minLength={3} /></label>}<BagiForm view={s} workers={workers.filter((w) => s.points.some((p) => p.id === w.pointId)).map((w) => ({ ...w, pointId: w.pointId! }))} /></ModalForm>
+                    <ModalForm action={simpanPembagian} className="space-y-3" confirm={bk(scope, bWho).confirm}>{bk(scope, bWho).note}{hasAmb && <label className="block"><span className="label">Alasan perubahan (wajib, pembagian sudah dikunci pengambilan)</span><input name="reason" className="input" required minLength={3} /></label>}<BagiForm view={s} canEditQty={ubahQty} workers={workers.filter((w) => s.points.some((p) => p.id === w.pointId)).map((w) => ({ ...w, pointId: w.pointId! }))} /></ModalForm>
                   </Modal>
                 )}
                 {lapor.map((p) => (

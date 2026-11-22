@@ -2,7 +2,7 @@
 import { action, optStr, str } from "@/lib/action";
 import { prisma } from "@/lib/db";
 import { BoronganError, boronganScope } from "@/lib/borongan";
-import { cancelPickup, cancelShipment, createPickup, createShipment, receiveByColor, receivePickup, resolvePickup, saveAllots, saveWorkReport } from "@/lib/boronganFlow";
+import { cancelPickup, cancelShipment, changeShipmentQty, createPickup, createShipment, receiveByColor, receivePickup, resolvePickup, saveAllots, saveWorkReport } from "@/lib/boronganFlow";
 import { todayStr } from "@/lib/time";
 import { autoClaims } from "@/lib/boronganClaim";
 import { FieldError } from "@/lib/fieldError";
@@ -37,6 +37,20 @@ export const kirimBahan = action(
     const s = await createShipment({ date: str(fd, "date") || todayStr(), mode, pointIds: fd.getAll("pointId").map(String), driverId: optStr(fd, "driverId"), tasks, support, note: optStr(fd, "note") }, user, scope);
     const total = tasks.reduce((a, t) => a + t.qty, 0);
     return `Kiriman ${s.number} tercatat (${fmt(total)} pcs)`;
+  },
+  PATHS,
+);
+
+/** Ubah jumlah yang dikirim per jenis (t:<jenis>) — Owner/Supervisor, alasan wajib */
+export const ubahJumlahKiriman = action(
+  [...PERMS],
+  async (fd, user) => {
+    const qtys = [...fd.entries()].filter(([k]) => k.startsWith("t:")).map(([k, v]) => ({ taskId: k.slice(2), qty: int(v) }));
+    const scope = await boronganScope(prisma, user);
+    const r = await changeShipmentQty(str(fd, "shipmentId"), qtys, str(fd, "reason"), user, scope);
+    await backupAudit(scope, user, "ubah jumlah kiriman", str(fd, "shipmentId"), "pengelola");
+    const moved = Object.entries(r.moved);
+    return `Jumlah kiriman ${r.number} diubah${moved.length ? `; bahan ${moved.map(([n, d]) => `${n} ${d > 0 ? "+" : ""}${fmt(d)}`).join(", ")} disesuaikan` : ""}`;
   },
   PATHS,
 );
