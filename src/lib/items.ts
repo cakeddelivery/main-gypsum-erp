@@ -3,6 +3,7 @@ import { prisma } from "./db";
 import { autoCode, nextSequence } from "./codes";
 import { COA, postJournal } from "./accounting";
 import { audit } from "./audit";
+import { lockKey } from "./actionToken";
 import { INVENTORY_COA, StockError, locationSettings, recordMovement } from "./stock";
 import { categoryPrefixOf, itemCategories } from "./itemCategories";
 
@@ -87,6 +88,7 @@ export async function saveItemRecord(input: ItemInput, actor: Actor) {
     let supplierId = input.supplierId || null;
     const newSupplier = input.newSupplierName?.trim();
     if (!supplierId && newSupplier) {
+      await lockKey(tx, `sup:${newSupplier.toLowerCase()}`);
       const existing = await tx.supplier.findFirst({ where: { name: { equals: newSupplier, mode: "insensitive" } } });
       supplierId = existing?.id ?? (await tx.supplier.create({ data: { name: newSupplier, code: await autoCode.supplier(tx) } })).id;
     }
@@ -122,6 +124,10 @@ export async function saveItemRecord(input: ItemInput, actor: Actor) {
       }
       return it;
     }
+    // Item baru bernama sama (jenis sama) ditolak: klik ganda / kirim ulang tidak membuat item & stok awal kedua
+    await lockKey(tx, `item:${input.type}:${name.toLowerCase()}`);
+    const dupe = await tx.item.findFirst({ where: { type: input.type, name: { equals: name, mode: "insensitive" } }, select: { sku: true } });
+    if (dupe) throw new StockError(`Item "${name}" sudah ada (${dupe.sku}). Pakai item itu, atau beri nama yang berbeda.`);
     const sku = input.sku?.trim().toUpperCase() || (await nextItemSku(tx, await categoryPrefixOf(tx, input.type, input.category)));
     const it = await tx.item.create({ data: { ...data, sku, avgCost: BigInt(price), lastCost: BigInt(price), lastCostAt: price > 0 ? new Date() : null, buyPrice: BigInt(input.buyPrice != null ? Math.round(input.buyPrice) : price), buyQty: input.buyPrice != null ? buyQty : 1 } });
     if (openingQty > 0) {

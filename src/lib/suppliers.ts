@@ -2,6 +2,7 @@ import type { Prisma, Supplier } from "@prisma/client";
 import { prisma } from "./db";
 import { autoCode } from "./codes";
 import { audit } from "./audit";
+import { lockKey } from "./actionToken";
 
 type Db = Prisma.TransactionClient | typeof prisma;
 type Actor = { id: string | null; name: string };
@@ -50,6 +51,7 @@ export async function resolveSupplier(db: Db, input: { supplierId?: string | nul
   if (input.supplierId) return db.supplier.findUniqueOrThrow({ where: { id: input.supplierId } });
   const name = input.name?.trim();
   if (!name) return null;
+  await lockKey(db, `sup:${supplierKey(name)}`);
   const found = await findSupplierByName(db, name);
   if (found) return found;
   const s = await db.supplier.create({ data: { name: name.slice(0, 120), code: await autoCode.supplier(db) } });

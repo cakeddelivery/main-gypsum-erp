@@ -12,6 +12,7 @@ import { EmailError } from "./email";
 import { RegistrationError } from "./registration";
 import { Prisma } from "@prisma/client";
 import { FieldError, fieldsOf } from "./fieldError";
+import { claimToken, finishToken, releaseToken } from "./actionToken";
 export { FieldError };
 
 export type ActionResult = {
@@ -33,7 +34,25 @@ export function action(perms: Permission | Permission[], fn: (fd: FormData, user
   return async (_prev: ActionResult | null, fd: FormData): Promise<ActionResult> => {
     try {
       const user = await assertPerm(...(Array.isArray(perms) ? perms : [perms]));
-      const message = await fn(fd, user);
+      // Token kirim-form: kirim ulang (klik ganda, retry, tab ganda) dengan token sama tidak menjalankan aksi dua kali
+      const raw = fd.get("_idem");
+      const token = typeof raw === "string" && /^[\w-]{8,64}$/.test(raw) ? `${user.id}:${raw}` : null;
+      if (token) {
+        const c = await claimToken(token, user.id);
+        if (!c.fresh) {
+          if (c.state === "SELESAI") return { ok: true, message: c.message ?? "Tersimpan", ts: Date.now() };
+          return { ok: false, error: "Permintaan yang sama masih diproses. Tunggu sebentar lalu cek daftar sebelum menyimpan lagi.", ts: Date.now() };
+        }
+      }
+      let message: string | void;
+      try {
+        message = await fn(fd, user);
+      } catch (e) {
+        // redirect() sukses juga lewat throw: token tetap terpakai; error lain melepas token agar bisa dikirim ulang
+        if (token) await (isRedirect(e) ? finishToken(token, "Tersimpan") : releaseToken(token)).catch(() => 0);
+        throw e;
+      }
+      if (token) await finishToken(token, message || "Tersimpan").catch(() => 0);
       for (const p of revalidate) revalidatePath(p, "layout");
       // Angka di lonceng peringatan ikut segar setelah data berubah (lihat cachedAlerts)
       revalidateTag("alerts");
@@ -44,6 +63,8 @@ export function action(perms: Permission | Permission[], fn: (fd: FormData, user
     }
   };
 }
+
+const isRedirect = (e: unknown) => typeof (e as { digest?: unknown })?.digest === "string" && /^NEXT_REDIRECT/.test((e as { digest: string }).digest);
 
 export function friendly(e: unknown): string {
   if (e instanceof ForbiddenError || e instanceof AccountingError || e instanceof FinanceError || e instanceof StockError || e instanceof PayrollError || e instanceof EmailError || e instanceof RegistrationError || e instanceof FieldError) return e.message;

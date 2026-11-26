@@ -19,6 +19,9 @@ type Props = {
   persist?: boolean;
 };
 
+/** Token unik per kirim: server menolak memproses token yang sama dua kali (klik ganda / retry / tab ganda) */
+const newToken = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`);
+
 /** true sesaat setelah form berhasil disimpan → tombol Simpan menampilkan tanda centang */
 const DoneCtx = createContext<{ done: boolean; by: string | null }>({ done: false, by: null });
 /** Lama tanda "✓ Berhasil" di tombol */
@@ -46,6 +49,7 @@ export function ActionForm({ action, children, className, resetOnSuccess, onSucc
     return { ...r, n: (prev?.n ?? 0) + 1 };
   }, null);
   const ref = useRef<HTMLFormElement>(null);
+  const idem = useRef<string | null>(null);
   const msgRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const [done, setDone] = useState(false);
@@ -63,6 +67,7 @@ export function ActionForm({ action, children, className, resetOnSuccess, onSucc
     if (state.ok) {
       // Berhasil: kosongkan seperti bawaan form (nilai awal = data terbaru dari server)
       ref.current?.reset();
+      idem.current = null; // kirim berikutnya = pekerjaan baru → token baru
       onSuccess?.();
       if (!persist) setVisible(false);
       setDone(true);
@@ -94,6 +99,8 @@ export function ActionForm({ action, children, className, resetOnSuccess, onSucc
           fd = new FormData(e.currentTarget);
           if (b?.name && !fd.has(b.name)) fd.append(b.name, b.value);
         }
+        idem.current ??= newToken();
+        fd.set("_idem", idem.current);
         setSent(fd);
         startTransition(() => formAction(fd));
       }}
