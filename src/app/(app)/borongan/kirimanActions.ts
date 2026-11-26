@@ -2,7 +2,7 @@
 import { action, optStr, str } from "@/lib/action";
 import { prisma } from "@/lib/db";
 import { BoronganError, boronganScope } from "@/lib/borongan";
-import { cancelPickup, cancelShipment, changeShipmentQty, createPickup, createShipment, receiveByColor, receivePickup, resolvePickup, saveAllots, saveWorkReport } from "@/lib/boronganFlow";
+import { cancelPickup, cancelShipment, changeShipmentQty, editShipment, createPickup, createShipment, receiveByColor, receivePickup, resolvePickup, saveAllots, saveWorkReport } from "@/lib/boronganFlow";
 import { todayStr } from "@/lib/time";
 import { autoClaims } from "@/lib/boronganClaim";
 import { FieldError } from "@/lib/fieldError";
@@ -55,11 +55,50 @@ export const ubahJumlahKiriman = action(
   PATHS,
 );
 
+/**
+ * Ubah semua data kiriman (Owner / Supervisor / pengelola): tanggal, titik, cara kirim/driver, catatan,
+ * jumlah per jenis (t:<jenis>), bahan (l:<barang> = jumlah akhir; baris baru n.item + n.qty). Alasan wajib.
+ */
+export const ubahKiriman = action(
+  [...PERMS],
+  async (fd, user) => {
+    const scope = await boronganScope(prisma, user);
+    const id = str(fd, "shipmentId");
+    const has = (k: string) => fd.has(k);
+    const tasks = [...fd.entries()].filter(([k]) => k.startsWith("t:")).map(([k, v]) => ({ taskId: k.slice(2), qty: Number(String(v).replace(/\./g, "").trim() || 0) }));
+    if (tasks.some((t) => !Number.isInteger(t.qty) || t.qty < 0)) throw new BoronganError("Jumlah per jenis harus bilangan bulat, tidak minus");
+    const lines = [...fd.entries()].filter(([k]) => k.startsWith("l:")).map(([k, v]) => ({ itemId: k.slice(2), qty: dec(v) }));
+    const newItems = fd.getAll("n.item").map(String);
+    const newQty = fd.getAll("n.qty");
+    newItems.forEach((itemId, i) => {
+      if (!itemId || !(dec(newQty[i]) > 0)) return;
+      const cur = lines.find((l) => l.itemId === itemId);
+      if (cur) cur.qty += dec(newQty[i]);
+      else lines.push({ itemId, qty: dec(newQty[i]) });
+    });
+    const mode = has("mode") ? (str(fd, "mode") === "LANGSUNG" ? "LANGSUNG" : "DRIVER") : undefined;
+    const r = await editShipment(id, {
+      date: has("date") ? str(fd, "date") : undefined,
+      pointIds: has("pointId") ? fd.getAll("pointId").map(String) : undefined,
+      mode,
+      driverId: has("driverId") ? optStr(fd, "driverId") : undefined,
+      note: has("note") ? optStr(fd, "note") : undefined,
+      tasks: tasks.length ? tasks : undefined,
+      lines: lines.length ? lines : undefined,
+    }, str(fd, "reason"), user, scope);
+    await backupAudit(scope, user, "ubah kiriman", id, "pengelola");
+    return `Kiriman ${r.number} diubah: ${Object.keys(r.sesudah).join(", ")}`;
+  },
+  PATHS,
+);
+
 export const batalKiriman = action(
   [...PERMS],
   async (fd, user) => {
     const scope = await boronganScope(prisma, user);
-    await cancelShipment(str(fd, "id"), user, scope);
+    // Pengelola (Owner/Supervisor) membatalkan kiriman wajib menulis alasan
+    if (scope.backup && (optStr(fd, "reason") ?? "").trim().length < 3) throw new BoronganError("Tulis alasan pembatalan kiriman");
+    await cancelShipment(str(fd, "id"), user, scope, optStr(fd, "reason"));
     await backupAudit(scope, user, "batal kiriman", str(fd, "id"), "pencatat kiriman");
     return "Kiriman dibatalkan, bahan kembali ke gudang";
   },

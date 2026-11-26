@@ -8,7 +8,7 @@ import { stockBalances } from "@/lib/stock";
 import { canTask, type Scope } from "@/lib/borongan";
 import { taskGroupName } from "@/lib/boronganKirim";
 import { pointConfig, taskKits } from "@/lib/boronganSetup";
-import { STATE_LABEL, byColumn, canCompleteAssembling, canCancelShipment, canDistribute, fullAccess, canInputKering, canPickup, canReceive, canReport, canShip, canShipGroup, isAssemblingName, isCoordinatorScope, openShipments, scopeShipments, shipmentViews, shortTaskName, type ShipmentView } from "@/lib/boronganFlow";
+import { STATE_LABEL, byColumn, canViewShipment, canCompleteAssembling, canCancelShipment, canDistribute, fullAccess, canInputKering, canPickup, canReceive, canReport, canShip, canShipGroup, isAssemblingName, isCoordinatorScope, openShipments, scopeShipments, shipmentViews, shortTaskName, type ShipmentView } from "@/lib/boronganFlow";
 import { Badge, Empty } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
@@ -20,18 +20,7 @@ const f = (n: number) => n.toLocaleString("id-ID");
 const Chip = ({ children }: { children: React.ReactNode }) => <span className="inline-block break-all rounded-md bg-brand-50 px-2 py-0.5 font-mono text-xs font-semibold text-brand-700">{children}</span>;
 const STATE_TONE = { DI_PEKERJA: "amber", SEBAGIAN: "amber", SELESAI: "green" } as const;
 
-/** Kiriman yang relevan untuk akun ini */
-function visible(scope: Scope, s: ShipmentView) {
-  if (scope.all) return true;
-  const asm = s.tasks.some((t) => isAssemblingName(t.name));
-  // Tim Cetak/Oven & Packing: hanya kiriman Assembling (isian patung kering / penerimaan setoran)
-  if (scope.kering || scope.packing) return asm;
-  // Isian patung kering yang belum dilengkapi hanya untuk tim Assembling / Supervisor
-  if (s.waitingSupport) return !!scope.warehouse || scope.division?.template === "ASSEMBLING";
-  if (scope.driver) return s.mode === "DRIVER";
-  if (scope.division) return !!scope.warehouse || s.tasks.some((t) => canTask(scope, t.id));
-  return s.points.some((p) => scope.pointIds.includes(p.id));
-}
+const visible = (scope: Scope, s: ShipmentView) => canViewShipment(scope, s);
 
 /** Pilihan form Kirim Bahan: per kelompok jenis pekerjaan aktif → titik → bahan resep & bahan pendukung titik */
 async function kirimGroups(): Promise<KirimGroupOpt[]> {
@@ -248,7 +237,7 @@ export async function KirimanTab({ scope, userId, filter }: { scope: Scope; user
           return (
             <article key={s.id} className="card space-y-2 p-3">
               <div className="flex flex-wrap items-center gap-2">
-                {coordinator ? <Link href={`/borongan/riwayat/${s.id}`} className="underline decoration-brand-300"><Chip>{s.number}</Chip></Link> : <Chip>{s.number}</Chip>}
+                <Link href={`/borongan/riwayat/${s.id}`} className="underline decoration-brand-300" aria-label={`Detail kiriman ${s.number}`}><Chip>{s.number}</Chip></Link>
                 <span className="text-sm font-semibold text-slate-800">{fmtDay(dateOnly(s.date))}</span>
                 <span className="ml-auto"><Badge tone={STATE_TONE[s.state]}>{STATE_LABEL[s.state]}</Badge></span>
               </div>
@@ -302,6 +291,7 @@ export async function KirimanTab({ scope, userId, filter }: { scope: Scope; user
                 </ul>
               )}
               <div className="flex flex-wrap gap-2 pt-1">
+                <Link href={`/borongan/riwayat/${s.id}`} className="btn-secondary btn-sm">Detail</Link>
                 {ubahQty && (
                   <Modal trigger="Ubah jumlah kiriman" triggerClass={allotted < s.totals.sent ? "btn-primary btn-sm" : "btn-secondary btn-sm"} title="Ubah jumlah kiriman" subtitle={`${s.number} · ${s.group}`} wide>
                     <ModalForm action={ubahJumlahKiriman} className="space-y-3"><UbahJumlahForm view={s} /></ModalForm>
