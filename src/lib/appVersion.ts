@@ -20,6 +20,9 @@ const STALE = [
   /Failed to find Server Action/i,
   /Server Action "[^"]*" was not found on the server/i,
   /UnrecognizedActionError/i,
+  /Server Reference ID/i,
+  /did not match the expected format/i,
+  /An unexpected response was received from the server/i,
 ];
 
 /** Error karena HP masih menjalankan versi lama setelah deploy (file JS lama hilang / server action berganti) */
@@ -76,4 +79,35 @@ export function isBusy(doc: Document): boolean {
   const a = doc.activeElement as HTMLElement | null;
   if (a && (a.isContentEditable || ((a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT") && !(a as HTMLInputElement).readOnly))) return true;
   return Array.from(doc.forms).some(formDirty);
+}
+
+export const STALE_EVENT = "mg-stale-error";
+export const STALE_MESSAGE = "Aplikasi diperbarui, memuat ulang…";
+
+/** Server sedang menjalankan build lain dari yang terbuka di HP (dicek lewat /api/version; gagal jaringan = dianggap tidak beda) */
+export async function serverBuildDiffers(): Promise<boolean> {
+  try {
+    const res = await fetch("/api/version", { cache: "no-store", credentials: "same-origin" });
+    if (!res.ok) return false;
+    const { build } = (await res.json()) as { build?: string };
+    return isNewBuild(CURRENT_BUILD, build);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Jalankan server action; bila gagal karena klien basi setelah deploy (action tidak dikenal / respons aneh / versi build beda)
+ * picu pemuatan ulang otomatis (sekali per menit, lihat AppUpdater) dan kembalikan pesan ramah. Error lain dilempar ulang.
+ */
+export async function runActionGuarded<T extends { ok: boolean; error?: string }>(run: () => Promise<T>): Promise<T | { ok: false; error: string }> {
+  try {
+    return await run();
+  } catch (e) {
+    if (isStaleError(e) || (await serverBuildDiffers())) {
+      if (typeof window !== "undefined") window.dispatchEvent(new Event(STALE_EVENT));
+      return { ok: false, error: STALE_MESSAGE };
+    }
+    throw e;
+  }
 }
