@@ -4,6 +4,7 @@ import { syncSalaryOverheadsSafe } from "@/lib/salaryOverhead";
 import { prisma } from "@/lib/db";
 import { action, str, optStr, int } from "@/lib/action";
 import { audit } from "@/lib/audit";
+import { lockKey } from "@/lib/advisoryLock";
 import { ForbiddenError, hashPassword } from "@/lib/auth";
 import { clearLoginBlocks, passwordChangeData } from "@/lib/loginGuard";
 import { dateOnly, dateStr, todayStr } from "@/lib/time";
@@ -55,6 +56,12 @@ export const saveEmployee = action(
     const allowances = fd.has("allowancesPresent") && user.can("payroll.manage") ? parseAllowances(fd) : null;
     // Kode karyawan otomatis per divisi (CTK-001); kode tetap walau pindah divisi
     const e = await prisma.$transaction(async (tx) => {
+      if (!id) {
+        // Klik ganda / input ulang: nama yang sama di divisi yang sama (belum nonaktif) tidak dibuat dua kali
+        await lockKey(tx, `karyawan:${data.divisionId}:${data.name.toLowerCase()}`);
+        const dup = await tx.employee.findFirst({ where: { divisionId: data.divisionId, name: { equals: data.name, mode: "insensitive" }, status: { not: "NONAKTIF" } }, select: { code: true } });
+        if (dup) throw withField(new Error(`Karyawan "${data.name}" sudah ada di divisi ini (${dup.code}). Ubah datanya lewat daftar karyawan, bukan dibuat ulang.`), "name");
+      }
       const e = id ? await tx.employee.update({ where: { id }, data }) : await tx.employee.create({ data: { ...data, code: await autoCode.employee(tx, data.divisionId) } });
       if (allowances) {
         const keep = allowances.filter((a) => a.id).map((a) => a.id!);

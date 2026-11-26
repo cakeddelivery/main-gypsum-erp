@@ -62,6 +62,10 @@ export async function selfCheckIn(user: Actor, pos: GeoPoint | null, via: "WEB" 
     });
     await tx.shiftSchedule.upsert({ where: { employeeId_date: { employeeId: user.employeeId!, date: dateOnly(date) } }, create: { employeeId: user.employeeId!, date: dateOnly(date), shiftId: shift.id }, update: { shiftId: shift.id } });
     return row;
+  }).catch((e) => {
+    // Dua permintaan masuk bersamaan (klik ganda): indeks unik (karyawan, tanggal) menolak yang kedua
+    if ((e as { code?: string }).code === "P2002" || (e as { code?: string }).code === "P2025") throw new Error("Anda sudah absen masuk hari ini");
+    throw e;
   });
   await audit(user, "ABSEN_MASUK", "Attendance", a.id, { ...ev, lat: pos?.lat, lng: pos?.lng, lokasi: geo.site?.name, jarak: geo.distance, via });
   return { status: ev.status, lateMinutes: ev.lateMinutes, shift: shift.name, site: geo.site?.name ?? null, distance: geo.distance, date };
@@ -108,10 +112,12 @@ export async function selfCheckOut(user: Actor, pos: GeoPoint | null, via: "WEB"
     ]);
     if (cur && sch && !crossesMidnight(cur) && crossesMidnight(sch.shift)) shiftId = sch.shiftId;
   }
-  await prisma.attendance.update({
-    where: { id: a.id },
+  // Hanya berhasil bila belum ada jam pulang: dua klik bersamaan tidak mencatat/mengaudit dua kali
+  const closed = await prisma.attendance.updateMany({
+    where: { id: a.id, checkOut: null },
     data: { shiftId, checkOut: now, checkOutLat: pos?.lat, checkOutLng: pos?.lng, checkOutAccuracy: pos?.accuracy, checkOutDistance: geo.distance, reportMissing },
   });
+  if (!closed.count) throw new Error("Sudah absen pulang");
   const shift = await prisma.shift.findUnique({ where: { id: shiftId } });
   const diff = shift ? checkoutDiff(date, shift, now) : { earlyMinutes: 0, overtimeMinutes: 0 };
   await audit(user, "ABSEN_PULANG", "Attendance", a.id, { tanggalKerja: date, lat: pos?.lat, lng: pos?.lng, lokasi: geo.site?.name, jarak: geo.distance, via, laporanBelumTerkirim: reportMissing || undefined, pulangCepatMenit: diff.earlyMinutes || undefined, lemburMenit: diff.overtimeMinutes || undefined });
