@@ -548,26 +548,26 @@ enum HandoverStatus {
 
 /// Titik kerja borongan (BMR, Mastrip); stok bahan & hasil di titik memakai lokasi stok sendiri
 model BoronganPoint {
-  id            String                @id @default(cuid())
-  code          String                @unique
-  name          String
-  locationId    String                @unique
-  location      Location              @relation(fields: [locationId], references: [id])
-  active        Boolean               @default(true)
+  id                     String                     @id @default(cuid())
+  code                   String                     @unique
+  name                   String
+  locationId             String                     @unique
+  location               Location                   @relation(fields: [locationId], references: [id])
+  active                 Boolean                    @default(true)
   /// Kiriman bahan ke titik ini lewat driver (false = diantar/diambil langsung, mis. Beringin)
-  viaDriver     Boolean               @default(true)
+  viaDriver              Boolean                    @default(true)
   /// Titik tanpa koordinator: bagian upah koordinator dibayarkan ke pekerja (mis. Cat Plastik Rp15 penuh)
-  noCoordinator Boolean               @default(false)
-  createdAt     DateTime              @default(now())
-  people        BoronganPerson[]
-  handovers     BoronganHandover[]
-  results       BoronganResult[]
-  settlements   BoronganSettlement[]
-  receiptLines  BoronganReceiptLine[]
-  allots        BoronganAllot[]
-  reports       BoronganWorkReport[]
-  pickupLines   BoronganPickupLine[]
-  claims        BoronganClaim[]
+  noCoordinator          Boolean                    @default(false)
+  createdAt              DateTime                   @default(now())
+  people                 BoronganPerson[]
+  handovers              BoronganHandover[]
+  results                BoronganResult[]
+  settlements            BoronganSettlement[]
+  receiptLines           BoronganReceiptLine[]
+  allots                 BoronganAllot[]
+  reports                BoronganWorkReport[]
+  pickupLines            BoronganPickupLine[]
+  claims                 BoronganClaim[]
   coordinatorAssignments BoronganCoordinatorPoint[]
 }
 
@@ -588,30 +588,30 @@ model BoronganCoordinatorPoint {
 
 /// Tetangga yang bekerja borongan (bukan karyawan): pekerja & koordinator per titik, driver tanpa titik
 model BoronganPerson {
-  id            String                   @id @default(cuid())
+  id            String                     @id @default(cuid())
   name          String
   phone         String?
   role          BoronganRole
   pointId       String?
-  point         BoronganPoint?           @relation(fields: [pointId], references: [id])
+  point         BoronganPoint?             @relation(fields: [pointId], references: [id])
   /// Akun login koordinator (role KOORDINATOR)
-  userId        String?                  @unique
-  user          User?                    @relation(fields: [userId], references: [id])
-  active        Boolean                  @default(true)
+  userId        String?                    @unique
+  user          User?                      @relation(fields: [userId], references: [id])
+  active        Boolean                    @default(true)
   note          String?
   /// Jenis pekerjaan (PieceTask.id) yang dikerjakan pekerja ini; divisinya mengikuti divisi tugas.
   /// Kosong = belum diatur (boleh semua tugas di titiknya, seperti sebelumnya)
-  taskIds       String[]                 @default([])
+  taskIds       String[]                   @default([])
   /// Koordinator pilihan pekerja ini (kosong = koordinator titik; tanpa koordinator = bagian koordinator masuk ke pekerja)
   coordinatorId String?
-  coordinator   BoronganPerson?          @relation("WorkerCoordinator", fields: [coordinatorId], references: [id])
-  coordinates   BoronganPerson[]         @relation("WorkerCoordinator")
+  coordinator   BoronganPerson?            @relation("WorkerCoordinator", fields: [coordinatorId], references: [id])
+  coordinates   BoronganPerson[]           @relation("WorkerCoordinator")
   /// Pekerja dipilih TANPA koordinator walau titiknya punya koordinator (bagian koordinator dibayarkan ke pekerja)
-  noCoordinator Boolean                  @default(false)
-  createdAt     DateTime                 @default(now())
-  works         BoronganResult[]         @relation("ResultWorker")
-  coordinated   BoronganResult[]         @relation("ResultCoordinator")
-  drivenResults BoronganResult[]         @relation("ResultDriver")
+  noCoordinator Boolean                    @default(false)
+  createdAt     DateTime                   @default(now())
+  works         BoronganResult[]           @relation("ResultWorker")
+  coordinated   BoronganResult[]           @relation("ResultCoordinator")
+  drivenResults BoronganResult[]           @relation("ResultDriver")
   drives        BoronganHandover[]
   shipments     BoronganShipment[]
   allots        BoronganAllot[]
@@ -931,8 +931,38 @@ model ShiftReport {
   createdBy         String
   createdAt         DateTime       @default(now())
   sends             ReportSend[]
+  harvests          ShiftHarvest[]
 
   @@unique([date, shiftId, divisionId])
+}
+
+/// Entri hasil panen Oven realtime ("+ Hasil Panen"): tiap entri langsung diposting ke stok
+/// (− patung cetak bagus+reject, + patung kering bagus) bertanggal jam entri, ref PNN:<id>.
+/// Isian panen/reject laporan shift = jumlah entri aktif; postShiftWork hanya memposting selisihnya.
+/// Batal/koreksi = mutasi pembalik (BATAL-PNN:<id>), entri tidak dihapus.
+model ShiftHarvest {
+  id           String      @id @default(cuid())
+  reportId     String
+  report       ShiftReport @relation(fields: [reportId], references: [id])
+  /// Oven Besar / Oven Kecil (baris isian laporan)
+  oven         String
+  /// Hewan / Cowok / Transportasi / Cewek
+  variant      String
+  good         Int
+  reject       Int         @default(0)
+  at           DateTime    @default(now())
+  /// Sudah diposting ke stok (stok terpadu menyala saat entri dibuat)
+  posted       Boolean     @default(false)
+  cancelledAt  DateTime?
+  cancelledBy  String?
+  cancelReason String?
+  /// Entri pengganti (koreksi) menunjuk entri lama yang dibatalkan
+  replacesId   String?
+  createdById  String
+  createdBy    String
+  createdAt    DateTime    @default(now())
+
+  @@index([reportId])
 }
 
 /// Reject produksi per tahap yang dilaporkan di laporan shift (jenis barang + jumlah + alasan).
@@ -990,20 +1020,20 @@ model ShiftBalance {
 
 /// Status tabung LPG 5 kg yang dilaporkan di laporan shift Oven (penuh / aktif terpasang / kosong). Total harus sama dengan total aset tabung.
 model LpgState {
-  id         String   @id @default(cuid())
-  reportId   String   @unique
-  date       DateTime @db.Date
-  penuh      Int
-  aktif      Int
-  kosong     Int
+  id        String   @id @default(cuid())
+  reportId  String   @unique
+  date      DateTime @db.Date
+  penuh     Int
+  aktif     Int
+  kosong    Int
   /// Tabung isi ulang yang diterima shift ini (kosong → penuh)
-  isiUlang   Int      @default(0)
+  isiUlang  Int      @default(0)
   /// Turunan dari shift sebelumnya: tabung dipasang (penuh → aktif) & tabung habis (aktif → kosong)
-  dipasang   Int      @default(0)
-  habis      Int      @default(0)
-  total      Int
-  picName    String?
-  createdAt  DateTime @default(now())
+  dipasang  Int      @default(0)
+  habis     Int      @default(0)
+  total     Int
+  picName   String?
+  createdAt DateTime @default(now())
 
   @@index([date])
 }
@@ -1045,17 +1075,17 @@ model UsageStandard {
 /// Reject bahan pendukung di titik borongan (mis. cat cair tumpah, plastik klip rusak untuk Cat Plastik/Cat Giftbox, plastik OPP untuk Assembling).
 /// Stok titik berkurang dan nilainya dibebankan; dicatat per bahan + alasan untuk pemantauan.
 model BoronganMaterialReject {
-  id        String   @id @default(cuid())
-  pointId   String
-  itemId    String
-  qty       Decimal  @db.Decimal(14, 3)
+  id          String   @id @default(cuid())
+  pointId     String
+  itemId      String
+  qty         Decimal  @db.Decimal(14, 3)
   /// ROBEK / RUSAK / TUMPAH / KOTOR / SALAH_WARNA / LAINNYA
-  reason    String
-  note      String?
-  unitCost  BigInt   @default(0)
-  createdBy String
+  reason      String
+  note        String?
+  unitCost    BigInt   @default(0)
+  createdBy   String
   createdById String?
-  createdAt DateTime @default(now())
+  createdAt   DateTime @default(now())
 
   @@index([pointId, createdAt])
   @@index([itemId])
@@ -2457,33 +2487,33 @@ model Complaint {
 }
 
 model ComplaintLine {
-  id          String    @id @default(cuid())
+  id          String           @id @default(cuid())
   complaintId String
-  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  complaint   Complaint        @relation(fields: [complaintId], references: [id], onDelete: Cascade)
   labelSku    String?
   labelName   String?
   itemId      String?
-  item        Item?     @relation(fields: [itemId], references: [id])
+  item        Item?            @relation(fields: [itemId], references: [id])
   /// Jumlah bermasalah
   qty         Int
   /// Jumlah pengganti yang dikirim (kirim ganti)
-  sendQty     Int       @default(0)
-  unitCost    BigInt    @default(0)
-  sortOrder   Int       @default(0)
+  sendQty     Int              @default(0)
+  unitCost    BigInt           @default(0)
+  sortOrder   Int              @default(0)
   /// Rincian pcs rusak per karakter (paket Single Pack)
   pieces      ComplaintPiece[]
 }
 
 /// Pcs rusak/bermasalah per karakter pada satu baris komplain (nilai = harga pokok pcs × jumlah)
 model ComplaintPiece {
-  id         String         @id @default(cuid())
+  id         String        @id @default(cuid())
   lineId     String
-  line       ComplaintLine  @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  line       ComplaintLine @relation(fields: [lineId], references: [id], onDelete: Cascade)
   itemId     String
-  item       Item           @relation("ComplaintPieceItem", fields: [itemId], references: [id])
+  item       Item          @relation("ComplaintPieceItem", fields: [itemId], references: [id])
   perPack    Int
-  damagedQty Int            @default(0)
-  unitCost   BigInt         @default(0)
+  damagedQty Int           @default(0)
+  unitCost   BigInt        @default(0)
 
   @@index([lineId])
 }
@@ -2521,36 +2551,36 @@ enum PickupStatus {
 /// Kiriman bahan borongan bernomor KRM-DDMMYY-NN. Lewat driver: bahan gudang → lokasi driver, lalu ke titik saat dibagi.
 /// Diantar langsung: bahan gudang → lokasi titik (satu titik).
 model BoronganShipment {
-  id             String                 @id @default(cuid())
-  number         String                 @unique
-  date           DateTime               @db.Date
-  mode           ShipmentMode
+  id              String                 @id @default(cuid())
+  number          String                 @unique
+  date            DateTime               @db.Date
+  mode            ShipmentMode
   /// Titik tujuan (BoronganPoint.id)
-  pointIds       String[]
-  driverId       String?
-  driver         BoronganPerson?        @relation(fields: [driverId], references: [id])
-  note           String?
-  createdBy      String
-  createdById    String?
-  createdAt      DateTime               @default(now())
-  cancelledAt    DateTime?
-  cancelledBy    String?
+  pointIds        String[]
+  driverId        String?
+  driver          BoronganPerson?        @relation(fields: [driverId], references: [id])
+  note            String?
+  createdBy       String
+  createdById     String?
+  createdAt       DateTime               @default(now())
+  cancelledAt     DateTime?
+  cancelledBy     String?
   /// Assembling: patung kering sudah diisi Cetak/Oven, menunggu Assembling/Supervisor melengkapi bahan pendukung
   /// (stok belum keluar gudang selama masih menunggu)
-  waitingSupport Boolean                @default(false)
-  completedBy    String?
-  completedAt    DateTime?
+  waitingSupport  Boolean                @default(false)
+  completedBy     String?
+  completedAt     DateTime?
   /// Kiriman bertugas "hasil diisi saat penerimaan" (disalin dari tugas saat kirim; kiriman lama tetap false)
-  resultAtReceipt Boolean               @default(false)
+  resultAtReceipt Boolean                @default(false)
   /// Ditutup administratif (mis. cut-over stok 20 Nov): status SELESAI tanpa mutasi stok / upah / jurnal
-  closedAt       DateTime?
-  closedBy       String?
-  closeNote      String?
-  tasks          BoronganShipmentTask[]
-  lines          BoronganShipmentLine[]
-  allots         BoronganAllot[]
-  reports        BoronganWorkReport[]
-  pickups        BoronganPickup[]
+  closedAt        DateTime?
+  closedBy        String?
+  closeNote       String?
+  tasks           BoronganShipmentTask[]
+  lines           BoronganShipmentLine[]
+  allots          BoronganAllot[]
+  reports         BoronganWorkReport[]
+  pickups         BoronganPickup[]
 
   @@index([date])
 }
@@ -2756,7 +2786,7 @@ enum ContractStatus {
 /// Pencacah nomor dokumen yang aman bersamaan (kontrak per tahun; invoice per toko+channel+bulan)
 model DocCounter {
   key  String @id
-  last Int     @default(0)
+  last Int    @default(0)
 }
 
 /// Perjanjian kerja (PKWT) atau addendum bernomor. Isi dibekukan di snapshot saat dibuat; hash dokumen dihitung saat HRD menandatangani.
@@ -2842,31 +2872,31 @@ model Termination {
 
 /// Invoice bernomor resmi (INV/{MG|DL}/{TTS|SHP|OFF}/{YYMM}/{urut 4 digit}); isi dibekukan saat dibuat. Dari penjualan offline (saleId) atau dicatat manual untuk marketplace.
 model Invoice {
-  id              String    @id @default(cuid())
-  number          String    @unique
-  seq             Int
+  id           String    @id @default(cuid())
+  number       String    @unique
+  seq          Int
   /// MG / DL
-  storeCode       String
+  storeCode    String
   /// TTS / SHP / OFF
-  channel         String
-  yymm            String
-  date            DateTime  @db.Date
-  storeId         String
-  saleId          String?   @unique
-  customerName    String
+  channel      String
+  yymm         String
+  date         DateTime  @db.Date
+  storeId      String
+  saleId       String?   @unique
+  customerName String
   /// [{name, unit, qty, price, amount}]
-  lines           Json
-  subtotal        BigInt
-  discount        BigInt    @default(0)
-  shipping        BigInt    @default(0)
-  total           BigInt
+  lines        Json
+  subtotal     BigInt
+  discount     BigInt    @default(0)
+  shipping     BigInt    @default(0)
+  total        BigInt
   /// Sudah dibayar (invoice dari penjualan memakai pembayaran penjualan yang berjalan)
-  paid            BigInt    @default(0)
-  note            String?
-  createdBy       String
-  createdAt       DateTime  @default(now())
-  cancelledAt     DateTime?
-  cancelReason    String?
+  paid         BigInt    @default(0)
+  note         String?
+  createdBy    String
+  createdAt    DateTime  @default(now())
+  cancelledAt  DateTime?
+  cancelReason String?
 
   @@index([date])
   @@index([storeCode, channel, yymm])
@@ -2878,8 +2908,8 @@ model Invoice {
 
 /// Satu kali unggah file = satu batch yang bisa dibatalkan
 model MarketplaceImport {
-  id         String    @id @default(cuid())
-  createdAt  DateTime  @default(now())
+  id         String              @id @default(cuid())
+  createdAt  DateTime            @default(now())
   createdBy  String
   storeId    String
   /// SHP / TTS
@@ -2887,8 +2917,8 @@ model MarketplaceImport {
   /// ORDER / INCOME
   kind       String
   fileName   String
-  periodFrom DateTime? @db.Date
-  periodTo   DateTime? @db.Date
+  periodFrom DateTime?           @db.Date
+  periodTo   DateTime?           @db.Date
   /// {baru, diperbarui, dilewati, perluDicek, ...}
   stats      Json?
   undoneAt   DateTime?
@@ -2900,76 +2930,76 @@ model MarketplaceImport {
 
 /// Foto kondisi sebelum batch mengubah baris yang sudah ada (untuk pembatalan batch)
 model MarketplaceChange {
-  id       String            @id @default(cuid())
-  importId String
-  batch    MarketplaceImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+  id        String            @id @default(cuid())
+  importId  String
+  batch     MarketplaceImport @relation(fields: [importId], references: [id], onDelete: Cascade)
   /// ORDER / INCOME
-  table    String
-  rowId    String
-  before   Json
+  table     String
+  rowId     String
+  before    Json
   /// Ringkasan perubahan yang dibawa batch ini (mis. "status: Dikirim → Selesai")
-  summary  String?
-  createdAt DateTime @default(now())
+  summary   String?
+  createdAt DateTime          @default(now())
   /// Setelah batch dibatalkan, foto kondisi dibuang tapi riwayat ringkas tetap ada
-  undone   Boolean  @default(false)
+  undone    Boolean           @default(false)
 
   @@index([importId])
   @@index([rowId])
 }
 
 model MarketplaceOrder {
-  id              String   @id @default(cuid())
-  storeId         String
+  id            String                 @id @default(cuid())
+  storeId       String
   /// SHP / TTS
-  channel         String
-  orderNo         String
-  orderedAt       DateTime?
-  paidAt          DateTime?
-  completedAt     DateTime?
+  channel       String
+  orderNo       String
+  orderedAt     DateTime?
+  paidAt        DateTime?
+  completedAt   DateTime?
   /// Status mentah dari platform (apa adanya)
-  rawStatus       String?
-  rawSubstatus    String?
+  rawStatus     String?
+  rawSubstatus  String?
   /// Status Pembatalan/Pengembalian (Shopee) atau Cancelation/Return Type (TikTok)
-  rawReturn       String?
-  cancelReason    String?
+  rawReturn     String?
+  cancelReason  String?
   /// PIUTANG / BATAL / RETUR (CAIR dihitung dari tautan income)
-  status          String
+  status        String
   /// Ditandai komplain manual
-  complaint       Boolean  @default(false)
-  complaintNote   String?
-  trackingNo      String?
-  shipOption      String?
-  courier         String?
-  paymentMethod   String?
-  city            String?
-  province        String?
-  creatorHandle   String?
+  complaint     Boolean                @default(false)
+  complaintNote String?
+  trackingNo    String?
+  shipOption    String?
+  courier       String?
+  paymentMethod String?
+  city          String?
+  province      String?
+  creatorHandle String?
   /// Pesanan affiliate (TikTok: kreator terisi / komisi afiliasi; Shopee: komisi AMS)
-  affiliate       Boolean  @default(false)
+  affiliate     Boolean                @default(false)
   /// Perlu dicek manual (mis. RETUR_SETELAH_CAIR, BATAL_SETELAH_CAIR)
-  needsCheck      String?
-  subtotal        BigInt   @default(0)
-  discount        BigInt   @default(0)
-  shippingPaid    BigInt   @default(0)
-  total           BigInt   @default(0)
-  refundAmount    BigInt   @default(0)
-  returnQty       Int      @default(0)
+  needsCheck    String?
+  subtotal      BigInt                 @default(0)
+  discount      BigInt                 @default(0)
+  shippingPaid  BigInt                 @default(0)
+  total         BigInt                 @default(0)
+  refundAmount  BigInt                 @default(0)
+  returnQty     Int                    @default(0)
   /// Sidik isi pesanan (untuk mengenali impor ulang yang identik)
-  sig             String?
+  sig           String?
   /// Semua kolom NON-pribadi dari file Order per baris produk (berat, voucher, cashback koin, dst.). Data pribadi pembeli tidak disimpan.
-  extra           Json?
-  importId        String
-  lastImportId    String
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  incomeId        String?  @unique
-  income          MarketplaceIncome? @relation(fields: [incomeId], references: [id], onDelete: SetNull)
+  extra         Json?
+  importId      String
+  lastImportId  String
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  incomeId      String?                @unique
+  income        MarketplaceIncome?     @relation(fields: [incomeId], references: [id], onDelete: SetNull)
   /// Invoice resmi yang diterbitkan dari pesanan ini
-  invoiceId       String?
+  invoiceId     String?
   /// Retur / komplain ERP yang cocok (tanpa FK; hanya penanda tautan)
-  returnCaseId    String?
-  complaintId     String?
-  lines           MarketplaceOrderLine[]
+  returnCaseId  String?
+  complaintId   String?
+  lines         MarketplaceOrderLine[]
 
   @@unique([storeId, channel, orderNo])
   @@index([orderedAt])
@@ -2999,29 +3029,29 @@ model MarketplaceOrderLine {
 
 /// Uang cair per pesanan (dari file penghasilan). Bisa masuk lebih dulu daripada pesanannya.
 model MarketplaceIncome {
-  id          String    @id @default(cuid())
-  storeId     String
-  channel     String
+  id           String                   @id @default(cuid())
+  storeId      String
+  channel      String
   /// ORDER / ADS (potongan GMV iklan) / ADJUST (penyesuaian)
-  kind        String    @default("ORDER")
+  kind         String                   @default("ORDER")
   /// No. pesanan (ORDER) atau ID penyesuaian/referensi
-  refNo       String
-  orderedAt   DateTime?
-  releasedAt  DateTime?
+  refNo        String
+  orderedAt    DateTime?
+  releasedAt   DateTime?
   /// Uang yang masuk saldo toko (boleh negatif)
-  released    BigInt    @default(0)
-  productAmt  BigInt    @default(0)
-  refundAmt   BigInt    @default(0)
+  released     BigInt                   @default(0)
+  productAmt   BigInt                   @default(0)
+  refundAmt    BigInt                   @default(0)
   /// Total biaya platform (positif = potongan)
-  fees        BigInt    @default(0)
+  fees         BigInt                   @default(0)
   /// Rincian biaya {nama: nilai}
-  feeDetail   Json?
-  sig         String?
-  importId    String
+  feeDetail    Json?
+  sig          String?
+  importId     String
   lastImportId String
-  order       MarketplaceOrder?
+  order        MarketplaceOrder?
   /// Satu pesanan bisa punya beberapa baris penyelesaian (mis. cair lalu refund); angka di atas = jumlah semua event
-  events      MarketplaceIncomeEvent[]
+  events       MarketplaceIncomeEvent[]
 
   @@unique([storeId, channel, kind, refNo])
   @@index([releasedAt])
@@ -3030,17 +3060,17 @@ model MarketplaceIncome {
 
 /// Riwayat penarikan dana TikTok (untuk rekonsiliasi; tanpa rekening bank)
 model MarketplaceWithdrawal {
-  id         String    @id @default(cuid())
-  storeId    String
-  channel    String
+  id          String    @id @default(cuid())
+  storeId     String
+  channel     String
   /// Withdrawal / GMV Pay Deduction / dst.
-  txType     String
-  refId      String
+  txType      String
+  refId       String
   requestedAt DateTime?
-  doneAt     DateTime?
-  amount     BigInt    @default(0)
-  status     String?
-  importId   String
+  doneAt      DateTime?
+  amount      BigInt    @default(0)
+  status      String?
+  importId    String
 
   @@unique([storeId, channel, txType, refId])
   @@index([requestedAt])
@@ -3123,16 +3153,16 @@ model MarketplaceBalanceTx {
 /// BUKU BAYANGAN marketplace (mode SIMULASI): jurnal penuh yang DITURUNKAN dari data impor, terpisah dari jurnal nyata.
 /// Tidak mengubah Neraca/Laba Rugi nyata. Dibangun ulang otomatis (idempoten) dari data impor + withdraw.
 model MarketplaceGlJournal {
-  id          String   @id @default(cuid())
+  id          String              @id @default(cuid())
   /// Kunci stabil, mis. "SETTLE|<toko>|<kanal>|2026-11-25" (satu jurnal per hari per jenis)
-  key         String   @unique
+  key         String              @unique
   date        DateTime
   storeId     String
   channel     String
   /// SETTLE (cair pesanan) · ADS (iklan: isi saldo/pemakaian/GMV Pay) · ADJ (penyesuaian) · WD (withdraw) · OPEN (saldo pembuka)
   kind        String
   description String
-  createdAt   DateTime @default(now())
+  createdAt   DateTime            @default(now())
   lines       MarketplaceGlLine[]
 
   @@index([date])
@@ -3140,13 +3170,13 @@ model MarketplaceGlJournal {
 }
 
 model MarketplaceGlLine {
-  id        String   @id @default(cuid())
+  id        String               @id @default(cuid())
   journalId String
   journal   MarketplaceGlJournal @relation(fields: [journalId], references: [id], onDelete: Cascade)
   /// Kode akun (lihat gl.ts); belum tentu ada di COA nyata sebelum aktivasi
   account   String
-  debit     BigInt   @default(0)
-  credit    BigInt   @default(0)
+  debit     BigInt               @default(0)
+  credit    BigInt               @default(0)
   memo      String?
 
   @@index([journalId])
@@ -3173,19 +3203,19 @@ model MarketplaceGlOpening {
 
 /// Selisih ongkir Shopee (sheet "Shipping Fee Discrepancy" di file Penghasilan): estimasi vs yang dibayarkan ke jasa kirim
 model MarketplaceShipDiscrepancy {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   storeId   String
   channel   String
   orderNo   String
-  estimate  BigInt   @default(0)
-  paid      BigInt   @default(0)
+  estimate  BigInt    @default(0)
+  paid      BigInt    @default(0)
   /// paid - estimate (positif = penjual menanggung lebih)
-  diff      BigInt   @default(0)
+  diff      BigInt    @default(0)
   reason    String?
   /// Tanggal acuan bulan laporan (tanggal dana dilepas pesanan itu, atau tanggal pesanan)
   date      DateTime?
   importId  String
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   @@unique([storeId, channel, orderNo])
   @@index([storeId, channel, date])
@@ -3247,16 +3277,16 @@ model MarketplaceAccessGap {
 /// Titik acuan saldo: saldo menurut Seller Center pada tanggal tertentu (diisi Finance; mis. saldo TikTok yang tidak punya saldo berjalan di file).
 /// Saldo setelah tanggal itu = acuan + cair − withdraw sesudahnya. Riwayatnya disimpan; yang terbaru dipakai.
 model MarketplaceWalletCheck {
-  id        String   @id @default(cuid())
+  id        String    @id @default(cuid())
   storeId   String
   channel   String
-  asOf      DateTime @db.Date
+  asOf      DateTime  @db.Date
   /// Saat saldo itu dibaca (jam WIB): TikTok menyelesaikan saldo 1× sehari ±08.00, jadi acuan sebelum jam itu belum memuat penyelesaian hari tersebut
   asOfAt    DateTime?
   amount    BigInt
   note      String?
   createdBy String
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   @@index([storeId, channel, asOf])
 }

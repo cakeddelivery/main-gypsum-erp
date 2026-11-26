@@ -37,13 +37,15 @@ import { ReportSheet } from "./ReportSheet";
 import { reportCatalogs } from "@/lib/productFamily";
 import { mostStockedVariant } from "@/lib/shiftReportFlow";
 import { letterhead } from "@/lib/letterhead";
+import { HARVEST_MANAGERS, isHarvestWork, netOfHarvest, reportHarvests } from "@/lib/shiftHarvest";
+import { HarvestPanel } from "./HarvestPanel";
 
 export const metadata = { title: "Laporan Penutup Shift" };
 
-export default async function ReportDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ isi?: string; masuk?: string; terima?: string; jpg?: string }> }) {
+export default async function ReportDetail({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ isi?: string; masuk?: string; terima?: string; jpg?: string; panen?: string }> }) {
   const user = await requirePerm("report.view");
   const { id } = await params;
-  const { isi, masuk, terima, jpg } = await searchParams;
+  const { isi, masuk, terima, jpg, panen } = await searchParams;
   // Draf mengikuti checklist divisi terbaru sebelum ditampilkan (laporan terkirim tidak diubah)
   await refreshDraftChecklists({ id });
   const r = await prisma.shiftReport.findUnique({ where: { id }, include: { shift: true, division: true, sends: { orderBy: { sentAt: "desc" } } } });
@@ -103,7 +105,9 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   // Reject: barang setengah jadi / jadi milik divisi (hanya divisi berformat laporan)
   const rejectItems = stageOfTemplate(template) ? rItems.map((i) => ({ id: i.id, name: i.name, unit: i.unit })) : [];
   const receiptLines = receipts.map((x) => `${x.item.name}: ${Number(x.qty).toLocaleString("id-ID")} ${x.item.unit}${x.supplierName ? ` · ${x.supplierName}` : ""}${x.purchaseId ? "" : " (belum dicatat di Pembelian)"}`);
-  const flow = flowOn && template ? flowLines(plannedFlow(template, work)) : [];
+  // Panen Oven realtime: entri + Hasil Panen (sudah masuk stok); pratinjau stok hanya selisih yang belum diposting
+  const harvests = template === "PRODUKSI" ? await reportHarvests(r.id) : [];
+  const flow = flowOn && template ? flowLines(isHarvestWork(work) ? netOfHarvest(plannedFlow(template, work), harvests) : plannedFlow(template, work)) : [];
   const fname = `laporan-${r.division.code}-${r.shift.code}-${day}`;
   // Pratinjau JPG & Unduh JPG hanya setelah laporan dikirim (saat mengisi tidak ditampilkan)
   const sent = r.status !== "DRAFT";
@@ -191,6 +195,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   sampleItems={sampleItems}
                   sampleStores={sampleStores}
                   samples={storedSamples(work)}
+                  autoGrids={isHarvestWork(work) ? ["panen", "reject"] : []}
                 />
               </Modal>
             )}
@@ -213,7 +218,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
       />
       {canEdit && (
         <div className="space-y-4">
-          <Suspense fallback={null}><ClearQuery param="isi" /><ClearQuery param="masuk" /><ClearQuery param="terima" /></Suspense>
+          <Suspense fallback={null}><ClearQuery param="isi" /><ClearQuery param="masuk" /><ClearQuery param="terima" /><ClearQuery param="panen" /></Suspense>
 
           {pendingReturns.length > 0 && (
             <div className="card p-4 text-sm">
@@ -230,6 +235,9 @@ export default async function ReportDetail({ params, searchParams }: { params: P
             </div>
           )}
         </div>
+      )}
+      {template === "PRODUKSI" && (
+        <HarvestPanel reportId={r.id} entries={harvests} canAdd={user.can("report.harvest") && !locked && r.status === "DRAFT"} sent={r.status !== "DRAFT"} userId={user.id} manager={user.can("report.harvest") && HARVEST_MANAGERS.includes(user.role)} defaultOpen={panen === "1" && r.status === "DRAFT"} />
       )}
       {locked && isi === "1" && (
         <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">✓ Laporan shift ini sudah terkirim, jadi tidak bisa diubah lagi. Bila ada yang salah, minta Supervisor/Admin mengubahnya.</p>

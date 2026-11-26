@@ -85,6 +85,8 @@ type Props = {
   sampleItems: { id: string; name: string }[];
   sampleStores: { id: string; name: string }[];
   samples: { itemId: string; qty: number; platform: string; storeId: string }[];
+  /** Grid yang terisi otomatis (mis. panen & reject dari entri + Hasil Panen): hanya dibaca */
+  autoGrids?: string[];
 };
 
 type Step = { key: string; label: string };
@@ -282,6 +284,7 @@ export function ReportForm(p: Props) {
             if (s.kind === "grid" && s.legacy && !gridRows(p.work, s).some((r) => r.v.some((v) => v != null))) return null;
             if (s.kind === "grid") {
               const people = s.rows === "people";
+              const auto = !!p.autoGrids?.includes(s.key);
               const rows = people ? ((work[s.key] as GridRow[] | undefined) ?? []) : gridRows(work, s);
               const update = (ri: number, patch: Partial<GridRow>) => setGrid(s, rows.map((r, i) => (i === ri ? { ...r, ...patch } : r)));
               return (
@@ -290,6 +293,7 @@ export function ReportForm(p: Props) {
                     <span className="text-sm font-medium text-slate-700">{s.title}</span>
                     <span className="text-xs text-slate-500">{s.totalLabel}: <b className="text-slate-800">{fmt(rows.reduce((a, r) => a + rowTotal(r), 0))} pcs</b></span>
                   </div>
+                  {auto && <p className="mb-2 text-xs text-sky-700">Otomatis dari entri + Hasil Panen (sudah masuk stok). Ubah lewat daftar entri panen.</p>}
                   <input type="hidden" name={`w.${s.key}.n`} value={rows.length} />
                   <div className="space-y-2">
                     {rows.map((r, ri) => (
@@ -313,6 +317,7 @@ export function ReportForm(p: Props) {
                                 name={`w.${s.key}.${ri}.${ci}`}
                                 inputMode="numeric"
                                 value={r.v[ci] ?? ""}
+                                readOnly={auto}
                                 onChange={(e) => { const v = [...r.v]; v[ci] = toNum(e.target.value); update(ri, { v }); }}
                                 placeholder={s.cols.length > 1 ? "—" : "pcs"}
                                 className="input py-1.5"

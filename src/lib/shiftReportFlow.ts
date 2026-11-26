@@ -93,7 +93,12 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
   if (!(await flowEnabledOn(r.date))) return { posted: 0, skipped: "sebelum tanggal mulai stok terpadu" };
   const template = r.division.reportTemplate;
   if (!isTemplate(template)) return { posted: 0, skipped: "laporan umum" };
-  const steps = plannedFlow(template, r.work as WorkData);
+  // Panen Oven realtime: yang sudah diposting per entri (+ Hasil Panen) tidak diposting lagi, hanya selisihnya
+  const { isHarvestWork, netOfHarvest, reportHarvests } = await import("./shiftHarvest");
+  const realtime = isHarvestWork(r.work);
+  const harvests = realtime ? await reportHarvests(r.id) : [];
+  const harvestSig = (h: { id: string; posted: boolean; cancelledAt: Date | null }[]) => h.map((x) => `${x.id}:${x.posted}:${!!x.cancelledAt}`).join(",");
+  const steps = realtime ? netOfHarvest(plannedFlow(template, r.work as WorkData), harvests) : plannedFlow(template, r.work as WorkData);
   if (!steps.length && r.workPostedVersion === 0) return { posted: 0 };
   const { wip, finished } = await locationSettings(prisma);
   if (!wip || !finished) throw new Error("Lokasi gudang setengah jadi / barang jadi belum diatur di Pengaturan");
@@ -112,6 +117,7 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
     // Kunci laporan & baca ulang versinya: klik Kirim dua kali bersamaan tidak boleh memposting hasil kerja dua kali
     await tx.$queryRaw`SELECT id FROM "ShiftReport" WHERE id = ${r.id} FOR UPDATE`;
     const { workPostedVersion } = await tx.shiftReport.findUniqueOrThrow({ where: { id: r.id }, select: { workPostedVersion: true } });
+    if (realtime && harvestSig(await reportHarvests(r.id, tx)) !== harvestSig(harvests)) throw new Error("Entri panen baru saja berubah, kirim ulang laporan");
     if (workPostedVersion > 0) await reverseVersion(tx, r.id, workPostedVersion, actor);
     const v = workPostedVersion + 1;
     const ref = `LPH:${r.id}:${v}`;

@@ -13,6 +13,8 @@ import { sendTelegram, telegramConfigured, esc } from "@/lib/telegram";
 import { STAGE_LABEL } from "@/lib/stock";
 import { applyShiftStockCount } from "@/lib/shiftReportStock";
 import { postShiftWork } from "@/lib/shiftReportFlow";
+import { HARVEST_KEY, addHarvest, cancelHarvest, correctHarvest, harvestGrids, isHarvestWork, reportHarvests } from "@/lib/shiftHarvest";
+import { VARIANTS } from "@/lib/shiftReport";
 import { assertMemberOwnsReport, memberReportSlot, moveReportShift, discardEmptyDraft } from "@/lib/reportShift";
 import { REJECT_KEY, REJECT_REASONS, applyReportRejects, parseRejects, storedRejects } from "@/lib/productionReject";
 import { boronganBalanceLines, saveShiftBalance } from "@/lib/shiftBalance";
@@ -44,7 +46,7 @@ async function stockRows(divisionId: string, prev: StockCountRow[] = []): Promis
 }
 
 /** "+ Kirim laporan": buat draf (atau buka yang sudah ada) lalu langsung buka form isiannya di popup */
-export const openReport = action("report.create", async (fd, user) => {
+export const openReport = action(["report.create", "report.harvest"], async (fd, user) => {
   let date = str(fd, "date");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Tanggal tidak valid");
   let shiftId = str(fd, "shiftId");
@@ -81,7 +83,7 @@ export const openReport = action("report.create", async (fd, user) => {
   await refreshDraftChecklists({ id: r.id });
   // go=masuk: popup Barang masuk; go=terima: popup Penerimaan borongan (dari notifikasi); selain itu form isian laporan
   const go = fd.get("go");
-  redirect(`/laporan/${r.id}?${go === "masuk" ? "masuk" : go === "terima" ? "terima" : "isi"}=1`);
+  redirect(`/laporan/${r.id}?${go === "masuk" ? "masuk" : go === "terima" ? "terima" : go === "panen" ? "panen" : "isi"}=1`);
 });
 
 async function guardReport(id: string, user: User) {
@@ -130,6 +132,8 @@ async function saveReportData(fd: FormData, user: User) {
     const template = r.division.reportTemplate;
     const get = (k: string) => (typeof fd.get(k) === "string" ? (fd.get(k) as string) : null);
     const work: Record<string, unknown> = isTemplate(template) ? parseWork(template, get, await reportCatalogs(template)) : {};
+    // Panen Oven realtime: isian panen & reject = jumlah entri + Hasil Panen (tidak dari form)
+    if (isHarvestWork(r.work)) Object.assign(work, harvestGrids(await reportHarvests(id)), { [HARVEST_KEY]: true });
     const rc = parseResultCount((await resultItems(r.divisionId)).map((i) => i.id), get);
     if (rc) work[RESULT_KEY] = rc;
     // Reject per tahap (jenis + jumlah + alasan); tanpa penanda form → reject lama dipertahankan
@@ -468,3 +472,33 @@ export const moveReport = action("report.create", async (fd, user) => {
   revalidatePath("/laporan");
   return r.swapped ? `Laporan ditukar: sekarang ${r.to}` : `Laporan dipindah dari ${r.from} ke ${r.to}`;
 });
+
+// ---------------- Panen Oven realtime ----------------
+
+const intOf = (fd: FormData, k: string) => {
+  const t = String(fd.get(k) ?? "").replace(/\./g, "").trim();
+  if (!t) return 0;
+  const x = Number(t);
+  if (!Number.isInteger(x) || x < 0) throw new Error("Jumlah panen tidak valid");
+  return x;
+};
+
+/** "+ Hasil Panen": entri per karakter, langsung masuk stok (− patung cetak, + patung kering) */
+export const addHarvestEntry = action("report.harvest", async (fd, user) => {
+  const id = str(fd, "reportId");
+  await guardEditable(id, user);
+  const res = await addHarvest(id, { oven: str(fd, "oven"), lines: VARIANTS.map((v) => ({ variant: v, good: intOf(fd, `g.${v}`), reject: intOf(fd, `r.${v}`) })) }, user);
+  return res.posted ? `Hasil panen tercatat & masuk stok (${res.ids.length} entri)` : `Hasil panen tercatat (${res.ids.length} entri)`;
+}, ["/laporan", "/stok", "/borongan"]);
+
+export const correctHarvestEntry = action("report.harvest", async (fd, user) => {
+  const h = await prisma.shiftHarvest.findUniqueOrThrow({ where: { id: str(fd, "id") } });
+  await guardReport(h.reportId, user);
+  const reason = optStr(fd, "reason");
+  if (fd.get("mode") === "batal") {
+    await cancelHarvest(h.id, reason, user);
+    return "Entri panen dibatalkan (stok dikembalikan)";
+  }
+  await correctHarvest(h.id, { good: intOf(fd, "good"), reject: intOf(fd, "reject") }, reason, user);
+  return "Entri panen dikoreksi";
+}, ["/laporan", "/stok", "/borongan"]);

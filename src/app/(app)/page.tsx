@@ -27,6 +27,8 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const role = user.role;
   const isOperator = role === "OPERATOR";
   const isCaptain = role === "KAPTEN_DIVISI";
+  // Anggota divisi Oven (format laporan Produksi): pintasan "+ Hasil Panen" di Beranda
+  const ovenMember = (isOperator || isCaptain) && !!user.divisionId && (await prisma.division.findUnique({ where: { id: user.divisionId }, select: { reportTemplate: true } }))?.reportTemplate === "PRODUKSI";
   // Produksi dibaca dari Laporan Shift + Borongan; Kapten melihat divisinya sendiri
   const scope = isCaptain ? { divisionId: user.divisionId } : {};
   const showFinance = user.can("dashboard.finance");
@@ -83,6 +85,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Stat label="Absensi hari ini" value={attendance ? ATT_LABEL[attendance.status] : "Belum absen"} tone={attendance ? (attendance.status === "TERLAMBAT" ? "amber" : "green") : "red"} hint={attendance ? attendance.shift.name : "Ketuk untuk absen"} href="/absensi" />
           {/* Hasil produksi tidak lagi diketik di sini: dicatat lewat Laporan Shift */}
+          {ovenMember && user.can("report.harvest") && <Link href="/laporan/buka?f=panen" className="card flex items-center justify-center bg-emerald-50 p-4 text-center text-sm font-semibold text-emerald-800 hover:bg-emerald-100">+ Hasil Panen</Link>}
           {user.can("report.create") && <Link href="/laporan" className="card flex items-center justify-center p-4 text-center text-sm font-semibold text-brand-700 hover:bg-brand-50">Buka laporan shift</Link>}
         </div>
       )}
