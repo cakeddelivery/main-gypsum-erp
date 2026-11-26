@@ -1,5 +1,6 @@
 import type { ReserveKind } from "@prisma/client";
 import { prisma } from "./db";
+import { DUP_WINDOW_MS } from "./dupGuard";
 import { postJournal, COA, type LineInput } from "./accounting";
 import { audit } from "./audit";
 import { addDays, dateOnly, dateStr, jakartaDateTime, todayStr } from "./time";
@@ -80,6 +81,9 @@ export async function withdrawReserve(fundId: string, amount: number, date: stri
     const f = await tx.reserveFund.findUniqueOrThrow({ where: { id: fundId } });
     if (f.kind === "LOAN_PAYMENT") throw new FinanceError("Cicilan harian langsung mengurangi hutang; tidak ada saldo untuk ditarik");
     const bal = await fundBalance(tx, fundId);
+    // Klik ganda: penarikan identik yang baru dicatat ditolak (dana dikunci di atas, jadi paralel pun terserialkan)
+    const same = await tx.reserveEntry.findFirst({ where: { fundId, type: "TARIK", amount: BigInt(amount), date: dateOnly(date), createdBy: actor.name, createdAt: { gte: new Date(Date.now() - DUP_WINDOW_MS) } }, select: { note: true } });
+    if (same && (same.note ?? null) === (note ?? null)) throw new FinanceError("Penarikan yang sama persis baru saja dicatat. Jika memang sengaja dua kali, tunggu 2 menit atau beri catatan yang berbeda.");
     if (!(amount > 0) || amount > bal) throw new FinanceError(`Nominal harus 1 – ${bal}`);
     const to = await tx.bankAccount.findUniqueOrThrow({ where: { id: f.toBankId! } });
     let lines: LineInput[] = [{ accountCode: COA.UTANG_GAJI_OWNER, debit: amount }, { accountId: to.coaAccountId, credit: amount }];

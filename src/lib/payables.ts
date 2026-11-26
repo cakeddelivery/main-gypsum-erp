@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "./db";
-import { assertPeriodOpen, COA, postJournal, type LineInput } from "./accounting";
+import { AccountingError, assertPeriodOpen, COA, postJournal, type LineInput } from "./accounting";
+import { DUP_WINDOW_MS, lockKey } from "./dupGuard";
 import { nextNumber } from "./numbering";
 
 type Tx = Prisma.TransactionClient;
@@ -112,6 +113,10 @@ export async function createLoanRecord(input: LoanInput, actor: Actor, db?: Tx) 
     const liabilityId = input.coaAccountId || (await liabilityAccountId(tx, { kind: "PINJAMAN", coaAccountId: null }));
     const liab = await tx.coaAccount.findUniqueOrThrow({ where: { id: liabilityId } });
     if (liab.type !== "KEWAJIBAN") throw new Error("Akun hutang harus akun kewajiban (2-xxxx)");
+    // Klik ganda: pinjaman identik (pemberi, nominal, tanggal) yang baru dicatat ditolak
+    await lockKey(tx, `pinjaman-ganda:${lender}|${amount}|${input.date.toISOString()}`);
+    if (await tx.payable.findFirst({ where: { kind: "PINJAMAN", vendor: lender, amount: BigInt(amount), date: input.date, createdAt: { gte: new Date(Date.now() - DUP_WINDOW_MS) } }, select: { number: true } }))
+      throw new AccountingError("Pinjaman yang sama persis baru saja dicatat. Muat ulang halaman untuk melihatnya; jika memang sengaja, tunggu 2 menit atau bedakan tanggal/nominalnya.");
     const number = await nextNumber(tx, "PJM");
     let lines: LineInput[];
     let paid = 0;
