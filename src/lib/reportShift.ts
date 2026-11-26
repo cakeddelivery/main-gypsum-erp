@@ -3,6 +3,8 @@ import { audit } from "./audit";
 import { addDays, dateOnly, dateStr, fmtDay, todayStr } from "./time";
 import { crossesMidnight, shiftWindow, NIGHT_GRACE_HOURS } from "./workday";
 import { resolveWorkday } from "./attendanceSelf";
+import { nearestShift } from "./attendance";
+import { divisionShifts } from "./attendanceRules";
 
 type Actor = { id: string; name: string };
 
@@ -11,7 +13,7 @@ type Actor = { id: string; name: string };
  * tanggal kerja saat ini (lihat lib/workday) + shift yang tercatat di absen masuk tanggal itu.
  * null = divisi 1 shift (tidak dibatasi). Melempar error bila belum absen masuk.
  */
-export async function memberReportSlot(employeeId: string, divisionId: string, now: Date = new Date()): Promise<{ date: string; shiftId: string } | null> {
+export async function memberReportSlot(employeeId: string, divisionId: string, now: Date = new Date()): Promise<{ date: string; shiftId: string; noAttendance?: boolean } | null> {
   const div = await prisma.division.findUniqueOrThrow({ where: { id: divisionId }, select: { shiftCount: true } });
   if (div.shiftCount < 2) return null;
   const wd = await resolveWorkday(employeeId, now);
@@ -23,7 +25,15 @@ export async function memberReportSlot(employeeId: string, divisionId: string, n
     // Laporan shift kemarin yang belum terkirim tetap bisa dikirim sampai absen masuk berikutnya (tidak terkunci setelah jam shift selesai)
     if (prev?.checkIn && ((crossesMidnight(prev.shift) && now < new Date(shiftWindow(y, prev.shift).end.getTime() + NIGHT_GRACE_HOURS * 3600_000)) || !(await prisma.shiftReport.findFirst({ where: { date: prev.date, shiftId: prev.shiftId, divisionId, status: { not: "DRAFT" } }, select: { id: true } })))) att = prev;
   }
-  if (!att?.checkIn) throw new Error("Anda belum absen masuk. Absen masuk dulu di menu Absensi: shift laporan mengikuti shift absen Anda.");
+  if (!att?.checkIn) {
+    // Belum absen (mis. GPS ditolak): jangan sampai input stok macet. Laporan dibuat untuk shift yang paling sesuai jam sekarang,
+    // ditandai "tanpa absen" (audit + notifikasi Supervisor oleh pemanggil)
+    const active = await prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" } });
+    const div2 = await prisma.division.findUniqueOrThrow({ where: { id: divisionId }, select: { shiftCount: true } });
+    const shift = nearestShift(divisionShifts(active, div2.shiftCount), now);
+    if (!shift) throw new Error("Anda belum absen masuk dan belum ada shift aktif. Hubungi Supervisor.");
+    return { date: wd.date, shiftId: shift.id, noAttendance: true };
+  }
   return { date: dateStr(att.date), shiftId: att.shiftId };
 }
 
@@ -32,7 +42,12 @@ export async function assertMemberOwnsReport(employeeId: string, r: { date: Date
   const div = await prisma.division.findUniqueOrThrow({ where: { id: r.divisionId }, select: { shiftCount: true } });
   if (div.shiftCount < 2) return;
   const att = await prisma.attendance.findUnique({ where: { employeeId_date: { employeeId, date: r.date } }, include: { shift: true } });
-  if (!att?.checkIn) throw new Error(`Anda belum absen masuk pada ${fmtDay(r.date)}. Laporan ${r.shift?.name ?? "shift"} hanya bisa diisi karyawan yang absen di shift itu.`);
+  if (!att?.checkIn) {
+    // Laporan "tanpa absen" (dibuat saat absen gagal): boleh dilanjutkan untuk hari kerja ini / kemarin
+    const d = dateStr(r.date);
+    if (d === todayStr() || d === addDays(todayStr(), -1)) return;
+    throw new Error(`Anda belum absen masuk pada ${fmtDay(r.date)}. Laporan ${r.shift?.name ?? "shift"} hanya bisa diisi karyawan yang absen di shift itu.`);
+  }
   if (att.shiftId !== r.shiftId) throw new Error(`Laporan ini untuk ${r.shift?.name ?? "shift lain"}, sedangkan absen Anda ${att.shift.name}. Minta Supervisor memindahkan laporan bila salah shift.`);
 }
 

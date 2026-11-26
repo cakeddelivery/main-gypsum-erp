@@ -63,14 +63,22 @@ export function checkGeofence(pos: GeoPoint | null, sites: Site[]): GeofenceResu
   if (!pos) return { ok: false, error: "Lokasi GPS tidak terbaca. Izinkan akses lokasi di browser lalu coba lagi." };
   if (pos.accuracy != null && pos.accuracy > MAX_GPS_ACCURACY)
     return { ok: false, error: `Sinyal GPS kurang akurat (±${Math.round(pos.accuracy)} m). Nyalakan GPS/mode akurasi tinggi lalu coba lagi.` };
+  // Akurasi GPS dihitung: posisi sebenarnya bisa sejauh `accuracy` lebih dekat, jadi lolos bila jarak − akurasi ≤ radius
+  const slack = Math.max(0, pos.accuracy ?? 0);
   let best: { site: Site; distance: number } | null = null;
   for (const s of sites) {
     const d = distanceMeters(pos, { lat: s.latitude, lng: s.longitude });
     if (!best || d - s.radiusM < best.distance - best.site.radiusM) best = { site: s, distance: d };
   }
-  if (best && best.distance <= best.site.radiusM) return { ok: true, site: best.site, distance: Math.round(best.distance) };
-  return { ok: false, error: `Anda di luar lokasi kerja (${Math.round(best!.distance)} m dari ${best!.site.name}, batas ${best!.site.radiusM} m).` };
+  if (best && best.distance - slack <= best.site.radiusM) return { ok: true, site: best.site, distance: Math.round(best.distance) };
+  return {
+    ok: false,
+    error: `Anda di luar lokasi kerja (${Math.round(best!.distance)} m dari ${best!.site.name}, batas ${best!.site.radiusM} m${slack ? `, akurasi GPS ±${Math.round(slack)} m` : ""}). Dekati titik kerja lalu coba lagi beberapa detik kemudian. Bila sudah di lokasi tetapi tetap ditolak, minta Supervisor mengabsenkan Anda.`,
+  };
 }
+
+/** Radius titik lokasi kerja yang disarankan (meter): GPS HP di dalam gedung sering meleset 30–70 m */
+export const RECOMMENDED_RADIUS_M = 75;
 
 /** Baca koordinat dari FormData (diisi otomatis oleh tombol absen di browser). */
 export function readGeo(fd: FormData): GeoPoint | null {

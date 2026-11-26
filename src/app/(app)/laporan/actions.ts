@@ -55,9 +55,13 @@ export const openReport = action(["report.create", "report.harvest"], async (fd,
   // Anggota divisi 2 shift: tanggal & shift laporan OTOMATIS dari absennya (tidak bisa memilih shift lain);
   // Supervisor/Owner/Admin boleh memilih manual (pembuatan laporan baru dicatat di audit).
   const member = reportDivision(user) !== null && user.employeeId;
+  let noAttendance = false;
   if (member) {
     const slot = await memberReportSlot(user.employeeId!, divisionId);
-    if (slot) ({ date, shiftId } = { date: slot.date, shiftId: slot.shiftId });
+    if (slot) {
+      ({ date, shiftId } = { date: slot.date, shiftId: slot.shiftId });
+      noAttendance = !!slot.noAttendance;
+    }
   }
   const division = await prisma.division.findUniqueOrThrow({ where: { id: divisionId } });
   const allowed = (await prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, take: Math.max(1, division.shiftCount) })).map((s) => s.id);
@@ -79,6 +83,13 @@ export const openReport = action(["report.create", "report.harvest"], async (fd,
     update: {},
   });
   if (!member && !existed) await audit(user, "LAPORAN_SHIFT_MANUAL", "ShiftReport", r.id, { shiftId, tanggal: date });
+  // Anggota belum absen (GPS gagal dsb.): laporan tetap dibuat agar input stok jalan; dicatat & Supervisor diberi tahu
+  if (member && noAttendance && !existed) {
+    await audit(user, "LAPORAN_TANPA_ABSEN", "ShiftReport", r.id, { shiftId, tanggal: date, karyawan: user.name });
+    const sup = await prisma.user.findMany({ where: { active: true, role: { in: ["SUPERVISOR", "OWNER"] } }, select: { id: true } });
+    const { sendPush } = await import("@/lib/push");
+    await sendPush(sup.map((u) => u.id), { title: "Laporan tanpa absen", body: `${user.name} membuka laporan ${division.name} ${fmtDay(dateOnly(date))} sebelum absen masuk. Cek absensinya di menu Absensi.`, url: "/absensi", tag: `tanpa-absen-${r.id}` }).catch(() => {});
+  }
   // Draf lama mengikuti checklist divisi terbaru (jawaban dengan label sama dipertahankan)
   await refreshDraftChecklists({ id: r.id });
   // go=masuk: popup Barang masuk; go=terima: popup Penerimaan borongan (dari notifikasi); selain itu form isian laporan
