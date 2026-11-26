@@ -77,7 +77,7 @@ export async function loadUser(userId: string, sv = 0) {
     if (grant) for (const p of ["borongan.view", "borongan.point"] as const) perms.add(p);
   }
   // Tim Cetak/Oven mengisi patung kering kiriman Assembling; tim Packing menerima setoran Assembling
-  if ((user.role === "KAPTEN_DIVISI" || user.role === "OPERATOR") && division && (division.reportTemplate === "CETAK" || division.reportTemplate === "PACKING" || /\b(cetak|oven)\b/i.test(division.name))) {
+  if ((user.role === "KAPTEN_DIVISI" || user.role === "OPERATOR") && division && (division.reportTemplate === "CETAK" || division.reportTemplate === "PRODUKSI" || division.reportTemplate === "PACKING" || /\b(cetak|oven)\b/i.test(division.name))) {
     for (const p of ["borongan.view", "borongan.point"] as const) perms.add(p);
   } else if (division && /oven/i.test(division.name)) perms.add("borongan.view");
   // Anggota divisi Giftbox & Packing mencatat retur paket (video unboxing) tanpa akses refund/komplain
