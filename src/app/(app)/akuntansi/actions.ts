@@ -14,6 +14,11 @@ import { resolveSupplier } from "@/lib/suppliers";
 import { saveProof } from "@/lib/storage";
 import { paySale } from "@/lib/sales";
 import { reverseFromJournalMenu } from "@/lib/journalSource";
+import { assertNotRecentDuplicateJournal, lockKey, DUP_WINDOW_MS } from "@/lib/dupGuard";
+
+/** Bukukan jurnal manual dengan penjaga klik ganda (identik dalam 2 menit = ditolak) */
+const postGuarded = (tx: Parameters<typeof postJournal>[0], input: Parameters<typeof postJournal>[1]) =>
+  assertNotRecentDuplicateJournal(tx, { source: input.source, description: input.description, date: input.date, createdBy: input.actor.name, lines: input.lines }).then(() => postJournal(tx, input));
 
 /** Foto/PDF nota atau bukti transfer dari form (opsional) */
 async function proofOf(fd: FormData): Promise<{ path: string; mime: string } | null> {
@@ -36,7 +41,7 @@ export const manualJournal = action(
     const memo = fd.getAll("memo").map(String);
     const lines: LineInput[] = acc.map((a, i) => ({ accountId: a, debit: deb[i] || 0, credit: cre[i] || 0, memo: memo[i] || undefined })).filter((l) => l.accountId && (l.debit || l.credit));
     const j = await prisma.$transaction((tx) =>
-      postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: zField(fd, "description", z.string().min(3, "Keterangan wajib")), source: str(fd, "source") === "PENYESUAIAN" ? "PENYESUAIAN" : "MANUAL", actor: user, lines }),
+      postGuarded(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: zField(fd, "description", z.string().min(3, "Keterangan wajib")), source: str(fd, "source") === "PENYESUAIAN" ? "PENYESUAIAN" : "MANUAL", actor: user, lines }),
     );
     return `Jurnal ${j.number} dibukukan`;
   },
@@ -92,7 +97,7 @@ export const openingBalance = action(
     });
     if (!lines.length) throw new Error("Isi minimal satu saldo");
     if (net !== 0) lines.push({ accountCode: COA.EKUITAS_SALDO_AWAL, debit: net < 0 ? -net : 0, credit: net > 0 ? net : 0, memo: "Penyeimbang saldo awal" });
-    const j = await prisma.$transaction((tx) => postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: "Saldo awal", source: "SALDO_AWAL", actor: user, lines }));
+    const j = await prisma.$transaction((tx) => postGuarded(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: "Saldo awal", source: "SALDO_AWAL", actor: user, lines }));
     return `Saldo awal dibukukan (${j.number})`;
   },
   ["/akuntansi"],
@@ -104,6 +109,10 @@ export const createReceivable = action(
     const amount = int(fd, "amount");
     if (amount <= 0) throw new Error("Nominal harus > 0");
     await prisma.$transaction(async (tx) => {
+      const customer = str(fd, "customer");
+      await lockKey(tx, `piutang-ganda:${customer}|${amount}|${str(fd, "date")}`);
+      if (await tx.receivable.findFirst({ where: { customer, amount: BigInt(amount), date: d(fd), createdAt: { gte: new Date(Date.now() - DUP_WINDOW_MS) } }, select: { number: true } }))
+        throw new AccountingError("Piutang yang sama persis baru saja dicatat. Muat ulang halaman untuk melihatnya.");
       const number = await nextNumber(tx, "PIU");
       const j = await postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: `Piutang ${number} ${str(fd, "customer")}`, source: "PIUTANG", sourceId: number, actor: user, lines: [{ accountCode: COA.PIUTANG, debit: amount }, { accountId: str(fd, "revenueAccountId"), credit: amount }] });
       await tx.receivable.create({ data: { number, customer: zField(fd, "customer", z.string().min(2, "Pelanggan wajib")), storeId: j.storeId, date: d(fd), dueDate: optStr(fd, "dueDate") ? d(fd, "dueDate") : null, amount: BigInt(amount), note: optStr(fd, "note"), journalId: j.id } });
@@ -120,12 +129,15 @@ export const createPayable = action(
     if (amount <= 0) throw new Error("Nominal harus > 0");
     const proof = await proofOf(fd);
     await prisma.$transaction(async (tx) => {
+      await lockKey(tx, `hutang-ganda:${str(fd, "vendor")}|${str(fd, "supplierId")}|${amount}|${str(fd, "date")}`);
       const number = await nextNumber(tx, "UTG");
       // Supplier dipilih dari master, atau nama yang diketik dicocokkan dulu (termasuk nama lain) agar tidak dobel
       const supplier = await resolveSupplier(tx, { supplierId: optStr(fd, "supplierId"), name: str(fd, "vendor") }, user, "hutang");
       if (!supplier) throw new Error("Pemasok wajib diisi");
       const supplierId = supplier.id;
       const vendor = supplier.name;
+      if (await tx.payable.findFirst({ where: { supplierId, amount: BigInt(amount), date: d(fd), createdAt: { gte: new Date(Date.now() - DUP_WINDOW_MS) } }, select: { number: true } }))
+        throw new AccountingError("Hutang yang sama persis baru saja dicatat. Muat ulang halaman untuk melihatnya.");
       const debit = await tx.coaAccount.findUniqueOrThrow({ where: { id: str(fd, "debitAccountId") } });
       // Hutang supplier = barang/jasa yang diterima: persediaan, aset, atau beban; bukan piutang/kas/hutang
       if (debit.isCash || debit.code.startsWith("1-13") || !["ASET", "BEBAN", "HPP"].includes(debit.type)) throw new Error("Akun debit harus persediaan, aset, atau beban (barang/jasa yang diterima dari supplier)");
@@ -188,6 +200,7 @@ export const settle = action(
     }
     const bank = await prisma.bankAccount.findUniqueOrThrow({ where: { id: str(fd, "bankAccountId") } });
     await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Receivable" WHERE id = ${id} FOR UPDATE`; // pelunasan paralel tidak boleh sama-sama lolos cek sisa
       const doc = await tx.receivable.findUniqueOrThrow({ where: { id } });
       const remaining = Number(doc.amount - doc.paid);
       if (amount <= 0 || amount > remaining) throw new Error(`Nominal harus 1 – ${remaining}`);
@@ -233,7 +246,7 @@ export const createAsset = action(
       const name = zField(fd, "name", z.string().min(2, "Nama aset wajib"));
       const supplier = funding === "UTANG" ? await resolveSupplier(tx, { supplierId: optStr(fd, "supplierId"), name: str(fd, "vendor") }, user, "hutang aset") : null;
       if (funding === "UTANG" && !supplier) throw new AccountingError("Pemasok wajib diisi");
-      const j = await postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: `Perolehan aset ${name}${supplier ? ` (hutang ke ${supplier.name})` : ""}`, source: "ASET", actor: user, lines: [{ accountId: str(fd, "assetAccountId"), debit: cost }, credit] });
+      const j = await postGuarded(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: `Perolehan aset ${name}${supplier ? ` (hutang ke ${supplier.name})` : ""}`, source: "ASET", actor: user, lines: [{ accountId: str(fd, "assetAccountId"), debit: cost }, credit] });
       await tx.fixedAsset.create({ data: { name, storeId: j.storeId, acquiredAt: d(fd), cost: BigInt(cost), usefulLifeMonths: life, residual: BigInt(int(fd, "residual")), journalId: j.id } });
       if (supplier) {
         const number = await nextNumber(tx, "UTG", d(fd));

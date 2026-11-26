@@ -1973,6 +1973,18 @@ model Counter {
   value Int
 }
 
+/// Token sekali pakai per kirim form: kirim ulang dengan token sama (klik ganda, retry, tab ganda) tidak diproses dua kali
+model ActionToken {
+  key       String   @id
+  userId    String?
+  /// PROSES (sedang jalan) | SELESAI (sukses, pesan disimpan)
+  state     String   @default("PROSES")
+  message   String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}
+
 // ============ PEMBELIAN & GAJI OWNER ============
 
 enum PaymentTerm {

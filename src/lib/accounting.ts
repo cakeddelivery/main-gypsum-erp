@@ -127,6 +127,8 @@ export async function reversalDate(tx: Tx, date: Date, now: Date = new Date()) {
 
 /** Koreksi jurnal dengan jurnal pembalik (jurnal asli tidak pernah diubah). */
 export async function reverseJournal(tx: Tx, journalId: string, date: Date, actor: { id: string; name: string }, reason: string) {
+  // Kunci baris jurnal: dua permintaan bersamaan (klik ganda / retry) tidak boleh sama-sama lolos cek "sudah dibalik"
+  await tx.$queryRaw`SELECT id FROM "Journal" WHERE id = ${journalId} FOR UPDATE`;
   const j = await tx.journal.findUniqueOrThrow({ where: { id: journalId }, include: { lines: true } });
   const already = await tx.journal.findFirst({ where: { reversalOfId: j.id } });
   if (already) throw new AccountingError("Jurnal ini sudah pernah dibalik");
@@ -352,7 +354,14 @@ export async function closePeriod(year: number, month: number, actor: { id: stri
   const { start, end } = monthRange(year, month);
   const lastMoment = new Date(end.getTime() - 1000);
   let depTotal = 0;
+  let raced = false;
   await prisma.$transaction(async (tx) => {
+    // Serialkan penutupan periode yang sama (klik ganda / dua sesi): yang kedua menunggu lalu melihat periode sudah ditutup
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`tutup-buku:${year}-${month}`}))`;
+    if ((await tx.accountingPeriod.findUnique({ where: { year_month: { year, month } } }))?.status === "CLOSED") {
+      raced = true;
+      return;
+    }
     const assets = await tx.fixedAsset.findMany({ where: { active: true, acquiredAt: { lt: end } } });
     for (const a of assets) {
       const key = `${a.id}:${year}-${month}`;
@@ -382,5 +391,6 @@ export async function closePeriod(year: number, month: number, actor: { id: stri
     });
     await audit(actor, "TUTUP_BUKU", "AccountingPeriod", `${year}-${month}`, { depreciation: depTotal, start }, tx);
   });
+  if (raced) return { alreadyClosed: true, depreciation: 0 };
   return { alreadyClosed: false, depreciation: depTotal };
 }

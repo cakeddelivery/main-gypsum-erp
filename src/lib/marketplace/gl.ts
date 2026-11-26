@@ -216,6 +216,8 @@ export async function openingFromBalance(storeId: string, channel: string, walle
 export async function rebuildGl() {
   const journals = await deriveJournals();
   await prisma.$transaction(async (tx) => {
+    // Dua pembangunan ulang bersamaan (impor selesai + tombol Bangun ulang) bentrok di kunci unik: serialkan, yang kedua menimpa yang pertama
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('marketplace-gl-rebuild'))`;
     await tx.marketplaceGlJournal.deleteMany({});
     for (let i = 0; i < journals.length; i += 200) {
       for (const j of journals.slice(i, i + 200)) {
