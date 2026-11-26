@@ -187,6 +187,7 @@ export type CellView = { pointId: string; workerId: string; worker: string; task
 export type PickupView = { id: string; number: string; date: string; status: PickupStatus; driver: string | null; holdNote: string | null; note?: string | null; lines: { id: string; pointId: string; workerId: string; worker: string; taskId: string; qty: number; reject: number; done: boolean }[]; counts: { taskId: string; qty: number }[] };
 export type ShipmentView = {
   id: string; number: string; date: string; mode: ShipmentMode; driver: string | null; state: ShipmentState; note: string | null; createdBy: string; cancelled: boolean; waitingSupport: boolean;
+  driverId?: string | null;
   /** Ditutup administratif (tanpa stok/upah): catatan penutupan, null = tidak */
   closed?: string | null;
   group: string;
@@ -240,6 +241,7 @@ export async function buildViews(rows: ShipmentRow[]): Promise<ShipmentView[]> {
     const taken = cells.reduce((a, c) => a + c.diambil, 0);
     return {
       id: s.id, number: s.number, date: dateStr(s.date), mode: s.mode, driver: s.driver?.name ?? null, state, note: s.note, createdBy: s.createdBy, cancelled: !!s.cancelledAt, waitingSupport: s.waitingSupport,
+      driverId: s.driverId,
       closed: s.closedAt ? `${s.closeNote ?? "Ditutup administratif"} (${s.closedBy ?? "-"}, ${dateStr(s.closedAt)})` : null,
       group: s.tasks[0] ? taskGroupName(s.tasks[0].task.name) : "",
       points: s.pointIds.map((id) => {
@@ -320,6 +322,21 @@ export function forCoordinator(v: ShipmentView, pointIds: string[]): ShipmentVie
     crosscheck: v.crosscheck?.filter((c) => own(c.pointId)),
     totals: { sent, allotted: sent, received, reject, atWorkers: Math.max(0, sent - taken - reject), gap: state === "SELESAI" ? sent - taken - reject : null },
   };
+}
+
+/**
+ * Kiriman yang boleh dilihat akun ini (daftar Kiriman DAN halaman detail): Owner/Supervisor semua; Cetak/Oven & Packing hanya
+ * kiriman Assembling; isian patung kering yang belum dilengkapi hanya tim Assembling; driver kiriman lewat driver; tim divisi
+ * kiriman tugas divisinya; koordinator titiknya (bagian titiknya, disaring forCoordinator).
+ */
+export function canSeeShipment(scope: Scope, s: { tasks: { id: string; name: string }[]; points: { id: string }[]; mode: ShipmentMode; waitingSupport: boolean }) {
+  if (scope.all) return true;
+  const asm = s.tasks.some((t) => isAssemblingName(t.name));
+  if (scope.kering || scope.packing) return asm;
+  if (s.waitingSupport) return !!scope.warehouse || scope.division?.template === "ASSEMBLING";
+  if (scope.driver) return s.mode === "DRIVER";
+  if (scope.division) return !!scope.warehouse || s.tasks.some((t) => canTask(scope, t.id));
+  return s.points.some((p) => scope.pointIds.includes(p.id));
 }
 
 /** Saring daftar kiriman menurut akses: koordinator hanya bagian titiknya, lainnya apa adanya */
@@ -502,80 +519,235 @@ export async function cancelShipment(id: string, actor: Actor, scope: Scope) {
   });
 }
 
+export type ShipmentPatch = {
+  date?: string;
+  mode?: ShipmentMode;
+  pointIds?: string[];
+  driverId?: string | null;
+  note?: string | null;
+  /** Jumlah per jenis (Assembling); jenis yang tidak disebut tetap */
+  tasks?: { taskId: string; qty: number }[];
+  /** Daftar LENGKAP bahan yang dikirim (barang tidak disebut / qty 0 = dihapus); tanpa ini bahan tetap */
+  lines?: { itemId: string; qty: number }[];
+};
+
+const r3 = (n: number) => Math.round(n * 1000) / 1000;
+
 /**
- * Ubah JUMLAH yang dikirim per jenis pada kiriman yang sudah dibuat (mis. Cewek 700 padahal hanya 600 yang dibagi).
- * Hanya Owner/Supervisor (hak kelola borongan), alasan wajib, audit nilai lama → baru. Stok bahan disesuaikan dengan mutasi
- * koreksi (selisih saja, bertanggal sekarang, ref kiriman; mutasi lama tidak dihapus): dikurangi → bahan resep kembali ke
- * gudang asal dari lokasi kiriman (mobil driver / titik); ditambah → keluar lagi dari gudang (stok harus cukup).
- * Tidak boleh lebih kecil dari yang sudah dibagi ke pekerja per jenis (itu juga batas laporan/pengambilan). Kiriman yang sudah
- * SELESAI / ditutup / dibatalkan, dan kiriman "hasil diisi saat penerimaan" (tanpa jumlah), tidak bisa diubah.
+ * Ubah SEMUA data kiriman yang sudah dibuat (Kirim Assembling maupun Kirim Cat): tanggal, titik tujuan, cara kirim & driver, catatan,
+ * jumlah per jenis, dan bahan yang dikirim (tambah / kurangi / hapus / tambah barang). Hanya Owner/Supervisor/Admin (hak kelola borongan).
+ *  - Alasan wajib; audit KIRIMAN_DIUBAH berisi lama → baru per field.
+ *  - Stok dikoreksi dengan mutasi SELISIH (ref KRM:<nomor>, tanggal sekarang, mutasi lama tidak dihapus): posisi bahan per lokasi
+ *    (gudang / mobil driver / titik, dari mutasi KRM+BGI) dibandingkan dengan posisi yang seharusnya, lalu dipindahkan seperlunya
+ *    (pindah titik = bahan kembali dari lokasi lama lalu keluar ke lokasi baru). Stok di lokasi asal harus cukup (bahan yang sudah
+ *    terpakai tidak bisa ditarik).
+ *  - Batas minimal: jumlah per jenis ≥ yang sudah dibagi ke pekerja; bahan ≥ yang sudah dibagi ke titik (lewat driver).
+ *  - Titik tidak bisa diganti bila sudah ada pembagian / laporan / pengambilan. Titik, cara kirim, dan driver tidak bisa diubah bila
+ *    upahnya sudah masuk klaim / dibayar.
+ *  - Kiriman SELESAI / ditutup / dibatalkan: hanya CATATAN yang boleh diubah. Isian patung kering yang menunggu bahan pendukung
+ *    hanya tanggal, jumlah, dan catatan (lengkapi dulu lewat "Lengkapi & kirim").
  */
-export async function changeShipmentQty(shipmentId: string, qtys: { taskId: string; qty: number }[], reason: string, actor: Actor, scope: Scope) {
-  if (!fullAccess(scope)) throw new BoronganError("Jumlah kiriman hanya bisa diubah Owner / Supervisor (hak kelola borongan)");
+export async function updateShipment(shipmentId: string, patch: ShipmentPatch, reason: string, actor: Actor, scope: Scope) {
+  if (!fullAccess(scope)) throw new BoronganError("Kiriman hanya bisa diubah Owner / Supervisor (hak kelola borongan)");
   const why = reason?.trim() ?? "";
-  if (why.length < 3) throw withField(new BoronganError("Tulis alasan perubahan jumlah kiriman"), "reason");
+  if (why.length < 3) throw withField(new BoronganError("Tulis alasan perubahan kiriman"), "reason");
   return prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "BoronganShipment" WHERE id = ${shipmentId} FOR UPDATE`;
-    const s = await tx.boronganShipment.findUniqueOrThrow({ where: { id: shipmentId }, include: { tasks: { include: { task: { include: { inputs: { include: { item: true } } } } } }, lines: true, allots: true, pickups: { where: { status: { not: "DIBATALKAN" } }, include: { lines: true } } } });
+    const s = await tx.boronganShipment.findUniqueOrThrow({
+      where: { id: shipmentId },
+      include: { tasks: { include: { task: { include: { inputs: { include: { item: true } } } } } }, lines: true, allots: true, reports: { select: { id: true } }, pickups: { where: { status: { not: "DIBATALKAN" } }, include: { lines: true } } },
+    });
     if (s.cancelledAt) throw new BoronganError(`${s.number} sudah dibatalkan`);
-    if (s.closedAt) throw new BoronganError(`${s.number} sudah ditutup, tidak bisa diubah`);
-    if (s.resultAtReceipt) throw new BoronganError("Kiriman ini tidak memakai jumlah per jenis (hasil diisi saat penerimaan)");
-    if (shipmentState(s.allots, s.pickups) === "SELESAI") throw new BoronganError(`${s.number} sudah selesai, tidak bisa diubah`);
-    const want = new Map<string, number>();
-    for (const q of qtys) {
-      if (!s.tasks.some((t) => t.taskId === q.taskId)) throw new BoronganError("Jenis pekerjaan bukan bagian kiriman ini");
-      if (!Number.isInteger(q.qty) || q.qty < 0) throw new BoronganError("Jumlah harus bilangan bulat, tidak minus");
-      want.set(q.taskId, q.qty);
+    const taskName = (t: (typeof s.tasks)[number]) => shortTaskName(t.task.name);
+    const changes: Record<string, { lama: unknown; baru: unknown }> = {};
+    const noteNew = patch.note === undefined ? undefined : (patch.note?.trim() || null);
+    const noteChanged = noteNew !== undefined && noteNew !== (s.note ?? null);
+
+    // ---- status: selesai / ditutup → hanya catatan (dicek setelah perubahan dihitung, nilai yang sama tidak dianggap perubahan) ----
+    const finished = !!s.closedAt || (s.resultAtReceipt ? s.pickups.some((p) => p.lines.length > 0) : shipmentState(s.allots, s.pickups) === "SELESAI");
+    // Isian patung kering yang menunggu bahan pendukung: hanya tanggal, jumlah, catatan (titik/cara kirim/bahan diisi saat "Lengkapi & kirim")
+    if (s.waitingSupport) patch = { date: patch.date, note: patch.note, tasks: patch.tasks };
+
+    // ---- tanggal ----
+    let dateNew = s.date;
+    if (patch.date !== undefined) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(patch.date)) throw withField(new BoronganError("Tanggal tidak valid"), "date");
+      dateNew = dateOnly(patch.date);
+      if (dateStr(dateNew) !== dateStr(s.date)) changes.tanggal = { lama: dateStr(s.date), baru: patch.date };
     }
-    const name = (t: (typeof s.tasks)[number]) => shortTaskName(t.task.name);
-    const before: Record<string, number> = {};
-    const after: Record<string, number> = {};
-    const next = new Map<string, number>();
-    for (const t of s.tasks) {
-      const q = want.get(t.taskId) ?? t.qty;
-      const min = s.allots.filter((a) => a.taskId === t.taskId).reduce((a, x) => a + x.qty, 0);
-      if (q < min) throw withField(new BoronganError(`${name(t)}: tidak boleh kurang dari yang sudah dibagi ke pekerja (${min.toLocaleString("id-ID")})`), `t:${t.taskId}`);
-      before[name(t)] = t.qty;
-      after[name(t)] = q;
-      next.set(t.taskId, q);
+    if (noteChanged) changes.catatan = { lama: s.note, baru: noteNew };
+
+    // ---- jumlah per jenis ----
+    const nextQty = new Map(s.tasks.map((t) => [t.taskId, t.qty]));
+    if (patch.tasks && !s.resultAtReceipt) {
+      for (const q of patch.tasks) {
+        const t = s.tasks.find((x) => x.taskId === q.taskId);
+        if (!t) throw new BoronganError("Jenis pekerjaan bukan bagian kiriman ini");
+        if (!Number.isInteger(q.qty) || q.qty < 0) throw new BoronganError("Jumlah harus bilangan bulat, tidak minus");
+        const min = s.allots.filter((a) => a.taskId === q.taskId).reduce((a, x) => a + x.qty, 0);
+        if (q.qty < min) throw withField(new BoronganError(`${taskName(t)}: tidak boleh kurang dari yang sudah dibagi ke pekerja (${min.toLocaleString("id-ID")})`), `t:${q.taskId}`);
+        nextQty.set(q.taskId, q.qty);
+      }
+      if (![...nextQty.values()].some((q) => q > 0)) throw new BoronganError("Minimal satu jenis harus berjumlah lebih dari 0 (untuk membatalkan, pakai Batalkan kiriman)");
+      const before: Record<string, number> = {};
+      const after: Record<string, number> = {};
+      for (const t of s.tasks) if (nextQty.get(t.taskId) !== t.qty) { before[taskName(t)] = t.qty; after[taskName(t)] = nextQty.get(t.taskId)!; }
+      if (Object.keys(before).length) changes.jumlah = { lama: before, baru: after };
     }
-    if (![...next.values()].some((q) => q > 0)) throw new BoronganError("Minimal satu jenis harus berjumlah lebih dari 0 (untuk membatalkan, pakai Batalkan kiriman)");
-    if (s.tasks.every((t) => next.get(t.taskId) === t.qty)) throw new BoronganError("Tidak ada perubahan jumlah");
-    // Selisih bahan resep per barang (bahan pendukung tidak ikut jumlah pcs)
-    const delta = new Map<string, number>();
-    for (const t of s.tasks) {
-      const d = (next.get(t.taskId) ?? t.qty) - t.qty;
-      if (!d) continue;
-      for (const inp of t.task.inputs) delta.set(inp.itemId, Math.round(((delta.get(inp.itemId) ?? 0) + bomStockQty(inp.qty, inp.item) * d) * 1000) / 1000);
+
+    // ---- titik / cara kirim / driver ----
+    const modeNew = patch.mode ?? s.mode;
+    const pointsNew = patch.pointIds !== undefined ? [...new Set(patch.pointIds.filter(Boolean))] : s.pointIds;
+    const pointsChanged = pointsNew.length !== s.pointIds.length || pointsNew.some((p) => !s.pointIds.includes(p));
+    let driverNew = patch.driverId !== undefined ? patch.driverId : s.driverId;
+    if (modeNew === "LANGSUNG") driverNew = null;
+    const routeChanged = pointsChanged || modeNew !== s.mode || (driverNew ?? null) !== (s.driverId ?? null);
+    if (routeChanged && !s.waitingSupport) {
+      if (pointsChanged && (s.allots.length || s.reports.length || s.pickups.length)) throw new BoronganError("Titik tujuan tidak bisa diganti: kiriman ini sudah dibagi / dilaporkan / diambil setorannya");
+      const claimed = await tx.boronganResult.count({ where: { pickup: { shipmentId }, OR: [{ claimId: { not: null } }, { settlementId: { not: null } }] } });
+      if (claimed) throw new BoronganError("Titik / cara kirim / driver tidak bisa diubah: upah kiriman ini sudah masuk klaim atau dibayar");
+      if (!pointsNew.length) throw withField(new BoronganError("Pilih titik tujuan"), "pointId");
+      if (modeNew === "LANGSUNG" && pointsNew.length !== 1) throw new BoronganError("Kiriman yang diantar langsung hanya ke satu titik");
+      if (s.resultAtReceipt && pointsNew.length !== 1) throw new BoronganError("Kiriman bahan (hasil diisi saat penerimaan) hanya ke satu titik");
+      const pts = await tx.boronganPoint.findMany({ where: { id: { in: pointsNew }, active: true } });
+      if (pts.length !== pointsNew.length) throw new BoronganError("Titik tujuan tidak aktif");
+      const cfg = await pointConfig(tx);
+      for (const p of pts) if (cfg[p.id]?.tasks.length && !s.tasks.some((t) => cfg[p.id].tasks.includes(t.taskId))) throw new BoronganError(`Titik ${p.name} tidak mengerjakan ${taskGroupName(s.tasks[0].task.name)}`);
+      if (modeNew === "DRIVER") {
+        const drivers = await tx.boronganPerson.findMany({ where: { role: "DRIVER", active: true }, select: { id: true } });
+        if (drivers.length && !driverNew) throw withField(new BoronganError("Pilih driver"), "driverId");
+        if (driverNew && !drivers.some((d) => d.id === driverNew)) throw new BoronganError("Driver tidak aktif");
+      }
+      const nm = async (ids: string[]) => (await tx.boronganPoint.findMany({ where: { id: { in: ids } }, select: { name: true } })).map((p) => p.name).join(", ");
+      const dn = async (id: string | null) => (id ? (await tx.boronganPerson.findUnique({ where: { id }, select: { name: true } }))?.name ?? id : null);
+      if (pointsChanged) changes.titik = { lama: await nm(s.pointIds), baru: await nm(pointsNew) };
+      if (modeNew !== s.mode) changes.caraKirim = { lama: s.mode === "DRIVER" ? "lewat driver" : "diantar langsung", baru: modeNew === "DRIVER" ? "lewat driver" : "diantar langsung" };
+      if ((driverNew ?? null) !== (s.driverId ?? null)) changes.driver = { lama: await dn(s.driverId), baru: await dn(driverNew ?? null) };
     }
-    const moved: Record<string, number> = {};
-    if (!s.waitingSupport) {
-      const to = s.mode === "DRIVER" ? await driverLocation(tx) : (await tx.boronganPoint.findUniqueOrThrow({ where: { id: s.pointIds[0] } })).locationId;
-      const items = await tx.item.findMany({ where: { id: { in: [...delta.keys()] } } });
-      for (const [itemId, d] of delta) {
-        if (Math.abs(d) < 0.0005) continue;
+
+    // ---- bahan yang dikirim ----
+    const resepIds = new Set(s.tasks.flatMap((t) => t.task.inputs.map((i) => i.itemId)));
+    let linesNew = s.lines.map((l) => ({ itemId: l.itemId, qty: Number(l.qty), support: l.support, warehouseId: l.warehouseId as string | null }));
+    if (patch.lines !== undefined) {
+      const merged = new Map<string, number>();
+      for (const l of patch.lines) {
+        if (!(l.qty >= 0) || !Number.isFinite(l.qty)) throw new BoronganError("Jumlah bahan tidak boleh minus");
+        merged.set(l.itemId, r3((merged.get(l.itemId) ?? 0) + l.qty));
+      }
+      const kit = new Set(Object.entries(await taskKits(tx)).filter(([id]) => s.tasks.some((t) => t.taskId === id)).flatMap(([, ids]) => ids));
+      linesNew = [];
+      for (const [itemId, qty] of merged) {
+        if (qty <= 0) continue;
+        const old = s.lines.find((l) => l.itemId === itemId);
+        if (!old && !kit.has(itemId) && !resepIds.has(itemId)) throw new BoronganError("Ada bahan yang bukan resep / kit jenis pekerjaan ini. Muat ulang halaman.");
+        linesNew.push({ itemId, qty, support: old ? old.support : !resepIds.has(itemId), warehouseId: old?.warehouseId ?? null });
+      }
+      if (!linesNew.length) throw new BoronganError("Isi minimal satu bahan yang dikirim");
+    }
+    const itemIds = [...new Set([...s.lines.map((l) => l.itemId), ...linesNew.map((l) => l.itemId)])];
+    const items = await tx.item.findMany({ where: { id: { in: itemIds } } });
+    const iname = (id: string) => items.find((i) => i.id === id)?.name ?? id;
+    const oldQty = new Map(s.lines.map((l) => [l.itemId, Number(l.qty)]));
+    const newQty = new Map(linesNew.map((l) => [l.itemId, l.qty]));
+    const bahan: Record<string, { lama: number; baru: number }> = {};
+    for (const id of itemIds) if (r3(oldQty.get(id) ?? 0) !== r3(newQty.get(id) ?? 0)) bahan[iname(id)] = { lama: oldQty.get(id) ?? 0, baru: newQty.get(id) ?? 0 };
+    if (Object.keys(bahan).length) changes.bahan = { lama: Object.fromEntries(Object.entries(bahan).map(([k, v]) => [k, v.lama])), baru: Object.fromEntries(Object.entries(bahan).map(([k, v]) => [k, v.baru])) };
+
+    if (!Object.keys(changes).length) throw new BoronganError("Tidak ada perubahan");
+    if (finished && Object.keys(changes).some((k) => k !== "catatan")) throw new BoronganError(`${s.number} sudah ${s.closedAt ? "ditutup" : "selesai"}: hanya catatan yang bisa diubah`);
+
+    // ---- stok: mutasi selisih ----
+    const moved: { bahan: string; qty: number; dari: string; ke: string }[] = [];
+    const stockChanged = !s.waitingSupport && (routeChanged || Object.keys(bahan).length > 0);
+    if (stockChanged) {
+      const locs = new Map((await tx.location.findMany({ select: { id: true, name: true } })).map((l) => [l.id, l.name]));
+      const pointRows = await tx.boronganPoint.findMany({ where: { id: { in: [...new Set([...s.pointIds, ...pointsNew])] } } });
+      const pointLoc = (id: string) => pointRows.find((p) => p.id === id)!.locationId;
+      const drv = modeNew === "DRIVER" || s.mode === "DRIVER" ? await driverLocation(tx) : null;
+      const refs = [`KRM:${s.number}`, `BGI:${s.number}`];
+      const moves = await tx.stockMovement.findMany({ where: { ref: { in: refs }, itemId: { in: itemIds } } });
+      // Rencana bagi ke titik (lewat driver) memakai jumlah & lines BARU; hasil diisi saat penerimaan selalu langsung ke titik
+      const plan = modeNew === "DRIVER" && !s.resultAtReceipt
+        ? allotStockPlan(linesNew.map((l) => ({ itemId: l.itemId, qty: l.qty, support: l.support })), s.tasks.map((t) => ({ taskId: t.taskId, qty: nextQty.get(t.taskId) ?? t.qty, inputs: t.task.inputs.map((i) => ({ itemId: i.itemId, per: bomStockQty(i.qty, i.item) })) })), s.allots.map((a) => ({ pointId: a.pointId, workerId: a.workerId, taskId: a.taskId, qty: a.qty })))
+        : null;
+      for (const itemId of itemIds) {
         const item = items.find((i) => i.id === itemId)!;
-        const warehouseId = (s.lines.find((l) => l.itemId === itemId)?.warehouseId) ?? (await warehouseFor(tx, item.type));
-        const note = `Koreksi jumlah kiriman ${s.number} (${d > 0 ? "tambah" : "kurang"}): ${why}`.slice(0, 300);
-        await recordMovement(tx, { type: "TRANSFER", itemId, qty: Math.abs(d), fromLocationId: d > 0 ? warehouseId : to, toLocationId: d > 0 ? to : warehouseId, ref: `KRM:${s.number}`, note, date: new Date() }, actor);
-        moved[item.name] = d;
-        const line = s.lines.find((l) => l.itemId === itemId);
-        if (line) {
-          const q = Math.round((Number(line.qty) + d) * 1000) / 1000;
-          if (q > 0.0005) await tx.boronganShipmentLine.update({ where: { id: line.id }, data: { qty: new Prisma.Decimal(q) } });
-          else await tx.boronganShipmentLine.delete({ where: { id: line.id } });
-        } else if (d > 0) await tx.boronganShipmentLine.create({ data: { shipmentId, itemId, warehouseId, qty: new Prisma.Decimal(d), support: false } });
+        const warehouse = s.lines.find((l) => l.itemId === itemId)?.warehouseId ?? (await warehouseFor(tx, item.type));
+        const have = new Map<string, number>();
+        for (const m of moves.filter((x) => x.itemId === itemId)) {
+          if (m.toLocationId) have.set(m.toLocationId, (have.get(m.toLocationId) ?? 0) + Number(m.qty));
+          if (m.fromLocationId) have.set(m.fromLocationId, (have.get(m.fromLocationId) ?? 0) - Number(m.qty));
+        }
+        const total = newQty.get(itemId) ?? 0;
+        const want = new Map<string, number>([[warehouse, -total]]);
+        const put = (loc: string, q: number) => want.set(loc, r3((want.get(loc) ?? 0) + q));
+        if (modeNew === "DRIVER" && !s.resultAtReceipt) {
+          let atPoints = 0;
+          for (const pid of pointsNew) {
+            const q = plan?.get(pid)?.get(itemId) ?? 0;
+            if (q > 0) { put(pointLoc(pid), q); atPoints += q; }
+          }
+          const left = r3(total - atPoints);
+          if (left < -0.0005) throw new BoronganError(`${iname(itemId)}: tidak boleh kurang dari yang sudah dibagi ke titik (${r3(atPoints).toLocaleString("id-ID")})`);
+          if (left > 0.0005) put(drv!, left);
+        } else if (total > 0) put(pointLoc(pointsNew[0]), total);
+        const all = new Set([...have.keys(), ...want.keys()]);
+        const give: { loc: string; q: number }[] = [];
+        const take: { loc: string; q: number }[] = [];
+        for (const loc of all) {
+          const d = r3((want.get(loc) ?? 0) - (have.get(loc) ?? 0));
+          if (d < -0.0005) give.push({ loc, q: -d });
+          else if (d > 0.0005) take.push({ loc, q: d });
+        }
+        for (const g of give) {
+          for (const t of take) {
+            if (g.q < 0.0005) break;
+            if (t.q < 0.0005) continue;
+            const q = r3(Math.min(g.q, t.q));
+            g.q = r3(g.q - q);
+            t.q = r3(t.q - q);
+            await recordMovement(tx, { type: "TRANSFER", itemId, qty: q, fromLocationId: g.loc, toLocationId: t.loc, ref: `KRM:${s.number}`, note: `Koreksi kiriman ${s.number}: ${why}`.slice(0, 300), date: new Date() }, actor);
+            moved.push({ bahan: item.name, qty: q, dari: locs.get(g.loc) ?? g.loc, ke: locs.get(t.loc) ?? t.loc });
+          }
+        }
+      }
+      // Baris bahan kiriman mengikuti
+      for (const id of itemIds) {
+        const line = s.lines.find((l) => l.itemId === id);
+        const next = linesNew.find((l) => l.itemId === id);
+        if (line && next) await tx.boronganShipmentLine.update({ where: { id: line.id }, data: { qty: new Prisma.Decimal(next.qty), support: next.support } });
+        else if (line) await tx.boronganShipmentLine.delete({ where: { id: line.id } });
+        else if (next) await tx.boronganShipmentLine.create({ data: { shipmentId, itemId: id, warehouseId: next.warehouseId ?? (await warehouseFor(tx, items.find((i) => i.id === id)!.type)), qty: new Prisma.Decimal(next.qty), support: next.support } });
       }
     }
     for (const t of s.tasks) {
-      const q = next.get(t.taskId)!;
+      const q = nextQty.get(t.taskId)!;
       if (q === t.qty) continue;
       if (q > 0) await tx.boronganShipmentTask.update({ where: { id: t.id }, data: { qty: q } });
       else await tx.boronganShipmentTask.delete({ where: { id: t.id } });
     }
-    await audit(actor, "KIRIMAN_JUMLAH_DIUBAH", "BoronganShipment", shipmentId, { number: s.number, alasan: why, sebelum: before, sesudah: after, bahan: moved, stok: s.waitingSupport ? "tidak diubah (belum keluar gudang)" : "disesuaikan dengan mutasi koreksi" }, tx);
-    return { number: s.number, before, after, moved };
-  });
+    await tx.boronganShipment.update({ where: { id: shipmentId }, data: { date: dateNew, note: noteNew === undefined ? s.note : noteNew, ...(routeChanged && !s.waitingSupport ? { mode: modeNew, pointIds: pointsNew, driverId: driverNew ?? null } : {}) } });
+    await audit(actor, "KIRIMAN_DIUBAH", "BoronganShipment", shipmentId, { number: s.number, alasan: why, perubahan: changes, mutasi: moved.length ? moved : undefined, stok: s.waitingSupport ? "tidak diubah (belum keluar gudang)" : stockChanged ? "disesuaikan dengan mutasi koreksi" : "tidak berubah" }, tx);
+    return { number: s.number, changes, moved };
+  }, { timeout: 60000 });
+}
+
+/**
+ * Ubah JUMLAH per jenis saja (bahan resep otomatis menyesuaikan): pembungkus updateShipment. Dipakai tombol "Ubah jumlah kiriman".
+ * Tidak boleh lebih kecil dari yang sudah dibagi per jenis; aturan lain sama dengan updateShipment.
+ */
+export async function changeShipmentQty(shipmentId: string, qtys: { taskId: string; qty: number }[], reason: string, actor: Actor, scope: Scope) {
+  const s = await prisma.boronganShipment.findUniqueOrThrow({ where: { id: shipmentId }, include: { tasks: { include: { task: { include: { inputs: { include: { item: true } } } } } }, lines: true } });
+  const delta = new Map<string, number>();
+  for (const q of qtys) {
+    const t = s.tasks.find((x) => x.taskId === q.taskId);
+    if (!t) throw new BoronganError("Jenis pekerjaan bukan bagian kiriman ini");
+    for (const inp of t.task.inputs) delta.set(inp.itemId, r3((delta.get(inp.itemId) ?? 0) + bomStockQty(inp.qty, inp.item) * (q.qty - t.qty)));
+  }
+  const lines = s.lines.map((l) => ({ itemId: l.itemId, qty: r3(Number(l.qty) + (delta.get(l.itemId) ?? 0)) }));
+  for (const [itemId, d] of delta) if (d > 0 && !lines.some((l) => l.itemId === itemId)) lines.push({ itemId, qty: d });
+  const r = await updateShipment(shipmentId, { tasks: qtys, ...(s.waitingSupport ? {} : { lines }) }, reason, actor, scope);
+  return { number: r.number, before: r.changes.jumlah?.lama as Record<string, number> | undefined, after: r.changes.jumlah?.baru as Record<string, number> | undefined, moved: Object.fromEntries(r.moved.map((m) => [m.bahan, m.qty])) };
 }
 
 // ---------------- 2. PEMBAGIAN KE PEKERJA ----------------

@@ -2,12 +2,18 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requirePerm } from "@/lib/auth";
 import { dateOnly, fmtDay } from "@/lib/time";
-import { STATE_LABEL, forCoordinator, isCoordinatorScope, shipmentView } from "@/lib/boronganFlow";
+import { STATE_LABEL, canCancelShipment, canSeeShipment, forCoordinator, fullAccess, isCoordinatorScope, shipmentView } from "@/lib/boronganFlow";
 import { boronganScope } from "@/lib/borongan";
 import { prisma } from "@/lib/db";
 import { isAssemblingTask } from "@/lib/boronganClaim";
+import { shipmentEditOptions } from "@/lib/boronganEdit";
+import { shipmentHistory } from "@/lib/boronganHistory";
 import { Badge, PageHeader } from "@/components/ui";
-import { WorkerCard } from "../../KirimanForms";
+import { ActionForm } from "@/components/ActionForm";
+import { Modal } from "@/components/Modal";
+import { ModalForm } from "@/components/ModalForm";
+import { UbahKirimanForm, WorkerCard } from "../../KirimanForms";
+import { batalKiriman, ubahKiriman } from "../../kirimanActions";
 import { canSeeHistory } from "../access";
 
 export const metadata = { title: "Detail kiriman borongan" };
@@ -16,14 +22,25 @@ const PICKUP = { DIBAWA: ["menunggu dihitung", "amber"], DITERIMA: ["cocok / dit
 
 /** Detail satu kiriman: ringkasan angka, bahan dikirim, tabel per pekerja, setiap pengambilan, info untuk tim Oven */
 export default async function KirimanDetail({ params }: { params: Promise<{ id: string }> }) {
-  const user = await requirePerm("borongan.view", "borongan.point", "borongan.manage");
-  // Riwayat penuh: pengelola & tim divisi; koordinator hanya bagian titiknya sendiri (disaring di server)
-  const full = await canSeeHistory(user);
-  const scope = full ? null : await boronganScope(prisma, user);
-  if (!full && !(scope && isCoordinatorScope(scope))) notFound();
+  const user = await requirePerm("borongan.view", "borongan.point", "borongan.manage", "borongan.driver");
+  // Semua pengguna borongan, sesuai hak lihat masing-masing (aturan sama dengan daftar Kiriman): Owner/Supervisor semua; tim divisi
+  // kiriman tugasnya; driver kiriman lewat driver; koordinator hanya bagian titiknya (disaring di server)
+  const scope = await boronganScope(prisma, user);
   const raw = await shipmentView((await params).id);
-  const s = raw && (scope ? forCoordinator(raw, scope.pointIds) : raw);
+  if (!raw) notFound();
+  const full = await canSeeHistory(user);
+  if (!full && !canSeeShipment(scope, raw)) notFound();
+  const coordinatorView = !full && isCoordinatorScope(scope);
+  const s = coordinatorView ? forCoordinator(raw, scope.pointIds) : raw;
   if (!s) notFound();
+  const admin = fullAccess(scope) && !coordinatorView;
+  const [history, creator, opts] = await Promise.all([
+    shipmentHistory(s.id, s.pickups.map((p) => p.id), !coordinatorView && !scope.driver),
+    prisma.boronganShipment.findUnique({ where: { id: s.id }, select: { createdById: true, _count: { select: { allots: true } } } }),
+    admin && !s.cancelled ? shipmentEditOptions(s) : Promise.resolve(null),
+  ]);
+  const finished = s.state === "SELESAI" || !!s.closed;
+  const canCancel = !!creator && !s.cancelled && canCancelShipment(scope, { waitingSupport: s.waitingSupport, createdById: creator.createdById, _count: creator._count }, user.id) && !s.pickups.some((p) => p.status !== "DIBATALKAN");
   const workers = [...new Map(s.cells.map((c) => [c.workerId, { id: c.workerId, name: c.worker, pointId: c.pointId }])).values()];
   const pname = (id: string) => s.points.find((p) => p.id === id)?.name ?? "";
   const active = s.pickups.filter((p) => p.status !== "DIBATALKAN");
@@ -38,6 +55,20 @@ export default async function KirimanDetail({ params }: { params: Promise<{ id: 
         <span className="text-sm text-slate-500">dicatat {s.createdBy}</span>
         <Link href={full ? "/borongan/riwayat" : "/borongan?tab=kiriman"} className="ml-auto text-sm font-semibold text-brand-700 underline">← {full ? "Riwayat" : "Kiriman"}</Link>
       </div>
+      {(opts || canCancel) && (
+        <div className="flex flex-wrap gap-2">
+          {opts && (
+            <Modal trigger="Ubah kiriman" triggerClass="btn-primary btn-sm" title="Ubah kiriman" subtitle={`${s.number} · ${s.group}`} wide>
+              <ModalForm action={ubahKiriman} className="space-y-3"><UbahKirimanForm view={s} opts={opts} finished={finished} /></ModalForm>
+            </Modal>
+          )}
+          {canCancel && (
+            <ActionForm action={batalKiriman} confirm={`Batalkan kiriman ${s.number}? Bahan kembali ke gudang.`}><input type="hidden" name="id" value={s.id} /><button className="btn-secondary btn-sm text-rose-600">Batalkan kiriman</button></ActionForm>
+          )}
+        </div>
+      )}
+      {s.closed && <p className="rounded-xl bg-slate-50 px-4 py-2 text-sm text-slate-600">{s.closed}</p>}
+      {s.note && <p className="break-words rounded-xl bg-slate-50 px-4 py-2 text-sm text-slate-700"><b>Catatan:</b> {s.note}</p>}
 
       <div className="grid grid-cols-2 gap-2 keep-cols sm:grid-cols-4">
         {[["Dikirim", f(s.totals.sent), false], ["Setoran diterima", f(s.totals.received), false], ["Reject", f(s.totals.reject), false], [gap == null ? "Masih di pekerja" : "Selisih", gap == null ? f(s.totals.atWorkers) : f(gap), !!gap]].map(([k, v, bad]) => (
@@ -55,6 +86,33 @@ export default async function KirimanDetail({ params }: { params: Promise<{ id: 
           {s.lines.map((l) => <div key={l.itemId} className="flex justify-between gap-2 border-b border-slate-100 px-3 py-1.5 text-slate-600"><span className="min-w-0 break-words">{l.name}{l.support ? " (pendukung)" : ""}</span><span className="whitespace-nowrap tabular-nums">{f(l.qty)} {l.unit}</span></div>)}
         </div>
       </section>
+
+      {s.resultAtReceipt && s.crosscheck && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Kroscek hasil per jenis</h2>
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+            <table className="w-full table-fixed text-sm tabular-nums">
+              <colgroup><col />{s.tasks.map((t) => <col key={t.id} style={{ width: 64 }} />)}</colgroup>
+              <thead><tr className="bg-slate-50 text-xs text-slate-500"><th className="px-2 py-1 text-left font-semibold">Hasil</th>{s.tasks.map((t) => <th key={t.id} className="px-1 py-1 text-center font-semibold">{t.short}</th>)}</tr></thead>
+              <tbody>
+                {(["Lapor koordinator", "Diterima divisi", "Selisih"] as const).map((label) => (
+                  <tr key={label} className={`border-t border-slate-100 ${label === "Selisih" ? "bg-slate-50 font-semibold" : ""}`}>
+                    <td className="px-2 py-1">{label}</td>
+                    {s.tasks.map((t) => {
+                      const c = s.crosscheck!.find((x) => x.taskId === t.id);
+                      if (label === "Lapor koordinator") return <td key={t.id} className="px-1 py-1 text-center">{s.reports.length ? f(c?.reported ?? 0) : "—"}</td>;
+                      if (label === "Diterima divisi") return <td key={t.id} className="px-1 py-1 text-center">{c?.received == null ? "—" : f(c.received)}</td>;
+                      const n = c?.received == null || !s.reports.length ? null : c.received - c.reported;
+                      return <td key={t.id} className={`px-1 py-1 text-center ${n ? "text-rose-700" : ""}`}>{n == null ? "—" : `${n > 0 ? "+" : ""}${f(n)}`}</td>;
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {s.waiting && <p className="rounded-lg bg-amber-50 px-3 py-1.5 text-xs font-semibold text-amber-800">{s.waiting === "laporan" ? "Menunggu laporan koordinator — upah & klaim belum bisa" : "Menunggu penerimaan divisi — upah & klaim belum bisa"}</p>}
+        </section>
+      )}
 
       <section className="space-y-2">
         <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Pembagian &amp; setoran per pekerja</h2>
@@ -89,6 +147,20 @@ export default async function KirimanDetail({ params }: { params: Promise<{ id: 
             </div>
           );
         })}
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Riwayat perubahan</h2>
+        {!history.length ? <p className="text-sm text-slate-500">Belum ada catatan.</p> : (
+          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white text-sm">
+            {history.map((h, i) => (
+              <li key={i} className="space-y-0.5 px-3 py-2">
+                <div className="flex flex-wrap items-baseline gap-x-2"><b className="text-slate-800">{h.label}</b><span className="text-xs text-slate-500">{h.by} · {new Date(h.at).toLocaleString("id-ID", { timeZone: "Asia/Jakarta", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</span></div>
+                {h.text && <div className="break-words text-xs text-slate-600">{h.text}</div>}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       {!!gap && gap > 0 && patung && (

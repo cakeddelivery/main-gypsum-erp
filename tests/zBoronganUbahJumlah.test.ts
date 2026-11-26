@@ -63,8 +63,8 @@ describe("Ubah jumlah kiriman (Owner/Supervisor)", () => {
     expect(await prisma.stockMovement.count({ where: { ref: `KRM:${s.number}` } })).toBe(movesBefore + 1);
     const line = await prisma.boronganShipmentLine.findFirstOrThrow({ where: { shipmentId: sid, itemId: ctx.kCewek } });
     expect(Number(line.qty)).toBe(600);
-    const log = await prisma.auditLog.findFirstOrThrow({ where: { entityId: sid, action: "KIRIMAN_JUMLAH_DIUBAH" } });
-    expect(log.data).toMatchObject({ alasan: "patung kering yang dikirim ternyata 600", sebelum: { Cewek: 700, Cowok: 300 }, sesudah: { Cewek: 600, Cowok: 300 } });
+    const log = await prisma.auditLog.findFirstOrThrow({ where: { entityId: sid, action: "KIRIMAN_DIUBAH" } });
+    expect(log.data).toMatchObject({ alasan: "patung kering yang dikirim ternyata 600", perubahan: { jumlah: { lama: { Cewek: 700 }, baru: { Cewek: 600 } } } });
     const v = (await shipmentView(sid))!;
     expect(v.tasks.find((t) => t.id === ctx.cewek)?.qty).toBe(600);
     expect(v.totals.sent).toBe(900);

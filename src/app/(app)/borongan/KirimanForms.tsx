@@ -2,6 +2,7 @@
 import { useMemo, useState } from "react";
 import { Submit } from "@/components/ActionForm";
 import type { CellView, PickupView, ShipmentView } from "@/lib/boronganFlow";
+import type { EditOptions } from "@/lib/boronganEdit";
 
 /**
  * Form HP alur kiriman borongan. Setiap pekerja = satu tabel kecil: kolom Status | jenis (Cowok/Cewek/…),
@@ -235,6 +236,125 @@ export function KeringForm({ tasks, today }: { tasks: { id: string; short: strin
 
 // ---------------- 2. PEMBAGIAN ----------------
 
+/**
+ * Ubah SEMUA data kiriman (Owner/Supervisor): tanggal, cara kirim & driver, titik, catatan, jumlah per jenis, dan bahan yang dikirim.
+ * Alasan wajib. Stok bahan menyesuaikan otomatis (mutasi selisih). Kiriman selesai/ditutup: hanya catatan.
+ */
+export function UbahKirimanForm({ view, opts, finished }: { view: ShipmentView; opts: EditOptions; finished: boolean }) {
+  const free = !!view.resultAtReceipt;
+  const waiting = view.waitingSupport;
+  const [mode, setMode] = useState<"DRIVER" | "LANGSUNG">(view.mode);
+  const [pts, setPts] = useState<string[]>(view.points.map((p) => p.id));
+  const [qty, setQty] = useState<Record<string, string>>(() => Object.fromEntries(view.tasks.map((t) => [t.id, String(t.qty)])));
+  const [items, setItems] = useState<Record<string, string>>(() => Object.fromEntries(opts.items.map((i) => [i.id, i.qty ? String(i.qty).replace(".", ",") : ""])));
+  const edited = useMemo(() => new Set<string>(), []);
+  const dec = (v: string | undefined) => { const n = Number(String(v ?? "").replace(/\./g, "").replace(",", ".")); return Number.isFinite(n) && n > 0 ? n : 0; };
+  // Jumlah per jenis berubah → bahan resep ikut menyesuaikan (selama belum diubah manual)
+  const changeQty = (taskId: string, v: string) => {
+    const next = { ...qty, [taskId]: v.replace(/[^\d]/g, "") };
+    setQty(next);
+    setItems((cur) => {
+      const out = { ...cur };
+      for (const i of opts.items) {
+        if (edited.has(i.id) || i.per[taskId] == null) continue;
+        const base = i.qty;
+        const delta = view.tasks.reduce((a, t) => a + (i.per[t.id] ?? 0) * (toInt(next[t.id]) - t.qty), 0);
+        const n = Math.max(0, Math.round((base + delta) * 1000) / 1000);
+        out[i.id] = n ? String(n).replace(".", ",") : "";
+      }
+      return out;
+    });
+  };
+  const direct = mode === "LANGSUNG" || free;
+  const lockedPoints = !!opts.pointsLocked || !!opts.routeLocked;
+  const shown = opts.items.filter((i) => i.qty > 0 || (items[i.id] ?? "") !== "" || true);
+  const underMin = view.tasks.some((t) => toInt(qty[t.id]) < (opts.minQty[t.id] ?? 0));
+  return (
+    <div className="space-y-3">
+      <input type="hidden" name="shipmentId" value={view.id} />
+      {finished && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Kiriman ini sudah {view.closed ? "ditutup" : "selesai"}: hanya <b>catatan</b> yang bisa diubah.</p>}
+      {!finished && (
+        <>
+          <label className="block"><span className="label">Tanggal</span><input type="date" name="date" defaultValue={view.date} className="input" /></label>
+          {!waiting && (
+            <fieldset className="space-y-2 rounded-xl border border-slate-200 p-3">
+              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">Titik, cara kirim & driver</legend>
+              {opts.routeLocked ? <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">{opts.routeLocked}.</p> : (
+                <>
+                  <input type="hidden" name="mode" value={mode} />
+                  <div className="grid grid-cols-2 gap-2 keep-cols">
+                    {(["DRIVER", "LANGSUNG"] as const).map((m) => (
+                      <button key={m} type="button" onClick={() => { setMode(m); if (m === "LANGSUNG") setPts((x) => x.slice(0, 1)); }} aria-pressed={mode === m} className={`rounded-lg border px-3 py-2 text-sm font-semibold ${mode === m ? "border-brand-600 bg-brand-600 text-white" : "border-slate-300 text-slate-700"}`}>{m === "DRIVER" ? "Lewat driver" : "Diantar langsung"}</button>
+                    ))}
+                  </div>
+                  {mode === "DRIVER" && opts.drivers.length > 0 && (
+                    <label className="block"><span className="label">Driver</span><select name="driverId" className="input" defaultValue={view.driverId ?? opts.drivers[0].id}>{opts.drivers.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
+                  )}
+                  {opts.pointsLocked ? <p className="text-xs text-slate-500">{opts.pointsLocked}. Titik: <b>{view.points.map((p) => p.name).join(", ")}</b></p> : (
+                    <>
+                      <input type="hidden" name="pointSent" value="1" />
+                      <div className="flex flex-wrap gap-2">
+                        {opts.points.map((p) => (
+                          <label key={p.id} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${pts.includes(p.id) ? "border-brand-500 bg-brand-50 text-brand-800" : "border-slate-300"}`}>
+                            <input type="checkbox" name="pointId" value={p.id} checked={pts.includes(p.id)} onChange={(e) => setPts((x) => (e.target.checked ? (direct ? [p.id] : [...x, p.id]) : x.filter((y) => y !== p.id)))} className="h-4 w-4" />
+                            {p.name}{!p.viaDriver && <span className="text-xs text-slate-500">(langsung)</span>}
+                          </label>
+                        ))}
+                      </div>
+                      {direct && pts.length > 1 && <p className="text-xs text-rose-700">Diantar langsung hanya untuk satu titik.</p>}
+                    </>
+                  )}
+                  <p className="text-xs text-slate-500">Mengganti titik / cara kirim memindahkan bahan: kembali dari lokasi lama lalu keluar ke lokasi baru (mutasi selisih).</p>
+                </>
+              )}
+            </fieldset>
+          )}
+          {!free && (
+            <div className="rounded-xl border border-slate-200 p-3">
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Jumlah per jenis (pcs)</p>
+              <table className="w-full table-fixed text-sm tabular-nums">
+                <colgroup><col /><col style={{ width: 64 }} /><col style={{ width: 72 }} /><col style={{ width: 72 }} /></colgroup>
+                <thead><tr className="text-xs text-slate-500"><th className="text-left font-semibold">Jenis</th><th className="text-right font-semibold">Sekarang</th><th className="text-center font-semibold">Baru</th><th className="text-right font-semibold">Min.</th></tr></thead>
+                <tbody>
+                  {view.tasks.map((t) => (
+                    <tr key={t.id} className="border-t border-slate-100">
+                      <td className="py-1 font-semibold text-slate-800">{t.short}</td>
+                      <td className="py-1 text-right text-slate-500">{f(t.qty)}</td>
+                      <td className="py-1 text-center"><NumIn name={`t:${t.id}`} label={`Jumlah baru ${t.short}`} value={qty[t.id] ?? ""} onChange={(v) => changeQty(t.id, v)} /></td>
+                      <td className={`py-1 text-right ${toInt(qty[t.id]) < (opts.minQty[t.id] ?? 0) ? "font-bold text-rose-700" : "text-slate-500"}`}>{f(opts.minQty[t.id] ?? 0)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {underMin && <p className="mt-2 rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">Ada jenis yang lebih kecil dari yang sudah dibagi.</p>}
+            </div>
+          )}
+          {!waiting && (
+            <div className="rounded-xl border border-slate-200 p-3">
+              <input type="hidden" name="linesSent" value="1" />
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Bahan yang dikirim</p>
+              <p className="mb-2 text-xs text-slate-500">Ubah jumlah, kosongkan untuk menghapus, atau isi bahan yang belum ada untuk menambah. Bahan resep ikut menyesuaikan bila jumlah per jenis diubah (boleh ditimpa manual).</p>
+              <div className="space-y-2">
+                {shown.map((i) => (
+                  <label key={i.id} className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 break-words text-sm">{i.name} <span className="text-xs text-slate-500">· {i.qty ? `sekarang ${f(i.qty)} · ` : ""}stok {f(i.stock)} {i.unit}</span></span>
+                    <input name={`s:${i.id}`} inputMode="decimal" value={items[i.id] ?? ""} onChange={(e) => { edited.add(i.id); setItems((x) => ({ ...x, [i.id]: e.target.value })); }} placeholder="0" className="input w-24 text-right tabular-nums" />
+                  </label>
+                ))}
+              </div>
+              {opts.items.length === 0 && <p className="text-sm text-slate-500">Tidak ada bahan yang bisa dipilih.</p>}
+            </div>
+          )}
+        </>
+      )}
+      <label className="block"><span className="label">Catatan</span><input name="note" defaultValue={view.note ?? ""} className="input" /></label>
+      <label className="block"><span className="label">Alasan perubahan (wajib)</span><input name="reason" className="input" required minLength={3} placeholder="mis. Beringin diantar langsung, bukan lewat driver" /></label>
+      <p className="text-xs text-slate-500">Tercatat di riwayat dengan nilai lama → baru. Stok dikoreksi dengan mutasi selisih; stok di lokasi asal harus cukup.</p>
+      <Submit confirm="Simpan perubahan kiriman? Stok bahan disesuaikan dan tercatat di riwayat.">Simpan perubahan</Submit>
+    </div>
+  );
+}
+
 /** Ubah jumlah yang dikirim per jenis (Owner/Supervisor): batas minimal = yang sudah dibagi ke pekerja */
 export function UbahJumlahForm({ view }: { view: ShipmentView }) {
   const min = (taskId: string) => view.cells.filter((c) => c.taskId === taskId).reduce((a, c) => a + c.dibagi, 0);
@@ -317,7 +437,7 @@ export function BagiForm({ view, workers, canEditQty = false }: { view: Shipment
         </table>
       </div>
       {over && <p className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700">Pembagian melebihi jumlah kiriman.</p>}
-      {left !== 0 && canEditQty && <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Sisa tidak sama dengan nol karena jumlah kirimannya keliru? Simpan/tutup form ini, lalu pilih <b>Ubah jumlah kiriman</b> di kartu kiriman (Owner/Supervisor).</p>}
+      {left !== 0 && canEditQty && <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">Sisa tidak sama dengan nol karena jumlah kirimannya keliru? Simpan/tutup form ini, lalu pilih <b>Ubah jumlah kiriman</b> di kartu kiriman, atau buka detail kiriman › <b>Ubah kiriman</b> (Owner/Supervisor).</p>}
       <Submit confirm={left > 0 ? `Masih ada ${f(left)} pcs yang belum dibagi. Tetap simpan?` : undefined}>Simpan pembagian</Submit>
     </div>
   );
