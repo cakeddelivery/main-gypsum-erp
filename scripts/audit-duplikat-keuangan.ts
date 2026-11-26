@@ -42,9 +42,12 @@ async function main() {
     SELECT "reversalOfId" id, COUNT(*)::int n FROM "Journal" WHERE "reversalOfId" IS NOT NULL GROUP BY "reversalOfId" HAVING COUNT(*)>1`, (r) => `jurnal ${r.id} dibalik ${r.n}×`);
   await check("Jurnal aktif dari sumber yang sama terposting >1x", "kemungkinan posting ganda (pembalik & yang sudah dibalik tidak dihitung)", q`
     SELECT j.source, j."sourceId", COUNT(*)::int n, MIN(j.id) id, STRING_AGG(j.number, ', ') nums FROM "Journal" j
-    WHERE j."sourceId" IS NOT NULL AND j."reversalOfId" IS NULL AND j.source NOT IN ('PEMBALIK','PIUTANG','UTANG')
+    WHERE j."sourceId" IS NOT NULL AND j."reversalOfId" IS NULL AND j.source NOT IN ('PEMBALIK','PIUTANG','UTANG','SISIHAN')
       AND NOT EXISTS (SELECT 1 FROM "Journal" r WHERE r."reversalOfId"=j.id)
     GROUP BY j.source, j."sourceId" HAVING COUNT(*)>1 ORDER BY n DESC LIMIT 500`, (r) => `${r.source}/${r.sourceId} ×${r.n}: ${r.nums}`);
+  // SISIHAN memakai id dana sebagai sourceId untuk SETIAP setoran harian & penarikan → banyak jurnal per dana itu SAH; yang dijaga: satu setoran per dana per hari
+  await check("Sisihan harian ganda (dana & tanggal sama)", "setoran sisihan dobel (seharusnya satu per dana per hari)", q`
+    SELECT "fundId", date::text d, COUNT(*)::int n, STRING_AGG(COALESCE("journalId", '-'), ', ') js FROM "ReserveEntry" WHERE type='SISIH' GROUP BY "fundId", date HAVING COUNT(*)>1`, (r) => `dana ${r.fundId} ${String(r.d).slice(0, 10)} ×${r.n} (jurnal ${r.js})`);
   await check("Penyusutan ganda (aset & bulan sama)", "penyusutan terposting dobel", q`
     SELECT "sourceId", COUNT(*)::int n, STRING_AGG(number, ', ') nums FROM "Journal" WHERE source='PENYUSUTAN' AND "reversalOfId" IS NULL
       AND NOT EXISTS (SELECT 1 FROM "Journal" r WHERE r."reversalOfId"="Journal".id)
@@ -61,14 +64,17 @@ async function main() {
   await check("No. referensi withdraw sama di >1 transaksi aktif", "withdraw tercatat 2x (calon unique index tahap 2)", q`
     SELECT "withdrawRef" ref, COUNT(*)::int n, STRING_AGG(number, ', ') nums FROM "FinanceTransaction"
     WHERE "withdrawRef" IS NOT NULL AND "withdrawRef"<>'' AND status NOT IN ('DITOLAK','DIBATALKAN') AND "deletedAt" IS NULL GROUP BY "withdrawRef" HAVING COUNT(*)>1`, (r) => `ref ${r.ref} ×${r.n}: ${r.nums}`);
-  await check("Transfer antar rekening kembar (rekening, nominal sama, <3 menit)", "transfer/withdraw dobel", q`
+  // Dikecualikan: catatan/pihak berbeda (mis. sisihan beberapa dana dengan nominal sama), atau salah satunya sudah dinyatakan pengguna "berbeda, tetap simpan" (dupAckIds)
+  await check("Transfer antar rekening kembar (rekening, nominal, catatan sama, <3 menit)", "transfer/withdraw dobel (rincian: npx tsx scripts/diagnosa-keuangan-dobel.ts)", q`
     SELECT a.id, a.number, b.number n2, a.amount::text amt FROM "FinanceTransaction" a JOIN "FinanceTransaction" b ON b.id>a.id AND b.direction=a.direction AND b."accountId"=a."accountId" AND b."toAccountId" IS NOT DISTINCT FROM a."toAccountId" AND b.amount=a.amount
-      AND ABS(EXTRACT(EPOCH FROM (b.date-a.date)))<180
-    WHERE a.direction='TRANSFER' AND a.status NOT IN ('DITOLAK','DIBATALKAN') AND b.status NOT IN ('DITOLAK','DIBATALKAN') AND a."deletedAt" IS NULL AND b."deletedAt" IS NULL LIMIT 500`, (r) => `${r.number} & ${r.n2}: ${idr(r.amt)}`);
-  await check("Transaksi dibukukan dobel (sidik jari sama, <3 menit, catatan sama)", "kemungkinan input ganda", q`
+      AND b.note IS NOT DISTINCT FROM a.note AND b.counterparty IS NOT DISTINCT FROM a.counterparty AND ABS(EXTRACT(EPOCH FROM (b.date-a.date)))<180
+    WHERE a.direction='TRANSFER' AND a.status NOT IN ('DITOLAK','DIBATALKAN') AND b.status NOT IN ('DITOLAK','DIBATALKAN') AND a."deletedAt" IS NULL AND b."deletedAt" IS NULL
+      AND NOT (a.id = ANY(b."dupAckIds") OR b.id = ANY(a."dupAckIds")) LIMIT 500`, (r) => `${r.number} & ${r.n2}: ${idr(r.amt)}`);
+  await check("Transaksi dibukukan dobel (sidik jari, catatan, pembuat sama, <3 menit)", "kemungkinan input ganda (rincian: diagnosa-keuangan-dobel.ts)", q`
     SELECT a.id, a.number, b.number n2, a.amount::text amt FROM "FinanceTransaction" a JOIN "FinanceTransaction" b ON b.id>a.id AND b.fingerprint=a.fingerprint AND b.note IS NOT DISTINCT FROM a.note AND b."createdBy"=a."createdBy"
       AND ABS(EXTRACT(EPOCH FROM (b."createdAt"-a."createdAt")))<180
-    WHERE a.direction<>'TRANSFER' AND a.status='DIBUKUKAN' AND b.status='DIBUKUKAN' AND a."deletedAt" IS NULL AND b."deletedAt" IS NULL LIMIT 500`, (r) => `${r.number} & ${r.n2}: ${idr(r.amt)}`);
+    WHERE a.direction<>'TRANSFER' AND a.status='DIBUKUKAN' AND b.status='DIBUKUKAN' AND a."deletedAt" IS NULL AND b."deletedAt" IS NULL
+      AND NOT (a.id = ANY(b."dupAckIds") OR b.id = ANY(a."dupAckIds")) LIMIT 500`, (r) => `${r.number} & ${r.n2}: ${idr(r.amt)}`);
   await check("Satu jurnal FINANCE dipakai >1 transaksi", "tautan jurnal ganda", q`
     SELECT "journalId" id, COUNT(*)::int n, STRING_AGG(number, ', ') nums FROM "FinanceTransaction" WHERE "journalId" IS NOT NULL AND status IN ('DIBUKUKAN','DALAM_PROSES') GROUP BY "journalId" HAVING COUNT(*)>1`, (r) => `jurnal ${r.id}: ${r.nums}`);
 
@@ -88,13 +94,18 @@ async function main() {
   h("D. IMPOR MARKETPLACE");
   await check("File yang sama (hash) diimpor aktif >1x", "unggah ganda", q`
     SELECT stats->>'fileHash' h, COUNT(*)::int n, STRING_AGG("fileName", ' | ') f FROM "MarketplaceImport" WHERE "undoneAt" IS NULL AND stats->>'fileHash' IS NOT NULL GROUP BY stats->>'fileHash' HAVING COUNT(*)>1`, (r) => `${String(r.h).slice(0, 10)}… ×${r.n}: ${r.f}`);
-  await check("Penarikan marketplace kembar (toko, kanal, nominal, waktu sama, refId beda)", "withdraw terhitung 2x", q`
-    SELECT a."storeId", a.channel, a.amount::text amt, COUNT(*)::int n, STRING_AGG(a."refId", ', ') refs FROM "MarketplaceWithdrawal" a WHERE a."requestedAt" IS NOT NULL
-    GROUP BY a."storeId", a.channel, a."txType", a.amount, a."requestedAt" HAVING COUNT(*)>1`, (r) => `${r.channel} ${idr(r.amt)} ×${r.n}: ${r.refs}`);
+  // Hanya penarikan sungguhan bernominal positif. "GMV Pay Deduction" dsb. (nominal negatif, refId beda) adalah potongan harian terpisah → SAH
+  await check("Penarikan marketplace kembar (toko, kanal, nominal>0, waktu minta & selesai sama, refId beda)", "withdraw terhitung 2x", q`
+    SELECT a."storeId", a.channel, a.amount::text amt, COUNT(*)::int n, STRING_AGG(a."refId", ', ') refs FROM "MarketplaceWithdrawal" a WHERE a."requestedAt" IS NOT NULL AND a.amount>0 AND a."txType" ILIKE 'withdraw%'
+    GROUP BY a."storeId", a.channel, a."txType", a.amount, a."requestedAt", a."doneAt" HAVING COUNT(*)>1`, (r) => `${r.channel} ${idr(r.amt)} ×${r.n}: ${r.refs}`);
   await check("Mutasi saldo kembar (toko, kanal, waktu, nominal, pesanan, keterangan, urutan sama; txKey beda)", "baris saldo penjual dobel", q`
     SELECT "storeId", channel, date, amount::text amt, "orderNo", description, pos, COUNT(*)::int n FROM "MarketplaceBalanceTx" GROUP BY "storeId", channel, date, amount, "orderNo", description, pos HAVING COUNT(*)>1 LIMIT 500`, (r) => `${r.channel} ${r.orderNo ?? "-"} ${idr(r.amt)} ×${r.n}`);
-  await check("Event penghasilan kembar (income, waktu, nominal sama; eventKey beda)", "cair/fee terhitung 2x", q`
-    SELECT "incomeId", "releasedAt", released::text rel, "productAmt"::text pa, COUNT(*)::int n FROM "MarketplaceIncomeEvent" GROUP BY "incomeId", "releasedAt", released, "productAmt", fees HAVING COUNT(*)>1 LIMIT 500`, (r) => `income ${r.incomeId} cair ${idr(r.rel)} ×${r.n}`);
+  // eventKey berakhiran "#n" = baris kembar persis DI SATU FILE (sah, mis. dua bonus Rp250.000 sama). Dobel nyata = isi sama muncul dari IMPOR BERBEDA dengan kunci beda
+  await check("Event penghasilan kembar lintas impor (isi sama, impor beda, kunci beda)", "cair/fee terhitung 2x (rincian: diagnosa-keuangan-dobel.ts)", q`
+    SELECT a."incomeId", a."releasedAt", a.released::text rel, COUNT(*)::int n FROM "MarketplaceIncomeEvent" a JOIN "MarketplaceIncomeEvent" b ON b."incomeId"=a."incomeId" AND b.id>a.id AND b."releasedAt" IS NOT DISTINCT FROM a."releasedAt"
+      AND b.released=a.released AND b."productAmt"=a."productAmt" AND b."refundAmt"=a."refundAmt" AND b.fees=a.fees AND b."importId"<>a."importId"
+      AND split_part(b."eventKey",'#',1)<>split_part(a."eventKey",'#',1)
+    GROUP BY a."incomeId", a."releasedAt", a.released LIMIT 500`, (r) => `income ${r.incomeId} cair ${idr(r.rel)} ≥2 impor berbeda`);
   await check("Pesanan marketplace punya >1 invoice / satu invoice di >1 pesanan", "invoice ganda", q`
     SELECT "invoiceId" id, COUNT(*)::int n FROM "MarketplaceOrder" WHERE "invoiceId" IS NOT NULL GROUP BY "invoiceId" HAVING COUNT(*)>1`, (r) => `invoice ${r.id} dipakai ${r.n} pesanan`);
 
