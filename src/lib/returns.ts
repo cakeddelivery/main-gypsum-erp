@@ -2,6 +2,7 @@ import type { Prisma, ReturnStatus } from "@prisma/client";
 import { prisma } from "./db";
 import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } from "./accounting";
 import { nextNumber } from "./numbering";
+import { lockKey } from "./actionToken";
 import { audit } from "./audit";
 import { locationSettings, recordMovement, reverseMovementsByRef, StockError } from "./stock";
 import { recipeMaterialCost } from "./hpp";
@@ -120,6 +121,7 @@ export async function createReturn(input: ReturnInput, actor: Actor) {
     if (dup) throw new StockError(`Pesanan ini sudah punya retur ${dup}. Bila memang retur kedua (mis. sebagian barang), centang “Ini retur kedua untuk pesanan yang sama”.`);
   }
   return prisma.$transaction(async (tx) => {
+    await lockKey(tx, `retur:${trackingNo}`); // dua kirim bersamaan dengan resi sama: yang kedua ditolak
     const same = await tx.returnCase.findFirst({ where: { trackingNo, cancelledAt: null }, select: { number: true } });
     if (same) throw new StockError(`Resi ${trackingNo} sudah tercatat di ${same.number}`);
     await checkItems(tx, rows);

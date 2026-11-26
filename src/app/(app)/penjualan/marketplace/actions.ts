@@ -7,6 +7,7 @@ import { friendly } from "@/lib/action";
 import { prisma } from "@/lib/db";
 import { audit } from "@/lib/audit";
 import { createInvoice, InvoiceError } from "@/lib/invoice";
+import { claimOrderInvoice, releaseOrderInvoice } from "@/lib/marketplace/invoiceClaim";
 import { commitImport, previewImport, undoImport, MarketplaceImportError, type ImportFile, type Preview } from "@/lib/marketplace/import";
 import { FormatError, parseMarketplaceFile } from "@/lib/marketplace/parse";
 import { linkOrdersToReturns } from "@/lib/marketplace/link";
@@ -310,10 +311,17 @@ export const invoiceFromOrderAction = action(
       else lines.push({ itemId: r.itemId, qty: l.qty, price: Number(l.unitPrice) });
     }
     if (!lines.length) throw new InvoiceError("Pesanan ini hanya berisi Extra Packing; tidak ada produk untuk diinvoice");
-    const inv = await createInvoice(user, {
-      storeId: o.storeId, channel: o.channel, date: dateStr(o.orderedAt ?? new Date()), customerName: `Pembeli ${o.channel === "SHP" ? "Shopee" : "TikTok"} ${o.orderNo}`, lines,
-      shipping: Number(o.shippingPaid), paid: Number.MAX_SAFE_INTEGER, note: `Pesanan marketplace ${o.orderNo}${extra ? ` · Extra Packing Rp ${extra.toLocaleString("id-ID")} tidak dimasukkan` : ""}`,
-    });
+    await claimOrderInvoice(id); // klik ganda / dua tab: hanya satu yang boleh menerbitkan
+    let inv;
+    try {
+      inv = await createInvoice(user, {
+        storeId: o.storeId, channel: o.channel, date: dateStr(o.orderedAt ?? new Date()), customerName: `Pembeli ${o.channel === "SHP" ? "Shopee" : "TikTok"} ${o.orderNo}`, lines,
+        shipping: Number(o.shippingPaid), paid: Number.MAX_SAFE_INTEGER, note: `Pesanan marketplace ${o.orderNo}${extra ? ` · Extra Packing Rp ${extra.toLocaleString("id-ID")} tidak dimasukkan` : ""}`,
+      });
+    } catch (e) {
+      await releaseOrderInvoice(id);
+      throw e;
+    }
     await prisma.marketplaceOrder.update({ where: { id }, data: { invoiceId: inv.id } });
     return `Invoice ${inv.number} terbit`;
   },

@@ -25,7 +25,7 @@ export default async function OrderDetail({ params }: { params: Promise<{ id: st
   const [store, res, inv, ret, comp, hist, disc, sellerFee] = await Promise.all([
     prisma.store.findUnique({ where: { id: o.storeId }, select: { name: true } }),
     resolveSkuKeys(o.lines.map((l) => l.skuKey)),
-    o.invoiceId ? prisma.invoice.findUnique({ where: { id: o.invoiceId }, select: { id: true, number: true } }) : null,
+    o.invoiceId && o.invoiceId !== "PENDING" ? prisma.invoice.findUnique({ where: { id: o.invoiceId }, select: { id: true, number: true } }) : null,
     o.returnCaseId ? prisma.returnCase.findUnique({ where: { id: o.returnCaseId }, include: { lines: { select: { goodQty: true, damagedQty: true, qty: true } } } }) : null,
     o.complaintId ? prisma.complaint.findUnique({ where: { id: o.complaintId } }) : null,
     prisma.marketplaceChange.findMany({ where: { rowId: o.id }, orderBy: { createdAt: "desc" }, take: 30 }),

@@ -4,7 +4,8 @@ import { prisma } from "@/lib/db";
 import { action, bool, optStr, str } from "@/lib/action";
 import { audit } from "@/lib/audit";
 import { autoCode } from "@/lib/codes";
-import { findSupplierByName, mergeSuppliers } from "@/lib/suppliers";
+import { findSupplierByName, mergeSuppliers, supplierKey } from "@/lib/suppliers";
+import { lockKey } from "@/lib/actionToken";
 import { zField } from "@/lib/fieldError";
 
 const data = (fd: FormData) => ({
@@ -25,7 +26,14 @@ export const saveSupplier = action(
       const same = await findSupplierByName(prisma, n);
       if (same && same.id !== id) throw new Error(`"${n}" sudah dipakai supplier ${same.name}. Pakai supplier itu, atau Gabungkan bila sama.`);
     }
-    const s = id ? await prisma.supplier.update({ where: { id }, data: d }) : await prisma.supplier.create({ data: { ...d, code: await autoCode.supplier(prisma) } });
+    const s = await prisma.$transaction(async (tx) => {
+      if (id) return tx.supplier.update({ where: { id }, data: d });
+      // Cek nama + buat dalam satu kunci: kirim ganda / paralel tidak membuat supplier dobel
+      await lockKey(tx, `sup:${supplierKey(d.name)}`);
+      const same = await findSupplierByName(tx, d.name);
+      if (same) throw new Error(`"${d.name}" sudah dipakai supplier ${same.name}. Pakai supplier itu, atau Gabungkan bila sama.`);
+      return tx.supplier.create({ data: { ...d, code: await autoCode.supplier(tx) } });
+    });
     await audit(user, "SUPPLIER_DISIMPAN", "Supplier", s.id, d);
     return "Supplier tersimpan";
   },
@@ -60,7 +68,13 @@ export const saveCustomer = action(
   async (fd, user) => {
     const id = optStr(fd, "id");
     const d = data(fd);
-    const c = id ? await prisma.customer.update({ where: { id }, data: d }) : await prisma.customer.create({ data: { ...d, code: await autoCode.customer(prisma) } });
+    const c = await prisma.$transaction(async (tx) => {
+      if (id) return tx.customer.update({ where: { id }, data: d });
+      await lockKey(tx, `cust:${d.name.trim().replace(/\s+/g, " ").toLowerCase()}`);
+      const same = await tx.customer.findFirst({ where: { name: { equals: d.name.trim(), mode: "insensitive" } } });
+      if (same) throw new Error(`Pelanggan "${same.name}" sudah ada (${same.code ?? "tanpa kode"}).`);
+      return tx.customer.create({ data: { ...d, code: await autoCode.customer(tx) } });
+    });
     await audit(user, "PELANGGAN_DISIMPAN", "Customer", c.id, d);
     return "Pelanggan tersimpan";
   },
