@@ -6,28 +6,27 @@ import { locationSettings, recordMovement, reverseMovementsByRef, StockError } f
 import { recipeMaterialCost } from "./hpp";
 import { shiftEndAt } from "./shiftReport";
 import { addDays, dateOnly, todayStr } from "./time";
-import { SAMPLE_KEY, SAMPLE_PLATFORMS, isSampleTemplate, type SampleEntry } from "./sampleShared";
+import { SAMPLE_KEY, SAMPLE_PLATFORMS, isSampleTemplate, sampleRowEmpty, sampleRowIssue, type SampleEntry } from "./sampleShared";
 
-export { SAMPLE_KEY, SAMPLE_PLATFORMS, isSampleTemplate, type SampleEntry } from "./sampleShared";
+export { SAMPLE_KEY, SAMPLE_PLATFORMS, isSampleTemplate, sampleRowEmpty, sampleRowIssue, type SampleEntry, type SampleRow } from "./sampleShared";
 
 type Tx = Prisma.TransactionClient;
 type Actor = { id: string; name: string };
 
 /** Isian form: sm.item / sm.qty / sm.platform / sm.store (baris kosong diabaikan, setengah terisi = error) */
-export function parseSamples(getAll: (k: string) => string[]): SampleEntry[] {
+/** lenient (simpan draf): baris yang terisi sebagian dilewati, bukan error; saat kirim tetap diperiksa */
+export function parseSamples(getAll: (k: string) => string[], opts: { lenient?: boolean } = {}): SampleEntry[] {
   const items = getAll("sm.item"), qtys = getAll("sm.qty"), platforms = getAll("sm.platform"), stores = getAll("sm.store");
   const out: SampleEntry[] = [];
   items.forEach((itemId, i) => {
-    const raw = (qtys[i] ?? "").trim().replace(/\./g, "").replace(",", ".");
-    const qty = raw === "" ? 0 : Number(raw);
-    const platform = platforms[i] ?? "";
-    const storeId = stores[i] ?? "";
-    if (!itemId && !(qty > 0) && !platform && !storeId) return;
-    if (!itemId) throw new Error(`Sample baris ${i + 1}: pilih produknya`);
-    if (!Number.isFinite(qty) || !(qty > 0) || !Number.isInteger(qty)) throw new Error(`Sample baris ${i + 1}: isi jumlah (bilangan bulat)`);
-    if (!SAMPLE_PLATFORMS[platform]) throw new Error(`Sample baris ${i + 1}: pilih platform (TikTok Shop / Shopee)`);
-    if (!storeId) throw new Error(`Sample baris ${i + 1}: pilih toko`);
-    out.push({ itemId, qty, platform, storeId });
+    const row = { itemId, qty: qtys[i] ?? "", platform: platforms[i] ?? "", storeId: stores[i] ?? "" };
+    if (sampleRowEmpty(row)) return; // baris kosong diabaikan
+    const issue = sampleRowIssue(row);
+    if (issue) {
+      if (opts.lenient) return;
+      throw new Error(`Sample baris ${i + 1}: ${issue}`);
+    }
+    out.push({ itemId, qty: Number(row.qty.trim().replace(/\./g, "").replace(",", ".")), platform: row.platform, storeId: row.storeId });
   });
   return out;
 }

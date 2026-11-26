@@ -142,7 +142,7 @@ async function saveReportData(fd: FormData, user: User) {
     }
     // Sample affiliator (Packing/Giftbox): produk + jumlah + platform + toko; tanpa penanda form → data lama dipertahankan
     if (isSampleTemplate(template)) {
-      if (fd.has("sm.present")) work[SAMPLE_KEY] = parseSamples((k) => fd.getAll(k).map(String));
+      if (fd.has("sm.present")) work[SAMPLE_KEY] = parseSamples((k) => fd.getAll(k).map(String), { lenient: fd.get("intent") !== "send" });
       else if ((r.work as Record<string, unknown>)?.[SAMPLE_KEY]) work[SAMPLE_KEY] = (r.work as Record<string, unknown>)[SAMPLE_KEY];
     }
     const stock = (await stockRows(r.divisionId, r.stockCount as StockCountRow[])).map((row) => (fd.has(`s.${row.itemId}`) ? { ...row, qty: num(str(fd, `s.${row.itemId}`)) } : row));

@@ -37,7 +37,7 @@ import { readReopen, reportReopenKey, writeReopen } from "@/lib/reopen";
 import { setUploading } from "@/lib/appVersion";
 import { REJECT_REASONS } from "@/lib/rejectShared";
 import { lpgFlow } from "@/lib/lpgShared";
-import { SAMPLE_PLATFORMS } from "@/lib/sampleShared";
+import { SAMPLE_PLATFORMS, sampleRowIssue } from "@/lib/sampleShared";
 
 /** Baris pesanan yang sedang dikirim (Stok → Pembelian) untuk barang divisi ini */
 export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean; vendor: string; itemName: string; unit: string };
@@ -181,6 +181,12 @@ export function ReportForm(p: Props) {
   const sending = useRef(false);
   const router = useRouter();
   const trySend = () => {
+    const badSample = samples.findIndex((x) => sampleRowIssue(x));
+    if (badSample >= 0) {
+      toast(`Sample baris ${badSample + 1}: ${sampleRowIssue(samples[badSample])}. Lengkapi atau hapus baris itu.`, false);
+      go(steps.findIndex((x) => x.key === "sample"));
+      return;
+    }
     if (missingPhoto.length) {
       toast(`Lampirkan foto dulu: ${missingPhoto.map((c) => c.label).join(", ")}`, false);
       go(steps.findIndex((x) => x.key === "checklist"));
@@ -642,6 +648,7 @@ export function ReportForm(p: Props) {
                   <input name="sm.qty" inputMode="numeric" value={x.qty} onChange={(e) => patch({ qty: e.target.value.replace(/\D/g, "") })} className="input w-16 px-1.5 text-right tabular-nums" placeholder="0" aria-label={`Jumlah sample ${i + 1}`} />
                   <button type="button" className="grid h-9 w-7 shrink-0 place-items-center rounded-md text-rose-600 hover:bg-rose-50" onClick={() => setSamples((xs) => xs.filter((_, j) => j !== i))} aria-label={`Hapus sample ${i + 1}`}>✕</button>
                 </div>
+                {sampleRowIssue(x) && <p role="alert" className="text-xs font-medium text-rose-600">Baris {i + 1}: {sampleRowIssue(x)}. Lengkapi, atau hapus baris ini (✕).</p>}
                 <div className="flex gap-1.5">
                   <select name="sm.platform" value={x.platform} onChange={(e) => patch({ platform: e.target.value })} className="input min-w-0 flex-1 px-2 text-sm" aria-label={`Platform sample ${i + 1}`}>
                     <option value="">— platform —</option>
