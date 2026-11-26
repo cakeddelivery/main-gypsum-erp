@@ -2,7 +2,7 @@
 import { action, optStr, str } from "@/lib/action";
 import { prisma } from "@/lib/db";
 import { BoronganError, boronganScope } from "@/lib/borongan";
-import { cancelPickup, cancelShipment, changeShipmentQty, createPickup, createShipment, receiveByColor, receivePickup, resolvePickup, saveAllots, saveWorkReport } from "@/lib/boronganFlow";
+import { cancelPickup, cancelShipment, changeShipmentQty, updateShipment, createPickup, createShipment, receiveByColor, receivePickup, resolvePickup, saveAllots, saveWorkReport } from "@/lib/boronganFlow";
 import { todayStr } from "@/lib/time";
 import { autoClaims } from "@/lib/boronganClaim";
 import { FieldError } from "@/lib/fieldError";
@@ -41,6 +41,28 @@ export const kirimBahan = action(
   PATHS,
 );
 
+/** Ubah semua data kiriman (Owner/Supervisor): tanggal, titik, cara kirim, driver, catatan, jumlah per jenis (t:), bahan (s:) — alasan wajib */
+export const ubahKiriman = action(
+  [...PERMS],
+  async (fd, user) => {
+    const patch: Parameters<typeof updateShipment>[1] = {};
+    if (fd.has("date")) patch.date = str(fd, "date");
+    if (fd.has("note")) patch.note = String(fd.get("note") ?? "");
+    if (fd.has("mode")) patch.mode = str(fd, "mode") === "LANGSUNG" ? "LANGSUNG" : "DRIVER";
+    if (fd.has("pointSent")) patch.pointIds = fd.getAll("pointId").map(String);
+    if (fd.has("mode")) patch.driverId = optStr(fd, "driverId");
+    const tasks = [...fd.entries()].filter(([k]) => k.startsWith("t:")).map(([k, v]) => ({ taskId: k.slice(2), qty: int(v) }));
+    if (tasks.length) patch.tasks = tasks;
+    if (fd.has("linesSent")) patch.lines = [...fd.entries()].filter(([k]) => k.startsWith("s:")).map(([k, v]) => ({ itemId: k.slice(2), qty: dec(v) }));
+    const scope = await boronganScope(prisma, user);
+    const r = await updateShipment(str(fd, "shipmentId"), patch, str(fd, "reason"), user, scope);
+    await backupAudit(scope, user, "ubah kiriman", str(fd, "shipmentId"), "pengelola");
+    const keys = Object.keys(r.changes).map((k) => ({ tanggal: "tanggal", catatan: "catatan", jumlah: "jumlah", titik: "titik", caraKirim: "cara kirim", driver: "driver", bahan: "bahan" } as Record<string, string>)[k] ?? k);
+    return `Kiriman ${r.number} diubah (${keys.join(", ")})${r.moved.length ? `; stok bahan disesuaikan: ${r.moved.map((m) => `${m.bahan} ${fmt(m.qty)} ${m.dari} → ${m.ke}`).join("; ")}` : ""}`;
+  },
+  PATHS,
+);
+
 /** Ubah jumlah yang dikirim per jenis (t:<jenis>) — Owner/Supervisor, alasan wajib */
 export const ubahJumlahKiriman = action(
   [...PERMS],
@@ -50,7 +72,7 @@ export const ubahJumlahKiriman = action(
     const r = await changeShipmentQty(str(fd, "shipmentId"), qtys, str(fd, "reason"), user, scope);
     await backupAudit(scope, user, "ubah jumlah kiriman", str(fd, "shipmentId"), "pengelola");
     const moved = Object.entries(r.moved);
-    return `Jumlah kiriman ${r.number} diubah${moved.length ? `; bahan ${moved.map(([n, d]) => `${n} ${d > 0 ? "+" : ""}${fmt(d)}`).join(", ")} disesuaikan` : ""}`;
+    return `Jumlah kiriman ${r.number} diubah${moved.length ? `; stok bahan disesuaikan (${moved.map(([n, q]) => `${n} ${fmt(q)}`).join(", ")})` : ""}`;
   },
   PATHS,
 );

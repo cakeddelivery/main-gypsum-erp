@@ -34,12 +34,13 @@ const workers = [
 ];
 
 (async () => {
-  const { BagiForm, LaporForm, TerimaJenisForm, UbahJumlahForm } = await import("../src/app/(app)/borongan/KirimanForms");
+  const { BagiForm, LaporForm, TerimaJenisForm, UbahJumlahForm, UbahKirimanForm } = await import("../src/app/(app)/borongan/KirimanForms");
   const pages: [string, string][] = [
     ["Pembagian", renderToStaticMarkup(<BagiForm view={view} workers={workers} />)],
     ["Lapor hasil", renderToStaticMarkup(<LaporForm view={view} pointId="p1" workers={workers} />)],
     ["Terima per warna", renderToStaticMarkup(<TerimaJenisForm view={view} pointId="p1" />)],
     ["Ubah jumlah kiriman", renderToStaticMarkup(<UbahJumlahForm view={view} />)],
+    ["Ubah kiriman", renderToStaticMarkup(<UbahKirimanForm view={{ ...view, mode: "DRIVER", date: "2026-11-22", note: "catatan", driverId: "d1", resultAtReceipt: false, waitingSupport: false } as unknown as ShipmentView} finished={false} opts={{ points: [{ id: "p1", name: "BMR", viaDriver: true }, { id: "p2", name: "MASTRIP", viaDriver: true }], drivers: [{ id: "d1", name: "Edy" }], items: [{ id: "i1", name: "Patung kering Cowok dengan nama yang sangat panjang sekali", unit: "pcs", stock: 1200, qty: 300, per: { t0: 1 } }, { id: "i2", name: "Plastik OPP", unit: "pcs", stock: 80, qty: 0, per: {} }], pointsLocked: null, routeLocked: null, minQty: { t0: 300 } }} />)],
   ];
   const browser = await chromium.launch();
   let bad = 0;
