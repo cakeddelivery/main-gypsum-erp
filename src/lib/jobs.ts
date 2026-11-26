@@ -181,13 +181,18 @@ export async function sendConsistencyReport(now: Date = new Date()) {
   return { ...counts, sent };
 }
 
-async function ranToday(key: string, date: string) {
-  const s = await prisma.setting.findUnique({ where: { key } });
-  return s?.value === date;
-}
-
-async function markRan(key: string, date: string) {
-  await prisma.setting.upsert({ where: { key }, create: { key, value: date }, update: { value: date } });
+/**
+ * Klaim job untuk tanggal ini secara ATOMIK (satu pernyataan SQL): hanya satu pemanggil yang mendapat true.
+ * Dua proses (scheduler PM2 + cron eksternal, dua instance, restart tumpang tindih) yang memanggil bersamaan
+ * tidak lagi sama-sama lolos cek lalu menjalankan job dua kali (pesan Telegram/push dobel, slip gaji dobel).
+ */
+export async function claimJob(key: string, date: string): Promise<boolean> {
+  const rows = await prisma.$queryRaw<{ key: string }[]>`
+    INSERT INTO "Setting" ("key", "value", "updatedAt") VALUES (${key}, ${date}, NOW())
+    ON CONFLICT ("key") DO UPDATE SET "value" = EXCLUDED."value", "updatedAt" = NOW()
+    WHERE "Setting"."value" <> EXCLUDED."value"
+    RETURNING "key"`;
+  return rows.length > 0;
 }
 
 /**
@@ -212,8 +217,7 @@ export async function runDueJobs(now: Date = new Date()) {
   const date = todayStr(now);
   const results: Record<string, unknown> = {};
   const minutes = p.hour * 60 + p.minute;
-  if (minutes >= 6 * 60 && !(await ranToday("job_monthly_payroll_last", date))) {
-    await markRan("job_monthly_payroll_last", date);
+  if (minutes >= 6 * 60 && (await claimJob("job_monthly_payroll_last", date))) {
     // Resign terjadwal yang tanggalnya tiba: Nonaktif + akun dimatikan (sebelum slip dibuat)
     const { applyDueResignations } = await import("./payroll");
     results.resign = await logFailure("RESIGN_BERLAKU", date, () => applyDueResignations(now));
@@ -227,52 +231,42 @@ export async function runDueJobs(now: Date = new Date()) {
     results.salaryOverhead = await logFailure("OVERHEAD_GAJI", date, () => syncSalaryOverheads());
   }
   // 06.00 setelah slip gaji: Cek Konsistensi (uang, barang, absensi-gaji, karyawan); ringkasan ke Owner bila ada masalah
-  if (minutes >= 6 * 60 && !(await ranToday("job_konsistensi_last", date))) {
-    await markRan("job_konsistensi_last", date);
+  if (minutes >= 6 * 60 && (await claimJob("job_konsistensi_last", date))) {
     results.consistency = await logFailure("CEK_KONSISTENSI", date, () => sendConsistencyReport(now));
   }
   // Setelah Cek Konsistensi: alert anomali stok & produksi (push untuk yang TINGGI)
-  if (minutes >= 6 * 60 + 20 && !(await ranToday("job_stok_anomali_last", date))) {
-    await markRan("job_stok_anomali_last", date);
+  if (minutes >= 6 * 60 + 20 && (await claimJob("job_stok_anomali_last", date))) {
     const { runStockAlerts } = await import("./stockAlerts");
     results.stokAnomali = await logFailure("ANOMALI_STOK", date, () => runStockAlerts(now));
   }
-  if (minutes >= 7 * 60 && !(await ranToday("job_daily_recap_last", date))) {
-    await markRan("job_daily_recap_last", date);
+  if (minutes >= 7 * 60 && (await claimJob("job_daily_recap_last", date))) {
     results.dailyRecap = await logFailure("REKAP_HARIAN", date, () => sendDailyRecap(now));
   }
-  if (minutes >= 5 * 60 && !(await ranToday("job_cek_saldo_last", date))) {
-    await markRan("job_cek_saldo_last", date);
+  if (minutes >= 5 * 60 && (await claimJob("job_cek_saldo_last", date))) {
     const { sendBalanceCheck } = await import("./balanceCheck");
     results.balanceCheck = await logFailure("CEK_SALDO", date, () => sendBalanceCheck(now));
   }
-  if (minutes >= 12 * 60 && !(await ranToday("job_cek_saldo_ingat_last", date))) {
-    await markRan("job_cek_saldo_ingat_last", date);
+  if (minutes >= 12 * 60 && (await claimJob("job_cek_saldo_ingat_last", date))) {
     const { sendBalanceCheckReminder } = await import("./balanceCheck");
     results.balanceCheckReminder = await logFailure("CEK_SALDO_INGAT", date, () => sendBalanceCheckReminder(now));
   }
-  if (minutes >= 8 * 60 && !(await ranToday("job_wd_proses_last", date))) {
-    await markRan("job_wd_proses_last", date);
+  if (minutes >= 8 * 60 && (await claimJob("job_wd_proses_last", date))) {
     results.wdProcess = await logFailure("WD_PROSES", date, () => sendWdProcessReminder(now));
   }
-  if (minutes >= 8 * 60 && !(await ranToday("job_talangan_last", date))) {
-    await markRan("job_talangan_last", date);
+  if (minutes >= 8 * 60 && (await claimJob("job_talangan_last", date))) {
     results.talangan = await logFailure("TALANGAN", date, () => sendTalanganReminder(now));
   }
-  if (minutes >= 8 * 60 && !(await ranToday("job_piutang_last", date))) {
-    await markRan("job_piutang_last", date);
+  if (minutes >= 8 * 60 && (await claimJob("job_piutang_last", date))) {
     results.receivable = await logFailure("PIUTANG_JATUH_TEMPO", date, () => sendReceivableReminder(now));
   }
-  if (minutes >= 8 * 60 && !(await ranToday("job_budget_last", date))) {
-    await markRan("job_budget_last", date);
+  if (minutes >= 8 * 60 && (await claimJob("job_budget_last", date))) {
     results.budget = await logFailure("ANGGARAN", date, () => sendBudgetNotice(now));
   }
   // Pengingat push 12.00 / 15.00 (jendela 3 jam; tiap slot sekali per hari)
   {
     const { dueSlot, sendShiftReminders } = await import("./pushReminders");
     const slot = dueSlot(minutes);
-    if (slot && !(await ranToday(slot.key, date))) {
-      await markRan(slot.key, date);
+    if (slot && (await claimJob(slot.key, date))) {
       const { pushConfigured } = await import("./push");
       if (pushConfigured()) results[`push${slot.label.slice(0, 2)}`] = await logFailure("PUSH_PENGINGAT", date, () => sendShiftReminders(now, slot.label));
     }
@@ -292,12 +286,10 @@ export async function runDueJobs(now: Date = new Date()) {
     const cfg = await syncConfig();
     if (cfg.start) {
       const { pushConfigured } = await import("./push");
-      if (minutes >= cfg.hour * 60 && !(await ranToday("job_mp_sync_sup", date))) {
-        await markRan("job_mp_sync_sup", date);
+      if (minutes >= cfg.hour * 60 && (await claimJob("job_mp_sync_sup", date))) {
         if (pushConfigured()) results.mpSyncSup = await logFailure("MP_SYNC_SUP", date, () => sendMarketplaceSyncReminder(now, "SUPERVISOR"));
       }
-      if (minutes >= (cfg.hour + 2) * 60 && !(await ranToday("job_mp_sync_own", date))) {
-        await markRan("job_mp_sync_own", date);
+      if (minutes >= (cfg.hour + 2) * 60 && (await claimJob("job_mp_sync_own", date))) {
         if (pushConfigured()) results.mpSyncOwner = await logFailure("MP_SYNC_OWNER", date, () => sendMarketplaceSyncReminder(now, "OWNER"));
       }
     }
@@ -306,8 +298,7 @@ export async function runDueJobs(now: Date = new Date()) {
   {
     const { syncConfig, sendMarketplaceMonthlyReminder } = await import("./marketplace/sync");
     const cfg = await syncConfig();
-    if (cfg.start && Number(date.slice(8)) <= 3 && minutes >= cfg.hour * 60 && !(await ranToday("job_mp_month", date))) {
-      await markRan("job_mp_month", date);
+    if (cfg.start && Number(date.slice(8)) <= 3 && minutes >= cfg.hour * 60 && (await claimJob("job_mp_month", date))) {
       const { pushConfigured } = await import("./push");
       if (pushConfigured()) results.mpMonthly = await logFailure("MP_BULANAN", date, () => sendMarketplaceMonthlyReminder(now));
     }
@@ -315,8 +306,7 @@ export async function runDueJobs(now: Date = new Date()) {
   // Pengingat withdraw marketplace belum dicatat (jam diatur di Penjualan › Marketplace › Saldo; bawaan 15.00)
   {
     const { wdReminderHour, sendMarketplaceWdReminder } = await import("./marketplace/saldo");
-    if (minutes >= (await wdReminderHour()) * 60 && !(await ranToday("job_mp_wd_last", date))) {
-      await markRan("job_mp_wd_last", date);
+    if (minutes >= (await wdReminderHour()) * 60 && (await claimJob("job_mp_wd_last", date))) {
       const { pushConfigured } = await import("./push");
       if (pushConfigured()) results.mpWithdraw = await logFailure("MP_WITHDRAW", date, () => sendMarketplaceWdReminder(now));
     }
@@ -331,22 +321,19 @@ export async function runDueJobs(now: Date = new Date()) {
       if (r && (r as { titik?: string[] }).titik?.length) results.boronganHariBayar = r;
     }
   }
-  if (minutes >= 19 * 60 && !(await ranToday("job_order_bahan_last", date))) {
-    await markRan("job_order_bahan_last", date);
+  if (minutes >= 19 * 60 && (await claimJob("job_order_bahan_last", date))) {
     const { sendMaterialOrderReminder } = await import("./shiftReportStock");
     results.materialOrder = await logFailure("ORDER_BAHAN", date, () => sendMaterialOrderReminder(now));
   }
   // 03.00 WIB: hapus video retur lama, tandai unggahan macet, proses ulang video tertahan; cek sisa disk
-  if (minutes >= 3 * 60 && !(await ranToday("job_retur_media_last", date))) {
-    await markRan("job_retur_media_last", date);
+  if (minutes >= 3 * 60 && (await claimJob("job_retur_media_last", date))) {
     const { returnMediaMaintenance, diskWarning } = await import("./returnJobs");
     results.returMedia = await logFailure("RETUR_MEDIA", date, () => returnMediaMaintenance(now));
     results.disk = await logFailure("DISK", date, () => diskWarning(now));
   }
   const closeDay = await autoCloseDay();
-  if (p.day === closeDay && minutes >= 9 * 60 && !(await ranToday("job_month_close_last", date))) {
+  if (p.day === closeDay && minutes >= 9 * 60 && (await claimJob("job_month_close_last", date))) {
     const auto = await prisma.setting.findUnique({ where: { key: "auto_close_enabled" } });
-    await markRan("job_month_close_last", date);
     if ((auto?.value ?? "true") === "true") {
       const y = p.month === 1 ? p.year - 1 : p.year;
       const m = p.month === 1 ? 12 : p.month - 1;
