@@ -1,4 +1,5 @@
 "use client";
+import { runActionGuarded } from "@/lib/appVersion";
 import { createContext, startTransition, useActionState, useContext, useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
 import type { ActionResult } from "@/lib/action";
@@ -39,7 +40,7 @@ export function useFormPending() {
 export function ActionForm({ action, children, className, resetOnSuccess, onSuccess, onError, confirm, persist }: Props) {
   // Toast dipicu langsung setelah respons server, sebelum form bisa hilang karena data ter-render ulang
   const [state, formAction, pending] = useActionState(async (prev: State, fd: FormData): Promise<State> => {
-    const r = await action(prev, fd);
+    const r = await runActionGuarded(() => action(prev, fd));
     if (r?.ok && !persist) toast(r.message ?? "Tersimpan");
     // n berubah tiap kirim agar animasi pesan error diputar ulang walau pesannya sama
     return { ...r, n: (prev?.n ?? 0) + 1 };

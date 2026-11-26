@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { RELOAD_GAP_MS, canAutoReload, isNewBuild, isStaleError } from "@/lib/appVersion";
+import { RELOAD_GAP_MS, STALE_MESSAGE, canAutoReload, isNewBuild, isStaleError, runActionGuarded } from "@/lib/appVersion";
 import { GET } from "@/app/api/version/route";
 
 describe("Pembaruan otomatis aplikasi (PWA)", () => {
@@ -69,5 +69,28 @@ describe("Pembaruan otomatis menunggu unggahan selesai", () => {
     expect(isBusy(doc)).toBe(true);
     setUploading(false, doc);
     expect(isBusy(doc)).toBe(false);
+  });
+});
+
+describe("Klien basi setelah deploy (server action)", () => {
+  it("pesan 'Server Reference ID' dan respons tak terduga dikenali sebagai versi lama", () => {
+    expect(isStaleError(new Error("Server Reference ID did not match the expected format"))).toBe(true);
+    expect(isStaleError(new Error("An unexpected response was received from the server."))).toBe(true);
+    expect(isStaleError(new Error("Stok tidak cukup"))).toBe(false);
+  });
+  it("runActionGuarded: error versi lama → pesan ramah + sinyal muat ulang; error lain dilempar ulang; hasil normal lewat", async () => {
+    const events: string[] = [];
+    (globalThis as { window?: unknown }).window = { dispatchEvent: (e: { type: string }) => events.push(e.type) };
+    class Ev { constructor(public type: string) {} }
+    (globalThis as { Event?: unknown }).Event = Ev;
+    try {
+      expect(await runActionGuarded(async () => ({ ok: true as const }))).toEqual({ ok: true });
+      expect(await runActionGuarded(async () => { throw new Error('Server Action "abc" was not found on the server'); })).toEqual({ ok: false, error: STALE_MESSAGE });
+      expect(events).toEqual(["mg-stale-error"]);
+      // Error biasa & server tidak terjangkau (bukan beda versi): dilempar ulang
+      await expect(runActionGuarded(async () => { throw new Error("boom"); })).rejects.toThrow("boom");
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+    }
   });
 });
