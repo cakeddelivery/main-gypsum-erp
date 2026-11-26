@@ -14,11 +14,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   if (!buf.length || buf.length > 3 * 1024 * 1024 || buf.subarray(0, 2).toString("hex") !== "ffd8") return Response.json({ error: "Gambar tidak valid" }, { status: 400 });
   const c = await compressImage(buf).catch(() => ({ buf, changed: false }));
   const data = c.changed ? c.buf : buf;
-  const hasThumb = await prisma.returnMedia.count({ where: { returnId: id, kind: "THUMB", status: "READY" } });
-  const count = await prisma.returnMedia.count({ where: { returnId: id, kind: "FRAME" } });
-  if (hasThumb && count >= 12) return Response.json({ ok: true, skipped: true });
-  const key = mediaStore.newKey("retur", "jpg");
-  await mediaStore.write(key, data);
-  const m = await prisma.returnMedia.create({ data: { returnId: id, kind: hasThumb ? "FRAME" : "THUMB", status: "READY", storageKey: key, mime: "image/jpeg", size: data.length, createdBy: user.name } });
+  // Kunci per retur: frame paralel tidak membuat THUMB ganda / melewati batas 12 frame
+  const m = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"retur-frame:" + id}))`;
+    const hasThumb = await tx.returnMedia.count({ where: { returnId: id, kind: "THUMB", status: "READY" } });
+    const count = await tx.returnMedia.count({ where: { returnId: id, kind: "FRAME" } });
+    if (hasThumb && count >= 12) return null;
+    const key = mediaStore.newKey("retur", "jpg");
+    await mediaStore.write(key, data);
+    return tx.returnMedia.create({ data: { returnId: id, kind: hasThumb ? "FRAME" : "THUMB", status: "READY", storageKey: key, mime: "image/jpeg", size: data.length, createdBy: user.name } });
+  });
+  if (!m) return Response.json({ ok: true, skipped: true });
   return Response.json({ ok: true, id: m.id });
 }

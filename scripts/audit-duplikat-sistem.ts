@@ -69,6 +69,26 @@ async function main() {
   for (let i = 1; i < lg.length; i++) if (lg[i].actorId === lg[i - 1].actorId && lg[i].at.getTime() - lg[i - 1].at.getTime() < 2000) dup.push({ actorId: lg[i].actorId, id: String(lg[i].id) });
   show(dup, "login ganda");
 
+  head("7. Media retur ganda (THUMB >1 atau FRAME >12 per retur)");
+  const media = await prisma.returnMedia.groupBy({ by: ["returnId", "kind"], where: { kind: { in: ["THUMB", "FRAME"] }, deletedAt: null }, _count: true });
+  show(media.filter((m) => (m.kind === "THUMB" && m._count > 1) || (m.kind === "FRAME" && m._count > 12)).map((m) => ({ returnId: m.returnId, jenis: m.kind, jumlah: m._count })), "retur dengan media berlebih (perbaikan = hapus kelebihan manual setelah backup)");
+
+  head("8. Kunci idempotensi API v1 macet (status 0 > 5 menit)");
+  const stuck = await prisma.idempotencyRecord.findMany({ where: { status: 0, createdAt: { lt: new Date(Date.now() - 5 * 60_000) } }, select: { key: true, createdAt: true }, take: 20 });
+  show(stuck, "kunci sementara macet (otomatis diambil alih saat dikirim ulang)");
+
+  head("9. Draft transaksi API/Bot ganda (arah+nominal+tanggal+rekening+uraian sama, dibuat <2 menit)");
+  const drafts = await prisma.financeTransaction.findMany({ where: { status: { in: ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"] }, createdAt: { gte: since } }, select: { id: true, direction: true, amount: true, date: true, accountId: true, counterparty: true, createdAt: true }, orderBy: { createdAt: "asc" } });
+  const dd: unknown[] = [];
+  const seen = new Map<string, (typeof drafts)[number]>();
+  for (const d of drafts) {
+    const k = `${d.direction}|${d.amount}|${d.date.toISOString()}|${d.accountId}|${d.counterparty ?? ""}`;
+    const p = seen.get(k);
+    if (p && d.createdAt.getTime() - p.createdAt.getTime() < 120_000) dd.push({ id: d.id, mirip: p.id });
+    seen.set(k, d);
+  }
+  show(dd, "pasangan draft kembar");
+
   head("Ringkasan");
   console.log(issues ? `  ${issues} temuan — tinjau contoh di atas (skrip ini tidak mengubah data).` : "  Tidak ada data ganda terdeteksi.");
 }

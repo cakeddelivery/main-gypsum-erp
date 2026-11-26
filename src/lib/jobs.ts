@@ -1,4 +1,5 @@
 import { prisma } from "./db";
+import { claimJob } from "./jobClaim";
 import { idr } from "./money";
 import { addDays, dayRange, jakartaParts, monthRange, todayStr, fmtDay, dateOnly } from "./time";
 import { bankBalances } from "./finance";
@@ -7,6 +8,7 @@ import { sendTelegram, telegramConfigured } from "./telegram";
 import { lowStockItems } from "./stock";
 import { generateAllowancePayroll, generateMonthlyPayroll } from "./payroll";
 
+export { claimJob };
 const SYSTEM_ACTOR = { id: "system", name: "Sistem (terjadwal)" };
 
 /** Teks rekap harian (default: kemarin) */
@@ -179,20 +181,6 @@ export async function sendConsistencyReport(now: Date = new Date()) {
   let sent = 0;
   for (const x of recipients) if ((await sendTelegram(x.chatId!, text, { type: "CEK_KONSISTENSI" })).ok) sent++;
   return { ...counts, sent };
-}
-
-/**
- * Klaim job untuk tanggal ini secara ATOMIK (satu pernyataan SQL): hanya satu pemanggil yang mendapat true.
- * Dua proses (scheduler PM2 + cron eksternal, dua instance, restart tumpang tindih) yang memanggil bersamaan
- * tidak lagi sama-sama lolos cek lalu menjalankan job dua kali (pesan Telegram/push dobel, slip gaji dobel).
- */
-export async function claimJob(key: string, date: string): Promise<boolean> {
-  const rows = await prisma.$queryRaw<{ key: string }[]>`
-    INSERT INTO "Setting" ("key", "value", "updatedAt") VALUES (${key}, ${date}, NOW())
-    ON CONFLICT ("key") DO UPDATE SET "value" = EXCLUDED."value", "updatedAt" = NOW()
-    WHERE "Setting"."value" <> EXCLUDED."value"
-    RETURNING "key"`;
-  return rows.length > 0;
 }
 
 /**

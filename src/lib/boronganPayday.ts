@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { prisma } from "./db";
 import { audit } from "./audit";
+import { claimJob } from "./jobClaim";
 import { coordinatorsAt } from "./borongan";
 import { claimBreakdown, claimable } from "./boronganClaim";
 import { jakartaParts, todayStr } from "./time";
@@ -80,8 +81,7 @@ export async function sendPaydayReminders(now: Date = new Date()) {
   const sent: string[] = [];
   for (const pointId of duePoints(cfg, now)) {
     const key = `job_borongan_bayar_${pointId}`;
-    if ((await prisma.setting.findUnique({ where: { key } }))?.value === date) continue;
-    await prisma.setting.upsert({ where: { key }, create: { key, value: date }, update: { value: date } });
+    if (!(await claimJob(key, date))) continue; // atomik: dua proses tidak mengirim dobel
     const point = await prisma.boronganPoint.findUnique({ where: { id: pointId }, select: { name: true, active: true } });
     if (!point?.active) continue;
     const t = paydayText(point.name, cfg[pointId].day, await unclaimedSummary(pointId));
