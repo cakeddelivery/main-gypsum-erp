@@ -108,7 +108,12 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
   const at = shiftEndAt(r.date, r.shift, now);
   // Nilai resep dibaca di luar transaksi (fungsi HPP memakai koneksi biasa)
   const costs = new Map<string, number>();
-  const itemIds = await prisma.$transaction(async (tx) => Promise.all(steps.map((s) => flowItem(tx, s))));
+  // Berurutan (bukan Promise.all): dua langkah untuk barang yang sama (mis. giftbox masuk & keluar) tidak boleh membuat SKU yang sama bersamaan
+  const itemIds = await prisma.$transaction(async (tx) => {
+    const ids: string[] = [];
+    for (const s of steps) ids.push(await flowItem(tx, s));
+    return ids;
+  });
   const allCosts = itemIds.length ? await (await import("./hpp")).itemCosts() : undefined;
   for (const id of new Set(itemIds)) costs.set(id, await recipeMaterialCost(id, allCosts));
 

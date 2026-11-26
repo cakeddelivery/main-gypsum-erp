@@ -70,7 +70,7 @@ export async function isBoronganDivisionCaptain(db: DB, user: { role?: string; d
 }
 
 /** Divisi Cetak / Oven: penghasil patung kering (mengisi patung kering kiriman Assembling) */
-export const isKeringDivision = (d: { name: string; reportTemplate: string | null } | null | undefined) => !!d && (d.reportTemplate === "CETAK" || /\b(cetak|oven)\b/i.test(d.name));
+export const isKeringDivision = (d: { name: string; reportTemplate: string | null } | null | undefined) => !!d && (d.reportTemplate === "CETAK" || d.reportTemplate === "PRODUKSI" || /\b(cetak|oven)\b/i.test(d.name));
 
 /** Anggota divisi (Kapten/Operator) yang divisinya punya tugas borongan aktif boleh mencatat setoran tugas itu */
 export function isDivisionMemberRole(role?: string) {
