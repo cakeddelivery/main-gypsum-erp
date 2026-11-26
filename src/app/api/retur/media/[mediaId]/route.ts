@@ -58,7 +58,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ mediaId
   if (typeof body.total === "number" && body.total !== size) return Response.json({ error: "Video belum terunggah semua", received: size }, { status: 409 });
   if (!size) return Response.json({ error: "Video kosong" }, { status: 400 });
   const durationSec = Math.max(0, Math.round(Number(body.durationSec) || 0)) || null;
-  await prisma.returnMedia.update({ where: { id: x.m.id }, data: { status: "PROCESSING", received: size, size, durationSec } });
+  // Atomik: dua permintaan selesai bersamaan (klik/retry) hanya satu yang memulai pemrosesan
+  const won = await prisma.returnMedia.updateMany({ where: { id: x.m.id, status: "UPLOADING" }, data: { status: "PROCESSING", received: size, size, durationSec } });
+  if (won.count === 0) return Response.json({ status: "PROCESSING", size });
   void enqueueVideo(x.m.id);
   return Response.json({ status: "PROCESSING", size });
 }
