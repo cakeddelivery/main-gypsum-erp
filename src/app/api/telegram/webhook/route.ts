@@ -6,6 +6,14 @@ import { MENU_TEXT } from "@/lib/botMenu";
 import { hasActiveFlow } from "@/lib/botFlow";
 import { esc, sendTelegram } from "@/lib/telegram";
 
+/** Tandai update_id; false bila sudah pernah diterima. Penanda (ReminderLog.key unik) dibersihkan setelah 3 hari. */
+async function claimUpdate(updateId: unknown): Promise<boolean> {
+  if (typeof updateId !== "number") return true;
+  const fresh = await prisma.reminderLog.create({ data: { key: `tg-update:${updateId}` } }).then(() => true, (e) => (e?.code === "P2002" ? false : true));
+  if (fresh && updateId % 50 === 0) await prisma.reminderLog.deleteMany({ where: { key: { startsWith: "tg-update:" }, createdAt: { lt: new Date(Date.now() - 3 * 86400000) } } }).catch(() => {});
+  return fresh;
+}
+
 /**
  * Webhook Telegram Bot API. Diverifikasi dengan header X-Telegram-Bot-Api-Secret-Token.
  * Bila HERMES_WEBHOOK_URL diatur, pesan teks/foto diteruskan ke Hermes AI Agent
@@ -19,6 +27,8 @@ export async function POST(req: Request) {
   }
   const update = await req.json().catch(() => null);
   if (!update) return NextResponse.json({ ok: true });
+  // Telegram mengirim ulang update yang tidak dijawab tepat waktu (proses lambat/restart): update_id yang sama diproses sekali saja
+  if (!(await claimUpdate(update.update_id))) return NextResponse.json({ ok: true, duplicate: true });
   try {
     const hermes = process.env.HERMES_WEBHOOK_URL;
     // Perintah & tombol "📋 Menu" selalu ditangani ERP (tidak diteruskan ke Hermes)
