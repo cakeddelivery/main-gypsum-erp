@@ -1,6 +1,7 @@
 import type { AttendanceStatus, LeaveKind, Role } from "@prisma/client";
 import { prisma } from "./db";
 import { audit } from "./audit";
+import { lockKey } from "./advisoryLock";
 import { addDays, dateOnly, dateStr, fmtDate, todayStr } from "./time";
 import { sendPush } from "./push";
 import { esc, sendTelegram } from "./telegram";
@@ -77,11 +78,15 @@ export async function submitLeave(user: Actor, input: LeaveInput & { attachmentP
   if (err) throw new Error(err);
   const from = dateOnly(input.from);
   const to = dateOnly(input.to);
-  const clash = await prisma.leaveRequest.findFirst({ where: { employeeId: user.employeeId, status: { in: ["MENUNGGU", "DISETUJUI"] }, dateFrom: { lte: to }, dateTo: { gte: from } } });
-  if (clash) throw new Error(`Sudah ada pengajuan ${LEAVE_KIND_LABEL[clash.kind].toLowerCase()} untuk ${rangeText(clash.dateFrom, clash.dateTo)}`);
   const emp = await prisma.employee.findUniqueOrThrow({ where: { id: user.employeeId }, select: { name: true, division: { select: { name: true } } } });
-  const r = await prisma.leaveRequest.create({
-    data: { employeeId: user.employeeId, userId: user.id, kind: input.kind, dateFrom: from, dateTo: to, reason: input.reason.trim().slice(0, 500), attachmentPath: input.attachmentPath ?? null },
+  // Cek bentrok + simpan dalam satu transaksi berkunci per karyawan: klik ganda/submit ulang bersamaan tidak membuat pengajuan dobel
+  const r = await prisma.$transaction(async (tx) => {
+    await lockKey(tx, `leave:${user.employeeId}`);
+    const clash = await tx.leaveRequest.findFirst({ where: { employeeId: user.employeeId!, status: { in: ["MENUNGGU", "DISETUJUI"] }, dateFrom: { lte: to }, dateTo: { gte: from } } });
+    if (clash) throw new Error(`Sudah ada pengajuan ${LEAVE_KIND_LABEL[clash.kind].toLowerCase()} untuk ${rangeText(clash.dateFrom, clash.dateTo)}`);
+    return tx.leaveRequest.create({
+      data: { employeeId: user.employeeId!, userId: user.id, kind: input.kind, dateFrom: from, dateTo: to, reason: input.reason.trim().slice(0, 500), attachmentPath: input.attachmentPath ?? null },
+    });
   });
   await audit(user, "IZIN_DIAJUKAN", "LeaveRequest", r.id, { kind: r.kind, from: input.from, to: input.to });
   const label = LEAVE_KIND_LABEL[r.kind];

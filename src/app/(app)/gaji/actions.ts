@@ -47,7 +47,12 @@ export const adjustSlip = action(
     if (bonus < 0 || deduction < 0) throw new Error("Nilai tidak boleh negatif");
     // Potongan Alpa (gaji pokok ÷ 30 × hari Alpa) tetap; "Potongan" di sini = potongan lain/terlambat yang diubah manual
     const total = Math.max(0, Number(s.baseSalary + s.dailyWage + s.pieceWage + s.allowance + s.transport - s.advanceDeduction - s.alpaDeduction) + bonus - deduction);
-    await prisma.payslip.update({ where: { id }, data: { bonus: BigInt(bonus), deduction: BigInt(deduction), total: BigInt(total) } });
+    // Ubah hanya bila periodenya masih draft pada saat ditulis (Setujui bersamaan tidak boleh membuat slip beda dari jurnal hutang gaji)
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${s.periodId} FOR UPDATE`;
+      if ((await tx.payrollPeriod.findUniqueOrThrow({ where: { id: s.periodId } })).status !== "DRAFT") throw new Error("Periode sudah disetujui");
+      await tx.payslip.update({ where: { id }, data: { bonus: BigInt(bonus), deduction: BigInt(deduction), total: BigInt(total) } });
+    });
     await audit(user, "SLIP_DISESUAIKAN", "Payslip", id, { bonus, deduction });
     return "Slip diperbarui";
   },

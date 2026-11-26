@@ -4,6 +4,7 @@ import { prisma } from "./db";
 import { assertPeriodOpen, postJournal, reverseJournal, COA } from "./accounting";
 import { nextNumber } from "./numbering";
 import { audit } from "./audit";
+import { lockKey } from "./advisoryLock";
 import { addDays, dateOnly, dateStr, jakartaDateTime, todayStr } from "./time";
 import { withField } from "./fieldError";
 import { alpaCut } from "./salaryProjection";
@@ -232,7 +233,11 @@ export async function giveAdvance(input: { employeeId: string; amount: number; i
   if (!(input.amount > 0)) throw new PayrollError("Nominal kasbon harus > 0");
   if (input.installment < 0 || input.installment > input.amount) throw new PayrollError("Cicilan per gajian harus 0 – nominal kasbon");
   return prisma.$transaction(async (tx) => {
+    await lockKey(tx, `kasbon:${input.employeeId}`);
     const emp = await tx.employee.findUniqueOrThrow({ where: { id: input.employeeId } });
+    // Klik ganda / kirim ulang: kasbon identik (pegawai, nominal, tanggal, rekening) yang baru dibukukan < 2 menit lalu ditolak
+    const dup = await tx.cashAdvance.findFirst({ where: { employeeId: emp.id, amount: BigInt(input.amount), date: dateOnly(input.date), paidFromAccountId: input.bankAccountId, cancelledAt: null, createdAt: { gte: new Date(Date.now() - 120_000) } } });
+    if (dup) throw new PayrollError(`Kasbon ${dup.number} dengan nominal & tanggal yang sama baru saja dibukukan. Tidak dicatat dua kali; periksa daftar kasbon.`);
     // Aturan bisnis: pekerja borongan tidak mendapat kasbon
     if (emp.wageType === "BORONGAN") throw new PayrollError(`${emp.name} pekerja borongan: tidak bisa diberi kasbon`);
     const bank = await tx.bankAccount.findUniqueOrThrow({ where: { id: input.bankAccountId } });
@@ -265,6 +270,8 @@ export async function repayAdvance(advanceId: string, amount: number, bankAccoun
 /** Hitung (ulang) slip gaji seluruh karyawan aktif untuk periode DRAFT */
 export async function computePeriod(periodId: string, actor: Actor) {
   return prisma.$transaction(async (tx) => {
+    // Kunci periode: hitung ulang bersamaan (atau bersamaan dengan Setujui) diantre, tidak bentrok pada slip
+    await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
     const period = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId } });
     if (period.status !== "DRAFT") throw new PayrollError("Periode sudah disetujui; tidak bisa dihitung ulang");
     if (period.kind === "BULANAN") return computeMonthly(tx, period, actor);
@@ -465,8 +472,13 @@ export async function generateAllowancePayroll(actor: Actor, now: Date = new Dat
     if (today < payDate) continue; // belum tanggal bayarnya (juga untuk tombol manual)
     if (goLive && payDate < goLive && !force) continue;
     const code = allowanceCode(payDate);
-    if (await prisma.payrollPeriod.findUnique({ where: { code } })) continue;
-    const period = await prisma.payrollPeriod.create({ data: { code, kind: "TUNJANGAN", startDate: dateOnly(`${ym}-01`), endDate: dateOnly(payDate), payDate: dateOnly(payDate) } });
+    // Cek + buat dalam transaksi berkunci: scheduler & tombol manual bersamaan tidak membuat periode ganda / error duplikat
+    const period = await prisma.$transaction(async (tx) => {
+      await lockKey(tx, `gen-tunjangan:${code}`);
+      if (await tx.payrollPeriod.findUnique({ where: { code } })) return null;
+      return tx.payrollPeriod.create({ data: { code, kind: "TUNJANGAN", startDate: dateOnly(`${ym}-01`), endDate: dateOnly(payDate), payDate: dateOnly(payDate) } });
+    });
+    if (!period) continue;
     await computePeriod(period.id, actor);
     // Tidak ada tunjangan yang perlu ditagih (semua sudah masuk periode lain): periode kosong dihapus
     if (!(await prisma.payslip.count({ where: { periodId: period.id } }))) await prisma.payrollPeriod.delete({ where: { id: period.id } });
@@ -493,12 +505,16 @@ export async function generateMonthlyPayroll(actor: Actor, now: Date = new Date(
   }
   const created: string[] = [];
   for (const c of cycles.values()) {
-    const exists = await prisma.payrollPeriod.findFirst({ where: { kind: "BULANAN", startDate: dateOnly(c.start), endDate: dateOnly(c.end) } });
-    if (exists) continue;
-    // Tanggal masuk 29–31 bisa berakhir di tanggal yang sama (Februari) dengan awal siklus berbeda: kode dibedakan
-    const base = `GJB-${c.end.replace(/-/g, "")}`;
-    const code = (await prisma.payrollPeriod.findUnique({ where: { code: base } })) ? `${base}-${c.start.slice(8, 10)}` : base;
-    const p = await prisma.payrollPeriod.create({ data: { code, kind: "BULANAN", startDate: dateOnly(c.start), endDate: dateOnly(c.end), payDate: dateOnly(c.payDate) } });
+    // Cek + buat dalam transaksi berkunci per siklus: scheduler & tombol manual bersamaan tidak membuat periode ganda
+    const p = await prisma.$transaction(async (tx) => {
+      await lockKey(tx, `gen-bulanan:${c.start}|${c.end}`);
+      if (await tx.payrollPeriod.findFirst({ where: { kind: "BULANAN", startDate: dateOnly(c.start), endDate: dateOnly(c.end) } })) return null;
+      // Tanggal masuk 29–31 bisa berakhir di tanggal yang sama (Februari) dengan awal siklus berbeda: kode dibedakan
+      const base = `GJB-${c.end.replace(/-/g, "")}`;
+      const code = (await tx.payrollPeriod.findUnique({ where: { code: base } })) ? `${base}-${c.start.slice(8, 10)}` : base;
+      return tx.payrollPeriod.create({ data: { code, kind: "BULANAN", startDate: dateOnly(c.start), endDate: dateOnly(c.end), payDate: dateOnly(c.payDate) } });
+    });
+    if (!p) continue;
     await computePeriod(p.id, actor);
     created.push(p.code);
   }
@@ -513,7 +529,9 @@ export async function createPieceClaim(employeeId: string, upTo: string, actor: 
     const first = await tx.pieceWork.findFirst({ where, orderBy: { date: "asc" } });
     if (!first) throw new PayrollError(`Tidak ada hasil borongan ${emp.name} yang belum diklaim`);
     const p = await tx.payrollPeriod.create({ data: { code: `KLM-${emp.code}-${upTo.replace(/-/g, "")}-${Date.now().toString(36).slice(-4)}`, kind: "BORONGAN", employeeId, startDate: first.date, endDate: dateOnly(upTo), payDate: dateOnly(upTo) } });
-    await tx.pieceWork.updateMany({ where, data: { periodId: p.id } });
+    const taken = await tx.pieceWork.updateMany({ where, data: { periodId: p.id } });
+    // Klik ganda bersamaan: hasil kerja sudah diambil klaim lain → batalkan (jangan sisakan klaim kosong)
+    if (!taken.count) throw new PayrollError(`Tidak ada hasil borongan ${emp.name} yang belum diklaim`);
     await computeClaim(tx, p, actor);
     await audit(actor, "KLAIM_BORONGAN_DIBUAT", "PayrollPeriod", p.id, { employee: emp.code }, tx);
     return p;
@@ -589,6 +607,8 @@ async function activeAccrual(tx: Tx, periodId: string) {
 
 export async function approvePeriod(periodId: string, actor: Actor) {
   return prisma.$transaction(async (tx) => {
+    // Kunci periode: dua klik Setujui bersamaan tidak boleh membukukan jurnal hutang gaji dua kali
+    await tx.$queryRaw`SELECT id FROM "PayrollPeriod" WHERE id = ${periodId} FOR UPDATE`;
     const p = await tx.payrollPeriod.findUniqueOrThrow({ where: { id: periodId }, include: { payslips: true } });
     if (p.status !== "DRAFT") throw new PayrollError("Periode bukan draft");
     if (!p.payslips.length) throw new PayrollError("Belum ada slip gaji; hitung dahulu");

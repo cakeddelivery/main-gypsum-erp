@@ -1,6 +1,7 @@
 import type { Prisma, Role } from "@prisma/client";
 import { prisma } from "./db";
 import { audit } from "./audit";
+import { lockKey } from "./advisoryLock";
 import { addDays, dateOnly, fmtDay, todayStr } from "./time";
 import { sendPush } from "./push";
 import { esc, sendTelegram } from "./telegram";
@@ -91,13 +92,15 @@ export async function submitDayOff(user: Actor, input: DayOffInput & { reason?: 
   if (err) throw new Error(err);
   const w = dayOffWindow(today);
   const week = dateOnly(w.weekStart);
-  const clash = await prisma.dayOffRequest.findFirst({ where: { employeeId: user.employeeId, weekStart: week, status: { in: ["MENUNGGU", "DISETUJUI"] } } });
-  if (clash) throw new Error("Anda sudah mengajukan untuk minggu depan. Batalkan pengajuan lama dulu bila ingin mengubah.");
   const dates = input.none ? [] : [...new Set(input.dates)].sort();
   const emp = await prisma.employee.findUniqueOrThrow({ where: { id: user.employeeId }, select: { name: true, division: { select: { name: true } } } });
   const selfApprove = user.role === "SUPERVISOR" && dates.length > 0;
   let removed = 0;
   const r = await prisma.$transaction(async (tx) => {
+    // Cek + simpan dalam satu transaksi berkunci per karyawan: klik ganda tidak membuat pengajuan dobel
+    await lockKey(tx, `dayoff:${user.employeeId}`);
+    const clash = await tx.dayOffRequest.findFirst({ where: { employeeId: user.employeeId!, weekStart: week, status: { in: ["MENUNGGU", "DISETUJUI"] } } });
+    if (clash) throw new Error("Anda sudah mengajukan untuk minggu depan. Batalkan pengajuan lama dulu bila ingin mengubah.");
     const created = await tx.dayOffRequest.create({
       // "Tidak libur" tidak perlu persetujuan; libur Supervisor disetujui sendiri
       data: { employeeId: user.employeeId!, userId: user.id, weekStart: week, dates, reason: input.reason?.trim().slice(0, 300) || null, ...(dates.length ? {} : { status: "DISETUJUI", decidedBy: "Otomatis", decidedAt: new Date() }), ...(selfApprove ? { status: "DISETUJUI", decidedBy: `${user.name} (disetujui sendiri, Supervisor)`, decidedAt: new Date() } : {}) },
