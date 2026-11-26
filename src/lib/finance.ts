@@ -9,6 +9,7 @@ import { addDays, jakartaDateTime, todayStr } from "./time";
 import { liabilityAccountId, payableLines, splitPayment } from "./payables";
 import { applyReserveLink, parseLink, reserveAccrualLines, reserveOptions, validateLink, type ReserveLink, type ReservePart } from "./reserveSync";
 import { withField } from "./fieldError";
+import { DUP_WINDOW_MS } from "./dupGuard";
 
 type Tx = Prisma.TransactionClient;
 export type Actor = { id: string | null; name: string; telegramId?: string };
@@ -658,6 +659,12 @@ export async function bookPayablePayment(input: PayablePaymentInput, source: TxS
     }
     await tx.$queryRaw`SELECT id FROM "Payable" WHERE id = ${input.payableId} FOR UPDATE`;
     const p = await tx.payable.findUniqueOrThrow({ where: { id: input.payableId } });
+    // Formulir web tanpa kunci idempotensi: klik ganda tidak boleh mencatat pembayaran yang sama dua kali (kunci hutang di atas menserialkan)
+    if (source === "MANUAL" && !input.idempotencyKey) {
+      const note = input.note?.trim() || null;
+      const dup = await tx.financeTransaction.findFirst({ where: { payableId: p.id, accountId: input.bankAccountId, amount: BigInt(input.amount), date: input.date, createdBy: actor.name, status: { notIn: ["DITOLAK", "DIBATALKAN"] }, createdAt: { gte: new Date(Date.now() - DUP_WINDOW_MS) } }, select: { number: true, note: true } });
+      if (dup && (dup.note ?? null) === (note ?? dup.note)) throw new FinanceError(`Pembayaran yang sama persis baru saja dicatat (${dup.number}). Jika memang sengaja dua kali, tunggu 2 menit atau beri catatan yang berbeda.`);
+    }
     const sp = splitPayment(p, input.amount, input.interest);
     if (sp.interest < 0 || sp.principal <= 0) throw new FinanceError("Bunga harus 0 – kurang dari nominal");
     const number = await nextTxNumber(tx, input.date);
