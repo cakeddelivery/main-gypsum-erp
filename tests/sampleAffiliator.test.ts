@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import { FLOW_SETTING } from "@/lib/shiftReportFlow";
 import { locationSettings, qtyAt, recordMovement } from "@/lib/stock";
-import { SAMPLE_KEY, applyReportSamples, parseSamples, sampleRecap } from "@/lib/affiliateSample";
+import { SAMPLE_KEY, applyReportSamples, parseSamples, sampleRecap, sampleRowIssue } from "@/lib/affiliateSample";
 import { addDays, dateOnly, todayStr } from "@/lib/time";
 
 const tag = Date.now().toString(36).slice(-5).toUpperCase();
@@ -16,6 +16,15 @@ describe("Sample affiliator di laporan Packing/Giftbox", () => {
     expect(() => parseSamples(g({ "sm.item": ["a"], "sm.qty": ["2"], "sm.platform": ["OFFLINE"], "sm.store": ["s1"] }))).toThrow(/pilih platform/);
     expect(() => parseSamples(g({ "sm.item": ["a"], "sm.qty": ["2"], "sm.platform": ["SHOPEE"], "sm.store": [""] }))).toThrow(/pilih toko/);
     expect(() => parseSamples(g({ "sm.item": [""], "sm.qty": ["2"], "sm.platform": ["SHOPEE"], "sm.store": ["s1"] }))).toThrow(/pilih produknya/);
+  });
+
+  it("baris tanpa produk & jumlah (platform/toko saja) diabaikan; draf melewati baris setengah terisi; pesan per baris", () => {
+    expect(parseSamples(g({ "sm.item": [""], "sm.qty": [""], "sm.platform": ["SHOPEE"], "sm.store": ["s1"] }))).toEqual([]);
+    const half = g({ "sm.item": ["a", "b"], "sm.qty": ["2", "1"], "sm.platform": ["TIKTOK", "SHOPEE"], "sm.store": ["s1", ""] });
+    expect(parseSamples(half, { lenient: true })).toEqual([{ itemId: "a", qty: 2, platform: "TIKTOK", storeId: "s1" }]);
+    expect(() => parseSamples(half)).toThrow(/baris 2: pilih toko/);
+    expect(sampleRowIssue({ itemId: "b", qty: "1", platform: "SHOPEE", storeId: "" })).toBe("pilih toko");
+    expect(sampleRowIssue({ itemId: "", qty: "", platform: "", storeId: "" })).toBeNull();
   });
 
   describe("di database", () => {
