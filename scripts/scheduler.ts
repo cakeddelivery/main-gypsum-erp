@@ -1,12 +1,18 @@
 /* Scheduler proses terpisah (alternatif cron eksternal): cek job setiap menit. Jalankan: npm run scheduler */
 import { runDueJobs } from "../src/lib/jobs";
 
+// Satu tick belum selesai (job lambat) → tick berikutnya dilewati, bukan ditumpuk. Pencegahan dobel antar-proses ada di claimJob (jobs.ts).
+let running = false;
 async function tick() {
+  if (running) return;
+  running = true;
   try {
     const r = await runDueJobs();
     if (Object.keys(r).length) console.log(new Date().toISOString(), "job dijalankan:", JSON.stringify(r));
   } catch (e) {
     console.error(new Date().toISOString(), "job gagal:", e);
+  } finally {
+    running = false;
   }
 }
 
