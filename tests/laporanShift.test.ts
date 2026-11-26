@@ -38,7 +38,8 @@ describe("Shift laporan mengikuti absen", () => {
   it("A: slot laporan = shift & tanggal absen; belum absen → diarahkan absen", async () => {
     const e = await emp();
     setNow(at(D, "17:41"));
-    await expect(memberReportSlot(e.id, divId)).rejects.toThrow(/belum absen masuk/);
+    // Belum absen: laporan tetap bisa dibuat (shift terdekat jam sekarang), ditandai tanpa absen agar input stok tidak macet
+    expect(await memberReportSlot(e.id, divId)).toEqual({ date: D, shiftId: s2, noAttendance: true });
     await absen(e.id, D, s1, "08:25");
     expect(await memberReportSlot(e.id, divId)).toEqual({ date: D, shiftId: s1 });
   });
@@ -55,17 +56,20 @@ describe("Shift laporan mengikuti absen", () => {
     expect(await memberReportSlot(rico.id, divId)).toEqual({ date: D, shiftId: s1 });
     // Setelah laporannya terkirim, tidak lagi dibuka kembali
     await prisma.shiftReport.create({ data: { date: dateOnly(D), shiftId: s1, divisionId: divId, picName: "rico", status: "TERKIRIM", createdBy: "rico" } });
-    await expect(memberReportSlot(rico.id, divId)).rejects.toThrow(/belum absen masuk/);
+    expect((await memberReportSlot(rico.id, divId))?.noAttendance).toBe(true);
   });
 
   it("B: karyawan Shift 1 tidak bisa mengisi laporan Shift 2; Shift 2 bisa; belum absen ditolak", async () => {
     const rico = await emp(), bagus = await emp(), belum = await emp();
+    setNow(at(D, "17:00"));
     await absen(rico.id, D, s1, "08:25");
     await absen(bagus.id, D, s2, "15:58");
     const r2 = await report(D, s2, "bagus");
     const full = await prisma.shiftReport.findUniqueOrThrow({ where: { id: r2.id }, include: { shift: true } });
     await expect(assertMemberOwnsReport(rico.id, full)).rejects.toThrow(/absen Anda Shift 1|absen Anda/);
-    await expect(assertMemberOwnsReport(belum.id, full)).rejects.toThrow(/belum absen masuk/);
+    // Belum absen: laporan hari kerja ini tetap boleh dilanjutkan ("tanpa absen"); tanggal lama tetap ditolak
+    await expect(assertMemberOwnsReport(belum.id, full)).resolves.toBeUndefined();
+    await expect(assertMemberOwnsReport(belum.id, { ...full, date: dateOnly("2020-01-01") })).rejects.toThrow(/belum absen masuk/);
     await expect(assertMemberOwnsReport(bagus.id, full)).resolves.toBeUndefined();
   });
 

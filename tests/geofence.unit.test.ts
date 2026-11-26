@@ -19,6 +19,19 @@ describe("Geofence absensi", () => {
     expect(no.ok).toBe(false);
     if (!no.ok) expect(no.error).toMatch(/di luar lokasi kerja/);
   });
+  it("akurasi GPS dihitung: jarak − akurasi ≤ radius lolos; pesan menyarankan coba lagi / minta Supervisor", () => {
+    // ~134 m dari titik: ditolak bila akurasi bagus, lolos bila akurasi ±40 m (posisi bisa 40 m lebih dekat)
+    const edge = { lat: -7.1167 + 0.0012, lng: 112.4167 };
+    const d = distanceMeters(edge, { lat: pabrik.latitude, lng: pabrik.longitude });
+    expect(d).toBeGreaterThan(110);
+    expect(d).toBeLessThan(140);
+    const strict = checkGeofence({ ...edge, accuracy: 5 }, [pabrik]);
+    expect(strict.ok).toBe(false);
+    if (!strict.ok) expect(strict.error).toMatch(/coba lagi.*Supervisor/);
+    expect(checkGeofence({ ...edge, accuracy: 40 }, [pabrik]).ok).toBe(true);
+    // Akurasi buruk di atas batas tetap ditolak
+    expect(checkGeofence({ ...edge, accuracy: 300 }, [pabrik]).ok).toBe(false);
+  });
   it("pilih titik mana pun yang memuat posisi", () => {
     const gudang = { ...pabrik, id: "s2", name: "Gudang", latitude: far.lat, longitude: far.lng };
     const r = checkGeofence(far, [pabrik, gudang]);

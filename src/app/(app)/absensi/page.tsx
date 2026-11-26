@@ -2,7 +2,7 @@ import { AUTO_NOTE, SHIFT_NOTE_PREFIX } from "@/lib/attendanceRules";
 import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { addDays, dateOnly, dateStr, fmtDateTime, fmtDay, todayStr } from "@/lib/time";
-import { ATT_LABEL } from "@/lib/attendance";
+import { ATT_LABEL, RECOMMENDED_RADIUS_M } from "@/lib/attendance";
 import { fmtMinutes, lateRecap } from "@/lib/lateRecap";
 import { Badge, Card, Empty, FilterBar, Field, PageHeader, Tabs } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
@@ -308,7 +308,7 @@ function SiteFields({ site }: { site?: { name: string; latitude: number; longitu
       <label><span className="label">Latitude</span><input name="latitude" required inputMode="decimal" defaultValue={site?.latitude} placeholder="-7.1167" className="input" /></label>
       <label><span className="label">Longitude</span><input name="longitude" required inputMode="decimal" defaultValue={site?.longitude} placeholder="112.4167" className="input" /></label>
       <UseMyLocation />
-      <label><span className="label">Radius (meter)</span><input name="radiusM" type="number" inputMode="numeric" min={20} max={5000} required defaultValue={site?.radiusM ?? 100} className="input" /></label>
+      <label><span className="label">Radius (meter)</span><input name="radiusM" type="number" inputMode="numeric" min={20} max={5000} required defaultValue={site?.radiusM ?? 100} className="input" /><span className="mt-1 block text-xs text-slate-500">Disarankan minimal {RECOMMENDED_RADIUS_M} m: GPS HP sering meleset 30–70 m, radius terlalu kecil membuat karyawan gagal absen di tempat kerja.</span></label>
     </>
   );
 }
