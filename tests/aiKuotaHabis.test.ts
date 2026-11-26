@@ -1,6 +1,9 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+
+// OCR server dimatikan di tes ini (foto uji bukan gambar sungguhan): cadangan OCR gagal juga → nominal null
+vi.mock("@/lib/ocrReceipt", async (orig) => ({ ...(await orig<typeof import("@/lib/ocrReceipt")>()), ocrReceipt: vi.fn(async () => { throw new Error("OCR mati"); }), ocrImageText: vi.fn(async () => "") }));
 
 // Penyedia AI tiruan yang selalu menolak: kuota habis (400 model_tokens_exhausted) atau rate limit (429)
 let mode: "kuota" | "limit" | "rusak" = "kuota";
