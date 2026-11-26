@@ -72,6 +72,9 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
   const canReceive = member && (user.can("borongan.point") || user.can("borongan.manage")) && (await receiptItems(fixedDivision!)).length > 0;
   // Alur kiriman: setoran diterima per pengambilan (AMB) di Borongan › Kiriman
   const penerimaan = canReceive && <Link href="/borongan?tab=kiriman" className="btn-secondary">Terima setoran borongan</Link>;
+  // Oven (format Produksi): "+ Hasil Panen" realtime → langsung masuk stok patung kering
+  const ovenDivs = startData.divisions.filter((d) => divisions.find((x) => x.id === d.id)?.reportTemplate === "PRODUKSI");
+  const hasilPanen = canCreate && ovenDivs.length > 0 && <Modal trigger="+ Hasil Panen" triggerClass="btn-success" title="Hasil panen"><ReportStartForm data={{ ...startData, divisions: ovenDivs }} go="panen" /></Modal>;
   const barangMasuk = canCreate && <Modal trigger="+ Barang masuk" triggerClass="btn-secondary" title="Catat barang masuk"><ReportStartForm data={startData} go="masuk" /></Modal>;
   const newForm = canCreate && (
     <>
@@ -88,6 +91,7 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
         actions={
           <>
             {/* Anggota mengirim laporan lewat tombol + Lapor di navigasi bawah; Rekap & Resi khusus pengelola */}
+            {hasilPanen}
             {member ? barangMasuk : newForm}
             {penerimaan}
             <Link href="/laporan/order" className="btn-secondary">Order bahan baku</Link>

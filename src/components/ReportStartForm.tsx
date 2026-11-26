@@ -53,7 +53,7 @@ export function reportSlot(shifts: Shift[], today: string, now = new Date()): { 
  * go="isi" membuka form laporan, go="masuk" membuka popup Barang masuk laporan itu.
  * Mode otomatis (anggota): semua terisi sendiri dan langsung dibuka.
  */
-export function ReportStartForm({ data, go = "isi" }: { data: ReportStartData; go?: "isi" | "masuk" | "terima" }) {
+export function ReportStartForm({ data, go = "isi" }: { data: ReportStartData; go?: "isi" | "masuk" | "terima" | "panen" }) {
   const { divisions, shifts, today } = data;
   const [div, setDiv] = useState(divisions.length === 1 ? divisions[0].id : "");
   const d = divisions.find((x) => x.id === div);
@@ -94,7 +94,7 @@ export function ReportStartForm({ data, go = "isi" }: { data: ReportStartData; g
           </>
         ) : (
           <>
-            <p className="text-sm text-slate-500">{go === "masuk" ? "Barang masuk dicatat ke laporan shift ini (isi sebelum menghitung stok akhir)." : "Pilih laporan yang akan diisi. Bila laporan itu sudah ada, isiannya dilanjutkan."}</p>
+            <p className="text-sm text-slate-500">{go === "masuk" ? "Barang masuk dicatat ke laporan shift ini (isi sebelum menghitung stok akhir)." : go === "panen" ? "Hasil panen dicatat ke laporan Oven shift ini dan langsung masuk stok patung kering." : "Pilih laporan yang akan diisi. Bila laporan itu sudah ada, isiannya dilanjutkan."}</p>
             <label className="block">
               <span className="label">Tanggal</span>
               <input key={date} type="date" name="date" defaultValue={date} max={today} className="input" required />
