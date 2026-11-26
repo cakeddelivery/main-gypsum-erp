@@ -4,6 +4,7 @@ import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } fr
 import { nextNumber } from "./numbering";
 import { autoCode } from "./codes";
 import { audit } from "./audit";
+import { lockKey } from "./actionToken";
 import { locationSettings, qtyAt, recordMovement, StockError } from "./stock";
 import { recipeMaterialCost } from "./hpp";
 
@@ -68,6 +69,8 @@ async function resolveCustomer(tx: Tx, input: SaleInput, actor: Actor) {
   if (input.customerId) return tx.customer.findUniqueOrThrow({ where: { id: input.customerId } });
   const name = input.newCustomerName?.trim().replace(/\s+/g, " ");
   if (!name) return null;
+  // Dua penjualan paralel dengan pelanggan baru bernama sama: antre, yang kedua memakai pelanggan yang sudah dibuat
+  await lockKey(tx, `cust:${name.toLowerCase()}`);
   const same = await tx.customer.findFirst({ where: { name: { equals: name, mode: "insensitive" } } });
   if (same) return same;
   const c = await tx.customer.create({ data: { code: await autoCode.customer(tx), name, phone: input.newCustomerPhone?.trim() || null } });
