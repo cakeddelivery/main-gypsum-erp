@@ -237,7 +237,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
         </div>
       )}
       {template === "PRODUKSI" && (
-        <HarvestPanel reportId={r.id} entries={harvests} canAdd={canEdit && r.status === "DRAFT"} sent={r.status !== "DRAFT"} userId={user.id} manager={canEdit && HARVEST_MANAGERS.includes(user.role)} defaultOpen={panen === "1" && r.status === "DRAFT"} />
+        <HarvestPanel reportId={r.id} entries={harvests} canAdd={user.can("report.harvest") && !locked && r.status === "DRAFT"} sent={r.status !== "DRAFT"} userId={user.id} manager={user.can("report.harvest") && HARVEST_MANAGERS.includes(user.role)} defaultOpen={panen === "1" && r.status === "DRAFT"} />
       )}
       {locked && isi === "1" && (
         <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">✓ Laporan shift ini sudah terkirim, jadi tidak bisa diubah lagi. Bila ada yang salah, minta Supervisor/Admin mengubahnya.</p>

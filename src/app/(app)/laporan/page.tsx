@@ -74,7 +74,7 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
   const penerimaan = canReceive && <Link href="/borongan?tab=kiriman" className="btn-secondary">Terima setoran borongan</Link>;
   // Oven (format Produksi): "+ Hasil Panen" realtime → langsung masuk stok patung kering
   const ovenDivs = startData.divisions.filter((d) => divisions.find((x) => x.id === d.id)?.reportTemplate === "PRODUKSI");
-  const hasilPanen = canCreate && ovenDivs.length > 0 && <Modal trigger="+ Hasil Panen" triggerClass="btn-success" title="Hasil panen"><ReportStartForm data={{ ...startData, divisions: ovenDivs }} go="panen" /></Modal>;
+  const hasilPanen = user.can("report.harvest") && divisions.length > 0 && ovenDivs.length > 0 && <Modal trigger="+ Hasil Panen" triggerClass="btn-success" title="Hasil panen"><ReportStartForm data={{ ...startData, divisions: ovenDivs }} go="panen" /></Modal>;
   const barangMasuk = canCreate && <Modal trigger="+ Barang masuk" triggerClass="btn-secondary" title="Catat barang masuk"><ReportStartForm data={startData} go="masuk" /></Modal>;
   const newForm = canCreate && (
     <>

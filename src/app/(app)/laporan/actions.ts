@@ -46,7 +46,7 @@ async function stockRows(divisionId: string, prev: StockCountRow[] = []): Promis
 }
 
 /** "+ Kirim laporan": buat draf (atau buka yang sudah ada) lalu langsung buka form isiannya di popup */
-export const openReport = action("report.create", async (fd, user) => {
+export const openReport = action(["report.create", "report.harvest"], async (fd, user) => {
   let date = str(fd, "date");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Tanggal tidak valid");
   let shiftId = str(fd, "shiftId");
@@ -484,14 +484,14 @@ const intOf = (fd: FormData, k: string) => {
 };
 
 /** "+ Hasil Panen": entri per karakter, langsung masuk stok (− patung cetak, + patung kering) */
-export const addHarvestEntry = action("report.create", async (fd, user) => {
+export const addHarvestEntry = action("report.harvest", async (fd, user) => {
   const id = str(fd, "reportId");
   await guardEditable(id, user);
   const res = await addHarvest(id, { oven: str(fd, "oven"), lines: VARIANTS.map((v) => ({ variant: v, good: intOf(fd, `g.${v}`), reject: intOf(fd, `r.${v}`) })) }, user);
   return res.posted ? `Hasil panen tercatat & masuk stok (${res.ids.length} entri)` : `Hasil panen tercatat (${res.ids.length} entri)`;
 }, ["/laporan", "/stok", "/borongan"]);
 
-export const correctHarvestEntry = action("report.create", async (fd, user) => {
+export const correctHarvestEntry = action("report.harvest", async (fd, user) => {
   const h = await prisma.shiftHarvest.findUniqueOrThrow({ where: { id: str(fd, "id") } });
   await guardReport(h.reportId, user);
   const reason = optStr(fd, "reason");

@@ -18,9 +18,9 @@ export default async function BukaLaporan({ searchParams }: { searchParams: Prom
   const { f } = await searchParams;
   // Penerimaan borongan sekarang lewat Borongan › Kiriman (per pengambilan AMB)
   if (f === "terima") redirect("/borongan?tab=kiriman");
-  const go = f === "terima" ? "terima" : "masuk";
+  const go = f === "terima" ? "terima" : f === "panen" ? "panen" : "masuk";
   const fixed = reportDivision(user);
-  if (!fixed || fixed === "-" || !user.can("report.create")) redirect(go === "terima" ? "/borongan?tab=terima" : "/laporan");
+  if (!fixed || fixed === "-" || !(user.can("report.create") || (go === "panen" && user.can("report.harvest")))) redirect(go === "terima" ? "/borongan?tab=terima" : "/laporan");
   const [division, shifts] = await Promise.all([
     prisma.division.findUnique({ where: { id: fixed }, select: { id: true, name: true, shiftCount: true } }),
     prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, select: { id: true, name: true, startTime: true, endTime: true } }),
@@ -28,7 +28,7 @@ export default async function BukaLaporan({ searchParams }: { searchParams: Prom
   if (!division) redirect("/laporan");
   return (
     <div className="mx-auto max-w-md">
-      <PageHeader title={go === "terima" ? "Penerimaan borongan" : "Barang masuk"} />
+      <PageHeader title={go === "terima" ? "Penerimaan borongan" : go === "panen" ? "Hasil panen" : "Barang masuk"} />
       <div className="card p-4">
         <ReportStartForm data={{ auto: true, today: todayStr(), divisions: [division], shifts }} go={go} />
       </div>

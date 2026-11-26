@@ -4,6 +4,7 @@ import { locationSettings, qtyAt } from "@/lib/stock";
 import { plannedFlow } from "@/lib/shiftReport";
 import { FLOW_SETTING, flowItem, postShiftWork } from "@/lib/shiftReportFlow";
 import { addHarvest, cancelHarvest, correctHarvest, harvestGrids, netOfHarvest } from "@/lib/shiftHarvest";
+import { DEFAULT_MATRIX, effectivePermissions } from "@/lib/rbac";
 import { dateOnly, jakartaDateTime } from "@/lib/time";
 
 describe("Panen realtime (murni)", () => {
@@ -19,6 +20,15 @@ describe("Panen realtime (murni)", () => {
     // Isian laporan = entri → tidak ada selisih yang diposting lagi; hasil cetak tetap diposting
     const steps = plannedFlow("PRODUKSI", { ...g, cetakSeries: [{ name: "Ani", v: [10, null, null, null] }] });
     expect(netOfHarvest(steps, e)).toEqual([{ kind: "basah", key: "Hewan", qty: 10, dir: "in" }]);
+  });
+});
+
+describe("Hak akses report.harvest", () => {
+  it("bawaan: anggota Oven (Operator/Kapten), Supervisor, Admin, Owner; bisa dicabut lewat Pengaturan peran", () => {
+    for (const r of ["OPERATOR", "KAPTEN_DIVISI", "SUPERVISOR", "ADMIN", "ADMIN_PRODUKSI"] as const) expect(DEFAULT_MATRIX[r]).toContain("report.harvest");
+    expect(effectivePermissions("OWNER", []).has("report.harvest")).toBe(true);
+    expect(effectivePermissions("DRIVER", []).has("report.harvest")).toBe(false);
+    expect(effectivePermissions("OPERATOR", [{ role: "OPERATOR", permission: "report.harvest", allowed: false }]).has("report.harvest")).toBe(false);
   });
 });
 
