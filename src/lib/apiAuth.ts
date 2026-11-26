@@ -44,12 +44,29 @@ export async function withIdempotency(req: Request, clientId: string, handler: (
   const key = req.headers.get("idempotency-key");
   if (!key || key.length < 8 || key.length > 128) return apiError(400, "idempotency_key_required", "Header Idempotency-Key (8-128 karakter) wajib diisi");
   const fullKey = `${clientId}:${key}`;
-  const prev = await prisma.idempotencyRecord.findUnique({ where: { key: fullKey } });
-  if (prev) return NextResponse.json(prev.response, { status: prev.status, headers: { "idempotent-replayed": "true" } });
-  const { status, body } = await handler();
-  const json = JSON.parse(JSON.stringify(body, (_k, v) => (typeof v === "bigint" ? Number(v) : v)));
-  if (status < 500) {
-    await prisma.idempotencyRecord.create({ data: { key: fullKey, clientId, status, response: json } }).catch(() => undefined);
+  const replay = (r: { status: number; response: unknown }) => NextResponse.json(r.response, { status: r.status, headers: { "idempotent-replayed": "true" } });
+  // Klaim kunci SEBELUM menjalankan handler (baris sementara status 0): dua permintaan paralel dengan key sama tidak
+  // sama-sama menjalankan handler (draft ganda). Baris sementara yang macet >5 menit (proses mati) diambil alih.
+  const busy = () => apiError(409, "request_in_progress", "Permintaan dengan Idempotency-Key ini sedang diproses; coba lagi sebentar");
+  for (let attempt = 0; ; attempt++) {
+    const claimed = await prisma.idempotencyRecord.create({ data: { key: fullKey, clientId, status: 0, response: {} } }).then(() => true, (e) => { if (e?.code === "P2002") return false; throw e; });
+    if (claimed) break;
+    const prev = await prisma.idempotencyRecord.findUnique({ where: { key: fullKey } });
+    if (prev && prev.status !== 0) return replay(prev);
+    if (prev && Date.now() - prev.createdAt.getTime() < 5 * 60_000) return busy();
+    if (attempt >= 2) return busy();
+    if (prev) await prisma.idempotencyRecord.deleteMany({ where: { key: fullKey, status: 0, createdAt: prev.createdAt } });
   }
+  let status: number;
+  let body: unknown;
+  try {
+    ({ status, body } = await handler());
+  } catch (e) {
+    await prisma.idempotencyRecord.deleteMany({ where: { key: fullKey, status: 0 } }).catch(() => undefined);
+    throw e;
+  }
+  const json = JSON.parse(JSON.stringify(body, (_k, v) => (typeof v === "bigint" ? Number(v) : v)));
+  if (status < 500) await prisma.idempotencyRecord.update({ where: { key: fullKey }, data: { status, response: json } }).catch(() => undefined);
+  else await prisma.idempotencyRecord.deleteMany({ where: { key: fullKey, status: 0 } }).catch(() => undefined);
   return NextResponse.json(json, { status });
 }
