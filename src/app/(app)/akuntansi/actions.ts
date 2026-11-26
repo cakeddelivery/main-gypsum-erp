@@ -112,7 +112,7 @@ export const createReceivable = action(
       const customer = str(fd, "customer");
       await lockKey(tx, `piutang-ganda:${customer}|${amount}|${str(fd, "date")}`);
       if (await tx.receivable.findFirst({ where: { customer, amount: BigInt(amount), date: d(fd), createdAt: { gte: new Date(Date.now() - DUP_WINDOW_MS) } }, select: { number: true } }))
-        throw new AccountingError("Piutang yang sama persis baru saja dicatat. Muat ulang halaman untuk melihatnya.");
+        throw new AccountingError("Piutang yang sama persis (pelanggan, nominal, tanggal) baru saja dicatat. Muat ulang halaman untuk melihatnya; jika memang sengaja dua kali, tunggu 2 menit atau bedakan nominal/tanggalnya.");
       const number = await nextNumber(tx, "PIU");
       const j = await postJournal(tx, { date: d(fd), storeId: optStr(fd, "storeId"), description: `Piutang ${number} ${str(fd, "customer")}`, source: "PIUTANG", sourceId: number, actor: user, lines: [{ accountCode: COA.PIUTANG, debit: amount }, { accountId: str(fd, "revenueAccountId"), credit: amount }] });
       await tx.receivable.create({ data: { number, customer: zField(fd, "customer", z.string().min(2, "Pelanggan wajib")), storeId: j.storeId, date: d(fd), dueDate: optStr(fd, "dueDate") ? d(fd, "dueDate") : null, amount: BigInt(amount), note: optStr(fd, "note"), journalId: j.id } });
@@ -137,7 +137,7 @@ export const createPayable = action(
       const supplierId = supplier.id;
       const vendor = supplier.name;
       if (await tx.payable.findFirst({ where: { supplierId, amount: BigInt(amount), date: d(fd), createdAt: { gte: new Date(Date.now() - DUP_WINDOW_MS) } }, select: { number: true } }))
-        throw new AccountingError("Hutang yang sama persis baru saja dicatat. Muat ulang halaman untuk melihatnya.");
+        throw new AccountingError("Hutang yang sama persis (pemasok, nominal, tanggal) baru saja dicatat. Muat ulang halaman untuk melihatnya; jika memang sengaja dua kali, tunggu 2 menit atau bedakan nominal/tanggalnya.");
       const debit = await tx.coaAccount.findUniqueOrThrow({ where: { id: str(fd, "debitAccountId") } });
       // Hutang supplier = barang/jasa yang diterima: persediaan, aset, atau beban; bukan piutang/kas/hutang
       if (debit.isCash || debit.code.startsWith("1-13") || !["ASET", "BEBAN", "HPP"].includes(debit.type)) throw new Error("Akun debit harus persediaan, aset, atau beban (barang/jasa yang diterima dari supplier)");
