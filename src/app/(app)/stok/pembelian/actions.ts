@@ -6,7 +6,7 @@ import { cancelPurchase, createPurchase, termFor, lineAmounts } from "@/lib/purc
 import { closePurchase, receivePurchase } from "@/lib/purchaseReceive";
 import { matchAccount } from "@/lib/extract";
 import { readReceipt, receiptReaderConfigured } from "@/lib/receipt";
-import { isModelUnavailable } from "@/lib/ai";
+import { AiUnavailableError, isModelUnavailable } from "@/lib/ai";
 import { MAX_PROOF_BYTES, MAX_PROOF_TEXT, saveProof } from "@/lib/storage";
 import { jakartaDateTime, todayStr } from "@/lib/time";
 
@@ -74,7 +74,7 @@ export async function readPaymentProof(fd: FormData): Promise<ProofRead> {
   let quota = false;
   const r = await readReceipt(Buffer.from(await file.arrayBuffer()), "bukti bayar pembelian bahan baku ke supplier", banks, file.type).catch((e) => {
     console.error("readPaymentProof gagal:", e);
-    quota = e instanceof Error && isModelUnavailable(0, e.message);
+    quota = e instanceof Error && (e instanceof AiUnavailableError ? /kuota/i.test(e.message) : isModelUnavailable(0, e.message));
     return null;
   });
   if (quota) return { ok: false, error: "Kuota model AI di penyedia sedang habis, jadi foto belum bisa dibaca. Isi nominal manual dulu ya." };

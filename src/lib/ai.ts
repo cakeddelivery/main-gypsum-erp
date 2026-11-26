@@ -26,6 +26,20 @@ export function modelFor(envName: "ADVISOR_MODEL" | "RECEIPT_MODEL") {
   return process.env[envName] || process.env.AI_MODEL || fallback;
 }
 
+/** AI tidak bisa dipakai sekarang (kuota habis, gangguan penyedia, kunci salah). Pesan ramah untuk pengguna; detail teknis hanya di log */
+export class AiUnavailableError extends Error {
+  constructor(message: string, readonly detail = "") {
+    super(message);
+    this.name = "AiUnavailableError";
+  }
+}
+
+/** Ubah kegagalan penyedia AI jadi pesan ramah (kuota habis dibedakan agar pengguna tahu harus isi manual) */
+function friendlyAiError(detail: string): AiUnavailableError {
+  const quota = /tokens_exhausted|quota|kuota|rate.?limit|HTTP 429|model_unavailable/i.test(detail);
+  return new AiUnavailableError(quota ? "Kuota AI di penyedia sedang habis atau penuh, jadi belum bisa dipakai. Isi manual dulu ya, atau coba lagi nanti." : "Layanan AI sedang bermasalah. Isi manual dulu ya, atau coba lagi nanti.", detail);
+}
+
 export type AiImage = { data: Buffer; mime: string };
 
 /** Kirim satu pesan (teks + gambar opsional) dan kembalikan teks jawaban */
@@ -80,7 +94,7 @@ export async function aiText(opts: {
       lastText = text;
     }
     if (lastText !== null) return lastText;
-    throw new Error(lastError || "Semua model AI gagal");
+    throw friendlyAiError(lastError || "Semua model AI gagal");
   }
   const client = new Anthropic();
   const response = await client.messages.create({
