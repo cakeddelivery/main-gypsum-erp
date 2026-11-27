@@ -3,6 +3,9 @@
  *   npx tsx scripts/koreksi-stok-minus.ts                       -> PREVIEW (tidak mengubah data)
  *   npx tsx scripts/koreksi-stok-minus.ts --fisik=MG-003:1200,MG-001:800   -> pakai hitungan fisik nyata untuk barang tsb
  *   npm run backup && npx tsx scripts/koreksi-stok-minus.ts -- --jalankan [--tanggal=2026-11-22] [--fisik=…]
+ * --fisik-dari-laporan=YYYY-MM-DD:<shift> (mis. 2026-11-27:S1): hitungan fisik diambil dari stok akhir laporan shift TERKIRIM divisi Packing itu
+ *   (stockCount + hitungan hasil). Preview menampilkan angka laporan, saldo sistem, dan koreksinya. Barang minus yang TIDAK ada di laporan itu
+ *   dilaporkan dan dilewati (tidak diisi 0 diam-diam). --fisik= (bila ada) tetap menang untuk SKU tsb.
  * Hanya barang yang saldonya MINUS di gudang utama jenisnya (loc_raw / loc_wip / loc_finished) yang diproses; barang lain tidak disentuh.
  * Target tiap barang = hitungan fisik dari --fisik (bila ada), selain itu 0 (artinya: tidak ada fisik tersisa, stok awal sebelum cut-over
  * tidak pernah dibuat). ISI --fisik DENGAN HITUNGAN FISIK NYATA bila gudang masih berisi barang itu.
@@ -19,6 +22,7 @@ import { locationSettings } from "../src/lib/stock";
 import { COA, postJournal } from "../src/lib/accounting";
 import { INVENTORY_COA } from "../src/lib/stock";
 import { OPENING_SETTING, saveOpeningStock } from "../src/lib/stockOpening";
+import { fisikDariLaporan } from "../src/lib/fisikDariLaporan";
 
 const arg = (k: string) => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3);
 const run = process.argv.includes("--jalankan");
@@ -38,6 +42,9 @@ async function main() {
     if (!sku || !Number.isFinite(v) || v < 0) throw new Error(`--fisik salah format: "${p}" (pakai SKU:jumlah)`);
     fisik.set(sku.trim().toUpperCase(), v);
   }
+  const lap = arg("fisik-dari-laporan") ? await fisikDariLaporan(arg("fisik-dari-laporan")!) : null;
+  if (lap) console.log(`Hitungan fisik dari laporan ${lap.report.division} · ${lap.report.shift} · ${lap.report.date} (${lap.report.status}), ${lap.counts.size} barang dihitung\n`);
+  const tidakAda: string[] = [];
   const neg = await prisma.$queryRaw<{ itemId: string; locationId: string; qty: number }[]>`
     SELECT "itemId", "locationId", SUM(q)::float8 AS qty FROM (SELECT "itemId", "toLocationId" AS "locationId", qty AS q FROM "StockMovement" WHERE "toLocationId" IS NOT NULL
     UNION ALL SELECT "itemId", "fromLocationId", -qty FROM "StockMovement" WHERE "fromLocationId" IS NOT NULL) m GROUP BY 1,2 HAVING SUM(q) < -0.0005`;
@@ -52,6 +59,12 @@ async function main() {
     const it = items.get(x.itemId)!;
     const main = it.type === "BAHAN_BAKU" ? locs.raw : it.type === "BARANG_DALAM_PROSES" ? locs.wip : locs.finished;
     if (x.locationId !== main) { skipped.push(`${it.sku} ${it.name} @ ${locName.get(x.locationId)} ${n(x.qty)}`); continue; }
+    // Dari laporan shift: barang yang tidak ada di laporan dilaporkan & dilewati (bukan diisi 0)
+    if (lap && !fisik.has(it.sku.toUpperCase())) {
+      const c = lap.counts.get(it.id);
+      if (c == null) { tidakAda.push(`${it.sku} ${it.name} (saldo ${n(x.qty)})`); continue; }
+      fisik.set(it.sku.toUpperCase(), c);
+    }
     // Total semua lokasi dipertahankan: yang dikoreksi hanya saldo gudang utama ini
     const target = fisik.get(it.sku.toUpperCase()) ?? 0;
     const add = target - x.qty;
@@ -59,10 +72,11 @@ async function main() {
     value += v;
     gap[it.type] = (gap[it.type] ?? 0) + Math.round(-x.qty * Number(it.avgCost));
     rows.push({ itemId: it.id, physical: target });
-    console.log(`  ${it.sku.padEnd(14)} ${it.name.slice(0, 30).padEnd(30)} saldo ${n(x.qty).padStart(10)} → ${n(target).padStart(8)}  (+${n(add)}) ≈ Rp ${n(v)} @ ${n(Number(it.avgCost))}${fisik.has(it.sku.toUpperCase()) ? "  [fisik]" : "  [target 0]"}`);
+    console.log(`  ${it.sku.padEnd(14)} ${it.name.slice(0, 30).padEnd(30)} saldo ${n(x.qty).padStart(10)} → ${n(target).padStart(8)}  (+${n(add)}) ≈ Rp ${n(v)} @ ${n(Number(it.avgCost))}${lap?.counts.has(it.id) ? `  [angka laporan ${n(lap.counts.get(it.id)!)}]` : fisik.has(it.sku.toUpperCase()) ? "  [fisik]" : "  [target 0]"}`);
   }
   console.log(`\nNilai stok yang ditambahkan ≈ Rp ${n(value)}. Jurnal otomatis dari "Stok awal riil" untuk saldo minus = Rp 0 (lihat catatan akuntansi di kepala skrip).`);
   console.log(`Nilai HPP yang dibebankan tanpa stok masuk (jumlah minus × harga pokok) per jenis: ${Object.entries(gap).map(([t, v]) => `${t} Rp ${n(v)}`).join(" · ") || "-"}${withJournal ? "  → AKAN dijurnal (--jurnal-saldo-awal)" : "  (tidak dijurnal; pakai --jurnal-saldo-awal bila diputuskan)"}`);
+  if (tidakAda.length) console.log(`\n⚠ TIDAK ADA di laporan ${lap!.report.shift} ${lap!.report.date} (dilewati, tidak diisi 0):\n  ${tidakAda.join("\n  ")}`);
   if (skipped.length) console.log(`\nDilewati (bukan gudang utama; perbaiki lewat menu Borongan / Serah terima):\n  ${skipped.join("\n  ")}`);
   if (!rows.length) return console.log("\nTidak ada yang perlu dikoreksi.");
   if (!run) return console.log("\nPreview saja. Untuk mengeksekusi: npm run backup, lalu jalankan lagi dengan  -- --jalankan");

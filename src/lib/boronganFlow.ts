@@ -2,7 +2,7 @@ import { Prisma, type PickupStatus, type ShipmentMode } from "@prisma/client";
 import { prisma } from "./db";
 import { audit } from "./audit";
 import { addDays, dateOnly, dateStr, todayStr } from "./time";
-import { recordMovement, reverseMovementsByRef } from "./stock";
+import { qtyAt, recordMovement, reverseMovementsByRef } from "./stock";
 import { bomStockQty } from "./unitcost";
 import { BoronganError, canTask, coordinatorCovers, coordinatorFor, coordinatorPointSelect, coordinatorsAt, postResultTx, unpostResultTx, warehouseFor, type Scope } from "./borongan";
 import { taskGroupName } from "./boronganKirim";
@@ -1084,7 +1084,8 @@ async function postPickupResults(tx: Tx, pickupId: string, held: boolean, actor:
  * Barang hasil pindah dari titik ke gudang sebanyak yang dihitung divisi (maksimal setoran driver per jenis).
  * Berbasis selisih terhadap yang sudah dipindah dengan ref AMB:<nomor>, jadi aman dipanggil ulang setelah koreksi.
  */
-async function syncPickupOutput(tx: Tx, pickupId: string, counted: Map<string, number>, actor: Actor, fallbackPointId?: string) {
+export async function syncPickupOutput(tx: Tx, pickupId: string, counted: Map<string, number>, actor: Actor, fallbackPointId?: string) {
+  const capped: { item: string; titik: string; diminta: number; dipindah: number }[] = [];
   const p = await tx.boronganPickup.findUniqueOrThrow({ where: { id: pickupId }, include: { lines: true } });
   const ref = `AMB:${p.number}`;
   // Penerimaan "hasil diisi saat penerimaan" bisa mendahului laporan koordinator (belum ada baris): hasil dipindah dari titik tunggal kiriman
@@ -1107,11 +1108,23 @@ async function syncPickupOutput(tx: Tx, pickupId: string, counted: Map<string, n
     if (fallbackPointId && !p.lines.some((x) => x.taskId === t.id) && left > 0) want.set(fallbackPointId, left);
     for (const pt of points) {
       const have = moves.filter((m) => m.itemId === t.outputItem!.id).reduce((a, m) => a + (m.fromLocationId === pt.locationId ? Number(m.qty) : m.toLocationId === pt.locationId ? -Number(m.qty) : 0), 0);
-      const delta = (want.get(pt.id) ?? 0) - have;
+      let delta = (want.get(pt.id) ?? 0) - have;
       if (Math.abs(delta) < 0.0005) continue;
+      // Hasil tidak boleh keluar dari titik melebihi yang ADA di titik (stok titik barang hasil tidak pernah minus). Hasil yang belum tercatat
+      // masuk ke titik (mis. barang hasil baru dihubungkan ke tugas setelah setoran lama) tidak dipindah; kekurangannya dicatat di hasil fungsi.
+      // Pengecualian: penerimaan hasil per jenis yang mendahului laporan koordinator (fallbackPointId): hasil menyusul saat laporan masuk.
+      if (delta > 0 && !fallbackPointId) {
+        const avail = Math.max(0, await qtyAt(tx, t.outputItem.id, pt.locationId));
+        if (delta > avail + 0.0005) {
+          capped.push({ item: t.outputItem.name, titik: pt.name, diminta: Math.round(delta * 1000) / 1000, dipindah: Math.round(avail * 1000) / 1000 });
+          delta = avail;
+          if (Math.abs(delta) < 0.0005) continue;
+        }
+      }
       await recordMovement(tx, { type: "TRANSFER", itemId: t.outputItem.id, qty: Math.abs(delta), fromLocationId: delta > 0 ? pt.locationId : warehouse, toLocationId: delta > 0 ? warehouse : pt.locationId, allowNegative: true, ref, note: `Setoran ${p.number} ${delta > 0 ? "dari" : "dikembalikan ke"} ${pt.name}`, date: new Date(`${dateStr(p.date)}T06:00:00.000Z`) }, actor);
     }
   }
+  return capped;
 }
 
 export async function receivePickup(pickupId: string, counts: { taskId: string; qty: number }[], actor: Actor, scope: Scope) {
@@ -1133,12 +1146,12 @@ export async function receivePickup(pickupId: string, counts: { taskId: string; 
     for (const l of p.lines) driver.set(l.taskId, (driver.get(l.taskId) ?? 0) + l.qty);
     const check = checkCounts(driver, counted);
     await postPickupResults(tx, p.id, check.short, actor);
-    await syncPickupOutput(tx, p.id, counted, actor);
+    const capped = await syncPickupOutput(tx, p.id, counted, actor);
     await tx.boronganPickupCount.createMany({ data: [...counted].map(([taskId, qty]) => ({ pickupId: p.id, taskId, qty })) });
     const name = (id: string) => shortTaskName(tasks.find((t) => t.id === id)?.name ?? "");
     const holdNote = check.short ? `Hitungan kurang: ${check.rows.filter((r) => r.diff < 0).map((r) => `${name(r.taskId)} ${r.counted} dari ${r.driver}`).join(", ")}` : null;
     await tx.boronganPickup.update({ where: { id: p.id }, data: { status: check.short ? "KURANG" : "DITERIMA", receivedAt: new Date(), receivedBy: actor.name, receivedById: actor.id, holdNote } });
-    await audit(actor, "TERIMA_SETORAN_BORONGAN", "BoronganPickup", p.id, { number: p.number, hitungan: Object.fromEntries(counted), kurang: check.short || undefined }, tx);
+    await audit(actor, "TERIMA_SETORAN_BORONGAN", "BoronganPickup", p.id, { number: p.number, hitungan: Object.fromEntries(counted), kurang: check.short || undefined, hasilTidakTercatatDiTitik: capped.length ? capped : undefined }, tx);
     return { number: p.number, kiriman: p.shipment.number, short: check.short, holdNote, driverUser: p.driver?.userId ?? null, pointIds: [...new Set(p.lines.map((l) => l.pointId))], rows: check.rows };
   }, { timeout: 60000 });
   if (out.short) {
