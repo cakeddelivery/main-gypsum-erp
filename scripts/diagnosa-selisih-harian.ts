@@ -2,7 +2,7 @@
  * DIAGNOSA selisih stok harian (HANYA MEMBACA, tidak mengubah apa pun):
  *   npm run diagnosa:selisih-harian -- --tanggal=2026-11-27
  * Per divisi × barang pada tanggal itu: stok awal hari (saldo sebelum 00.00 WIB) + saldo awal reset (SALDO-AWAL-…), mutasi hari itu per jenis
- * (ref: KRM kiriman, BGI pembagian, AMB ambil, HSB hasil titik, PND penerimaan divisi, LPH hasil laporan shift, LPS opname laporan, PRD produksi,
+ * (ref: KRM kiriman, BGI pembagian, AMB ambil, HSB hasil titik, PND penerimaan divisi, RJP reject saat diterima divisi, LPH hasil laporan shift, LPS opname laporan, PRD produksi,
  * JUAL penjualan, dst.), lalu stok akhir hitungan laporan shift 1 & 2 vs stok sistem pada jam selesai shift. Bila ada selisih, baris mutasi
  * penyebabnya ditampilkan (waktu, jenis, ref, jumlah, catatan). Memakai stockGapReport (sama dengan cek:selisih-stok / menu Stok › Selisih).
  */

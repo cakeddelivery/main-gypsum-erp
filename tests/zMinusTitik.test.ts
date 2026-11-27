@@ -7,6 +7,7 @@ import { locationSettings, qtyAt, recordMovement, stockBalances } from "@/lib/st
 import { applyMinusTitik, planMinusTitik } from "@/lib/koreksiMinusTitik";
 import { fisikDariLaporan } from "@/lib/fisikDariLaporan";
 import { RESULT_KEY } from "@/lib/shiftResultCount";
+import { FLOW_SETTING } from "@/lib/shiftReportFlow";
 import { dateOnly } from "@/lib/time";
 
 vi.mock("@/lib/push", async (orig) => ({ ...(await orig<typeof import("@/lib/push")>()), sendPush: vi.fn(async () => ({ sent: 0, removed: 0, failed: 0, users: 0 })) }));
@@ -19,9 +20,13 @@ describe("Stok hasil di titik tidak pernah minus; koreksi minus titik", () => {
   const c = {} as { point: { id: string; locationId: string }; div: string; kering: string; bahan: string; out: string; outColor: string; task: string; taskColor: string; driver: string; w: string; wh: string };
   const at = (itemId: string, locationId: string) => qtyAt(prisma, itemId, locationId);
 
+  let prevFlow: string | undefined;
   beforeAll(async () => {
     const u = await prisma.user.findUniqueOrThrow({ where: { username: "owner" } });
     actor = { id: u.id, name: u.name };
+    // Sakelar hasil kerja → stok menyala: reject penerimaan ikut dibuang dari titik (dibatasi stok titik)
+    prevFlow = (await prisma.setting.findUnique({ where: { key: FLOW_SETTING } }))?.value;
+    await prisma.setting.upsert({ where: { key: FLOW_SETTING }, create: { key: FLOW_SETTING, value: "true" }, update: { value: "true" } });
     const div = await prisma.division.create({ data: { code: `MT${tag}`, name: `Minus ${tag}` } });
     const loc = await prisma.location.create({ data: { code: `LMT${tag}`, name: `Titik MT ${tag}` } });
     const point = await prisma.boronganPoint.create({ data: { code: `MT${tag}`, name: `Titik MT ${tag}`, locationId: loc.id } });
@@ -38,6 +43,8 @@ describe("Stok hasil di titik tidak pernah minus; koreksi minus titik", () => {
     Object.assign(c, { point, div: div.id, kering: kering.id, bahan: bahan.id, out: out.id, outColor: outColor.id, task: task.id, taskColor: taskColor.id, driver: driver.id, w: w.id, wh });
   });
   afterAll(async () => {
+    if (prevFlow === undefined) await prisma.setting.deleteMany({ where: { key: FLOW_SETTING } });
+    else await prisma.setting.update({ where: { key: FLOW_SETTING }, data: { value: prevFlow } });
     await prisma.boronganPerson.updateMany({ where: { pointId: c.point.id }, data: { active: false } });
     await prisma.boronganPoint.update({ where: { id: c.point.id }, data: { active: false } });
     await prisma.pieceTask.updateMany({ where: { id: { in: [c.task, c.taskColor] } }, data: { active: false } });
@@ -48,9 +55,11 @@ describe("Stok hasil di titik tidak pernah minus; koreksi minus titik", () => {
     expect(await at(c.outColor, c.point.locationId)).toBe(0);
     await saveWorkReport(s.id, c.point.id, [{ workerId: c.w, taskId: c.taskColor, good: 60, reject: 0 }], true, actor, all);
     expect(await at(c.outColor, c.point.locationId)).toBeGreaterThanOrEqual(0);
-    await receiveByColor(s.id, c.point.id, [{ taskId: c.taskColor, qty: 60 }], actor, all);
-    expect(await at(c.outColor, c.point.locationId)).toBe(0); // 60 masuk titik (laporan), 60 pindah ke gudang (diterima)
+    // Reject penerimaan (#191) juga dibatasi stok titik: 60 dilapor, 60 bagus diterima + 5 reject → reject 5 tidak ada barangnya di titik → hanya dicatat
+    await receiveByColor(s.id, c.point.id, [{ taskId: c.taskColor, qty: 60, reject: 5 }], actor, all);
+    expect(await at(c.outColor, c.point.locationId)).toBe(0); // 60 masuk titik (laporan), 60 pindah ke gudang (diterima); reject tidak membuat minus
     expect(await at(c.outColor, c.wh)).toBe(60);
+    expect((await prisma.boronganPickupCount.findFirstOrThrow({ where: { taskId: c.taskColor, pickup: { shipmentId: s.id } } })).reject).toBe(5);
   });
 
   it("Kirim Assembling → bagi → ambil → terima (cocok / kurang): saldo titik hasil tidak pernah minus", async () => {
@@ -62,8 +71,8 @@ describe("Stok hasil di titik tidak pernah minus; koreksi minus titik", () => {
     };
     // Normal: hasil tercatat di titik lalu dipindah penuh
     const p1 = await mk(40);
-    await receivePickup(p1.id, [{ taskId: c.task, qty: 40 }], actor, all);
-    expect(await at(c.out, c.point.locationId)).toBe(0);
+    await receivePickup(p1.id, [{ taskId: c.task, qty: 35, reject: 5 }], actor, all);
+    expect(await at(c.out, c.point.locationId)).toBe(0); // 35 bagus ke gudang + 5 reject dibuang dari titik (barangnya ada di titik)
     // Pengambilan kedua dengan hitungan kurang (ditahan): tetap tidak ada saldo minus di titik
     const p2 = await mk(30);
     await receivePickup(p2.id, [{ taskId: c.task, qty: 20 }], actor, all);

@@ -561,16 +561,18 @@ export function TerimaForm({ pickup, tasks }: { pickup: PickupView; tasks: Task[
   const used = tasks.filter((t) => pickup.lines.some((l) => l.taskId === t.id));
   const driver = (id: string) => pickup.lines.filter((l) => l.taskId === id).reduce((a, l) => a + l.qty, 0);
   const [val, setVal] = useState<Record<string, string>>({});
+  const [rej, setRej] = useState<Record<string, string>>({});
   const filled = used.every((t) => (val[t.id] ?? "") !== "");
-  const short = filled && used.some((t) => toInt(val[t.id]) < driver(t.id));
+  const short = filled && used.some((t) => toInt(val[t.id]) + toInt(rej[t.id]) < driver(t.id));
   return (
     <div className="space-y-3">
       <input type="hidden" name="pickupId" value={pickup.id} />
-      <p className="text-xs text-slate-500">Hitung <b>total</b> setoran per jenis. Rincian per pekerja diambil dari catatan driver.</p>
+      <p className="text-xs text-slate-500">Hitung <b>total</b> setoran per jenis. Isi <b>reject saat diterima</b> bila ada patung rusak: hanya dicatat (upah & klaim tidak berubah), barang rusak tidak masuk gudang. Rincian per pekerja diambil dari catatan driver.</p>
       <WorkerCard name="Total pengambilan ini" tasks={used} rows={[
         { label: "Setoran driver", muted: true, cells: used.map((t) => f(driver(t.id))) },
-        { label: "Dihitung", cells: used.map((t) => <NumIn key={t.id} name={`c:${t.id}`} label={`Dihitung ${t.short}`} value={val[t.id] ?? ""} onChange={(v) => setVal((x) => ({ ...x, [t.id]: v }))} />) },
-        { label: "Selisih", foot: true, cells: used.map((t) => ((val[t.id] ?? "") === "" ? "" : <Diff n={toInt(val[t.id]) - driver(t.id)} done />)) },
+        { label: "Dihitung (bagus)", cells: used.map((t) => <NumIn key={t.id} name={`c:${t.id}`} label={`Dihitung ${t.short}`} value={val[t.id] ?? ""} onChange={(v) => setVal((x) => ({ ...x, [t.id]: v }))} />) },
+        { label: "Reject saat diterima", cells: used.map((t) => <NumIn key={t.id} name={`r:${t.id}`} label={`Reject penerimaan ${t.short}`} value={rej[t.id] ?? ""} onChange={(v) => setRej((x) => ({ ...x, [t.id]: v }))} />) },
+        { label: "Selisih", foot: true, cells: used.map((t) => ((val[t.id] ?? "") === "" ? "" : <Diff n={toInt(val[t.id]) + toInt(rej[t.id]) - driver(t.id)} done />)) },
       ]} />
       {filled && <p className={`rounded-lg px-3 py-2 text-sm ${short ? "bg-amber-50 text-amber-800" : "bg-emerald-50 text-emerald-700"}`}>{short ? "Hitungan kurang dari setoran driver: upah pengambilan ini ditahan, driver & Supervisor diberi notifikasi." : "Cocok: barang masuk gudang, upah per pekerja mengikuti setoran driver."}</p>}
       <Submit>Simpan penerimaan</Submit>
@@ -581,13 +583,14 @@ export function TerimaForm({ pickup, tasks }: { pickup: PickupView; tasks: Task[
 /** Penerimaan hasil per jenis (tugas "hasil diisi saat penerimaan"): divisi menghitung total tiap jenis dari titik ini */
 export function TerimaJenisForm({ view, pointId, edit = false }: { view: ShipmentView; pointId: string; /** Sudah pernah disimpan (terkunci): hanya Owner/Supervisor, alasan wajib */ edit?: boolean }) {
   const [val, setVal] = useState<Record<string, string>>(() => (edit ? Object.fromEntries((view.crosscheck ?? []).filter((c) => c.pointId === pointId && c.received != null).map((c) => [c.taskId, String(c.received)])) : {}));
+  const [rej, setRej] = useState<Record<string, string>>(() => (edit ? Object.fromEntries(view.pickups.filter((p) => p.status !== "DIBATALKAN").flatMap((p) => p.counts).map((c) => [c.taskId, String(c.reject ?? 0)])) : {}));
   const total = view.tasks.reduce((a, t) => a + toInt(val[t.id]), 0);
   return (
     <div className="space-y-3">
       <input type="hidden" name="shipmentId" value={view.id} /><input type="hidden" name="pointId" value={pointId} />
       <p className="text-xs text-slate-500">Hitung hasil yang <b>diterima</b> per jenis (0 bila tidak ada). Boleh diisi sebelum koordinator melapor; upah dihitung setelah keduanya ada. Laporan koordinator dipakai sebagai kroscek; selisih dikirim ke koordinator, Supervisor & Owner. Upah pekerja mengikuti yang diterima.</p>
       {edit && <label className="block"><span className="label">Alasan perubahan (wajib, penerimaan sudah terkunci)</span><input name="reason" className="input" required minLength={3} /></label>}
-      <WorkerCard name="Diterima divisi" tasks={view.tasks} rows={[{ label: "Diterima", cells: view.tasks.map((t) => <NumIn key={t.id} name={`c:${t.id}`} label={`Diterima ${t.short}`} value={val[t.id] ?? ""} onChange={(v) => setVal((x) => ({ ...x, [t.id]: v }))} />) }]} />
+      <WorkerCard name="Diterima divisi" tasks={view.tasks} rows={[{ label: "Diterima (bagus)", cells: view.tasks.map((t) => <NumIn key={t.id} name={`c:${t.id}`} label={`Diterima ${t.short}`} value={val[t.id] ?? ""} onChange={(v) => setVal((x) => ({ ...x, [t.id]: v }))} />) }, { label: "Reject saat diterima", cells: view.tasks.map((t) => <NumIn key={t.id} name={`r:${t.id}`} label={`Reject penerimaan ${t.short}`} value={rej[t.id] ?? ""} onChange={(v) => setRej((x) => ({ ...x, [t.id]: v }))} />) }]} />
       <p className="text-right text-sm">Total diterima <b>{f(total)} pcs</b></p>
       <Submit confirm={edit ? "Ubah penerimaan? Kroscek & upah dihitung ulang; perubahan tercatat di audit." : "Simpan penerimaan? Setelah disimpan terkunci (ubah hanya Owner/Supervisor dengan alasan)."}>{edit ? "Simpan perubahan" : "Simpan penerimaan"}</Submit>
     </div>

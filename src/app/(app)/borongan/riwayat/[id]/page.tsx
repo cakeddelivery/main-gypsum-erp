@@ -149,6 +149,38 @@ export default async function KirimanDetail({ params }: { params: Promise<{ id: 
         })}
       </section>
 
+      {active.some((p) => p.counts.length > 0) && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Penerimaan divisi per jenis</h2>
+          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white text-sm">
+            <table className="w-full tabular-nums">
+              <thead><tr className="bg-slate-50 text-xs text-slate-500"><th className="px-2 py-1 text-left">Jenis</th>{!s.resultAtReceipt && <th className="px-2 py-1 text-right">Dibagi</th>}{!s.resultAtReceipt && <th className="px-2 py-1 text-right">Setoran driver</th>}<th className="px-2 py-1 text-right">Diterima bagus</th><th className="px-2 py-1 text-right">Reject penerimaan</th>{!s.resultAtReceipt && <th className="px-2 py-1 text-right">Selisih</th>}</tr></thead>
+              <tbody>
+                {s.tasks.map((t) => {
+                  const dibagi = s.cells.filter((c) => c.taskId === t.id).reduce((a, c) => a + c.dibagi, 0);
+                  const driver = active.flatMap((p) => p.lines).filter((l) => l.taskId === t.id).reduce((a, l) => a + l.qty, 0);
+                  const cs = active.flatMap((p) => p.counts).filter((c) => c.taskId === t.id);
+                  const bagus = cs.reduce((a, c) => a + c.qty, 0);
+                  const rej = cs.reduce((a, c) => a + (c.reject ?? 0), 0);
+                  const gap = driver - bagus - rej;
+                  return (
+                    <tr key={t.id} className="border-t border-slate-100">
+                      <td className="px-2 py-1 font-medium">{t.short}</td>
+                      {!s.resultAtReceipt && <td className="px-2 py-1 text-right">{f(dibagi)}</td>}
+                      {!s.resultAtReceipt && <td className="px-2 py-1 text-right">{f(driver)}</td>}
+                      <td className="px-2 py-1 text-right">{f(bagus)}</td>
+                      <td className={`px-2 py-1 text-right ${rej ? "font-semibold text-rose-700" : ""}`}>{f(rej)}</td>
+                      {!s.resultAtReceipt && <td className={`px-2 py-1 text-right ${gap ? "font-semibold text-rose-700" : ""}`}>{gap > 0 ? "+" : ""}{f(gap)}</td>}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs text-slate-500">Reject penerimaan hanya dicatat: upah dan klaim tidak berubah. Selisih = setoran driver − diterima bagus − reject penerimaan.</p>
+        </section>
+      )}
+
       <section className="space-y-2">
         <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Riwayat perubahan</h2>
         {!history.length ? <p className="text-sm text-slate-500">Belum ada catatan.</p> : (
