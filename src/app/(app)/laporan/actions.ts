@@ -28,7 +28,7 @@ import { divisionChecklist, refreshDraftChecklists } from "@/lib/shiftReportChec
 import { addShiftReceipt, addShiftReceipts, removeShiftReceipt } from "@/lib/shiftReceipt";
 import { RESULT_KEY, applyResultCount, parseResultCount, resultCountStatus, resultItems, resultLines } from "@/lib/shiftResultCount";
 import { reportCatalogs } from "@/lib/productFamily";
-import { withCurrentLimits } from "@/lib/shiftReportStock";
+import { lowProduction, withCurrentLimits } from "@/lib/shiftReportStock";
 import { isDone, isTemplate, needsOrder, parseWork, summaryOf, targetLine, targetOf, toEntries, workLines, type ChecklistEntry, type StockCountRow } from "@/lib/shiftReport";
 
 
@@ -271,6 +271,8 @@ async function sendReportData(id: string, user: User): Promise<string> {
     const checklist = toEntries(r.checklist) as ChecklistEntry[];
     const stock = await withCurrentLimits(r.stockCount as StockCountRow[]);
     const order = stock.filter(needsOrder);
+    // Setengah jadi / jadi ≤ limit: "perlu diproduksi" (daftar & notifikasi saja, bukan permintaan beli)
+    const prod = await lowProduction(id).catch(() => []);
     let body: string[];
     if (isTemplate(template)) {
       const work = r.work as Parameters<typeof workLines>[1];
@@ -305,6 +307,8 @@ async function sendReportData(id: string, user: User): Promise<string> {
       ...body,
       order.length ? `\n<b>⚠️ Order bahan baku</b>` : "",
       ...order.map((o) => `• ${esc(o.name)}: stok ${o.qty} ${esc(o.unit)} · limit ${o.limit} ${esc(o.unit)}`),
+      prod.length ? `\n<b>🏭 Perlu diproduksi</b>` : "",
+      ...prod.map((o) => `• ${esc(o.name)}: stok ${o.qty.toLocaleString("id-ID")} ${esc(o.unit)} · limit ${o.limit.toLocaleString("id-ID")} ${esc(o.unit)}`),
       r.complaints ? `\nCatatan/kendala: ${esc(r.complaints)}` : "",
       r.followUp ? `Tindak lanjut: ${esc(r.followUp)} [${r.followUpStatus}]` : "",
       `\nDikirim oleh ${esc(user.name)}`,
@@ -326,6 +330,12 @@ async function sendReportData(id: string, user: User): Promise<string> {
       prisma.shiftReport.update({ where: { id }, data: { status: status === "GAGAL" ? r.status : "TERKIRIM" } }),
     ]);
     await audit(user, "LAPORAN_DIKIRIM", "ShiftReport", id, { status, channel, stockAdjusted: stockRes.adjusted, stockSkipped: stockRes.skipped ?? null, workPosted: flowRes.posted, rejectRows: rejectRes.rows, rejectPosted: rejectRes.posted, sampleRows: sampleRes.rows, samplePosted: sampleRes.posted, resultAdjusted: resultRes.adjusted });
+    // Notifikasi Supervisor & Owner: barang setengah jadi / jadi yang perlu diproduksi
+    if (prod.length) {
+      const sup = await prisma.user.findMany({ where: { active: true, role: { in: ["SUPERVISOR", "OWNER"] } }, select: { id: true } });
+      const { sendPush } = await import("@/lib/push");
+      await sendPush(sup.map((u) => u.id), { title: `Perlu diproduksi · ${r.division.name}`, body: prod.slice(0, 4).map((o) => `${o.name} ${o.qty.toLocaleString("id-ID")}/${o.limit.toLocaleString("id-ID")}`).join(", ") + (prod.length > 4 ? ` +${prod.length - 4}` : ""), url: "/laporan/order", tag: `produksi-${id}` }).catch(() => {});
+    }
     // JPG laporan ke penerima & grup Telegram (latar belakang; tidak menahan tombol Kirim)
     if (channel === "TELEGRAM" && status !== "GAGAL") {
       const summary = isTemplate(template) ? summaryOf(template, r.work as Parameters<typeof workLines>[1]).map((s) => `${s.label}: ${s.value.toLocaleString("id-ID")}${s.unit ? ` ${s.unit}` : ""}`).join(" | ") : "";

@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
+import { RESULT_KEY } from "./shiftResultCount";
 import { dateOnly, fmtDay, todayStr } from "./time";
 import { locationSettings, qtyAt, recordMovement } from "./stock";
 import { needsOrder, shiftEndAt, type StockCountRow } from "./shiftReport";
@@ -107,7 +108,10 @@ export async function unsentReportCount(date: string, divisionId?: string | null
   return (await expectedSlots(date, divisionId)).filter((x) => !x.sent).length;
 }
 
-export type OrderRow = { itemId: string; name: string; unit: string; limit: number; qty: number; reportId: string; date: Date; shift: string; url?: string | null; /** Sudah ada permintaan stok terbuka (Diajukan/Disetujui) */ requested?: boolean };
+export type OrderRow = { itemId: string; name: string; unit: string; limit: number; qty: number; reportId: string; date: Date; shift: string; url?: string | null; /** Sudah ada permintaan stok terbuka (Diajukan/Disetujui) */ requested?: boolean; /** ORDER = bahan baku (perlu diorder); PRODUKSI = setengah jadi / jadi (perlu diproduksi) */ kind?: "ORDER" | "PRODUKSI" };
+
+/** Label per jenis barang: bahan baku diorder, setengah jadi / jadi diproduksi */
+export const orderVerb = (kind?: "ORDER" | "PRODUKSI") => (kind === "PRODUKSI" ? "perlu diproduksi" : "perlu diorder");
 
 /** Bahan baku per divisi yang perlu diorder: hitungan stok akhir shift terakhir tiap bahan ≤ limit */
 export async function materialOrderList(divisionId?: string | null) {
@@ -121,18 +125,39 @@ export async function materialOrderList(divisionId?: string | null) {
     where: { divisionId: { in: divisions.map((d) => d.id) } },
     orderBy: [{ date: "desc" }, { shift: { code: "desc" } }, { createdAt: "desc" }],
     take: 200,
-    select: { id: true, date: true, stockCount: true, shift: { select: { name: true } } },
+    select: { id: true, date: true, stockCount: true, work: true, shift: { select: { name: true } } },
   });
   const last = new Map<string, { qty: number; reportId: string; date: Date; shift: string }>();
-  for (const r of reports) for (const s of r.stockCount as StockCountRow[]) if (s.qty != null && !last.has(s.itemId)) last.set(s.itemId, { qty: s.qty, reportId: r.id, date: r.date, shift: r.shift.name });
+  for (const r of reports) {
+    for (const s of r.stockCount as StockCountRow[]) if (s.qty != null && !last.has(s.itemId)) last.set(s.itemId, { qty: s.qty, reportId: r.id, date: r.date, shift: r.shift.name });
+    // Setengah jadi / jadi: hitungan stok akhir hasil (work._hasil = { [idBarang]: n }); hitungan lama per karakter dilewati
+    const hasil = (r.work as Record<string, unknown> | null)?.[RESULT_KEY];
+    if (hasil && typeof hasil === "object" && !Array.isArray(hasil)) for (const [id, n] of Object.entries(hasil as Record<string, unknown>)) if (typeof n === "number" && Number.isFinite(n) && !last.has(id)) last.set(id, { qty: n, reportId: r.id, date: r.date, shift: r.shift.name });
+  }
   // Bahan yang permintaan stoknya masih terbuka tetap tampil di daftar order, ditandai "sudah diminta"
   const open = new Set((await prisma.stockRequest.findMany({ where: { status: { in: ["DIAJUKAN", "DISETUJUI"] }, itemId: { in: divisions.flatMap((d) => d.items.map((i) => i.id)) } }, select: { itemId: true } })).map((x) => x.itemId));
   return divisions.map((d) => {
     const rows = d.items.map((i) => ({ item: i, limit: Number(i.minStock), count: last.get(i.id) }));
     const order: OrderRow[] = rows
       .filter((r) => r.count && needsOrder({ qty: r.count.qty, limit: r.limit }))
-      .map((r) => ({ itemId: r.item.id, name: r.item.name, unit: r.item.unit, limit: r.limit, url: r.item.buyMode === "ONLINE" ? r.item.productUrl : null, requested: open.has(r.item.id), ...r.count! }));
+      .map((r) => ({ itemId: r.item.id, name: r.item.name, unit: r.item.unit, limit: r.limit, url: r.item.type === "BAHAN_BAKU" && r.item.buyMode === "ONLINE" ? r.item.productUrl : null, requested: open.has(r.item.id), kind: (r.item.type === "BAHAN_BAKU" ? "ORDER" : "PRODUKSI") as "ORDER" | "PRODUKSI", ...r.count! }));
     return { division: d, order, uncounted: rows.filter((r) => !r.count).map((r) => r.item) };
+  });
+}
+
+/**
+ * Setengah jadi / barang jadi divisi yang stok akhirnya (hitungan laporan ini) ≤ batas minimum (Item.minStock > 0): "perlu diproduksi".
+ * Hanya daftar & notifikasi, TIDAK membuat permintaan stok (itu khusus bahan baku yang dibeli).
+ */
+export async function lowProduction(reportId: string) {
+  const r = await prisma.shiftReport.findUniqueOrThrow({ where: { id: reportId }, select: { divisionId: true, work: true } });
+  const raw = (r.work as Record<string, unknown> | null)?.[RESULT_KEY];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const counts = raw as Record<string, unknown>;
+  const items = await prisma.item.findMany({ where: { divisionId: r.divisionId, active: true, type: { in: ["BARANG_DALAM_PROSES", "BARANG_JADI"] } }, select: { id: true, name: true, unit: true, minStock: true } });
+  return items.flatMap((i) => {
+    const qty = counts[i.id];
+    return typeof qty === "number" && needsOrder({ qty, limit: Number(i.minStock) }) ? [{ itemId: i.id, name: i.name, unit: i.unit, qty, limit: Number(i.minStock) }] : [];
   });
 }
 
@@ -141,11 +166,12 @@ export function materialOrderText(groups: { division: { name: string }; order: O
   const g = groups.filter((x) => x.order.length);
   if (!g.length) return null;
   const fmt = (v: number) => v.toLocaleString("id-ID");
-  const total = g.reduce((a, x) => a + x.order.length, 0);
+  const total = g.reduce((a, x) => a + x.order.filter((o) => o.kind !== "PRODUKSI").length, 0);
+  const prod = g.reduce((a, x) => a + x.order.filter((o) => o.kind === "PRODUKSI").length, 0);
   return [
-    `<b>⚠️ Order bahan baku (${total})</b>`,
-    "Stok akhir shift terakhir ≤ limit:",
-    ...g.flatMap((x) => [``, `<b>${esc(x.division.name)}</b>`, ...x.order.map((o) => `• ${esc(o.name)}: stok ${fmt(o.qty)} · limit ${fmt(o.limit)} ${esc(o.unit)}${o.requested ? " (sudah diminta)" : ""}${o.url ? `\n  🛒 <a href="${esc(o.url)}">Order online</a>` : ""}`)]),
+    ...(total ? [`<b>⚠️ Order bahan baku (${total})</b>`, "Stok akhir shift terakhir ≤ limit:"] : []),
+    ...(prod ? [`<b>🏭 Perlu diproduksi (${prod})</b> — setengah jadi / barang jadi ≤ limit`] : []),
+    ...g.flatMap((x) => [``, `<b>${esc(x.division.name)}</b>`, ...x.order.map((o) => `• ${esc(o.name)}${o.kind === "PRODUKSI" ? " (produksi)" : ""}: stok ${fmt(o.qty)} · limit ${fmt(o.limit)} ${esc(o.unit)}${o.requested ? " (sudah diminta)" : ""}${o.url ? `\n  🛒 <a href="${esc(o.url)}">Order online</a>` : ""}`)]),
   ].join("\n");
 }
 
