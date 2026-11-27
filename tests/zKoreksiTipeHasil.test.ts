@@ -26,7 +26,9 @@ describe("Koreksi tipe hasil Cat → barang setengah jadi", () => {
     Object.assign(c, { div: div.id, item: item.id, task: task.id, ok: ok.id });
   });
   afterAll(async () => {
-    await prisma.pieceTask.updateMany({ where: { id: c.task }, data: { active: false } });
+    // Tugas uji (termasuk yang dibuat di divisi Giftbox bawaan) dinonaktifkan agar tidak mengganggu tes lain
+    await prisma.pieceTask.updateMany({ where: { code: { in: [`KTC${tag}`, `KTG${tag}`, `KGG${tag}`] } }, data: { active: false } });
+    await prisma.item.updateMany({ where: { name: { contains: tag } }, data: { active: false } });
   });
 
   it("pratinjau mendaftar hanya yang bukan setengah jadi dan tidak mengubah apa pun", async () => {
