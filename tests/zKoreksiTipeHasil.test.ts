@@ -31,8 +31,10 @@ describe("Koreksi tipe hasil Cat → barang setengah jadi", () => {
 
   it("pratinjau mendaftar hanya yang bukan setengah jadi dan tidak mengubah apa pun", async () => {
     const plan = (await planTipeHasil()).filter((r) => r.itemId === c.item || r.itemId === c.ok);
-    expect(plan).toHaveLength(1);
-    expect(plan[0]).toMatchObject({ itemId: c.item, fromType: "BAHAN_BAKU", qtyRaw: 40, qtyTotal: 40, setDivision: true });
+    // Cat plastik salah tipe → TIPE; Cat giftbox setengah jadi tanpa divisi Giftbox → DIVISI saja
+    expect(plan).toHaveLength(2);
+    expect(plan.find((r) => r.itemId === c.item)).toMatchObject({ aksi: ["TIPE"], fromType: "BAHAN_BAKU", qtyRaw: 40, qtyTotal: 40, setDivision: true });
+    expect(plan.find((r) => r.itemId === c.ok)?.aksi).toEqual(["DIVISI"]);
     expect((await prisma.item.findUniqueOrThrow({ where: { id: c.item } })).type).toBe("BAHAN_BAKU");
   });
 
@@ -65,5 +67,24 @@ describe("Koreksi tipe hasil Cat → barang setengah jadi", () => {
     const again = await applyTipeHasil(actor);
     expect(again.rows.filter((x) => x.itemId === c.item)).toHaveLength(0);
     expect(await prisma.journal.count({ where: { source: "KOREKSI_TIPE_HASIL" } })).toBe(journals0 + 1);
+  });
+
+  it("Cat Giftbox (setengah jadi) di divisi salah → dipindah ke divisi Giftbox; Pot cat giftbox dilepas dari divisi (hanya stok titik)", async () => {
+    const gift = await prisma.division.findFirstOrThrow({ where: { reportTemplate: "GIFTBOX" } });
+    const wrongDiv = await prisma.division.create({ data: { code: `KW${tag}`, name: `Salah ${tag}` } });
+    const cg = await saveItemRecord({ name: `Cat Giftbox GG${tag}`, type: "BARANG_DALAM_PROSES", category: "Barang Setengah Jadi", unit: "pcs", hppFactor: 1, minStock: 0, price: 100, openingQty: 0, divisionId: wrongDiv.id }, actor);
+    const pot = await saveItemRecord({ name: `Pot cat giftbox GG${tag}`, type: "BAHAN_BAKU", category: "Bahan Pendukung", unit: "pcs", hppFactor: 1, minStock: 0, price: 100, openingQty: 0, divisionId: gift.id }, actor);
+    await prisma.pieceTask.create({ data: { code: `KGG${tag}`, name: `Cat giftbox GG${tag}`, divisionId: gift.id, ratePerPcs: 100n, workerRate: 80n, coordinatorRate: 20n, driverRate: 0n, outputItemId: cg.id, inputs: { create: [{ itemId: pot.id, qty: 1 }] } } });
+    const plan = await planTipeHasil();
+    expect(plan.find((r) => r.itemId === cg.id)?.aksi).toEqual(["DIVISI"]);
+    expect(plan.find((r) => r.itemId === pot.id)?.aksi).toEqual(["POT"]);
+    await applyTipeHasil(actor);
+    expect((await prisma.item.findUniqueOrThrow({ where: { id: cg.id } })).divisionId).toBe(gift.id); // tipe tetap setengah jadi
+    expect((await prisma.item.findUniqueOrThrow({ where: { id: cg.id } })).type).toBe("BARANG_DALAM_PROSES");
+    expect((await prisma.item.findUniqueOrThrow({ where: { id: pot.id } })).divisionId).toBeNull();
+    // Pot tidak muncul di stok akhir / daftar order divisi Giftbox
+    const [g] = await materialOrderList(gift.id);
+    expect(g?.order.some((o) => o.itemId === pot.id) ?? false).toBe(false);
+    expect(g?.uncounted.some((i) => i.id === pot.id) ?? false).toBe(false);
   });
 });

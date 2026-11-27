@@ -73,7 +73,8 @@ export async function setupBorongan(db: PrismaClient, apply: boolean): Promise<s
       const sku = `SJ-${name.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
       return (await tx.item.create({ data: { sku, name, unit, type: "BARANG_DALAM_PROSES", divisionId: d.id } })).id;
     };
-    const pot = await ensureMaterial("Pot cat giftbox", "pcs", gft);
+    // Pot cat giftbox hanya stok titik koordinator (BMR): tanpa divisi, tidak ikut stok akhir / daftar order divisi mana pun
+    const pot = (await findItem("Pot cat giftbox"))?.id ?? (say("+ Barang baru: Pot cat giftbox (pcs, tanpa divisi)"), (await tx.item.create({ data: { sku: await autoCode.divisionMaterial(tx, gft?.code ?? "GIB"), name: "Pot cat giftbox", unit: "pcs", type: "BAHAN_BAKU" } })).id);
     const catPlastik = Object.fromEntries(await seq(COLORS, async (c) => [c, await ensureHasil(`Cat plastik ${c}`, "pcs", asm)] as const));
     const kering = Object.fromEntries(await seq(VARIANTS, async (v) => [v, await flowItem(tx, { kind: "kering", key: v })] as const));
     const jadi = Object.fromEntries(await seq(VARIANTS, async (v) => [v, await flowItem(tx, { kind: "jadi", key: v })] as const));
