@@ -20,7 +20,7 @@ export default async function BukaLaporan({ searchParams }: { searchParams: Prom
   if (f === "terima") redirect("/borongan?tab=kiriman");
   const go = f === "terima" ? "terima" : f === "panen" ? "panen" : "masuk";
   const fixed = reportDivision(user);
-  if (!fixed || fixed === "-" || !(user.can("report.create") || (go === "panen" && user.can("report.harvest")))) redirect(go === "terima" ? "/borongan?tab=terima" : "/laporan");
+  if (!fixed || fixed === "-" || !(user.can("report.create") || (go === "panen" && user.can("report.harvest")))) redirect(go === "terima" ? "/borongan?tab=kiriman" : "/laporan");
   const [division, shifts] = await Promise.all([
     prisma.division.findUnique({ where: { id: fixed }, select: { id: true, name: true, shiftCount: true } }),
     prisma.shift.findMany({ where: { active: true }, orderBy: { code: "asc" }, select: { id: true, name: true, startTime: true, endTime: true } }),
