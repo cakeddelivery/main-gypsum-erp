@@ -28,6 +28,8 @@
     "typecheck": "tsc --noEmit",
     "kosongkan": "tsx scripts/kosongkan-data.ts",
     "audit:saldo": "tsx scripts/audit-saldo.ts",
+    "reset:kiriman": "tsx scripts/reset-kiriman-penerimaan.ts",
+    "diagnosa:selisih-harian": "tsx scripts/diagnosa-selisih-harian.ts",
     "audit:produksi": "bash tests/global-reset.sh && vitest run tests/zzAuditProduksi.test.ts --reporter=verbose",
     "koreksi:saldo-nov": "tsx scripts/koreksi-saldo-nov.ts",
     "koreksi:saldo-0006": "tsx scripts/koreksi-saldo-0006.ts",
