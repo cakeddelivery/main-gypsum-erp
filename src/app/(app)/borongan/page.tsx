@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { requirePerm } from "@/lib/auth";
 import { canSeeHistory } from "./riwayat/access";
@@ -25,24 +26,12 @@ import { initials } from "@/lib/initials";
 import { taskGroupName } from "@/lib/boronganKirim";
 import { shortTaskName } from "@/lib/boronganFlow";
 import { KlaimTab } from "./KlaimTab";
+import { menuTabs, pickTab, type TabContext } from "@/lib/boronganTabs";
 import { diffLines, receiptDiff } from "@/lib/boronganReceipt";
 import { dateOnly } from "@/lib/time";
 import { cancelPayPoint, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, savePointSettings, saveTask, sendHandover, voidDivisionReceipt, voidHandover } from "./actions";
 
 export const metadata = { title: "Borongan" };
-
-const TABS = [
-  { key: "kiriman", label: "Kiriman" },
-  { key: "stok", label: "Stok" },
-  { key: "klaim", label: "Klaim Upah" },
-  { key: "ringkasan", label: "Ringkasan" },
-  { key: "serah", label: "Serah Terima (lama)" },
-  { key: "hasil", label: "Setoran Hasil" },
-  { key: "terima", label: "Penerimaan (lama)" },
-  { key: "upah", label: "Bayar Upah (lama)" },
-  { key: "orang", label: "Orang" },
-  { key: "tugas", label: "Tugas & Tarif" },
-];
 
 export default async function BoronganPage({ searchParams }: { searchParams: Promise<{ tab?: string; f?: string; dari?: string; sampai?: string }> }) {
   const user = await requirePerm("borongan.view", "borongan.point", "borongan.manage", "borongan.driver");
@@ -55,19 +44,15 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
   const setoranOnly = isSetoranOnly(scope);
   const isCoordinatorOnly = !manage && !scope.driver && !scope.division && !!scope.personId;
   const taskFilter = scope.taskIds ? { taskId: { in: scope.taskIds } } : {};
-  const tabs = TABS.filter((t) => manage || !["tugas"].includes(t.key))
-    .filter((t) => t.key !== "upah" || manage || user.can("borongan.pay"))
-    .filter((t) => !setoranOnly || ["kiriman", "klaim", "ringkasan", "hasil", "terima"].includes(t.key))
-    // Driver: hanya Pembagian & Ambil Setoran (tab Kiriman)
-    .filter((t) => !scope.driver || t.key === "kiriman")
-    // Koordinator titik: lapor hasil (Kiriman), Klaim Upah, dan pekerja titiknya (Orang)
-    .filter((t) => !isCoordinatorOnly || ["kiriman", "stok", "klaim", "orang"].includes(t.key))
-    // Stok bahan titik: koordinator & pengelola
-    .filter((t) => t.key !== "stok" || isCoordinatorOnly || manage)
-    // Tim Cetak/Oven (isi patung kering) & Packing (terima setoran Assembling): hanya Kiriman
-    .filter((t) => !(scope.kering || scope.packing) || t.key === "kiriman");
+  // Data alur lama yang masih menggantung: serah terima DIKIRIM, setoran lama belum dibayar tanpa pengambilan & klaim
+  const legacy = {
+    handover: manage || scope.pointIds.length ? await prisma.boronganHandover.count({ where: { status: "DIKIRIM", ...resultFilter } }) : 0,
+    unpaid: manage ? await prisma.boronganResult.count({ where: { settlementId: null, pickupId: null, claimId: null, ...resultFilter } }) : 0,
+  };
+  const tabCtx: TabContext = { manage, canPay: user.can("borongan.pay"), setoranOnly, driver: !!scope.driver, coordinatorOnly: isCoordinatorOnly, timKiriman: !!(scope.kering || scope.packing), legacy };
+  const tabs = menuTabs(tabCtx);
   // Finance (hanya bayar upah): langsung ke Klaim Upah
-  const tab = tabs.some((t) => t.key === sp.tab) ? sp.tab! : !manage && !scope.pointIds.length && user.can("borongan.pay") ? "klaim" : "kiriman";
+  const tab = pickTab(sp.tab, tabCtx, !manage && !scope.pointIds.length && user.can("borongan.pay"));
   if (scope.driver) {
     return (
       <div className="space-y-4">
@@ -132,11 +117,15 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
         actions={tab === "serah" && !setoranOnly ? <div className="flex flex-wrap gap-2">{sendBack}</div> : undefined}
       />
       {/* Koordinator: menu tab pindah ke navigasi bawah */}
-      {!isCoordinatorOnly && <Tabs current={tab} tabs={[...tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: x.key === "serah" ? pending.length || undefined : undefined })), ...(history ? [{ key: "riwayat", label: "Riwayat", href: "/borongan/riwayat" }] : [])]} />}
+      {!isCoordinatorOnly && <Tabs current={tab} tabs={[...tabs.map((x) => ({ ...x, href: `?tab=${x.key}`, count: undefined })), ...(history ? [{ key: "riwayat", label: "Riwayat", href: "/borongan/riwayat" }] : [])]} />}
 
       {isCoordinatorOnly && tab === "kiriman" && <PortalSetup publicKey={pushPublicKey()} />}
       {tab === "kiriman" && <KirimanTab scope={scope} userId={user.id} filter={sp.f} />}
       {tab === "stok" && <StokTitikTab scope={scope} />}
+      {tab === "klaim" && user.can("borongan.pay") && (
+        // Batalkan pembayaran / riwayat pembayaran lama masih di tab lama (tidak di menu); satu-satunya tempat membatalkan settlement
+        <p className="text-xs text-slate-500">Riwayat pembayaran & pembatalan pembayaran: <Link href="?tab=upah" className="font-semibold text-brand-700 underline">buka riwayat pembayaran</Link>.</p>
+      )}
       {tab === "klaim" && <KlaimTab scope={scope} canPay={user.can("borongan.pay")} />}
       {tab === "ringkasan" && (
         <>
