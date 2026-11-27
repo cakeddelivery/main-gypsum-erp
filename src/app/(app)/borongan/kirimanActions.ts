@@ -158,7 +158,7 @@ export const batalAmbil = action(
 export const terimaSetoran = action(
   [...PERMS],
   async (fd, user) => {
-    const counts = [...fd.entries()].filter(([k]) => k.startsWith("c:")).map(([k, v]) => ({ taskId: k.slice(2), qty: String(v).trim() === "" ? -1 : int(v) }));
+    const counts = [...fd.entries()].filter(([k]) => k.startsWith("c:")).map(([k, v]) => ({ taskId: k.slice(2), qty: String(v).trim() === "" ? -1 : int(v), reject: int(fd.get(`r:${k.slice(2)}`)) }));
     const empty = counts.find((c) => c.qty < 0);
     if (empty) throw new FieldError(`c:${empty.taskId}`, "Isi hitungan jenis ini (0 bila tidak ada)");
     const scope = await boronganScope(prisma, user);
@@ -175,7 +175,7 @@ export const terimaSetoran = action(
 export const terimaHasilJenis = action(
   [...PERMS],
   async (fd, user) => {
-    const counts = [...fd.entries()].filter(([k]) => k.startsWith("c:")).map(([k, v]) => ({ taskId: k.slice(2), qty: String(v).trim() === "" ? -1 : int(v) }));
+    const counts = [...fd.entries()].filter(([k]) => k.startsWith("c:")).map(([k, v]) => ({ taskId: k.slice(2), qty: String(v).trim() === "" ? -1 : int(v), reject: int(fd.get(`r:${k.slice(2)}`)) }));
     const empty = counts.find((c) => c.qty < 0);
     if (empty) throw new FieldError(`c:${empty.taskId}`, "Isi jumlah diterima jenis ini (0 bila tidak ada)");
     const scope = await boronganScope(prisma, user);

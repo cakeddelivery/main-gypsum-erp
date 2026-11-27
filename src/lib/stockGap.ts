@@ -14,7 +14,7 @@ export type GapRow = ResultRow & { reportId: string; division: string; date: str
 export type FlowRow = { itemId: string; item: string; division: string | null; kind: string; count: number; masukWip: number; keluarWip: number };
 
 const KIND_LABEL: Record<string, string> = {
-  KRM: "Kiriman borongan (KRM)", BGI: "Pembagian ke pekerja (BGI)", HSB: "Hasil/pakai di titik (HSB)", PND: "Penerimaan divisi dari titik (PND)", AMB: "Ambil setoran (AMB)", SRT: "Serah terima (SRT)",
+  KRM: "Kiriman borongan (KRM)", BGI: "Pembagian ke pekerja (BGI)", HSB: "Hasil/pakai di titik (HSB)", PND: "Penerimaan divisi dari titik (PND)", RJP: "Reject saat diterima divisi (RJP)", AMB: "Ambil setoran (AMB)", SRT: "Serah terima (SRT)",
   LPH: "Hasil kerja laporan shift (LPH)", LPS: "Stok akhir laporan shift (LPS)", PRD: "Produksi manual (PRD)", RTR: "Retur (RTR)", AWAL: "Stok awal", JUAL: "Penjualan",
 };
 export const kindLabel = (k: string) => KIND_LABEL[k] ?? (k === "-" ? "Tanpa ref" : k);

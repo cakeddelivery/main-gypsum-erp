@@ -2723,6 +2723,8 @@ model BoronganPickupCount {
   taskId   String
   task     PieceTask      @relation(fields: [taskId], references: [id])
   qty      Int
+  /// Reject yang ditemukan divisi penerima saat menerima (dicatat saja: upah & klaim tidak berubah; stok keluar ke beban reject bila sakelar menyala)
+  reject   Int            @default(0)
 }
 
 /// MENUNGGU = diajukan koordinator / otomatis tiap 7× setoran Assembling; DIBAYAR = disetujui & dibayar Finance/Owner
