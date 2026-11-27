@@ -6,7 +6,7 @@ import { clearLoginBlocks, passwordChangeData } from "@/lib/loginGuard";
 import { prisma } from "@/lib/db";
 import { autoCode } from "@/lib/codes";
 import { audit } from "@/lib/audit";
-import { BoronganError, assertPoint, boronganScope, canWarehouse, isSetoranOnly, cancelHandover, checkSplit, createHandover, createHandovers, deleteResult, receiveHandover, recordResults, removePerson, savePerson, settlePoint, cancelSettlement } from "@/lib/borongan";
+import { BoronganError, assertPoint, boronganScope, canWarehouse, isSetoranOnly, cancelHandover, checkSplit, createHandover, createHandovers, deleteResult, receiveHandover, recordResults, removePerson, savePerson } from "@/lib/borongan";
 import { dateOnly, jakartaDateTime, todayStr } from "@/lib/time";
 import { pointConfig, saveTaskKit } from "@/lib/boronganSetup";
 import { allowedByPoint, kirimGroups, pointKits } from "@/lib/boronganKirim";
@@ -196,24 +196,6 @@ export const saveTask = action(
     return `Tugas ${t.name} tersimpan (budget Rp${total}/pcs)`;
   },
   [...PATHS, "/gaji/borongan"],
-);
-
-export const payPoint = action(
-  "borongan.pay",
-  async (fd, user) => {
-    const st = await settlePoint({ pointId: str(fd, "pointId"), upTo: dateOnly(str(fd, "upTo") || todayStr()), bankAccountId: str(fd, "bankAccountId") }, user);
-    return `Upah ${st.number} dibayar Rp${Number(st.total).toLocaleString("id-ID")}`;
-  },
-  [...PATHS, "/akuntansi"],
-);
-
-export const cancelPayPoint = action(
-  "borongan.pay",
-  async (fd, user) => {
-    const st = await cancelSettlement(str(fd, "id"), str(fd, "reason"), user);
-    return `Pembayaran ${st.number} dibatalkan, setorannya kembali belum dibayar`;
-  },
-  [...PATHS, "/akuntansi"],
 );
 
 /** Penerimaan hasil borongan oleh divisi: total per barang (q_<itemId>, r_<itemId>), titik dibagi otomatis */

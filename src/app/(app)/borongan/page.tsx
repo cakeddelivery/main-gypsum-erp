@@ -8,7 +8,7 @@ import { idr } from "@/lib/money";
 import { fmtDay, todayStr } from "@/lib/time";
 import { stockBalances } from "@/lib/stock";
 import { recipeUnit } from "@/lib/unitcost";
-import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, canWarehouse, isSetoranOnly, payLines, resultShares } from "@/lib/borongan";
+import { BORONGAN_ROLE_LABEL, HANDOVER_LABEL, boronganScope, canPoint, canWarehouse, isSetoranOnly, resultShares } from "@/lib/borongan";
 import { Badge, Card, Empty, Field, PageHeader, Tabs } from "@/components/ui";
 import { StokTitikTab } from "./StokTitikTab";
 import { PortalSetup } from "@/components/PushNotif";
@@ -27,9 +27,9 @@ import { taskGroupName } from "@/lib/boronganKirim";
 import { shortTaskName } from "@/lib/boronganFlow";
 import { KlaimTab } from "./KlaimTab";
 import { menuTabs, pickTab, type TabContext } from "@/lib/boronganTabs";
-import { diffLines, receiptDiff } from "@/lib/boronganReceipt";
+import { receiptDiff } from "@/lib/boronganReceipt";
 import { dateOnly } from "@/lib/time";
-import { cancelPayPoint, confirmHandover, payPoint, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, savePointSettings, saveTask, sendHandover, voidDivisionReceipt, voidHandover } from "./actions";
+import { confirmHandover, removePersonAction, removeResult, saveCoordinatorLogin, savePersonAction, savePointSettings, saveTask, sendHandover, voidDivisionReceipt, voidHandover } from "./actions";
 
 export const metadata = { title: "Borongan" };
 
@@ -44,10 +44,10 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
   const setoranOnly = isSetoranOnly(scope);
   const isCoordinatorOnly = !manage && !scope.driver && !scope.division && !!scope.personId;
   const taskFilter = scope.taskIds ? { taskId: { in: scope.taskIds } } : {};
-  // Data alur lama yang masih menggantung: serah terima DIKIRIM, setoran lama belum dibayar tanpa pengambilan & klaim
+  // Sisa data alur lama yang hanya bisa dituntaskan di tab lama: serah terima DIKIRIM (konfirmasi/batalkan), penerimaan divisi lama yang masih aktif (batalkan)
   const legacy = {
     handover: manage || scope.pointIds.length ? await prisma.boronganHandover.count({ where: { status: "DIKIRIM", ...resultFilter } }) : 0,
-    unpaid: manage ? await prisma.boronganResult.count({ where: { settlementId: null, pickupId: null, claimId: null, ...resultFilter } }) : 0,
+    receipts: manage ? await prisma.boronganReceipt.count({ where: { cancelledAt: null } }) : 0,
   };
   const tabCtx: TabContext = { manage, canPay: user.can("borongan.pay"), setoranOnly, driver: !!scope.driver, coordinatorOnly: isCoordinatorOnly, timKiriman: !!(scope.kering || scope.packing), legacy };
   const tabs = menuTabs(tabCtx);
@@ -63,12 +63,11 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
     );
   }
 
-  const [points, people, tasks, items, banks, pending, balances] = await Promise.all([
+  const [points, people, tasks, items, pending, balances] = await Promise.all([
     prisma.boronganPoint.findMany({ where: { active: true, ...pointFilter }, include: { location: true }, orderBy: { code: "asc" } }),
     prisma.boronganPerson.findMany({ where: manage ? {} : { OR: [{ pointId: { in: scope.pointIds } }, { role: "DRIVER" }] }, include: { point: true, user: true, extraPoints: { include: { point: { select: { name: true } } } } }, orderBy: [{ active: "desc" }, { name: "asc" }] }),
     prisma.pieceTask.findMany({ include: { inputs: { include: { item: true } }, outputItem: true }, orderBy: { name: "asc" } }),
     prisma.item.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
-    prisma.bankAccount.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     prisma.boronganHandover.findMany({ where: { status: "DIKIRIM", ...resultFilter }, include: { lines: { include: { item: true } }, point: true, driver: true }, orderBy: { date: "asc" } }),
     stockBalances(prisma),
   ]);
@@ -122,10 +121,6 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
       {isCoordinatorOnly && tab === "kiriman" && <PortalSetup publicKey={pushPublicKey()} />}
       {tab === "kiriman" && <KirimanTab scope={scope} userId={user.id} filter={sp.f} />}
       {tab === "stok" && <StokTitikTab scope={scope} />}
-      {tab === "klaim" && user.can("borongan.pay") && (
-        // Batalkan pembayaran / riwayat pembayaran lama masih di tab lama (tidak di menu); satu-satunya tempat membatalkan settlement
-        <p className="text-xs text-slate-500">Riwayat pembayaran & pembatalan pembayaran: <Link href="?tab=upah" className="font-semibold text-brand-700 underline">buka riwayat pembayaran</Link>.</p>
-      )}
       {tab === "klaim" && <KlaimTab scope={scope} canPay={user.can("borongan.pay")} />}
       {tab === "ringkasan" && (
         <>
@@ -138,7 +133,6 @@ export default async function BoronganPage({ searchParams }: { searchParams: Pro
       {tab === "serah" && <HandoverTab scope={scope} pending={pending} filter={resultFilter} />}
       {tab === "terima" && <ReceiptTab scope={scope} userId={user.id} from={sp.dari} to={sp.sampai} />}
       {tab === "hasil" && <ResultsTab filter={{ ...resultFilter, ...taskFilter }} scope={scope} userId={user.id} />}
-      {tab === "upah" && <WagesTab points={points} banks={banks} canPay={user.can("borongan.pay")} />}
       {tab === "orang" && <PeopleTab people={people} points={points} manage={manage} canLogin={manage} tasks={tasks.filter((t) => t.active).map((t) => ({ id: t.id, name: t.name, division: divisionName.get(t.divisionId ?? "") ?? null }))} />}
       {tab === "tugas" && manage && (
         <>
@@ -247,90 +241,6 @@ async function ResultsTab({ filter, scope, userId }: { filter: object; scope: Sc
         </table></Paged>
       )}
     </Card>
-  );
-}
-
-async function WagesTab({ points, banks, canPay }: { points: { id: string; name: string }[]; banks: { id: string; name: string }[]; canPay: boolean }) {
-  const [unpaid, history] = await Promise.all([
-    prisma.boronganResult.findMany({ where: { settlementId: null, pointId: { in: points.map((p) => p.id) } }, include: { worker: true, coordinator: true, driver: true }, orderBy: { date: "asc" } }),
-    prisma.boronganSettlement.findMany({ where: { pointId: { in: points.map((p) => p.id) } }, include: { point: true, results: { include: { worker: true, coordinator: true, driver: true } } }, orderBy: { date: "desc" }, take: 30 }),
-  ]);
-  const t = todayStr();
-  // Peringatan sebelum pelunasan: setoran koordinator (belum dibayar) vs penerimaan divisi berbeda
-  const warn: string[] = [];
-  if (unpaid.length) {
-    const from = unpaid[0].date;
-    const divs = await prisma.division.findMany({ where: { pieceTasks: { some: { active: true, outputItemId: { not: null } } } } });
-    for (const d of divs) warn.push(...diffLines(await receiptDiff(d.id, from, dateOnly(t))).map((l) => `${d.name}: ${l}`));
-  }
-  return (
-    <div className="space-y-5">
-      {warn.length > 0 && (
-        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-          <div className="mb-1 font-semibold">⚠ Setoran koordinator berbeda dengan penerimaan divisi (sejak setoran belum dibayar tertua)</div>
-          <ul className="list-disc space-y-0.5 pl-5">{warn.map((w) => <li key={w}>{w}</li>)}</ul>
-          <p className="mt-1 text-xs">Upah dihitung dari catatan koordinator. Periksa dulu sebelum melunasi (lihat tab Penerimaan &amp; Selisih).</p>
-        </div>
-      )}
-      <div className="grid gap-5 lg:grid-cols-2">
-        {points.map((p) => {
-          const rs = unpaid.filter((r) => r.pointId === p.id);
-          const lines = payLines(rs);
-          const total = lines.reduce((s, l) => s + l.amount, 0);
-          return (
-            <Card key={p.id} title={`Belum dibayar · ${p.name}`} actions={canPay && total > 0 && (
-              <Modal trigger="Bayar Upah" triggerClass="btn-success btn-sm" title={`Bayar upah borongan ${p.name}`}>
-                <ModalForm action={payPoint} className="space-y-3">
-                  <input type="hidden" name="pointId" value={p.id} />
-                  <Field label="Bayar setoran sampai tanggal"><input type="date" name="upTo" defaultValue={t} className="input" /></Field>
-                  <Field label="Dibayar dari"><select name="bankAccountId" className="input">{banks.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></Field>
-                  <p className="text-sm">Total <b>{idr(total)}</b> untuk pekerja, koordinator, dan jatah driver. Jatah driver dibukukan sebagai beban transport borongan, terpisah dari Kompensasi Pengelola.</p>
-                  <Submit>Bayar</Submit>
-                </ModalForm>
-              </Modal>
-            )}>
-              {lines.length === 0 ? <p className="text-sm text-slate-500">Semua upah sudah dibayar.</p> : <PayTable lines={lines} />}
-            </Card>
-          );
-        })}
-      </div>
-      <Card title="Riwayat pembayaran upah">
-        {history.length === 0 ? <Empty title="Belum ada pembayaran" /> : (
-          <ul className="divide-y divide-slate-100 text-sm">
-            {history.map((h) => (
-              <li key={h.id} className="flex items-center justify-between gap-2 py-2">
-                <span>{fmtDay(h.date)} · {h.point.name} · s.d. {fmtDay(h.upTo)}{h.cancelledAt && <> · <Badge tone="gray">Dibatalkan</Badge></>}</span>
-                <span className="flex items-center gap-2"><b className={`tabular-nums ${h.cancelledAt ? "text-slate-400 line-through" : ""}`}>{idr(h.total)}</b>
-                  {!h.cancelledAt && <Modal trigger="Rincian" triggerClass="btn-secondary btn-sm" title={`Rincian ${h.number}`}><PayTable lines={payLines(h.results)} /></Modal>}
-                  {!h.cancelledAt && canPay && (
-                    <Modal trigger="Batalkan" triggerClass="btn-secondary btn-sm" title={`Batalkan ${h.number}`}>
-                      <ModalForm action={cancelPayPoint} className="space-y-3">
-                        <input type="hidden" name="id" value={h.id} />
-                        <Field label="Alasan (tercatat di audit log)"><input name="reason" className="input" required /></Field>
-                        <p className="text-xs text-slate-500">Jurnal pembayaran dibalik dan setorannya kembali menjadi belum dibayar.</p>
-                        <Submit className="btn-danger">Batalkan pembayaran</Submit>
-                      </ModalForm>
-                    </Modal>
-                  )}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-    </div>
-  );
-}
-
-function PayTable({ lines }: { lines: ReturnType<typeof payLines> }) {
-  return (
-    <table className="tbl">
-      <thead><tr><th>Nama</th><th>Sebagai</th><th className="num">Pcs</th><th className="num">Upah</th></tr></thead>
-      <tbody>
-        {lines.map((l) => <tr key={`${l.role}${l.personId}`}><td>{l.name}</td><td>{BORONGAN_ROLE_LABEL[l.role]}</td><td className="num">{l.qty.toLocaleString("id-ID")}</td><td className="num">{idr(l.amount)}</td></tr>)}
-        <tr><td colSpan={3} className="font-semibold">Total</td><td className="num font-semibold">{idr(lines.reduce((s, l) => s + l.amount, 0))}</td></tr>
-      </tbody>
-    </table>
   );
 }
 

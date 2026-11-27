@@ -9,7 +9,7 @@ import { ActionForm, Submit } from "@/components/ActionForm";
 import { Modal } from "@/components/Modal";
 import { ModalForm } from "@/components/ModalForm";
 import { CLAIM_STATUS_LABEL, CLAIM_TONE } from "./KlaimViews";
-import { klaimSekarang, setujuiKlaim, tolakKlaim } from "./kirimanActions";
+import { batalBayarUpah, klaimSekarang, setujuiKlaim, tolakKlaim } from "./kirimanActions";
 
 const rp = (n: number | bigint) => `Rp${Number(n).toLocaleString("id-ID")}`;
 
@@ -25,10 +25,12 @@ async function visiblePoints(scope: Scope, canPay: boolean) {
 
 export async function KlaimTab({ scope, canPay }: { scope: Scope; canPay: boolean }) {
   const points = await visiblePoints(scope, canPay);
-  const [summaries, waiting, banks] = await Promise.all([
+  const [summaries, waiting, banks, paid] = await Promise.all([
     Promise.all(points.map(async (p) => ({ p, s: await pointWageSummary(p.id) }))),
     canPay ? prisma.boronganClaim.findMany({ where: { status: "MENUNGGU" }, include: { point: true }, orderBy: { createdAt: "asc" } }) : Promise.resolve([]),
     canPay ? prisma.bankAccount.findMany({ where: { active: true }, orderBy: { name: "asc" }, select: { id: true, name: true } }) : Promise.resolve([]),
+    // Riwayat pembayaran (termasuk pembayaran alur lama tanpa klaim): tempat membatalkan pembayaran
+    canPay ? prisma.boronganSettlement.findMany({ orderBy: { createdAt: "desc" }, take: 30, include: { point: { select: { name: true } }, claim: { select: { number: true } }, _count: { select: { results: true } } } }) : Promise.resolve([]),
   ]);
   if (!points.length) return <Empty title="Belum ada titik borongan" />;
   return (
@@ -64,6 +66,34 @@ export async function KlaimTab({ scope, canPay }: { scope: Scope; canPay: boolea
               </div>
             </div>
           ))}
+        </section>
+      )}
+
+      {canPay && paid.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-bold uppercase tracking-wide text-slate-500">Riwayat pembayaran</h2>
+          <ul className="card divide-y divide-slate-100 text-sm">
+            {paid.map((st) => (
+              <li key={st.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 p-3">
+                <span className="break-all font-mono text-xs font-semibold text-brand-700">{st.number}</span>
+                <span className="min-w-0">{st.point.name} · <b className="tabular-nums">{rp(st.total)}</b></span>
+                <span className="text-xs text-slate-500">{fmtDateTime(st.date)} · {st.claim ? `klaim ${st.claim.number}` : "pembayaran lama (tanpa klaim)"} · {st._count.results} setoran</span>
+                <span className="ml-auto">
+                  {st.cancelledAt ? <Badge tone="gray">Dibatalkan</Badge> : (
+                    <Modal trigger="Batalkan pembayaran" triggerClass="btn-secondary btn-sm text-rose-600" title={`Batalkan pembayaran ${st.number}`} subtitle={`${st.point.name} · ${rp(st.total)}`}>
+                      <ModalForm action={batalBayarUpah} className="space-y-3" confirm={`Batalkan pembayaran ${st.number}? Jurnal dibalik dan setoran kembali belum dibayar.`}>
+                        <input type="hidden" name="id" value={st.id} />
+                        <p className="text-sm text-slate-600">Jurnal pembayaran <b>dibalik</b> (jurnal lama tidak dihapus), kas/bank kembali, setoran tetap utuh dan kembali belum dibayar. {st.claim ? "Klaimnya kembali menunggu dibayar." : "Setoran bisa diklaim lagi lewat Klaim Upah."}</p>
+                        <Field label="Alasan (wajib)"><textarea name="reason" rows={2} required minLength={3} className="input" /></Field>
+                        <Submit className="btn-danger">Batalkan pembayaran</Submit>
+                      </ModalForm>
+                    </Modal>
+                  )}
+                </span>
+                {st.cancelledAt && st.cancelReason && <span className="w-full text-xs text-slate-500">Alasan: {st.cancelReason}</span>}
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 
