@@ -1,10 +1,11 @@
 /**
- * Tab halaman Borongan. Alur terbaru: Kiriman (KRM → bagi → lapor → AMB → diterima divisi), Stok, Klaim Upah, Ringkasan.
- * Tab alur lama (Serah Terima, Penerimaan, Bayar Upah) HANYA muncul di menu bila masih ada data lama yang menggantung
- * (serah terima DIKIRIM / setoran lama belum dibayar tanpa pengambilan & klaim), berlabel "(sisa data lama: N)".
+ * Tab halaman Borongan. Alur terbaru: Kiriman (KRM → bagi → lapor → AMB → diterima divisi), Stok, Klaim Upah (termasuk
+ * Riwayat pembayaran & Batalkan pembayaran), Ringkasan. Tab "Bayar Upah" lama sudah dihapus (pembayaran lama dibatalkan/ditagih lewat Klaim Upah).
+ * Tab alur lama Serah Terima & Penerimaan HANYA muncul di menu bila masih ada data lama yang hanya bisa dituntaskan di sana
+ * (serah terima DIKIRIM / penerimaan divisi lama yang masih aktif), berlabel "(sisa data lama: N)".
  * Alamat ?tab= tetap bisa dibuka untuk melihat riwayat (selama perannya berhak), tanpa muncul di menu.
  */
-export type TabKey = "kiriman" | "stok" | "klaim" | "ringkasan" | "serah" | "hasil" | "terima" | "upah" | "orang" | "tugas";
+export type TabKey = "kiriman" | "stok" | "klaim" | "ringkasan" | "serah" | "hasil" | "terima" | "orang" | "tugas";
 export type Tab = { key: TabKey; label: string };
 
 const TABS: Tab[] = [
@@ -15,11 +16,10 @@ const TABS: Tab[] = [
   { key: "serah", label: "Serah Terima" },
   { key: "hasil", label: "Setoran Hasil" },
   { key: "terima", label: "Penerimaan" },
-  { key: "upah", label: "Bayar Upah" },
   { key: "orang", label: "Orang" },
   { key: "tugas", label: "Tugas & Tarif" },
 ];
-export const LEGACY_TABS: TabKey[] = ["serah", "terima", "upah"];
+export const LEGACY_TABS: TabKey[] = ["serah", "terima"];
 
 export type TabContext = {
   manage: boolean;
@@ -30,13 +30,12 @@ export type TabContext = {
   /** Tim Cetak/Oven (isi patung kering) atau Packing (terima setoran Assembling) */
   timKiriman: boolean;
   /** Data lama yang masih menggantung */
-  legacy: { handover: number; unpaid: number };
+  legacy: { handover: number; receipts: number };
 };
 
 /** Tab yang boleh dibuka perannya (termasuk tab lama lewat ?tab=) */
 export function accessibleTabs(c: TabContext): Tab[] {
   return TABS.filter((t) => c.manage || t.key !== "tugas")
-    .filter((t) => t.key !== "upah" || c.manage || c.canPay)
     // Anggota divisi: kiriman (termasuk menerima setoran), klaim, ringkasan, setoran hasil
     .filter((t) => !c.setoranOnly || ["kiriman", "klaim", "ringkasan", "hasil"].includes(t.key))
     // Driver: hanya Pembagian & Ambil Setoran (tab Kiriman)
@@ -53,7 +52,7 @@ export function menuTabs(c: TabContext): (Tab & { count?: number })[] {
   const out: (Tab & { count?: number })[] = [];
   for (const t of accessibleTabs(c)) {
     if (!LEGACY_TABS.includes(t.key)) { out.push(t); continue; }
-    const n = t.key === "serah" ? c.legacy.handover : c.legacy.unpaid;
+    const n = t.key === "serah" ? c.legacy.handover : c.legacy.receipts;
     if (n > 0) out.push({ ...t, label: `${t.label} (sisa data lama: ${n.toLocaleString("id-ID")})`, count: n });
   }
   return out;
