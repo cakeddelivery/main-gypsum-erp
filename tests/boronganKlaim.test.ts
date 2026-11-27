@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/db";
-import { cancelSettlement, coordinatorFor, ratesFor, savePerson, settlePoint, type Scope } from "@/lib/borongan";
+import { cancelPayment, cancelSettlement, coordinatorFor, ratesFor, savePerson, settlePoint, type Scope } from "@/lib/borongan";
 import { canReceive, canShipGroup, completeShipment, createKeringDraft, createPickup, createShipment, receivePickup, saveAllots, saveWorkReport } from "@/lib/boronganFlow";
 import { stockBalances } from "@/lib/stock";
 import { CLAIM_EVERY, approveClaim, assemblingCount, autoClaims, canRequestClaim, claimBreakdown, rejectClaim, requestClaim } from "@/lib/boronganClaim";
 import { saveItemRecord } from "@/lib/items";
 import { saveSubscription, sendPush } from "@/lib/push";
+import { bankBalances } from "@/lib/finance";
 
 vi.mock("@/lib/push", async (orig) => ({ ...(await orig<typeof import("@/lib/push")>()), sendPush: vi.fn(async () => ({ sent: 0, removed: 0, failed: 0, users: 0 })) }));
 
@@ -145,6 +146,45 @@ describe("Klaim upah di database", () => {
     const p = await createPickup(s.id, [{ pointId: ctx.point.id, workerId: ctx.w.id, taskId: ctx.asm.id, qty: 5, done: true }], actor, all, "2027-06-11");
     expect((await receivePickup(p.id, [{ taskId: ctx.asm.id, qty: 3 }], actor, packScope)).short).toBe(true);
     await expect(requestClaim(ctx.point.id, actor, ctx.coordScope)).rejects.toThrow(/Belum ada upah/);
+  });
+
+  it("Batalkan pembayaran dari Klaim Upah: jurnal pembalik, kas kembali, dobel klik sekali, hanya peran bayar; pembayaran lama juga bisa", async () => {
+    const cash = async () => (await bankBalances()).find((b) => b.id === ctx.bank)!.balance;
+    const finance = { id: actor.id, name: "Finance", can: (p: string) => p === "borongan.pay" };
+    const nonPay = { id: actor.id, name: "Admin Marketplace", can: () => false };
+    // Klaim dibayar
+    await setoran(ctx.asm.id, 6, "2027-07-01");
+    const claim = await requestClaim(ctx.point.id, actor, ctx.coordScope);
+    const cash0 = await cash();
+    await approveClaim(claim.id, ctx.bank, actor);
+    const st = (await prisma.boronganClaim.findUniqueOrThrow({ where: { id: claim.id } })).settlementId!;
+    expect(await cash()).toBe(cash0 - Number(claim.total));
+    const settledResults = await prisma.boronganResult.count({ where: { settlementId: st } });
+    // Peran tanpa hak bayar ditolak; alasan wajib
+    await expect(cancelPayment(st, "salah rekening", nonPay as never)).rejects.toThrow(/Finance \/ Owner/);
+    await expect(cancelPayment(st, " ", finance as never)).rejects.toThrow(/Alasan/);
+    expect(await cash()).toBe(cash0 - Number(claim.total));
+    // Dobel klik bersamaan: hanya satu pembatalan, satu pembalik
+    const journalId = (await prisma.boronganSettlement.findUniqueOrThrow({ where: { id: st } })).journalId!;
+    const both = await Promise.allSettled([cancelPayment(st, "salah rekening", finance as never), cancelPayment(st, "salah rekening", finance as never)]);
+    expect(both.filter((x) => x.status === "fulfilled")).toHaveLength(1);
+    expect(await prisma.journal.count({ where: { reversalOfId: journalId } })).toBe(1);
+    expect(await prisma.journal.findUnique({ where: { id: journalId } })).not.toBeNull(); // jurnal lama tidak dihapus
+    expect(await cash()).toBe(cash0); // saldo kas kembali
+    // Setoran tetap utuh, klaim kembali menunggu, satu audit
+    expect(await prisma.boronganResult.count({ where: { claimId: claim.id, settlementId: null } })).toBe(settledResults);
+    expect((await prisma.boronganClaim.findUniqueOrThrow({ where: { id: claim.id } })).status).toBe("MENUNGGU");
+    expect(await prisma.auditLog.count({ where: { entityId: st, action: "UPAH_BORONGAN_DIBATALKAN" } })).toBe(1);
+    await rejectClaim(claim.id, "uji selesai", actor); // lepaskan setoran untuk tes berikutnya
+
+    // Pembayaran alur lama (setoran tanpa klaim) juga bisa dibatalkan dari sini
+    await setoran(ctx.asm.id, 4, "2027-07-02");
+    const legacy = await settlePoint({ pointId: ctx.point.id, upTo: new Date("2030-01-01"), bankAccountId: ctx.bank }, actor);
+    expect(await prisma.boronganResult.count({ where: { settlementId: legacy.id } })).toBeGreaterThan(0);
+    const cashPaid = await cash();
+    await cancelPayment(legacy.id, "pembayaran lama salah", finance as never);
+    expect(await cash()).toBe(cashPaid + Number(legacy.total));
+    expect(await prisma.boronganResult.count({ where: { settlementId: legacy.id } })).toBe(0);
   });
 
   it("tanpa koordinator → bagian koordinator dibayarkan ke pekerja (Cat Plastik Rp13 + Rp2 = Rp15)", async () => {
