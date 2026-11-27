@@ -185,7 +185,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   resultTitle={rItems.length ? RESULT_TITLE : null}
                   catalogs={catalogs}
                   mixDefault={mixDefault}
-                  resultCount={[...rItems].sort((a, b) => (places.get(a.id)?.order ?? 0) - (places.get(b.id)?.order ?? 0)).map((i) => { const pl = places.get(i.id); return { key: i.id, label: i.name, unit: i.unit, qty: rv[i.id] ?? null, group: pl?.group, sub: pl?.sub, col: pl?.col }; })}
+                  resultCount={[...rItems].sort((a, b) => (places.get(a.id)?.order ?? 0) - (places.get(b.id)?.order ?? 0)).map((i) => { const pl = places.get(i.id); return { key: i.id, label: i.name, unit: i.unit, qty: rv[i.id] ?? null, limit: Number(i.minStock), group: pl?.group, sub: pl?.sub, col: pl?.col }; })}
                   flow={flowOn && template ? flow : null}
                   sent={r.workPostedVersion > 0 || r.status !== "DRAFT"}
                   rejectItems={rejectItems}

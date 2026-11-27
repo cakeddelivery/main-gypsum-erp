@@ -43,7 +43,7 @@ import { SAMPLE_PLATFORMS, sampleRowIssue } from "@/lib/sampleShared";
 export type OrderOption = { lineId: string; itemId: string; label: string; remaining: number; cod: boolean; vendor: string; itemName: string; unit: string };
 export type ReceiptView = { id: string; number: string; itemName: string; unit: string; qty: number; supplierName: string | null; hasPhoto: boolean; linked: boolean };
 /** Barang tahap "Stok jadi": `group` produk induk, `sub` paket (baris katalog), `col` series (kolom katalog) */
-export type ResultCountRow = { key: string; label: string; unit: string; qty: number | null; group?: string; sub?: string; col?: string };
+export type ResultCountRow = { key: string; label: string; unit: string; qty: number | null; /** Batas minimum (Item.minStock); ≤ batas = perlu diproduksi */ limit?: number; group?: string; sub?: string; col?: string };
 
 type Props = {
   id: string;
@@ -199,6 +199,8 @@ export function ReportForm(p: Props) {
   // Tahap "Stok jadi": nilai terkontrol (untuk jumlah terisi), dikelompokkan per produk induk + kotak cari
   const [rc, setRc] = useState<Record<string, string>>(() => Object.fromEntries(p.resultCount.map((r) => [r.key, r.qty == null ? "" : String(r.qty)])));
   const rcFilled = Object.values(rc).filter((v) => v !== "").length;
+  // Setengah jadi / jadi yang stok akhirnya ≤ batas minimum: perlu diproduksi (bukan diorder)
+  const rcLow = p.resultCount.filter((r) => (rc[r.key] ?? "") !== "" && needsOrder({ qty: Number(rc[r.key]), limit: r.limit ?? 0 }));
   const [rcQuery, setRcQuery] = useState("");
   // Cari per kata (mis. "24 cewek" cocok dengan "Paket Single Pack 24 pcs · Cewek")
   const matches = (label: string) => rcQuery.trim().toLowerCase().split(/\s+/).every((w) => label.toLowerCase().includes(w));
@@ -482,6 +484,12 @@ export function ReportForm(p: Props) {
           <p className="mb-3 text-xs text-slate-500">Hitung fisik barang setengah jadi / produk jadi tanggung jawab divisi ini di gudang, setelah hasil kerja dihitung. Kosongkan bila tidak dihitung.</p>
           {p.resultCount.length > 12 && (
             <input type="search" value={rcQuery} onChange={(e) => setRcQuery(e.target.value)} placeholder="Cari barang…" aria-label="Cari barang" data-raw className="input mb-2 py-1.5" />
+          )}
+          {rcLow.length > 0 && (
+            <div role="status" className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-sm text-amber-900">
+              <div className="font-semibold">Perlu diproduksi ({rcLow.length})</div>
+              <ul className="mt-1 list-disc space-y-0.5 pl-5 text-xs">{rcLow.map((r) => <li key={r.key}>{r.label}: stok {fmt(Number(rc[r.key]))} · batas {fmt(r.limit ?? 0)} {r.unit}</li>)}</ul>
+            </div>
           )}
           <div className="space-y-2">
             {rcGroups.map(([g, rows]) => {

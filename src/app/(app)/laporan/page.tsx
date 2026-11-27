@@ -94,7 +94,7 @@ export default async function LaporanPage({ searchParams }: { searchParams: Prom
             {hasilPanen}
             {member ? barangMasuk : newForm}
             {penerimaan}
-            <Link href="/laporan/order" className="btn-secondary">Order bahan baku</Link>
+            <Link href="/laporan/order" className="btn-secondary">Order & produksi</Link>
             {!member && <Link href="/laporan/rekap" className="btn-secondary">Rekap</Link>}
             {!member && <Link href="/laporan/monitoring" className="btn-secondary">Resi &amp; patung</Link>}
             {user.can("production.target") && user.can("audit.view") && <Link href="/laporan/kebocoran" className="btn-secondary">Kebocoran & Efisiensi</Link>}

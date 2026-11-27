@@ -64,8 +64,18 @@ export async function setupBorongan(db: PrismaClient, apply: boolean): Promise<s
       say(`+ Barang baru: ${name} (${unit})`);
       return (await tx.item.create({ data: { sku: await autoCode.divisionMaterial(tx, d.code), name, unit, type: "BAHAN_BAKU", divisionId: d.id } })).id;
     };
-    const pot = await ensureMaterial("Pot cat giftbox", "pcs", gft);
-    const catPlastik = Object.fromEntries(await seq(COLORS, async (c) => [c, await ensureMaterial(`Cat plastik ${c}`, "pcs", asm)] as const));
+    // Hasil Cat Plastik per warna = barang SETENGAH JADI (ikut hitungan stok akhir hasil & limit "perlu diproduksi"), bukan bahan baku
+    const ensureHasil = async (name: string, unit: string, d: { id: string; code: string } | null) => {
+      const ex = await findItem(name);
+      if (ex) return ex.id;
+      if (!d) throw new Error(`Divisi untuk ${name} belum ada (jalankan npm run setup:divisi dulu)`);
+      say(`+ Barang baru: ${name} (${unit}, setengah jadi)`);
+      const sku = `SJ-${name.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "")}`;
+      return (await tx.item.create({ data: { sku, name, unit, type: "BARANG_DALAM_PROSES", divisionId: d.id } })).id;
+    };
+    // Pot cat giftbox hanya stok titik koordinator (BMR): tanpa divisi, tidak ikut stok akhir / daftar order divisi mana pun
+    const pot = (await findItem("Pot cat giftbox"))?.id ?? (say("+ Barang baru: Pot cat giftbox (pcs, tanpa divisi)"), (await tx.item.create({ data: { sku: await autoCode.divisionMaterial(tx, gft?.code ?? "GIB"), name: "Pot cat giftbox", unit: "pcs", type: "BAHAN_BAKU" } })).id);
+    const catPlastik = Object.fromEntries(await seq(COLORS, async (c) => [c, await ensureHasil(`Cat plastik ${c}`, "pcs", asm)] as const));
     const kering = Object.fromEntries(await seq(VARIANTS, async (v) => [v, await flowItem(tx, { kind: "kering", key: v })] as const));
     const jadi = Object.fromEntries(await seq(VARIANTS, async (v) => [v, await flowItem(tx, { kind: "jadi", key: v })] as const));
     const catGiftbox = (gft && (await tx.item.findFirst({ where: { divisionId: gft.id, name: { equals: "Cat Giftbox", mode: "insensitive" } } }))) || null;
