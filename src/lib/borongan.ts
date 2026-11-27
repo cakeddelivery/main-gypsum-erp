@@ -543,8 +543,10 @@ export async function settleResultsTx(tx: Tx, input: { pointId: string; upTo: Da
 
 /** Batalkan pembayaran upah satu titik: jurnal dibalik, setorannya kembali menjadi belum dibayar */
 export async function cancelSettlement(id: string, reason: string, actor: Actor, now: Date = new Date()) {
-  if (!reason?.trim()) throw new BoronganError("Alasan pembatalan wajib diisi");
+  if (!reason?.trim() || reason.trim().length < 3) throw new BoronganError("Alasan pembatalan wajib diisi");
   return prisma.$transaction(async (tx) => {
+    // Kunci per pembayaran: dua klik/permintaan bersamaan antre, yang kedua melihat "sudah dibatalkan" (tidak ada pembalik ganda)
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`batal-bayar:${id}`}))`;
     await tx.$queryRaw`SELECT id FROM "BoronganSettlement" WHERE id = ${id} FOR UPDATE`;
     const st = await tx.boronganSettlement.findUniqueOrThrow({ where: { id } });
     if (st.cancelledAt) throw new BoronganError(`${st.number} sudah dibatalkan`);
@@ -557,6 +559,12 @@ export async function cancelSettlement(id: string, reason: string, actor: Actor,
     await audit(actor, "UPAH_BORONGAN_DIBATALKAN", "BoronganSettlement", id, { number: st.number, reason }, tx);
     return out;
   });
+}
+
+/** Batalkan pembayaran upah dari Klaim Upah: hanya pemegang borongan.pay / borongan.manage; alasan wajib (jurnal pembalik, setoran & klaim kembali menunggu) */
+export async function cancelPayment(id: string, reason: string, user: { id: string; name: string; can: (p: "borongan.pay" | "borongan.manage") => boolean }) {
+  if (!user.can("borongan.pay") && !user.can("borongan.manage")) throw new BoronganError("Membatalkan pembayaran upah hanya oleh Finance / Owner / pengelola borongan");
+  return cancelSettlement(id, reason, { id: user.id, name: user.name });
 }
 
 // ---------------- ORANG ----------------

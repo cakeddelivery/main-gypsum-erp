@@ -1,7 +1,7 @@
 "use server";
 import { action, optStr, str } from "@/lib/action";
 import { prisma } from "@/lib/db";
-import { BoronganError, boronganScope } from "@/lib/borongan";
+import { BoronganError, boronganScope, cancelPayment } from "@/lib/borongan";
 import { cancelPickup, cancelShipment, changeShipmentQty, updateShipment, createPickup, createShipment, receiveByColor, receivePickup, resolvePickup, saveAllots, saveWorkReport } from "@/lib/boronganFlow";
 import { todayStr } from "@/lib/time";
 import { autoClaims } from "@/lib/boronganClaim";
@@ -259,4 +259,14 @@ export const lengkapiKiriman = action(
     return `Kiriman ${s.number} lengkap & dikirim`;
   },
   PATHS,
+);
+
+/** Batalkan pembayaran upah (klaim maupun pembayaran alur lama): jurnal pembalik, klaim kembali menunggu, setoran tetap utuh */
+export const batalBayarUpah = action(
+  ["borongan.pay", "borongan.manage"],
+  async (fd, user) => {
+    const st = await cancelPayment(str(fd, "id"), str(fd, "reason"), user);
+    return `Pembayaran ${st.number} dibatalkan: jurnal dibalik, setoran kembali belum dibayar`;
+  },
+  [...PATHS, "/akuntansi"],
 );
