@@ -17,8 +17,13 @@ export function targetTemplate(p: { type: string; family?: { name: string } | nu
 }
 
 export async function planDivisiHasil(db: Db): Promise<{ fixes: DivisiFix[]; ok: number; noDivision: string[] }> {
-  const divs = await db.division.findMany({ where: { reportTemplate: { in: ["PACKING", "GIFTBOX"] } }, select: { id: true, name: true, reportTemplate: true } });
-  const byTpl = new Map(divs.map((d) => [d.reportTemplate!, d]));
+  const divs = await db.division.findMany({ where: { reportTemplate: { in: ["PACKING", "GIFTBOX"] } }, orderBy: { name: "asc" }, select: { id: true, name: true, reportTemplate: true } });
+  const byTpl = new Map<string, (typeof divs)[number]>();
+  const okIds = new Map<string, Set<string>>(); // beberapa divisi bertemplate sama: yang mana pun sudah benar
+  for (const d of divs) {
+    if (!byTpl.has(d.reportTemplate!)) byTpl.set(d.reportTemplate!, d);
+    okIds.set(d.reportTemplate!, (okIds.get(d.reportTemplate!) ?? new Set()).add(d.id));
+  }
   const names = new Map((await db.division.findMany({ select: { id: true, name: true } })).map((d) => [d.id, d.name]));
   const products = await db.product.findMany({
     where: { active: true, finishedItemId: { not: null }, finishedItem: { active: true, type: "BARANG_JADI" } },
@@ -36,7 +41,7 @@ export async function planDivisiHasil(db: Db): Promise<{ fixes: DivisiFix[]; ok:
     seen.add(it.id);
     const d = byTpl.get(tpl);
     if (!d) { if (!noDivision.includes(tpl)) noDivision.push(tpl); continue; }
-    if (it.divisionId === d.id) { ok++; continue; }
+    if (it.divisionId && okIds.get(tpl)?.has(it.divisionId)) { ok++; continue; }
     fixes.push({ id: it.id, sku: p.sku, name: it.name, from: it.divisionId ? (names.get(it.divisionId) ?? it.divisionId) : null, to: d.name, why: tpl === "GIFTBOX" ? "produk Giftbox" : "Single Pack (produk satuan)" });
   }
   return { fixes, ok, noDivision };

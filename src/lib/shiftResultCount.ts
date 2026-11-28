@@ -156,3 +156,21 @@ export async function applyResultCount(reportId: string, actor: Actor, now: Date
   }, { timeout: 30000 });
   return { adjusted: n };
 }
+
+/**
+ * Stok akhir WAJIB lengkap sebelum laporan dikirim: semua bahan baku divisi (stockCount) dan semua barang setengah jadi / jadi divisi
+ * (work._hasil). Angka 0 sah, kosong tidak. Mengembalikan pesan error (nama barang yang belum diisi) atau null bila lengkap.
+ */
+export function missingStockCounts(
+  stock: { name: string; qty: number | null }[],
+  items: { id: string; name: string }[],
+  work: WorkData,
+): string | null {
+  const raw = work[RESULT_KEY];
+  const v = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, number | null>) : {};
+  const bahan = stock.filter((r) => r.qty == null || !Number.isFinite(Number(r.qty))).map((r) => r.name);
+  const hasil = items.filter((i) => v[i.id] == null || !Number.isFinite(Number(v[i.id]))).map((i) => i.name);
+  const cut = (l: string[]) => (l.length > 15 ? `${l.slice(0, 15).join(", ")}, dan ${l.length - 15} lainnya` : l.join(", "));
+  const parts = [bahan.length ? `Bahan baku: ${cut(bahan)}` : "", hasil.length ? `Setengah jadi / produk jadi: ${cut(hasil)}` : ""].filter(Boolean);
+  return parts.length ? `Stok akhir belum diisi (angka 0 boleh, tapi harus diisi). ${parts.join(" · ")}` : null;
+}

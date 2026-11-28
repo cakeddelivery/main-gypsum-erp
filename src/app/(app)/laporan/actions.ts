@@ -26,10 +26,10 @@ import { receiptReportLines } from "@/lib/boronganReceipt";
 import { saveProof } from "@/lib/storage";
 import { divisionChecklist, refreshDraftChecklists } from "@/lib/shiftReportChecklist";
 import { addShiftReceipt, addShiftReceipts, removeShiftReceipt } from "@/lib/shiftReceipt";
-import { RESULT_KEY, applyResultCount, parseResultCount, resultCountStatus, resultItems, resultLines } from "@/lib/shiftResultCount";
+import { RESULT_KEY, applyResultCount, missingStockCounts, parseResultCount, resultCountStatus, resultItems, resultLines } from "@/lib/shiftResultCount";
 import { reportCatalogs } from "@/lib/productFamily";
 import { lowProduction, withCurrentLimits } from "@/lib/shiftReportStock";
-import { isDone, isTemplate, needsOrder, parseWork, summaryOf, targetLine, targetOf, toEntries, workLines, type ChecklistEntry, type StockCountRow } from "@/lib/shiftReport";
+import { isDone, isTemplate, needsOrder, parseWork, summaryOf, targetLine, targetOf, toEntries, workLines, type ChecklistEntry, type StockCountRow, type WorkData } from "@/lib/shiftReport";
 
 
 type User = Awaited<ReturnType<typeof assertPerm>>;
@@ -244,6 +244,9 @@ async function sendReportData(id: string, user: User): Promise<string> {
     // Checklist wajib foto harus lengkap sebelum laporan bisa dikirim
     const noPhoto = toEntries(r.checklist).filter((c) => c.photo && !c.photoPath);
     if (noPhoto.length) throw new Error(`Lampirkan foto dulu: ${noPhoto.map((c) => c.label).join(", ")}`);
+    // Stok akhir semua tipe (bahan baku, setengah jadi, barang jadi) wajib terisi; 0 boleh
+    const missing = missingStockCounts(r.stockCount as StockCountRow[], await resultItems(r.divisionId), r.work as WorkData);
+    if (missing) throw new Error(missing);
     // Stok akhir shift = stock opname bahan baku divisi (per jam selesai shift). Diterapkan dulu: bila gagal
     // (mis. periode sudah ditutup), laporan tidak dikirim agar pesan dan stok tidak berbeda.
     const stockRes = await applyShiftStockCount(id, user);

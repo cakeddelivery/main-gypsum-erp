@@ -16,8 +16,8 @@ describe("koreksi divisi hasil", () => {
   const made: { items: string[]; products: string[] } = { items: [], products: [] };
   let packing: string, giftbox: string, assembling: string, storeId: string;
   beforeAll(async () => {
-    packing = (await prisma.division.findFirstOrThrow({ where: { reportTemplate: "PACKING" } })).id;
-    giftbox = (await prisma.division.findFirstOrThrow({ where: { reportTemplate: "GIFTBOX" } })).id;
+    packing = (await prisma.division.findFirstOrThrow({ where: { reportTemplate: "PACKING" }, orderBy: { name: "asc" } })).id;
+    giftbox = (await prisma.division.findFirstOrThrow({ where: { reportTemplate: "GIFTBOX" }, orderBy: { name: "asc" } })).id;
     assembling = (await prisma.division.findFirstOrThrow({ where: { reportTemplate: "ASSEMBLING" } })).id;
     storeId = (await prisma.store.findFirstOrThrow()).id;
   });

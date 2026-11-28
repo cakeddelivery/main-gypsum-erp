@@ -33,6 +33,12 @@ async function main() {
   const byDivision = new Map<string, typeof rows>();
   for (const r of rows) byDivision.set(r.division, [...(byDivision.get(r.division) ?? []), r]);
 
+  // Shift yang dijadwalkan per divisi (Division.shiftCount): shift yang tidak dijadwalkan (mis. malam di Oven/Assembling/Giftbox/Packing) bukan "hilang"
+  const shifts = await prisma.shift.findMany({ orderBy: { code: "asc" }, select: { code: true } });
+  const divs = await prisma.division.findMany({ where: { name: { in: [...byDivision.keys()] } }, select: { id: true, name: true, shiftCount: true } });
+  const reps = await prisma.shiftReport.findMany({ where: { date: new Date(`${tanggal}T00:00:00Z`), divisionId: { in: divs.map((d) => d.id) }, status: { in: ["TERKIRIM", "DIREVISI"] } }, select: { divisionId: true, shift: { select: { code: true } } } });
+  const shiftInfo = new Map(divs.map((d) => [d.name, { scheduled: shifts.slice(0, Math.max(1, d.shiftCount)).map((x) => x.code), sent: [...new Set(reps.filter((r) => r.divisionId === d.id).map((r) => r.shift.code))].sort() }]));
+
   // Selisih tidak terjelaskan = penyesuaian otomatis LPS (stok akhir laporan) per divisi × barang
   const lpsMoves = rows.length ? await prisma.stockMovement.findMany({ where: { itemId: { in: items.map((i) => i.id) }, date: { gte: start, lt: end }, ref: { startsWith: "LPS" }, OR: [{ toLocationId: { in: locIds } }, { fromLocationId: { in: locIds } }] } }) : [];
   const sgn = (m: { toLocationId: string | null; fromLocationId: string | null; qty: unknown }) => (m.toLocationId && locIds.includes(m.toLocationId) ? Number(m.qty) : 0) - (m.fromLocationId && locIds.includes(m.fromLocationId) ? Number(m.qty) : 0);
@@ -62,6 +68,11 @@ async function main() {
   } else if (rows.length) console.log("Tidak ada selisih tidak terjelaskan (tidak ada penyesuaian LPS hari itu).\n");
   for (const [division, list] of [...byDivision].sort((a, b) => a[0].localeCompare(b[0], "id"))) {
     console.log(`== ${division} ==`);
+    const sc = shiftInfo.get(division);
+    if (sc) {
+      const missing = sc.scheduled.filter((c) => !sc.sent.includes(c));
+      console.log(`  Shift dijadwalkan: ${sc.scheduled.join(", ")} · laporan terkirim: ${sc.sent.join(", ") || "-"}${missing.length ? ` · ⚠ belum ada laporan: ${missing.join(", ")}` : ""}${sc.scheduled.length < 2 ? " (divisi ini tanpa shift malam; shift 2 tidak dianggap hilang)" : ""}`);
+    }
     for (const itemId of [...new Set(list.map((r) => r.itemId))]) {
       const it = items.find((i) => i.id === itemId);
       const open = await prisma.$queryRaw<{ qty: number }[]>`
