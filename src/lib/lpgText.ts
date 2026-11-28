@@ -56,7 +56,7 @@ export function splitParts(text: string): { text: string; amount: number | null 
  *  - bagian LPG bernominal → jumlah nominal bagian LPG itu saja (≤ total)
  *  - bagian LPG tanpa nominal sendiri → tidak-terparse (perlu cek manual; tidak ditebak dari total − bagian lain)
  */
-export function lpgShare(text: string | null | undefined, total: number): LpgShare {
+export function lpgShare(text: string | null | undefined, total: number, opt: { hargaTabung?: number } = {}): LpgShare {
   const s = (text ?? "").trim();
   if (!isLpgText(s)) return { mode: "tidak-lpg" };
   const parts = splitParts(s);
@@ -64,5 +64,10 @@ export function lpgShare(text: string | null | undefined, total: number): LpgSha
   if (parts.length <= 1 || lpg.length === parts.length) return { mode: "penuh", amount: total };
   const lines = lpg.map((x) => x.text);
   if (lpg.every((x) => x.amount != null)) return { mode: "baris", amount: Math.min(total, lpg.reduce((a, x) => a + (x.amount ?? 0), 0)), lines };
+  // Opsi eksplisit --harga-tabung: bagian LPG tanpa nominal tetapi menyebut jumlah tabung → jumlah × harga (hanya bila SEMUA bagian LPG menyebut jumlah tabung)
+  if (opt.hargaTabung && opt.hargaTabung > 0 && lpg.every((x) => x.amount == null && /(\d+)\s*(?:tabung|tbg)/i.test(x.text))) {
+    const n = lpg.reduce((a, x) => a + Number(/(\d+)\s*(?:tabung|tbg)/i.exec(x.text)![1]), 0);
+    return { mode: "baris", amount: Math.min(total, n * opt.hargaTabung), lines };
+  }
   return { mode: "tidak-terparse", lines };
 }

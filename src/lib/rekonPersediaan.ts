@@ -37,7 +37,10 @@ export async function lpgExpenseAccount(db: Db): Promise<{ code: string; name: s
 
 /** Jenis referensi stok dari ref mutasi: "BATAL KRM:x" → KRM; "LPH:abc:1" → LPH; tanpa ref → "(tanpa ref)" */
 export const refGroup = (ref: string | null | undefined) => (ref ? /^[A-Za-z]+/.exec(ref.replace(/^BATAL[ -]/i, ""))?.[0]?.toUpperCase() ?? "(lain)" : "(tanpa ref)");
-const JOURNAL_GROUP: Record<string, string> = { LAPORAN_SHIFT: "LPH", REKON_PERSEDIAAN: "REKON", REVALUASI_HPP: "REVALUASI", PRODUKSI: "PRD", PEMBELIAN: "PEMBELIAN", PENJUALAN: "JUAL", BORONGAN: "BORONGAN(jurnal)" };
+/** Sumber jurnal → grup yang setara dengan awalan ref mutasi stok (agar selisih per grup bermakna) */
+const JOURNAL_GROUP: Record<string, string> = { LAPORAN_SHIFT: "LPH", REKON_PERSEDIAAN: "REKON", REVALUASI_HPP: "REVALUASI", PRODUKSI: "PRD", PEMBELIAN: "PBL", FINANCE: "TRX", STOK_AWAL: "STOK_AWAL", PENJUALAN: "JUAL", BORONGAN: "BORONGAN(jurnal)" };
+/** Awalan ref mutasi → grup gabungan (stok awal dibukukan satu jurnal STOK_AWAL; mutasinya ber-ref CUTOVER / AWAL) */
+const MOVEMENT_ALIAS: Record<string, string> = { CUTOVER: "STOK_AWAL", AWAL: "STOK_AWAL" };
 
 export type DiagRow = { account: string; group: string; mutasi: number; jurnal: number; selisih: number };
 export type Diagnosa = { rows: DiagRow[]; /** Σ nilai mutasi stok − nilai stok (Σ qty × harga rata-rata sekarang): pergeseran harga rata-rata, dll. */ nilaiStokVsMutasi: Record<string, number>; /** Bagian terbukti 1-1401 terlalu tinggi & 1-1403 terlalu rendah pada jenis referensi yang sama */ antar: { total: number; sudah: number; sisa: number; perGrup: { group: string; amount: number }[] } };
@@ -54,18 +57,23 @@ export async function diagnosaSisa(db: Db): Promise<Diagnosa> {
   const mutasi = new Map<string, number>();
   const groupOfJournal = new Map<string, string>();
   for (const m of mvs) {
-    const g = refGroup(m.ref);
+    const g0 = refGroup(m.ref);
+    const g = MOVEMENT_ALIAS[g0] ?? g0;
     if (m.journalId && !groupOfJournal.has(m.journalId)) groupOfJournal.set(m.journalId, g);
     const sign = m.toLocationId && !m.fromLocationId ? 1 : m.fromLocationId && !m.toLocationId ? -1 : 0;
     if (!sign) continue;
     const k = `${INVENTORY_COA[m.item.type]}|${g}`;
     mutasi.set(k, (mutasi.get(k) ?? 0) + sign * Math.round(Number(m.qty) * Number(m.unitCost)));
   }
-  const lines = await db.journalLine.findMany({ where: { accountId: { in: accs.map((a) => a.id) } }, select: { accountId: true, debit: true, credit: true, journal: { select: { id: true, source: true, sourceId: true } } } });
+  const lines = await db.journalLine.findMany({ where: { accountId: { in: accs.map((a) => a.id) } }, select: { accountId: true, debit: true, credit: true, journal: { select: { id: true, source: true, sourceId: true, reversalOfId: true } } } });
   const jurnal = new Map<string, number>();
+  const parentIds = [...new Set(lines.map((l) => l.journal.reversalOfId).filter((x): x is string => !!x))];
+  const parents = new Map((parentIds.length ? await db.journal.findMany({ where: { id: { in: parentIds } }, select: { id: true, source: true, sourceId: true } }) : []).map((x) => [x.id, x]));
   for (const l of lines) {
     const j = l.journal;
-    const g = groupOfJournal.get(j.id) ?? (j.source === "WORKSHOP" ? refGroup(j.sourceId) : JOURNAL_GROUP[j.source] ?? `J:${j.source}`);
+    const own = (x: { id: string; source: string; sourceId: string | null }) => groupOfJournal.get(x.id) ?? (x.source === "WORKSHOP" ? refGroup(x.sourceId) : JOURNAL_GROUP[x.source] ?? `J:${x.source}`);
+    // Jurnal pembalik (PEMBALIK/koreksi) ikut grup jurnal aslinya, bukan grup tersendiri
+    const g = j.reversalOfId && !groupOfJournal.has(j.id) ? (groupOfJournal.get(j.reversalOfId) ?? (parents.get(j.reversalOfId) ? own(parents.get(j.reversalOfId)!) : own(j))) : own(j);
     const k = `${codeOfId.get(l.accountId)}|${g}`;
     jurnal.set(k, (jurnal.get(k) ?? 0) + Number(l.debit) - Number(l.credit));
   }
@@ -167,7 +175,9 @@ export async function rekonPersediaan(db: Db): Promise<RekonResult> {
       if (t.splits.length) lpgPart = t.splits.filter((x) => !x.itemId && lpgShare(x.note, Number(x.amount)).mode !== "tidak-lpg").reduce((a, x) => a + Number(x.amount), 0);
       else {
         const sh = lpgShare(teks, Number(t.amount));
-        if (sh.mode === "penuh" || sh.mode === "baris") lpgPart = sh.amount;
+        // Mode "baris": hanya LPG bila leg persediaan sebesar nominal LPG dari teks (leg 5.000 kardus bekas bukan LPG 60rb); "penuh": seluruh transaksi LPG
+        if (sh.mode === "penuh") lpgPart = sh.amount;
+        else if (sh.mode === "baris") lpgPart = gap >= sh.amount - TOLERANSI ? sh.amount : 0;
         else if (sh.mode === "tidak-terparse") lpgNote = `deskripsi campur, nominal baris LPG tidak terbaca ("${sh.lines.join(" / ").slice(0, 60)}") → tidak dipisah`;
       }
       lpgPart = Math.min(gap, lpgPart);
@@ -280,4 +290,62 @@ export async function koreksiRekonPersediaan(db: PrismaClient, apply: boolean, k
     return j.id;
   }, { isolationLevel: "Serializable", timeout: 120000 });
   return { plan, journalId };
+}
+
+export type RincianJurnal = { number: string; date: Date; description: string; sourceId: string | null; account: string; amount: number; lawan: string; pihak: string | null };
+
+/**
+ * Rincian jurnal bersumber `source` yang menyentuh akun persediaan (tanpa mengubah apa pun): nomor, tanggal, pihak (supplier untuk UTANG),
+ * nominal pada akun persediaan (debit − kredit) dan akun lawan. Dipakai untuk menelusuri grup jurnal tanpa mutasi stok (mis. J:UTANG).
+ */
+export async function rincianJurnal(db: Db, source: string): Promise<RincianJurnal[]> {
+  const accs = await db.coaAccount.findMany({ where: { code: { in: [...ACCOUNTS] } }, select: { id: true, code: true } });
+  const codeOfId = new Map(accs.map((a) => [a.id, a.code]));
+  const js = await db.journal.findMany({ where: { source, lines: { some: { accountId: { in: accs.map((a) => a.id) } } } }, orderBy: { date: "asc" }, select: { number: true, date: true, description: true, sourceId: true, lines: { select: { accountId: true, debit: true, credit: true, account: { select: { code: true, name: true } } } } } });
+  const payables = source === "UTANG" ? await db.payable.findMany({ where: { number: { in: js.map((j) => j.sourceId).filter((x): x is string => !!x) } }, select: { number: true, vendor: true, supplier: { select: { name: true } } } }) : [];
+  const party = new Map(payables.map((p) => [p.number, p.supplier?.name ?? p.vendor]));
+  const out: RincianJurnal[] = [];
+  for (const j of js) {
+    for (const l of j.lines.filter((x) => codeOfId.has(x.accountId))) {
+      out.push({
+        number: j.number, date: j.date, description: j.description, sourceId: j.sourceId, account: codeOfId.get(l.accountId)!, amount: Number(l.debit) - Number(l.credit),
+        lawan: j.lines.filter((x) => x !== l).map((x) => `${x.account.code} ${x.account.name}`).join(" / "), pihak: j.sourceId ? party.get(j.sourceId) ?? null : null,
+      });
+    }
+  }
+  return out;
+}
+
+export type BarangDiag = { sku: string; name: string; type: string; account: string; avgCost: number; qty: number; nilaiStok: number; nilaiMutasi: number; selisihValuasi: number; lokasiNegatif: { lokasi: string; qty: number }[] };
+
+/**
+ * Per barang: qty per lokasi (Σ masuk − keluar), nilai stok sekarang (qty × harga rata-rata) vs Σ nilai mutasi (qty × harga mutasi, masuk +, keluar −).
+ * negatif = barang yang qty total, nilai, atau qty di salah satu lokasi negatif. selisihValuasi = nilai mutasi − nilai stok: dominan dari
+ * pergeseran harga rata-rata (mis. keluar dihargai harga rata-rata saat itu, harga rata-rata kini berbeda) atau stok minus.
+ */
+export async function diagnosaBarang(db: Db): Promise<{ negatif: BarangDiag[]; perAkun: Record<string, BarangDiag[]> }> {
+  const mvs = await db.stockMovement.findMany({ select: { itemId: true, qty: true, unitCost: true, fromLocationId: true, toLocationId: true } });
+  const locs = new Map((await db.location.findMany({ select: { id: true, name: true } })).map((l) => [l.id, l.name]));
+  const qtyLoc = new Map<string, Map<string, number>>();
+  const nilai = new Map<string, number>();
+  const add = (itemId: string, loc: string, q: number) => { const m = qtyLoc.get(itemId) ?? new Map<string, number>(); m.set(loc, (m.get(loc) ?? 0) + q); qtyLoc.set(itemId, m); };
+  for (const m of mvs) {
+    const q = Number(m.qty);
+    if (m.toLocationId) add(m.itemId, m.toLocationId, q);
+    if (m.fromLocationId) add(m.itemId, m.fromLocationId, -q);
+    const sign = m.toLocationId && !m.fromLocationId ? 1 : m.fromLocationId && !m.toLocationId ? -1 : 0;
+    if (sign) nilai.set(m.itemId, (nilai.get(m.itemId) ?? 0) + sign * Math.round(q * Number(m.unitCost)));
+  }
+  const items = await db.item.findMany({ where: { id: { in: [...qtyLoc.keys()] } }, select: { id: true, sku: true, name: true, type: true, avgCost: true } });
+  const rows: BarangDiag[] = items.map((i) => {
+    const per = qtyLoc.get(i.id)!;
+    const qty = Math.round([...per.values()].reduce((a, b) => a + b, 0) * 1000) / 1000;
+    const nilaiStok = Math.round(qty * Number(i.avgCost));
+    const nilaiMutasi = nilai.get(i.id) ?? 0;
+    return { sku: i.sku, name: i.name, type: i.type, account: INVENTORY_COA[i.type], avgCost: Number(i.avgCost), qty, nilaiStok, nilaiMutasi, selisihValuasi: nilaiMutasi - nilaiStok, lokasiNegatif: [...per].filter(([, q]) => q < -0.0005).map(([l, q]) => ({ lokasi: locs.get(l) ?? l, qty: Math.round(q * 1000) / 1000 })) };
+  });
+  const negatif = rows.filter((r) => r.qty < -0.0005 || r.nilaiStok < 0 || r.lokasiNegatif.length > 0).sort((a, b) => a.nilaiStok - b.nilaiStok);
+  const perAkun: Record<string, BarangDiag[]> = {};
+  for (const a of ACCOUNTS) perAkun[a] = rows.filter((r) => r.account === a && Math.abs(r.selisihValuasi) > TOLERANSI).sort((x, y) => Math.abs(y.selisihValuasi) - Math.abs(x.selisihValuasi)).slice(0, 15);
+  return { negatif, perAkun };
 }
