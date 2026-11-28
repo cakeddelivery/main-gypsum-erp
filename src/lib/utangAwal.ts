@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { COA, defaultStoreId, postJournal } from "./accounting";
 import { REKON_SOURCE } from "./rekonPersediaan";
+import { namaCocok } from "./saldoUtang";
 
 /**
  * UTANG supplier yang dicatat Dr persediaan / Cr Hutang Usaha tanpa stok masuk (jurnal utang awal dari data lama).
@@ -16,11 +17,9 @@ const INV = [COA.PERSEDIAAN_BAHAN, COA.PERSEDIAAN_BDP, COA.PERSEDIAAN_JADI] as s
 const PAY_WORDS = /cicil|angsur|pelunasan|lunas|bayar\s+(?:hutang|utang)|(?:hutang|utang)/i;
 
 export type UtangRow = { number: string; vendor: string; supplier: string | null; amount: number; paid: number; journalId: string; journalNumber: string; date: Date; akun: string; nominalPersediaan: number; sudahDikoreksi: boolean };
-export type AngsuranRow = { txId: string; txNumber: string; date: Date; teks: string; akun: string; nominal: number; utg: string; payableId: string; sudahDikoreksi: boolean };
+export type AngsuranRow = { txId: string; txNumber: string; date: Date; teks: string; akun: string; nominal: number; utg: string; payableId: string; /** Pembayaran bertanggal SEBELUM UTG dibuat: UTG sudah saldo bersih → melunasi utang lama (Dr Ekuitas Saldo Awal), TIDAK mengurangi UTG */ sebelumUtg: boolean; sudahDikoreksi: boolean };
 export type TanpaCatatan = { txNumber: string; date: Date; teks: string; nominal: number };
 export type UtangAwalPlan = { utang: UtangRow[]; angsuran: AngsuranRow[]; tanpaCatatan: TanpaCatatan[]; totalUtang: number };
-
-const words = (s: string) => s.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 4);
 
 export async function planUtangAwal(db: Db): Promise<UtangAwalPlan> {
   const payables = await db.payable.findMany({ where: { kind: "USAHA", journalId: { not: null } }, include: { supplier: { select: { name: true, aliases: true } } }, orderBy: { number: "asc" } });
@@ -45,10 +44,10 @@ export async function planUtangAwal(db: Db): Promise<UtangAwalPlan> {
     const l = lines.filter((x) => x.journalId === t.journalId);
     if (!l.length) continue;
     const teks = [t.note, t.rawText, t.counterparty].filter(Boolean).join(" · ");
-    const tw = new Set(words(teks));
-    const match = payables.find((p) => [p.vendor, p.supplier?.name, ...(p.supplier?.aliases ?? [])].filter((x): x is string => !!x).some((n) => words(n).some((w) => tw.has(w))));
+    // Cocok bila SEMUA kata salah satu nama (vendor "A / B" dipecah per bagian, atau alias supplier) ada di teks (bukan sekadar satu kata umum)
+    const match = payables.find((p) => [p.vendor, p.supplier?.name, ...(p.supplier?.aliases ?? [])].filter((x): x is string => !!x).flatMap((n) => n.split(/[\/|,]/)).some((n) => namaCocok(teks, [n])));
     const nominal = l.reduce((a, x) => a + Number(x.debit), 0);
-    if (match) angsuran.push({ txId: t.id, txNumber: t.number, date: t.date, teks, akun: l[0].account.code, nominal, utg: match.number, payableId: match.id, sudahDikoreksi: doneAng.has(`UTANG-ANGSURAN:${t.number}`) });
+    if (match) angsuran.push({ txId: t.id, txNumber: t.number, date: t.date, teks, akun: l[0].account.code, nominal, utg: match.number, payableId: match.id, sebelumUtg: t.date.getTime() < match.date.getTime(), sudahDikoreksi: doneAng.has(`UTANG-ANGSURAN:${t.number}`) || doneAng.has(`UTANG-ANGSURAN-AWAL:${t.number}`) });
     else tanpaCatatan.push({ txNumber: t.number, date: t.date, teks, nominal });
   }
   return { utang, angsuran, tanpaCatatan, totalUtang: utang.reduce((a, u) => a + u.nominalPersediaan, 0) };
@@ -61,7 +60,11 @@ export async function koreksiUtangAwal(db: PrismaClient, apply: boolean, opsi: U
   const plan = await planUtangAwal(db);
   const lines: UtangAwalLine[] = [];
   if (opsi.utangAwal === "ekuitas") for (const u of plan.utang.filter((x) => !x.sudahDikoreksi)) lines.push({ sourceId: `UTANG-AWAL:${u.number}`, memo: `REKON:UTANG-AWAL:${u.number}`, akunDr: COA.EKUITAS_SALDO_AWAL, akunCr: u.akun, amount: u.nominalPersediaan, keterangan: `Saldo utang awal ${u.number} ${u.vendor} (${u.journalNumber}): persediaan sudah ada di stok awal` });
-  if (opsi.angsuran === "ya") for (const a of plan.angsuran.filter((x) => !x.sudahDikoreksi)) lines.push({ sourceId: `UTANG-ANGSURAN:${a.txNumber}`, memo: `REKON:UTANG-ANGSURAN:${a.txNumber}`, akunDr: COA.UTANG_USAHA, akunCr: a.akun, amount: a.nominal, keterangan: `Angsuran utang ${a.utg} dibukukan ${a.txNumber}: Dr hutang, bukan persediaan` });
+  if (opsi.angsuran === "ya") for (const a of plan.angsuran.filter((x) => !x.sudahDikoreksi)) {
+    // Sebelum UTG dibuat: melunasi utang lama yang belum ada di sistem → Ekuitas Saldo Awal (UTG tidak dikurangi). Sesudah UTG: bayar UTG (Dr hutang)
+    if (a.sebelumUtg) lines.push({ sourceId: `UTANG-ANGSURAN-AWAL:${a.txNumber}`, memo: `REKON:UTANG-ANGSURAN-AWAL:${a.txNumber}`, akunDr: COA.EKUITAS_SALDO_AWAL, akunCr: a.akun, amount: a.nominal, keterangan: `Pelunasan utang lama ${a.txNumber} (sebelum ${a.utg}): Dr saldo awal ekuitas, bukan persediaan` });
+    else lines.push({ sourceId: `UTANG-ANGSURAN:${a.txNumber}`, memo: `REKON:UTANG-ANGSURAN:${a.txNumber}`, akunDr: COA.UTANG_USAHA, akunCr: a.akun, amount: a.nominal, keterangan: `Angsuran utang ${a.utg} dibukukan ${a.txNumber}: Dr hutang, bukan persediaan` });
+  }
   if (!apply || !lines.length) return { plan, lines, journals: 0 };
   let journals = 0;
   for (const l of lines) {

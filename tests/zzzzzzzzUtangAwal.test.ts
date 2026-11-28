@@ -16,18 +16,21 @@ describe("Utang awal (di balik flag, pratinjau dulu)", () => {
       prisma.$transaction((tx) => postJournal(tx, { date, storeId: store.id, description: desc, source: src, sourceId: id, actor, lines: [{ accountCode: dr, debit: amt }, { accountCode: cr, credit: amt }] }));
     const ju = await jurnal("UTANG", `UTG-${tag}`, "1-1401", "2-1100", 3_000_000, `Hutang UTG-${tag} ${vendorA}`);
     const p = await prisma.payable.create({ data: { number: `UTG-${tag}`, kind: "USAHA", vendor: vendorA, storeId: store.id, date, amount: 3_000_000n, journalId: ju.id } });
-    const mkTx = async (n: string, text: string, amt: number) => {
-      const t = await prisma.financeTransaction.create({ data: { number: `TRX-${tag}-${n}`, direction: "KELUAR", amount: BigInt(amt), date, status: "DIBUKUKAN", source: "MANUAL", fingerprint: `fp-${tag}-${n}`, createdBy: "uji", note: text } });
+    const mkTx = async (n: string, text: string, amt: number, at: Date = date) => {
+      const t = await prisma.financeTransaction.create({ data: { number: `TRX-${tag}-${n}`, direction: "KELUAR", amount: BigInt(amt), date: at, status: "DIBUKUKAN", source: "MANUAL", fingerprint: `fp-${tag}-${n}`, createdBy: "uji", note: text } });
       const j = await jurnal("FINANCE", t.id, "1-1401", "1-1100", amt, `Uji ${tag}`);
       await prisma.financeTransaction.update({ where: { id: t.id }, data: { journalId: j.id } });
       return t.number;
     };
     const ang = await mkTx("A", `Cicilan utang ${vendorA}`, 2_000_000);
+    const lama = await mkTx("L", `Cicilan utang ${vendorA}`, 500_000, new Date(date.getTime() - 3 * 86_400_000)); // SEBELUM tanggal UTG
     const orphan = await mkTx("B", `Cicilan utang ${vendorB}`, 1_400_000);
 
     const plan = await planUtangAwal(prisma);
     expect(plan.utang.find((u) => u.number === p.number)).toMatchObject({ nominalPersediaan: 3_000_000, akun: "1-1401", sudahDikoreksi: false });
     expect(plan.angsuran.find((a) => a.txNumber === ang)).toMatchObject({ utg: p.number, nominal: 2_000_000 });
+    expect(plan.angsuran.find((a) => a.txNumber === lama)).toMatchObject({ sebelumUtg: true });
+    expect(plan.angsuran.find((a) => a.txNumber === ang)).toMatchObject({ sebelumUtg: false });
     expect(plan.tanpaCatatan.some((t) => t.txNumber === orphan)).toBe(true);
     expect(plan.angsuran.some((a) => a.txNumber === orphan)).toBe(false);
 
@@ -53,6 +56,11 @@ describe("Utang awal (di balik flag, pratinjau dulu)", () => {
     const after = await prisma.payable.findUniqueOrThrow({ where: { id: p.id } });
     expect(Number(after.paid)).toBe(2_000_000);
     expect((await prisma.financeTransaction.findUniqueOrThrow({ where: { number: ang } })).payableId).toBe(p.id);
+    // pembayaran SEBELUM tanggal UTG: Dr 3-9000 Ekuitas Saldo Awal / Cr persediaan, UTG TIDAK dikurangi dan tidak ditautkan
+    const jl = await prisma.journal.findMany({ where: { source: "REKON_PERSEDIAAN", sourceId: `UTANG-ANGSURAN-AWAL:${lama}` }, include: { lines: { include: { account: true } } } });
+    expect(jl).toHaveLength(1);
+    expect(jl[0].lines.find((l) => l.account.code === "3-9000")?.debit).toBe(500_000n);
+    expect((await prisma.financeTransaction.findUniqueOrThrow({ where: { number: lama } })).payableId).toBeNull();
     expect(await prisma.journal.count({ where: { source: "REKON_PERSEDIAAN", sourceId: `UTANG-ANGSURAN:${ang}` } })).toBe(1);
     await koreksiUtangAwal(prisma, true, { angsuran: "ya" });
     expect(Number((await prisma.payable.findUniqueOrThrow({ where: { id: p.id } })).paid)).toBe(2_000_000);
