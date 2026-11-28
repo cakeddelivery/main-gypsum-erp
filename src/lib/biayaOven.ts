@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { latestCost } from "./unitcost";
 import { overheadUnitCost } from "./hpp";
+import { lpgShare } from "./lpgText";
 
 /**
  * Biaya oven & gypsum per patung (HANYA MEMBACA kecuali pasangBiayaOven):
@@ -34,7 +35,8 @@ export function periodes(now: Date = new Date()): Periode[] {
   return out;
 }
 
-export type LpgSumber = { isiUlangDibayar: number; isiUlangTabungDibayar: number; isiUlangMenunggu: number; estimasiMenunggu: number; pembelianItem: number; dipakai: number; catatan: string[] };
+export type LpgFinanceBaris = { number: string; date: Date; amount: number; total: number; mode: "penuh" | "baris" | "rincian"; teks: string };
+export type LpgSumber = { financeLpg: number; financeBaris: LpgFinanceBaris[]; isiUlangDibayar: number; isiUlangTabungDibayar: number; isiUlangMenunggu: number; estimasiMenunggu: number; pembelianItem: number; dipakai: number; catatan: string[] };
 export type PeriodeBiaya = { label: string; lpg: LpgSumber; panen: { bagus: number; laporan: number }; lpgPerPcs: number | null };
 
 const sumPanen = (work: unknown) => {
@@ -50,6 +52,31 @@ export async function biayaLpgPerPeriode(db: Db, now: Date = new Date()): Promis
   const lpgItemIds = lpgItems.filter((i) => LPG_WORDS.test(i.name)).map((i) => i.id);
   const lines = lpgItemIds.length ? await db.purchaseLine.findMany({ where: { itemId: { in: lpgItemIds } }, select: { amount: true, purchase: { select: { date: true } } } }) : [];
   const reports = await db.shiftReport.findMany({ where: { status: { in: ["TERKIRIM", "DIREVISI"] }, division: { reportTemplate: "PRODUKSI" } }, select: { date: true, work: true } });
+  // Pembelian LPG yang dicatat sebagai transaksi Finance biasa (kategori mis. Pembelian Bahan Baku / Konsumsi): dikenali dari deskripsinya.
+  // Yang sudah dipasangkan ke isi ulang tabung (LpgRefill.transactionId) tidak dihitung lagi.
+  const linkedTx = new Set(refills.map((r) => r.transactionId).filter((x): x is string => !!x));
+  const word = (f: string) => [{ [f]: { contains: "lpg", mode: "insensitive" as const } }, { [f]: { contains: "elpiji", mode: "insensitive" as const } }];
+  const fTx = await db.financeTransaction.findMany({
+    where: { direction: "KELUAR", status: { in: ["DIBUKUKAN", "DALAM_PROSES"] }, deletedAt: null, origin: null, OR: [...word("note"), ...word("rawText"), ...word("counterparty"), { splits: { some: { OR: word("note") } } }] },
+    include: { splits: true }, orderBy: { date: "asc" },
+  });
+  const fin: LpgFinanceBaris[] = [];
+  const peringatan: string[] = [];
+  for (const t of fTx) {
+    if (linkedTx.has(t.id)) continue;
+    const total = Number(t.amount);
+    const teks = [t.note, t.rawText, t.counterparty].filter(Boolean).join(" · ");
+    const sp = t.splits.filter((x) => lpgShare(x.note, Number(x.amount)).mode !== "tidak-lpg");
+    if (t.splits.length) {
+      // Rincian: nominal baris rincian yang menyebut LPG
+      if (sp.length) fin.push({ number: t.number, date: t.date, amount: sp.reduce((a, x) => a + Number(x.amount), 0), total, mode: "rincian", teks });
+      else peringatan.push(`${t.number}: rincian tidak menyebut LPG di barisnya (${teks.slice(0, 80)}), tidak dihitung`);
+      continue;
+    }
+    const sh = lpgShare(teks, total);
+    if (sh.mode === "penuh" || sh.mode === "baris") fin.push({ number: t.number, date: t.date, amount: sh.amount, total, mode: sh.mode, teks });
+    else if (sh.mode === "tidak-terparse") peringatan.push(`${t.number}: deskripsi campur dan nominal baris LPG tidak terbaca (Rp${total.toLocaleString("id-ID")}; "${sh.lines.join(" / ").slice(0, 80)}"), tidak dihitung — cek manual`);
+  }
   return periodes(now).map((p) => {
     const inP = (d: Date) => d >= p.from && d < p.to;
     const r = refills.filter((x) => inP(new Date(`${x.physicalDate.toISOString().slice(0, 10)}T00:00:00+07:00`)));
@@ -59,16 +86,22 @@ export async function biayaLpgPerPeriode(db: Db, now: Date = new Date()): Promis
     const estimasiMenunggu = waiting.reduce((a, x) => a + x.tabung * lastPrice, 0);
     const pembelianItem = lines.filter((l) => inP(l.purchase.date)).reduce((a, l) => a + Number(l.amount), 0);
     const catatan: string[] = [];
-    // Hindari hitung dobel: isi ulang (transaksi Finance) dipakai bila ada; pembelian item LPG hanya bila isi ulang tidak ada
-    const refillTotal = isiUlangDibayar + estimasiMenunggu;
+    const financeBaris = fin.filter((x) => inP(new Date(`${x.date.toISOString().slice(0, 10)}T00:00:00+07:00`)));
+    const financeLpg = financeBaris.reduce((a, x) => a + x.amount, 0);
+    // Aktual dipakai bila ada (isi ulang dipasangkan + transaksi Finance LPG); estimasi isi ulang yang belum dipasangkan HANYA bila tidak ada transaksi
+    // Finance LPG (transaksi itulah pembayaran isi ulang yang belum dipasangkan → tidak dobel). Pembelian barang LPG hanya bila semuanya kosong.
+    const aktual = isiUlangDibayar + financeLpg;
+    const refillTotal = financeLpg > 0 ? aktual : aktual + estimasiMenunggu;
     const dipakai = refillTotal > 0 ? refillTotal : pembelianItem;
+    if (financeLpg > 0 && estimasiMenunggu > 0) catatan.push(`estimasi isi ulang belum dipasangkan Rp${estimasiMenunggu.toLocaleString("id-ID")} TIDAK dijumlahkan (sudah ada transaksi Finance LPG Rp${financeLpg.toLocaleString("id-ID")} = aktual)`);
+    for (const w of peringatan) catatan.push(`⚠ ${w}`);
     if (refillTotal > 0 && pembelianItem > 0) catatan.push(`pembelian barang LPG Rp${pembelianItem.toLocaleString("id-ID")} tidak dijumlahkan (kemungkinan dobel dengan isi ulang)`);
     if (waiting.length) catatan.push(`${waiting.length} isi ulang belum dipasangkan ke transaksi Finance (estimasi ${waiting.reduce((a, x) => a + x.tabung, 0)} tabung × Rp${lastPrice.toLocaleString("id-ID")})`);
     const rep = reports.filter((x) => inP(new Date(`${x.date.toISOString().slice(0, 10)}T00:00:00+07:00`)));
     const bagus = rep.reduce((a, x) => a + sumPanen(x.work), 0);
     return {
       label: p.label,
-      lpg: { isiUlangDibayar, isiUlangTabungDibayar: rp.reduce((a, x) => a + x.tabung, 0), isiUlangMenunggu: waiting.length, estimasiMenunggu, pembelianItem, dipakai, catatan },
+      lpg: { financeLpg, financeBaris, isiUlangDibayar, isiUlangTabungDibayar: rp.reduce((a, x) => a + x.tabung, 0), isiUlangMenunggu: waiting.length, estimasiMenunggu, pembelianItem, dipakai, catatan },
       panen: { bagus, laporan: rep.length },
       lpgPerPcs: bagus > 0 && dipakai > 0 ? Math.round((dipakai / bagus) * 100) / 100 : null,
     };

@@ -12,6 +12,7 @@ const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "-");
 (async () => {
   const r = await rekonPersediaan(prisma);
   console.log("REKONSILIASI PERSEDIAAN: buku besar vs nilai stok\n");
+  console.log(`Akun beban LPG (untuk pembelian LPG yang dicatat ke persediaan): ${r.lpgAccount ? `${r.lpgAccount.code} ${r.lpgAccount.name}` : "BELUM ADA (buat akun beban LPG / kategori transaksi LPG agar baris LPG bisa direklas)"}\n`);
   for (const a of r.accounts) {
     console.log(`${a.code} ${a.name}: buku besar ${rp(a.gl)} · nilai stok ${rp(a.stock)} · selisih ${rp(a.diff)}`);
     console.log(`   terjelaskan ${rp(a.terjelaskan)} · SISA belum terjelaskan ${rp(a.sisa)}`);
@@ -20,7 +21,7 @@ const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "-");
       const g = rows.filter((x) => x.kelompok === k);
       if (!g.length) continue;
       console.log(`   [${k === "FINANCE_TANPA_STOK" ? "Transaksi Finance debit persediaan tanpa stok masuk" : "Penerimaan stok tanpa jurnal"}] ${g.length} baris, total ${rp(g.reduce((s, x) => s + x.gap, 0))}`);
-      for (const x of g) console.log(`      ${x.ref} (${day(x.date)}): ${rp(x.gap)} · ${x.detail}\n         usul: ${x.usul}`);
+      for (const x of g) console.log(`      ${x.ref} (${day(x.date)}): ${rp(x.gap)} · ${x.detail}${x.lpgPart ? ` · LPG Rp${x.lpgPart.toLocaleString("id-ID")}` : ""}${x.lpgNote ? ` · ⚠ ${x.lpgNote}` : ""}\n         usul: ${x.usul}`);
     }
   }
   console.log("\nKoreksi (jurnal penyesuaian, tidak menghapus transaksi): npm run koreksi:rekonsiliasi-persediaan");

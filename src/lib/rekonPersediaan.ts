@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { COA, defaultStoreId, postJournal } from "./accounting";
 import { INVENTORY_COA, inventoryValuation, usageAccountCode } from "./stock";
+import { lpgShare } from "./lpgText";
 
 /**
  * Rekonsiliasi persediaan: saldo buku besar 1-1401/1-1402/1-1403 vs nilai stok (Σ qty × avgCost per tipe barang).
@@ -19,9 +20,17 @@ const ACCOUNTS = [COA.PERSEDIAAN_BAHAN, COA.PERSEDIAAN_BDP, COA.PERSEDIAAN_JADI]
 const TYPE_OF: Record<string, "BAHAN_BAKU" | "BARANG_DALAM_PROSES" | "BARANG_JADI"> = { [COA.PERSEDIAAN_BAHAN]: "BAHAN_BAKU", [COA.PERSEDIAAN_BDP]: "BARANG_DALAM_PROSES", [COA.PERSEDIAAN_JADI]: "BARANG_JADI" };
 
 export type Kelompok = "FINANCE_TANPA_STOK" | "PENERIMAAN_TANPA_JURNAL";
-export type RekonRow = { kelompok: Kelompok; account: string; ref: string; date: Date | null; gap: number; detail: string; usul: string };
+export type RekonRow = { kelompok: Kelompok; account: string; ref: string; date: Date | null; gap: number; detail: string; usul: string; /** Bagian selisih yang berupa pembelian LPG (dari deskripsi) → beban LPG, bukan beban pemakaian bahan */ lpgPart?: number; lpgNote?: string };
 export type RekonAccount = { code: string; name: string; gl: number; stock: number; diff: number; terjelaskan: number; sisa: number };
-export type RekonResult = { accounts: RekonAccount[]; rows: RekonRow[] };
+export type RekonResult = { accounts: RekonAccount[]; rows: RekonRow[]; lpgAccount: { code: string; name: string } | null };
+
+/** Akun beban LPG: akun kategori transaksi bernama LPG/gas, atau akun BEBAN bernama LPG; null bila belum ada */
+export async function lpgExpenseAccount(db: Db): Promise<{ code: string; name: string } | null> {
+  const cat = await db.txCategory.findFirst({ where: { name: { contains: "lpg", mode: "insensitive" }, direction: "KELUAR" }, include: { coaAccount: true } });
+  if (cat && cat.coaAccount.type === "BEBAN") return { code: cat.coaAccount.code, name: cat.coaAccount.name };
+  const acc = await db.coaAccount.findFirst({ where: { type: "BEBAN", active: true, OR: [{ name: { contains: "lpg", mode: "insensitive" } }, { name: { contains: "elpiji", mode: "insensitive" } }] }, orderBy: { code: "asc" } });
+  return acc ? { code: acc.code, name: acc.name } : null;
+}
 
 const memoOf = (k: Kelompok | "SISA", ref: string) => `REKON:${k}:${ref}`;
 
@@ -48,7 +57,7 @@ export async function rekonPersediaan(db: Db): Promise<RekonResult> {
   const rows: RekonRow[] = [];
 
   // --- FINANCE_TANPA_STOK ---
-  const fin = await db.financeTransaction.findMany({ where: { origin: null, journalId: { not: null } }, select: { id: true, number: true, date: true, note: true, counterparty: true, categoryId: true } });
+  const fin = await db.financeTransaction.findMany({ where: { origin: null, journalId: { not: null } }, select: { id: true, number: true, date: true, amount: true, note: true, rawText: true, counterparty: true, categoryId: true, splits: { select: { note: true, amount: true, itemId: true } } } });
   const finById = new Map(fin.map((t) => [t.id, t]));
   const js = await db.journal.findMany({ where: { source: "FINANCE", sourceId: { in: fin.map((t) => t.id) } }, select: { id: true, sourceId: true } });
   const revs = js.length ? await db.journal.findMany({ where: { reversalOfId: { in: js.map((j) => j.id) } }, select: { id: true, reversalOfId: true } }) : [];
@@ -79,10 +88,25 @@ export async function rekonPersediaan(db: Db): Promise<RekonResult> {
     const t = finById.get(txId)!;
     const ref = t.number;
     // adjusted = debit − kredit koreksi sebelumnya pada akun persediaan (kredit = negatif): menambahkannya mengurangi selisih yang tersisa
-    const gap = g - (mvByTx.get(`${ref}|${code}`) ?? 0) + (adjusted.get(`${code}|${memoOf("FINANCE_TANPA_STOK", ref)}`) ?? 0);
+    const gap = g - (mvByTx.get(`${ref}|${code}`) ?? 0) + (adjusted.get(`${code}|${memoOf("FINANCE_TANPA_STOK", ref)}`) ?? 0) + (adjusted.get(`${code}|${memoOf("FINANCE_TANPA_STOK", ref)}:LPG`) ?? 0);
     if (Math.abs(gap) <= TOLERANSI) continue;
     const kat = t.categoryId ? catName.get(t.categoryId) : null;
-    rows.push({ kelompok: "FINANCE_TANPA_STOK", account: code, ref, date: t.date, gap, detail: `${t.note ?? t.counterparty ?? "(tanpa catatan)"}${kat ? ` · kategori ${kat}` : ""}`, usul: gap > 0 ? "buat penerimaan stok (Barang masuk/Pembelian dengan barang & qty) ATAU reklas ke beban pemakaian bahan" : "periksa: stok masuk lebih besar dari jurnal transaksi" });
+    // Pembelian LPG (dari deskripsi / rincian): bagian LPG → beban LPG; deskripsi campur → hanya nominal baris LPG bila terbaca
+    const teks = [t.note, t.rawText, t.counterparty].filter(Boolean).join(" · ");
+    let lpgPart = 0;
+    let lpgNote: string | undefined;
+    if (gap > 0) {
+      if (t.splits.length) lpgPart = t.splits.filter((x) => !x.itemId && lpgShare(x.note, Number(x.amount)).mode !== "tidak-lpg").reduce((a, x) => a + Number(x.amount), 0);
+      else {
+        const sh = lpgShare(teks, Number(t.amount));
+        if (sh.mode === "penuh" || sh.mode === "baris") lpgPart = sh.amount;
+        else if (sh.mode === "tidak-terparse") lpgNote = `deskripsi campur, nominal baris LPG tidak terbaca ("${sh.lines.join(" / ").slice(0, 60)}") → tidak dipisah`;
+      }
+      lpgPart = Math.min(gap, lpgPart);
+      const done = -(adjusted.get(`${code}|${memoOf("FINANCE_TANPA_STOK", ref)}:LPG`) ?? 0);
+      lpgPart = Math.max(0, lpgPart - done);
+    }
+    rows.push({ kelompok: "FINANCE_TANPA_STOK", account: code, ref, date: t.date, gap, detail: `${t.note ?? t.counterparty ?? "(tanpa catatan)"}${kat ? ` · kategori ${kat}` : ""}`, lpgPart: lpgPart > 0 ? lpgPart : undefined, lpgNote, usul: gap > 0 ? (lpgPart > 0 ? `pembelian LPG Rp${lpgPart.toLocaleString("id-ID")} → reklas ke beban LPG${gap - lpgPart > TOLERANSI ? `; sisa Rp${(gap - lpgPart).toLocaleString("id-ID")}: penerimaan stok atau beban pemakaian bahan` : ""}` : "buat penerimaan stok (Barang masuk/Pembelian dengan barang & qty) ATAU reklas ke beban pemakaian bahan") : "periksa: stok masuk lebih besar dari jurnal transaksi" });
   }
 
   // --- PENERIMAAN_TANPA_JURNAL ---
@@ -118,7 +142,7 @@ export async function rekonPersediaan(db: Db): Promise<RekonResult> {
       return { code: a.code, name: a.name, gl: g, stock: s, diff: g - s, terjelaskan, sisa: g - s - terjelaskan };
     })
     .sort((a, b) => a.code.localeCompare(b.code));
-  return { accounts, rows: rows.sort((a, b) => a.account.localeCompare(b.account) || a.kelompok.localeCompare(b.kelompok) || (a.date?.getTime() ?? 0) - (b.date?.getTime() ?? 0)) };
+  return { lpgAccount: await lpgExpenseAccount(db), accounts, rows: rows.sort((a, b) => a.account.localeCompare(b.account) || a.kelompok.localeCompare(b.kelompok) || (a.date?.getTime() ?? 0) - (b.date?.getTime() ?? 0)) };
 }
 
 export type Keputusan = {
@@ -142,9 +166,16 @@ export async function rencanaKoreksi(db: Db, k: Keputusan): Promise<RencanaKorek
   const lines: RencanaKoreksi["lines"] = [];
   const belum = new Set<Kelompok>();
   for (const r of result.rows) {
+    let gap = r.gap;
+    // Pembelian LPG → beban LPG (agar cek:overhead-bulanan / biaya LPG per pcs benar), bukan beban pemakaian bahan
+    if (r.kelompok === "FINANCE_TANPA_STOK" && r.lpgPart && result.lpgAccount) {
+      lines.push({ account: r.account, counter: result.lpgAccount.code, amount: r.lpgPart, memo: `${memoOf(r.kelompok, r.ref)}:LPG`, kelompok: "FINANCE_LPG", ref: r.ref });
+      gap -= r.lpgPart;
+      if (Math.abs(gap) <= TOLERANSI) continue;
+    }
     const counter = counterOf(r.kelompok);
     if (!counter) { belum.add(r.kelompok); continue; }
-    lines.push({ account: r.account, counter, amount: r.gap, memo: memoOf(r.kelompok, r.ref), kelompok: r.kelompok, ref: r.ref });
+    lines.push({ account: r.account, counter, amount: gap, memo: memoOf(r.kelompok, r.ref), kelompok: r.kelompok, ref: r.ref });
   }
   if (k.sisa === "selisih") for (const a of result.accounts) {
     // Sisa dihitung dengan kelompok yang BELUM diputuskan tetap dianggap terjelaskan (tidak ikut dikoreksi sebagai sisa)

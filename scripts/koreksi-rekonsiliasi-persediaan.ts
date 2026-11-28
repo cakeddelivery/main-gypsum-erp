@@ -27,6 +27,7 @@ const rp = (n: number) => `${n < 0 ? "-" : ""}Rp ${Math.abs(Math.round(n)).toLoc
 koreksiRekonPersediaan(prisma, apply, k)
   .then(({ plan, journalId }) => {
     console.log(apply ? "DISIMPAN:" : "PRATINJAU (belum disimpan):");
+    console.log(`Akun beban LPG: ${plan.result.lpgAccount ? `${plan.result.lpgAccount.code} ${plan.result.lpgAccount.name} (baris pembelian LPG otomatis direklas ke sini, tanpa flag)` : "BELUM ADA — baris LPG diperlakukan seperti baris lain"}`);
     for (const l of plan.lines) console.log(`  ${l.kelompok} ${l.ref}: ${l.amount > 0 ? "Cr" : "Dr"} ${l.account} ${rp(Math.abs(l.amount))} / ${l.amount > 0 ? "Dr" : "Cr"} ${l.counter}`);
     console.log(`\n${plan.lines.length} baris dikoreksi${journalId ? ` · jurnal ${journalId}` : ""}.`);
     for (const g of plan.belumDiputuskan) console.log(`⚠ ${g}: ${plan.result.rows.filter((r) => r.kelompok === g).length} baris BELUM diputuskan (${g === "FINANCE_TANPA_STOK" ? "--finance-tanpa-stok=beban-pemakaian|selisih, atau buat penerimaan stok" : "--penerimaan-tanpa-jurnal=saldo-awal|selisih"}) — tidak dikoreksi`);
