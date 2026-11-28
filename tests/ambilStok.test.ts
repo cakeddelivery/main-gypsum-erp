@@ -112,4 +112,20 @@ describe("Bot: Ambil stok", () => {
     expect(await qtyAt(prisma, cewek, wip)).toBe(o0 - 10);
     expect(sent.at(-1)!.text).toMatch(/Ambil stok AMB/);
   });
+
+  it('ketik bebas "ambil 7 patung kering cewek" → langsung tombol konfirmasi Ambil 7 (pengguna berdivisi Assembling)', async () => {
+    const asm = await prisma.division.findFirstOrThrow({ where: { reportTemplate: "ASSEMBLING" } });
+    const u = await prisma.user.findUniqueOrThrow({ where: { username: "owner" } });
+    const old = u.divisionId;
+    await prisma.user.update({ where: { id: u.id }, data: { divisionId: asm.id } });
+    try {
+      await handleTelegramUpdate({ update_id: n, message: { message_id: n++, chat, from, text: "ambil 7 patung kering cewek" } } as never);
+      expect(sent.at(-1)!.buttons!.flat().map((b) => b.callback_data)).toContain("f:7");
+      const o0 = await qtyAt(prisma, cewek, wip);
+      await tap("f:7");
+      expect(await qtyAt(prisma, cewek, wip)).toBe(o0 - 7);
+    } finally {
+      await prisma.user.update({ where: { id: u.id }, data: { divisionId: old } });
+    }
+  });
 });
