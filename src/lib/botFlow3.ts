@@ -21,7 +21,6 @@ import { createDraft, draftMessage, type DraftInput } from "./botDraft";
 import { ackIds, guardDup } from "./botDup";
 import { gajiFlow } from "./botGaji";
 import { workshopFlow } from "./botWorkshop";
-import { bongkarFlow } from "./botBongkar";
 
 /**
  * Isian bot Telegram Tahap 3: kasbon, pembelian bahan baku, dan borongan tetangga
@@ -55,7 +54,6 @@ export function t3MenuRows(i: BotIdent): InlineButton[][] {
   if (can(i, "borongan.view", "borongan.point", "borongan.manage")) rows.push([{ text: "🧑‍🏭 Borongan", callback_data: "f:start:bor" }]);
   if (can(i, "finance.approve")) rows.push([{ text: "💸 Kembalikan dana talangan", callback_data: "f:start:tlg" }]);
   if (can(i, "stock.produce")) rows.push([{ text: "🏭 Produksi workshop", callback_data: "f:start:wsp" }]);
-  if (can(i, "stock.produce") || can(i, "retur.manage")) rows.push([{ text: "🔧 Bongkar retur", callback_data: "f:start:brt" }]);
   return rows;
 }
 
@@ -1253,4 +1251,4 @@ const draftDup: FlowDef = {
   },
 };
 
-export const T3_FLOWS: Record<string, FlowDef> = { trx: draftDup, kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, tlg: talangan, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay, gaji: gajiFlow, wsp: workshopFlow, brt: bongkarFlow, ...SALES_FLOWS };
+export const T3_FLOWS: Record<string, FlowDef> = { trx: draftDup, kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, tlg: talangan, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay, gaji: gajiFlow, wsp: workshopFlow, ...SALES_FLOWS };
