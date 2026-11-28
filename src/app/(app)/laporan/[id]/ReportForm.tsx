@@ -67,6 +67,8 @@ type Props = {
   /** Stok akhir hasil (patung kering / produk jadi per karakter) */
   resultTitle: string | null;
   resultCount: ResultCountRow[];
+  /** Stok sistem per kolom hitung ("rc.<id>" / "s.<id>"): bagian stok-0 opsional & konfirmasi 0 tak tersentuh */
+  systemQty?: Record<string, number>;
   /** SKU katalog untuk bagian isian katalog (Giftbox, Paket & Satuan Single Pack) */
   catalogs: ReportCatalogs;
   /** Giftbox Mix: karakter patung ke-5 bawaan (stok terbanyak) */
@@ -105,6 +107,7 @@ export function ReportForm(p: Props) {
     return w;
   });
   const [stock, setStock] = useState(p.stock);
+  const [sTxt, setSTxt] = useState<Record<string, string>>({});
   const [rejects, setRejects] = useState(() => p.rejects.map((r, i) => ({ key: i, itemId: r.itemId, qty: String(r.qty).replace(".", ","), reason: r.reason, note: r.note ?? "" })));
   // LPG: isian laporan ini, atau diisi dulu dari status shift sebelumnya (tinggal ubah yang berbeda)
   const [lpg, setLpg] = useState(() => {
@@ -197,16 +200,26 @@ export function ReportForm(p: Props) {
     setConfirming(true);
   };
   // Tahap "Stok jadi": nilai terkontrol (untuk jumlah terisi), dikelompokkan per produk induk + kotak cari
-  const [rc, setRc] = useState<Record<string, string>>(() => Object.fromEntries(p.resultCount.map((r) => [r.key, r.qty == null ? "" : String(r.qty)])));
+  const [rc, setRc] = useState<Record<string, string>>(() => Object.fromEntries(p.resultCount.map((r) => [r.key, r.qty == null ? "0" : String(r.qty)])));
+  // Kolom stok akhir terisi 0 bawaan; ketuk kolom → 0 hilang (siap diketik); ditinggal kosong → kembali 0. `touched` = sengaja disentuh/diisi
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const touch = (k: string) => setTouched((t) => (t[k] ? t : { ...t, [k]: true }));
+  const sys = p.systemQty ?? {};
+  const ZERO_GROUP = "Barang stok 0 (opsional)";
   const rcFilled = Object.values(rc).filter((v) => v !== "").length;
   // Setengah jadi / jadi yang stok akhirnya ≤ batas minimum: perlu diproduksi (bukan diorder)
-  const rcLow = p.resultCount.filter((r) => (rc[r.key] ?? "") !== "" && needsOrder({ qty: Number(rc[r.key]), limit: r.limit ?? 0 }));
+  const rcLow = p.resultCount.filter((r) => (touched[`rc.${r.key}`] || r.qty != null) && (rc[r.key] ?? "") !== "" && needsOrder({ qty: Number(rc[r.key]), limit: r.limit ?? 0 }));
+  // Pengaman: kolom bernilai 0 yang TIDAK pernah disentuh padahal stok sistem ada → tanya dulu "yakin habis?" (0 sengaja diketik tidak ditanya)
+  const zeroAsk = [
+    ...p.resultCount.filter((r) => r.qty == null && !touched[`rc.${r.key}`] && Number(rc[r.key] || 0) === 0 && (sys[`rc.${r.key}`] ?? 0) > 0).map((r) => `${r.label} (stok sistem ${fmt(sys[`rc.${r.key}`])})`),
+    ...p.stock.filter((r) => r.qty == null && !touched[`s.${r.itemId}`] && Number(sTxt[r.itemId] || 0) === 0 && (sys[`s.${r.itemId}`] ?? 0) > 0).map((r) => `${r.name} (stok sistem ${fmt(sys[`s.${r.itemId}`])})`),
+  ];
   const [rcQuery, setRcQuery] = useState("");
   // Cari per kata (mis. "24 cewek" cocok dengan "Paket Single Pack 24 pcs · Cewek")
   const matches = (label: string) => rcQuery.trim().toLowerCase().split(/\s+/).every((w) => label.toLowerCase().includes(w));
   const rcGroups = Object.entries(
-    p.resultCount.reduce<Record<string, ResultCountRow[]>>((m, r) => ((m[r.group ?? "Lainnya"] ??= []).push(r), m), {}),
-  );
+    p.resultCount.reduce<Record<string, ResultCountRow[]>>((m, r) => ((m[sys[`rc.${r.key}`] === 0 && !((r.limit ?? 0) > 0) ? ZERO_GROUP : (r.group ?? "Lainnya")] ??= []).push(r), m), {}),
+  ).sort(([a], [b]) => (a === ZERO_GROUP ? 1 : 0) - (b === ZERO_GROUP ? 1 : 0));
   // Tutup (✕ di bawah atau di judul popup): konfirmasi simpan draf / buang perubahan bila ada isian berubah
   const [dirty, setDirty] = useState(false);
   const [closeAsk, setCloseAsk] = useState(false);
@@ -481,7 +494,7 @@ export function ReportForm(p: Props) {
             <h3 className="font-semibold text-slate-800">{p.resultTitle}</h3>
             <span className="shrink-0 text-xs font-medium text-slate-500 tabular-nums">{rcFilled}/{p.resultCount.length} terisi</span>
           </div>
-          <p className="mb-3 text-xs text-slate-500">Hitung fisik barang setengah jadi / produk jadi tanggung jawab divisi ini di gudang, setelah hasil kerja dihitung. WAJIB diisi untuk semua barang (angka 0 boleh, tapi harus diisi) sebelum laporan bisa dikirim.</p>
+          <p className="mb-3 text-xs text-slate-500">Hitung fisik barang setengah jadi / produk jadi tanggung jawab divisi ini di gudang, setelah hasil kerja dihitung. Semua kolom terisi 0 otomatis: ketuk kolom lalu ketik jumlah sebenarnya. Barang yang stok sistemnya 0 dan tanpa batas ada di bagian "Barang stok 0 (opsional)".</p>
           {p.resultCount.length > 12 && (
             <input type="search" value={rcQuery} onChange={(e) => setRcQuery(e.target.value)} placeholder="Cari barang…" aria-label="Cari barang" data-raw className="input mb-2 py-1.5" />
           )}
@@ -496,7 +509,7 @@ export function ReportForm(p: Props) {
               const shown = rows.filter((r) => matches(r.label));
               const filled = rows.filter((r) => (rc[r.key] ?? "") !== "").length;
               return (
-                <details key={g} open={rcGroups.length <= 2 || !!rcQuery} className={`group rounded-lg border border-slate-200 ${shown.length ? "" : "hidden"}`}>
+                <details key={g} open={(rcGroups.length <= 2 && g !== ZERO_GROUP) || !!rcQuery} className={`group rounded-lg border border-slate-200 ${shown.length ? "" : "hidden"}`}>
                   <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-sm font-medium text-slate-700 [&::-webkit-details-marker]:hidden">
                     <span className="min-w-0">{g}</span>
                     <span className="flex shrink-0 items-center gap-2 text-xs text-slate-500 tabular-nums">{filled}/{rows.length}<span className="transition group-open:rotate-180" aria-hidden>▾</span></span>
@@ -519,7 +532,7 @@ export function ReportForm(p: Props) {
                               {cells.map((r) => (
                                 <label key={r.key} className={`block min-w-0 ${matches(r.label) ? "" : "hidden"}`}>
                                   <span className={`block break-words text-xs leading-tight ${(rc[r.key] ?? "") !== "" && needsOrder({ qty: Number(rc[r.key]), limit: r.limit ?? 0 }) ? "font-medium text-amber-700" : "text-slate-500"}`}>{(rc[r.key] ?? "") !== "" && needsOrder({ qty: Number(rc[r.key]), limit: r.limit ?? 0 }) && "⚠ "}{r.col || r.label}{(r.limit ?? 0) > 0 && <span className="font-normal text-slate-400"> · limit {fmt(r.limit ?? 0)}</span>}</span>
-                                  <input name={`rc.${r.key}`} inputMode="numeric" value={rc[r.key] ?? ""} onChange={(e) => setRc((x) => ({ ...x, [r.key]: e.target.value }))} className={`input py-1.5 text-right ${rc[r.key] ? "border-brand-400 bg-brand-50" : ""}`} placeholder="0" aria-label={r.label} />
+                                  <input name={`rc.${r.key}`} inputMode="numeric" value={rc[r.key] ?? ""} onFocus={() => { touch(`rc.${r.key}`); if (rc[r.key] === "0") setRc((x) => ({ ...x, [r.key]: "" })); }} onBlur={() => { if ((rc[r.key] ?? "") === "") setRc((x) => ({ ...x, [r.key]: "0" })); }} onChange={(e) => setRc((x) => ({ ...x, [r.key]: e.target.value }))} className={`input py-1.5 text-right ${rc[r.key] && rc[r.key] !== "0" ? "border-brand-400 bg-brand-50" : ""}`} placeholder="0" aria-label={r.label} />
                                 </label>
                               ))}
                             </div>
@@ -541,6 +554,8 @@ export function ReportForm(p: Props) {
                           inputMode="numeric"
                           value={rc[r.key] ?? ""}
                           onChange={(v) => setRc((x) => ({ ...x, [r.key]: v }))}
+                          onFocus={() => { touch(`rc.${r.key}`); if (rc[r.key] === "0") setRc((x) => ({ ...x, [r.key]: "" })); }}
+                          onBlur={() => { if ((rc[r.key] ?? "") === "") setRc((x) => ({ ...x, [r.key]: "0" })); }}
                         />
                       ))}
                     </ul>
@@ -575,8 +590,10 @@ export function ReportForm(p: Props) {
                   unit={row.unit}
                   inputName={`s.${row.itemId}`}
                   inputMode="decimal"
-                  value={row.qty == null ? "" : String(row.qty)}
-                  onChange={(v) => { const t = v.trim(); const q = t === "" ? null : Math.max(0, Number(t.replace(",", ".")) || 0); setStock((x) => x.map((r, j) => (j === i ? { ...r, qty: q } : r))); }}
+                  value={sTxt[row.itemId] ?? (row.qty == null ? "0" : String(row.qty))}
+                  onFocus={() => { touch(`s.${row.itemId}`); setSTxt((x) => ((x[row.itemId] ?? (row.qty == null ? "0" : String(row.qty))) === "0" ? { ...x, [row.itemId]: "" } : x)); }}
+                  onBlur={() => setSTxt((x) => ((x[row.itemId] ?? "x") === "" ? { ...x, [row.itemId]: "0" } : x))}
+                  onChange={(v) => { const t = v.trim(); const q = t === "" ? null : Math.max(0, Number(t.replace(",", ".")) || 0); setSTxt((x) => ({ ...x, [row.itemId]: v })); setStock((x) => x.map((r, j) => (j === i ? { ...r, qty: q } : r))); }}
                 />
               );
             })}
@@ -753,9 +770,15 @@ export function ReportForm(p: Props) {
                 <ul className="mt-1 list-disc pl-5 text-xs">{unchecked.map((c) => <li key={c.label}>{c.label}</li>)}</ul>
               </div>
             )}
+            {zeroAsk.length > 0 && (
+              <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 p-2 text-sm text-rose-800">
+                <p className="font-medium">{zeroAsk.length} barang diisi 0 padahal stok sistem ada — yakin habis?</p>
+                <ul className="mt-1 list-disc pl-5 text-xs">{zeroAsk.slice(0, 8).map((z) => <li key={z}>{z}</li>)}{zeroAsk.length > 8 && <li>dan {zeroAsk.length - 8} lainnya</li>}</ul>
+              </div>
+            )}
             <p className="mt-2 text-xs text-slate-500">Stok akhir shift akan menjadi stok sistem (stock opname). {reportLockNote}</p>
             <div className="mt-4 flex flex-wrap justify-end gap-2">
-              <button type="button" className="btn-secondary" onClick={() => { setConfirming(false); if (unchecked.length) go(steps.findIndex((x) => x.key === "checklist")); }}>{unchecked.length ? "Lengkapi checklist" : "Batal"}</button>
+              <button type="button" className="btn-secondary" onClick={() => { setConfirming(false); if (unchecked.length) go(steps.findIndex((x) => x.key === "checklist")); }}>{unchecked.length ? "Lengkapi checklist" : zeroAsk.length ? "Periksa lagi" : "Batal"}</button>
               <span onClickCapture={() => (sending.current = true)}>
                 <Submit className="btn-success" name="intent" value="send" pendingText="Mengirim…">Ya, kirim</Submit>
               </span>
@@ -1030,7 +1053,7 @@ function PhotoTask({ id, index, entry }: { id: string; index: number; entry: Che
 }
 
 /** Satu baris hitung stok: nama (boleh 2 baris) + keterangan kecil di kiri, kolom angka kecil + satuan di kanan */
-function CountRow({ name, sub, unit, inputName, inputMode, value, onChange, warn, hidden }: { name: React.ReactNode; sub?: string; unit: string; inputName: string; inputMode: "numeric" | "decimal"; value: string; onChange: (v: string) => void; warn?: boolean; hidden?: boolean }) {
+function CountRow({ name, sub, unit, inputName, inputMode, value, onChange, onFocus, onBlur, warn, hidden }: { name: React.ReactNode; sub?: string; unit: string; inputName: string; inputMode: "numeric" | "decimal"; value: string; onChange: (v: string) => void; onFocus?: () => void; onBlur?: () => void; warn?: boolean; hidden?: boolean }) {
   return (
     <li className={`flex items-center gap-3 py-2 ${hidden ? "hidden" : ""}`}>
       <div className="min-w-0 flex-1">
@@ -1038,7 +1061,7 @@ function CountRow({ name, sub, unit, inputName, inputMode, value, onChange, warn
         {sub && <div className="text-xs text-slate-500">{sub}</div>}
       </div>
       <label className="flex shrink-0 items-center gap-1.5">
-        <input name={inputName} inputMode={inputMode} value={value} onChange={(e) => onChange(e.target.value)} className="input w-[4.5rem] py-1.5 text-right" placeholder="0" aria-label={typeof name === "string" ? name : undefined} />
+        <input name={inputName} inputMode={inputMode} value={value} onFocus={onFocus} onBlur={onBlur} onChange={(e) => onChange(e.target.value)} className="input w-[4.5rem] py-1.5 text-right" placeholder="0" aria-label={typeof name === "string" ? name : undefined} />
         <span className="w-12 break-words text-[11px] leading-tight text-slate-500">{unit}</span>
       </label>
     </li>
