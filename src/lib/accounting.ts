@@ -32,6 +32,8 @@ export const COA = {
   BEBAN_BPJS: "6-1120",
   BEBAN_GAJI_OWNER: "6-1150",
   BEBAN_TRANSPORT: "6-1200",
+  /** LPG oven = Biaya Overhead Pabrik (produksi); BUKAN 6-1300 Listrik, Air & Gas (beban umum) */
+  BEBAN_LPG_PRODUKSI: "6-1310",
   BEBAN_PENYUSUTAN: "6-1700",
   BEBAN_SELISIH_PERSEDIAAN: "6-1800",
   BEBAN_REJECT_PRODUKSI: "6-1830",
