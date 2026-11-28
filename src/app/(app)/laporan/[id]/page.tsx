@@ -17,7 +17,7 @@ import { lpgTotalAset, previousLpg, storedLpg } from "@/lib/lpg";
 import { usageCheck } from "@/lib/usageStandard";
 import { isSampleTemplate, storedSamples, SAMPLE_PLATFORMS } from "@/lib/affiliateSample";
 import { ambilRecapLines } from "@/lib/ambilStok";
-import { RESULT_TITLE, resultCountStatus, resultItems, resultLines, resultValues } from "@/lib/shiftResultCount";
+import { RESULT_TITLE, resultCountStatus, resultItems, resultValues } from "@/lib/shiftResultCount";
 import { resultPlaces } from "@/lib/resultCountGroups";
 import { divisionPendingReturns } from "@/lib/borongan";
 import { confirmReturnForReport } from "../actions";
@@ -100,7 +100,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const sampleNames = new Map((await prisma.item.findMany({ where: { id: { in: storedSamples(work).map((x) => x.itemId) } }, select: { id: true, name: true } })).map((i) => [i.id, i.name]));
   const sampleStores = isSampleTemplate(template) || storedSamples(work).length ? await prisma.store.findMany({ where: { active: true }, select: { id: true, name: true }, orderBy: { name: "asc" } }) : [];
   const sampleLines = storedSamples(work).length ? ["SAMPLE AFFILIATOR (tidak dihitung resi penjualan)", ...storedSamples(work).map((x) => `${sampleNames.get(x.itemId) ?? "Produk"} × ${x.qty} → ${SAMPLE_PLATFORMS[x.platform] ?? x.platform} · ${sampleStores.find((t) => t.id === x.storeId)?.name ?? "toko"}`)] : [];
-  const extraLines = [...bLines, ...(await receiptReportLines(r.divisionId, r.date)), ...sampleLines, ...(resultStatus ? resultLines(resultStatus) : []), ...(await ambilRecapLines(r.id))];
+  const extraLines = [...bLines, ...(await receiptReportLines(r.divisionId, r.date)), ...sampleLines, ...(await ambilRecapLines(r.id))];
   const [rItems, rv] = await Promise.all([resultItems(r.divisionId), resultValues(work, r.division.reportTemplate)]);
   // Tahap "Stok jadi": hanya barang milik divisi ini, dikelompokkan produk induk → paket → series
   const places = await resultPlaces(rItems);
@@ -313,6 +313,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
               followUp={r.followUp}
               followUpStatus={r.followUpStatus}
               extraLines={extraLines}
+              resultRows={resultStatus?.rows ?? []}
               receiptLines={receiptLines}
               target={r.division.targetPerShift}
               legacyLines={entries.map((e) => `${STAGE_LABEL[e.stage]}: ${e._sum.qtyGood ?? 0} pcs (reject ${e._sum.qtyReject ?? 0})`)}

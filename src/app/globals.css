@@ -416,3 +416,18 @@ button.is-done.btn-secondary { @apply border-emerald-300 text-emerald-700; }
 .rcv-row .choice-text { white-space: nowrap; }
 .rcv-row .choice-trigger { min-width: 0; }
 .rcv-row .choice-text { display: block; flex: 1 1 auto; overflow: hidden; }
+
+/* Laporan Penutup Shift (JPG 1080px): font dasar ≥ 28px agar terbaca di HP / WhatsApp tanpa zoom */
+.doc.report-doc { max-width: 1080px; padding: 44px 48px 56px; font-size: 28px; line-height: 1.4; }
+.report-doc .doc-brand-name { font-size: 40px; }
+.report-doc .doc-brand-tag { font-size: 20px; }
+.report-doc .doc-contact { font-size: 22px; max-width: 420px; }
+.report-doc .doc-eyebrow { font-size: 20px; }
+.report-doc .doc-title { font-size: 60px; }
+.report-doc .doc-subtitle { font-size: 34px; }
+.report-doc .doc-meta-label { font-size: 22px; }
+.report-doc .doc-meta-value { font-size: 26px; font-weight: 700; }
+.report-doc .doc-notes { font-size: 20px; }
+.report-doc .doc-sign { font-size: 22px; }
+.report-doc .report-jpg .text-sm { font-size: 28px; }
+.report-doc .doc-body { gap: 18px; }

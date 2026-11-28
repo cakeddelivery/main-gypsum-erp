@@ -103,7 +103,9 @@ export function resultLines(s: NonNullable<Awaited<ReturnType<typeof resultCount
   const f = (x: number) => x.toLocaleString("id-ID");
   return [
     s.title.toUpperCase(),
-    ...s.rows.map((r) => `${r.name}: ${f(r.counted)} ${r.unit}${r.diff === 0 ? " ✓ sesuai sistem" : ` ⚠ sistem ${f(r.system)} (selisih ${r.diff > 0 ? "+" : ""}${f(r.diff)})${r.big ? " ‼ SELISIH BESAR" : ""}`}`),
+    // Barang 0 yang sesuai sistem dirangkum satu baris (laporan tidak memanjang oleh puluhan baris "0 ✓")
+    ...s.rows.filter((r) => r.counted > 0 || r.diff !== 0 || r.system > 0).map((r) => `${r.name}: ${f(r.counted)} ${r.unit}${r.diff === 0 ? " ✓ sesuai sistem" : ` ⚠ sistem ${f(r.system)} (selisih ${r.diff > 0 ? "+" : ""}${f(r.diff)})${r.big ? " ‼ SELISIH BESAR" : ""}`}`),
+    ...(s.rows.some((r) => r.counted === 0 && r.diff === 0 && r.system === 0) ? [`${s.rows.filter((r) => r.counted === 0 && r.diff === 0 && r.system === 0).length} item lain: 0, sesuai sistem`] : []),
     ...(s.rows.some((r) => r.diff !== 0) ? [s.applies ? "Stok sistem disamakan dengan hitungan (selisih persediaan)." : "Selisih hanya ditandai; stok sistem belum diubah (sakelar Hasil kerja → stok belum menyala)."] : []),
   ];
 }
