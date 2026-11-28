@@ -4,6 +4,7 @@
  *   npm run hitung:biaya-oven -- --pasang              -> pratinjau pemasangan resep
  *   npm run hitung:biaya-oven -- --pasang --jalankan   -> menyimpan (jalankan `npm run backup` dulu)
  *   --gypsum=<SKU>                                     -> pilih barang gypsum bila ada beberapa
+ *   --gram-per-unit=<N>                                -> bila satuan resep gypsum bukan gram/kg (mis. sak = 18000 gram): koreksi/pasang 30 g = 30÷N satuan
  *   --aset=<regex>                                     -> pilih aset tetap alat produksi/cetakan (bawaan: cetakan|alat|mesin|produksi, tanpa oven)
  * Patung cetak = 30 g gypsum; patung kering = 1 patung cetak + biaya oven per pcs (overhead LPG di resep, tanpa model baru).
  * Biaya LPG per pcs = biaya LPG (isi ulang tabung dari laporan Oven yang dipasangkan ke transaksi Finance) ÷ panen patung kering laporan Oven.
@@ -42,7 +43,8 @@ async function main() {
   if (argv.includes("--pasang")) {
     const apply = argv.includes("--jalankan");
     const gypsumSku = argv.find((a) => a.startsWith("--gypsum="))?.slice(9);
-    const plan = await pasangBiayaOven(prisma, apply, { gypsumSku, poolAset: pola });
+    const gpu = Number(argv.find((a) => a.startsWith("--gram-per-unit="))?.slice(16));
+    const plan = await pasangBiayaOven(prisma, apply, { gypsumSku, poolAset: pola, gramPerUnit: gpu > 0 ? gpu : undefined });
     console.log(`\n${apply ? "DISIMPAN" : "PRATINJAU PASANG (belum disimpan)"}:`);
     for (const b of plan.baris) console.log(`  ${b}`);
     for (const d of plan.ditunda) console.log(`  ! ${d}`);
