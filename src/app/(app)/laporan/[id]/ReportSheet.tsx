@@ -144,7 +144,9 @@ export function ReportSheet(p: Props) {
 
             <Heading tone="red" wide={wide}>Order bahan baku</Heading>
             {order.length ? (
-              <div className={`px-2 ${z.txt} text-[#be123c]`}>⚠ {order.map((o) => `${o.name} (${fmt(o.qty!)}/${fmt(o.limit)} ${o.unit})`).join(" · ")}</div>
+              <div className={`grid gap-x-4 px-2 ${z.txt} text-[#be123c] ${wide ? "grid-cols-2" : "grid-cols-1 sm:grid-cols-2"}`}>
+                {order.map((o) => <div key={o.itemId} className="break-words">⚠ {o.name} — {fmt(o.qty!)}/{fmt(o.limit)} {o.unit}</div>)}
+              </div>
             ) : (
               <div className={`px-2 ${z.small} text-[#6b7280]`}>Semua bahan di atas limit</div>
             )}

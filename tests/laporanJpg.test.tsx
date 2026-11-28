@@ -33,7 +33,8 @@ describe("JPG Laporan Penutup Shift", () => {
     expect(html.match(/✓ sesuai sistem/g)).toBeNull();
     // bahan di bawah limit ditandai merah + order ringkas
     expect(html).toContain("⚠ Lem contoh");
-    expect(html).toContain("Lem contoh (4/10 kg)");
+    expect(html).toContain("Lem contoh — 4/10 kg"); // satu bahan per baris, grid 2 kolom
+    expect(html).not.toContain("Lem contoh (4/10 kg)");
     expect(html).toContain("grid-cols-2");
     if (process.env.JPG_HTML_OUT) fs.writeFileSync(process.env.JPG_HTML_OUT, html);
   });

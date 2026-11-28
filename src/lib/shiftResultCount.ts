@@ -23,8 +23,12 @@ export function bigDiff(diff: number, system: number) {
  * Hanya barang aktif. Setengah jadi dihitung di gudang setengah jadi, produk jadi di gudang barang jadi.
  */
 export async function resultItems(divisionId: string, db: Tx | typeof prisma = prisma) {
+  // Barang milik divisi (Item.divisionId) + keluaran tugas borongan divisi itu (yang diterima lewat Penerimaan divisi, mis. Single Pack satuan untuk Packing)
+  // yang Item.divisionId-nya KOSONG. Yang divisinya terisi divisi lain tidak ditarik (dihitung dua divisi = penyesuaian saling timpa): perbaiki lewat koreksi:divisi-hasil
+  const outputs = await db.pieceTask.findMany({ where: { divisionId, active: true, outputItemId: { not: null } }, select: { outputItemId: true } });
+  const outIds = [...new Set(outputs.map((t) => t.outputItemId!))];
   return db.item.findMany({
-    where: { divisionId, active: true, type: { in: ["BARANG_DALAM_PROSES", "BARANG_JADI"] } },
+    where: { active: true, type: { in: ["BARANG_DALAM_PROSES", "BARANG_JADI"] }, OR: [{ divisionId }, ...(outIds.length ? [{ id: { in: outIds }, divisionId: null }] : [])] },
     orderBy: [{ type: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
     select: { id: true, sku: true, name: true, unit: true, type: true, minStock: true },
   });
@@ -180,4 +184,38 @@ export function missingStockCounts(
   const cut = (l: string[]) => (l.length > 15 ? `${l.slice(0, 15).join(", ")}, dan ${l.length - 15} lainnya` : l.join(", "));
   const parts = [bahan.length ? `Bahan baku: ${cut(bahan)}` : "", hasil.length ? `Setengah jadi / produk jadi: ${cut(hasil)}` : ""].filter(Boolean);
   return parts.length ? `Stok akhir belum diisi (angka 0 boleh, tapi harus diisi). ${parts.join(" · ")}` : null;
+}
+
+export type AuditStokAkhir = {
+  divisi: { id: string; nama: string; template: string | null; jumlah: number; /** Keluaran tugas borongan divisi yang Item.divisionId-nya bukan divisi ini (kini tetap masuk daftar) */ lewatKeluaranTugas: { sku: string; nama: string; divisiItem: string | null }[]; /** Keluaran tugas divisi ini yang Item.divisionId-nya divisi LAIN → tidak muncul di form divisi ini (koreksi:divisi-hasil) */ keluaranDivisiLain: { sku: string; nama: string; divisiItem: string }[] }[];
+  /** Barang setengah jadi / jadi aktif yang ADA stoknya tetapi tidak masuk daftar stok akhir divisi mana pun */
+  yatim: { sku: string; nama: string; tipe: string; qty: number; divisiItem: string | null }[];
+};
+
+/** Audit (hanya baca): barang stok akhir per divisi, dan barang berstok yang tidak dihitung oleh divisi mana pun. */
+export async function auditStokAkhirDivisi(db: Tx | typeof prisma = prisma): Promise<AuditStokAkhir> {
+  const divs = await db.division.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true, reportTemplate: true } });
+  const names = new Map(divs.map((d) => [d.id, d.name]));
+  const covered = new Set<string>();
+  const divisi: AuditStokAkhir["divisi"] = [];
+  for (const d of divs.filter((x) => x.reportTemplate)) {
+    const items = await resultItems(d.id, db);
+    items.forEach((i) => covered.add(i.id));
+    const own = new Set((await db.item.findMany({ where: { id: { in: items.map((i) => i.id) }, divisionId: d.id }, select: { id: true } })).map((x) => x.id));
+    const viaTask = items.filter((i) => !own.has(i.id));
+    const meta = viaTask.length ? await db.item.findMany({ where: { id: { in: viaTask.map((i) => i.id) } }, select: { id: true, divisionId: true } }) : [];
+    const outs = await db.pieceTask.findMany({ where: { divisionId: d.id, active: true, outputItemId: { not: null } }, select: { outputItem: { select: { sku: true, name: true, divisionId: true, active: true } } } });
+    const other = new Map<string, { sku: string; nama: string; divisiItem: string }>();
+    for (const t of outs) { const o = t.outputItem; if (o?.active && o.divisionId && o.divisionId !== d.id) other.set(o.sku, { sku: o.sku, nama: o.name, divisiItem: names.get(o.divisionId) ?? o.divisionId }); }
+    divisi.push({ id: d.id, nama: d.name, template: d.reportTemplate, jumlah: items.length, keluaranDivisiLain: [...other.values()], lewatKeluaranTugas: viaTask.map((i) => ({ sku: i.sku, nama: i.name, divisiItem: names.get(meta.find((m) => m.id === i.id)?.divisionId ?? "") ?? null })) });
+  }
+  const locs = await locationSettings(db);
+  const rest = await db.item.findMany({ where: { active: true, type: { in: ["BARANG_DALAM_PROSES", "BARANG_JADI"] }, id: { notIn: [...covered] } }, select: { id: true, sku: true, name: true, type: true, divisionId: true } });
+  const yatim: AuditStokAkhir["yatim"] = [];
+  for (const i of rest) {
+    const loc = i.type === "BARANG_JADI" ? locs.finished : locs.wip;
+    const qty = loc ? Math.round((await qtyAt(db, i.id, loc)) * 1000) / 1000 : 0;
+    if (qty > 0) yatim.push({ sku: i.sku, nama: i.name, tipe: i.type, qty, divisiItem: i.divisionId ? names.get(i.divisionId) ?? null : null });
+  }
+  return { divisi, yatim: yatim.sort((a, b) => b.qty - a.qty) };
 }

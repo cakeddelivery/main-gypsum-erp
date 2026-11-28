@@ -26,7 +26,7 @@ export async function planDivisiHasil(db: Db): Promise<{ fixes: DivisiFix[]; ok:
   }
   const names = new Map((await db.division.findMany({ select: { id: true, name: true } })).map((d) => [d.id, d.name]));
   const products = await db.product.findMany({
-    where: { active: true, finishedItemId: { not: null }, finishedItem: { active: true, type: "BARANG_JADI" } },
+    where: { active: true, finishedItemId: { not: null }, finishedItem: { active: true, type: { in: ["BARANG_JADI", "BARANG_DALAM_PROSES"] } } },
     select: { sku: true, type: true, family: { select: { name: true } }, finishedItem: { select: { id: true, sku: true, name: true, divisionId: true } } },
     orderBy: { sku: "asc" },
   });
