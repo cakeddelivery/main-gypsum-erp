@@ -4,13 +4,13 @@ import { giveAdvance, PayrollError } from "./payroll";
 import { createPurchase, termFor } from "./purchase";
 import { nextInstallment, splitPayment } from "./payables";
 import { applyReserveOption } from "./reserve";
-import { bookPayablePayment, bookReserveTransfer, FinanceError } from "./finance";
+import { bookPayablePayment, bookReserveTransfer, FinanceError, rejectTransaction } from "./finance";
 import type { ReservePart } from "./reserveSync";
 import { findSupplierByName } from "./suppliers";
 import { readProofAmount, repayTalangan, talanganSummary } from "./talangan";
 import { saveProof } from "./storage";
 import { BoronganError, boronganScope, BORONGAN_ROLE_LABEL, createHandover, HANDOVER_LABEL, payLines, receiveHandover, recordResult, settlePoint, type Scope } from "./borongan";
-import { StockError } from "./stock";
+import { StockError, locationSettings } from "./stock";
 import { idr, parseIDR } from "./money";
 import { addDays, dateOnly, fmtDate, fmtDateTime, jakartaDateTime, todayStr } from "./time";
 import { esc, type InlineButton } from "./telegram";
@@ -22,6 +22,7 @@ import { ackIds, guardDup } from "./botDup";
 import { gajiFlow } from "./botGaji";
 import { workshopFlow } from "./botWorkshop";
 import { ambilFlow } from "./botAmbil";
+import { KIND_LABEL, type IntakeKind } from "./botClassify";
 
 /**
  * Isian bot Telegram Tahap 3: kasbon, pembelian bahan baku, dan borongan tetangga
@@ -191,6 +192,7 @@ function nextPrefilled(s: Session): string {
   const lines = getLines(s);
   if (!lines.length) return "item";
   if (!d.pre) return "more";
+  if (!d.locAsked) return "loc";
   const total = lines.reduce((t, l) => t + (l.amount ?? 0), 0);
   if (d.paid == null) d.paid = total;
   if (Number(d.paid) > 0 && !d.bankId) return "bank";
@@ -254,6 +256,26 @@ export async function prefilledPurchase(ctx: Ctx, p: PurchasePrefill): Promise<S
   return s;
 }
 
+/** Lokasi lain selain gudang bahan baku bawaan yang boleh menerima pembelian (bukan titik borongan, gudang setengah jadi/jadi) */
+async function purchaseLocations(raw: string | null) {
+  const { wip, finished } = await locationSettings(prisma);
+  return prisma.location.findMany({ where: { boronganPoint: null, id: { notIn: [raw, wip, finished].filter((x): x is string => !!x) } }, orderBy: { name: "asc" }, take: 10 });
+}
+
+export type PurchaseUnknownPrefill = { amount: number | null; bankId: string | null; supplier: { id: string; name: string } | null; date: string | null; time: string | null; note: string | null; proofPath: string | null; tx: unknown; draftId?: string | null };
+
+/** Pembelian dari pesan/bukti yang barangnya belum dikenali: bot MEMINTA supplier, barang (pencarian master), qty, lokasi, harga, cara bayar */
+export async function prefilledPurchaseUnknown(ctx: Ctx, p: PurchaseUnknownPrefill): Promise<Session | null> {
+  if (!can(ctx.i, "finance.approve")) return null;
+  const bank = p.bankId ? await prisma.bankAccount.findUnique({ where: { id: p.bankId } }) : null;
+  const s: Session = {
+    chatId: ctx.chatId, userId: ctx.i.userId, flow: "beli", step: "sup",
+    data: { page: 0, pre: 1, lines: "[]", supId: p.supplier?.id ?? null, supName: p.supplier?.name ?? null, supNew: 0, itemId: null, itemName: null, unit: null, qty: null, preAmount: p.amount, bankId: bank?.id ?? null, bankName: bank?.name ?? null, date: p.date, time: p.time, note: p.note ? p.note.slice(0, 200) : null, proofPath: p.proofPath, others: null, tx: JSON.stringify(p.tx), draftId: p.draftId ?? null },
+  };
+  s.step = nextPrefilled(s);
+  return s;
+}
+
 const purchase: FlowDef = {
   async start(ctx) {
     if (!can(ctx.i, "finance.approve")) return "Anda tidak berwenang mencatat pembelian";
@@ -269,6 +291,7 @@ const purchase: FlowDef = {
       lines.length ? `${linesText(lines)}\nTagihan: <b>${idr(total)}</b>` : "",
       d.itemName && s.step !== "item" ? `Barang: ${esc(String(d.itemName))}${d.qty ? ` · ${fmtQty(Number(d.qty))} ${esc(String(d.unit))}` : ""}` : "",
       d.paid != null ? `Dibayar sekarang: ${idr(Number(d.paid))}${Number(d.paid) < total ? ` · sisa hutang ${idr(total - Number(d.paid))}` : " (lunas)"}` : "",
+      d.locName ? `Disimpan di: ${esc(String(d.locName))}` : "",
       d.bankName ? `Dari rekening: ${esc(String(d.bankName))}` : "",
       d.due ? `Jatuh tempo: ${fmtDate(dateOnly(String(d.due)))}` : "",
       d.note ? `Catatan: ${esc(String(d.note))}` : "",
@@ -277,17 +300,28 @@ const purchase: FlowDef = {
     ].filter(Boolean).join("\n");
     const page = Number(d.page ?? 0);
     // Pesan yang dikenali sebagai pembelian: tetap bisa dicatat sebagai transaksi biasa
-    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan pembelian, catat transaksi biasa", callback_data: "f:plain" }]] : [];
+    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan pembelian, catat transaksi biasa", callback_data: "f:plain" }], [{ text: "✏️ Ubah jenis", callback_data: "f:jns" }]] : [];
     const others: { id: string; name: string }[] = d.others ? JSON.parse(String(d.others)) : [];
     switch (s.step) {
       case "sup": {
         const sups = await prisma.supplier.findMany({ where: { active: true }, orderBy: { name: "asc" }, skip: page * PAGE, take: PAGE + 1 });
         return { text: `${head}\nPilih supplier, atau ✍️ ketik nama supplier baru:`, buttons: [...chunk(sups.slice(0, PAGE).map((x) => ({ text: x.name.slice(0, 30), callback_data: `f:${x.id}` })), 2), ...pager(page, sups.length > PAGE), ...plainRow, cancelRow] };
       }
-      case "item":
-        return itemPrompt(head);
-      case "qty":
-        return { text: `${head}\n\n✍️ Ketik jumlah dalam <b>${esc(String(d.unit))}</b>, contoh <code>10</code>`, buttons: [...plainRow, cancelRow] };
+      case "item": {
+        const p = itemPrompt(head);
+        // Pembelian dari pesan/bukti yang barangnya belum diketahui: simpan sebagai draft "perlu dilengkapi" (tidak diposting ke persediaan)
+        return d.tx ? { ...p, buttons: [[{ text: "❓ Tidak tahu barangnya (simpan draft perlu dilengkapi)", callback_data: "f:unk" }], ...(p.buttons ?? [])] } : p;
+      }
+      case "qty": {
+        const hu = d.hppUnit ? String(d.hppUnit) : "";
+        const conv = hu && hu.toLowerCase() !== String(d.unit).toLowerCase() && Number(d.hppFactor) > 1 ? `\nAtau dalam satuan resep, contoh <code>${fmtQty(Number(d.hppFactor) / 2)} ${esc(hu)}</code> (1 ${esc(String(d.unit))} = ${fmtQty(Number(d.hppFactor))} ${esc(hu)})` : "";
+        return { text: `${head}\n\n✍️ Ketik jumlah dalam <b>${esc(String(d.unit))}</b>, contoh <code>10</code>${conv}`, buttons: [...plainRow, cancelRow] };
+      }
+      case "loc": {
+        const { raw } = await locationSettings(prisma);
+        const others = await purchaseLocations(raw);
+        return { text: `${head}\n\nBarang disimpan di mana?`, buttons: [[{ text: "Gudang bahan baku (bawaan)", callback_data: "f:def" }], ...chunk(others.map((x) => ({ text: x.name.slice(0, 28), callback_data: `f:${x.id}` })), 2), ...plainRow, cancelRow] };
+      }
       case "amt":
         return { text: `${head}\n\n✍️ Ketik <b>total harga</b> barang ini (Rp), contoh <code>850000</code> atau <code>850rb</code>`, buttons: [...plainRow, cancelRow] };
       case "more":
@@ -339,12 +373,23 @@ const purchase: FlowDef = {
         d.itemId = it.id;
         d.itemName = it.name;
         d.unit = it.unit;
+        d.hppUnit = it.hppUnit?.trim() || null;
+        d.hppFactor = Number(it.hppFactor) > 0 ? Number(it.hppFactor) : 1;
         d.qty = null;
         s.step = "qty";
         return null;
       }
       case "qty": {
-        const n = parseQty(v);
+        // "9000 gram" (satuan resep di master) dikonversi ke satuan stok (sak) sesuai faktor master; tanpa satuan = satuan stok
+        const mq = fromText ? /^\s*([\d.,]+)\s*([a-zA-Z]+)\s*$/.exec(v) : null;
+        const hu = d.hppUnit ? String(d.hppUnit).toLowerCase() : "";
+        let n: number | null;
+        if (mq && hu && mq[2].toLowerCase() === hu && hu !== String(d.unit).toLowerCase() && Number(d.hppFactor) > 1) {
+          const base = parseQty(mq[1]);
+          n = base == null ? null : Math.round((base / Number(d.hppFactor)) * 1000) / 1000;
+          if (n != null && !(n > 0)) return `${fmtQty(base!)} ${hu} terlalu kecil untuk satuan stok ${d.unit} (1 ${d.unit} = ${fmtQty(Number(d.hppFactor))} ${hu}); ketik dalam ${d.unit}`;
+        } else if (mq && mq[2].toLowerCase() === String(d.unit).toLowerCase()) n = parseQty(mq[1]);
+        else n = parseQty(v);
         if (n == null || !(n > 0)) return "Ketik jumlah lebih dari 0";
         d.qty = n;
         if (d.pre && d.preAmount) {
@@ -366,8 +411,22 @@ const purchase: FlowDef = {
       }
       case "more":
         if (fromText) return "Pilih dengan tombol";
-        s.step = v === "add" ? "item" : "paid";
+        s.step = v === "add" ? "item" : d.locAsked ? "paid" : "loc";
         return null;
+      case "loc": {
+        if (fromText) return "Pilih lokasi dengan tombol";
+        const { raw } = await locationSettings(prisma);
+        if (v === "def") { d.locId = null; d.locName = null; }
+        else {
+          const loc = (await purchaseLocations(raw)).find((x) => x.id === v);
+          if (!loc) return "Lokasi tidak ditemukan";
+          d.locId = loc.id;
+          d.locName = loc.name;
+        }
+        d.locAsked = 1;
+        s.step = d.pre ? nextPrefilled(s) : "paid";
+        return null;
+      }
       case "paid": {
         const n = !fromText && v === "full" ? total : !fromText && v === "zero" ? 0 : parseIDR(v);
         if (n == null || n < 0 || n > total) return `Nominal dibayar harus 0 – ${idr(total)}`;
@@ -404,7 +463,7 @@ const purchase: FlowDef = {
         }
         if (v !== "ok") return "Tekan Simpan atau Batal";
         if (!can(ctx.i, "finance.approve")) return "Anda tidak berwenang";
-        if (Number(d.paid) > 0 && (await guardDup(s, v, { direction: "KELUAR", amount: Number(d.paid), date: jakartaDateTime(d.date ? String(d.date) : todayStr(), d.time ? String(d.time) : "12:00"), accountId: d.bankId ? String(d.bankId) : null, text: `${d.supName ?? ""} ${lines.map((l) => l.name).join(" ")} ${d.note ?? ""}` }))) return null;
+        if (Number(d.paid) > 0 && (await guardDup(s, v, { excludeIds: d.draftId ? [String(d.draftId)] : undefined, direction: "KELUAR", amount: Number(d.paid), date: jakartaDateTime(d.date ? String(d.date) : todayStr(), d.time ? String(d.time) : "12:00"), accountId: d.bankId ? String(d.bankId) : null, text: `${d.supName ?? ""} ${lines.map((l) => l.name).join(" ")} ${d.note ?? ""}` }))) return null;
         try {
           const store = await prisma.setting.findUnique({ where: { key: "default_store_id" } });
           if (!store) return "Toko default belum diatur di Pengaturan";
@@ -418,6 +477,7 @@ const purchase: FlowDef = {
               date: jakartaDateTime(d.date ? String(d.date) : todayStr(), d.time ? String(d.time) : "12:00"),
               term,
               lines: lines.map((l) => ({ itemId: l.itemId, qty: l.qty, amount: l.amount })),
+              locationId: d.locId ? String(d.locId) : null,
               paidNow: term === "BERTAHAP" ? paid : 0,
               bankAccountId: paid > 0 ? String(d.bankId) : null,
               dueDate: term !== "LUNAS" && d.due ? jakartaDateTime(String(d.due), "12:00") : null,
@@ -429,6 +489,8 @@ const purchase: FlowDef = {
           );
           d.number = p.number;
           d.term = term;
+          // Draft transaksi yang digantikan pembelian ini ditolak: satu dokumen saja (tidak dobel dengan transaksi Finance)
+          if (d.draftId) await rejectTransaction(String(d.draftId), actorOf(ctx.i), `Diganti Pembelian ${p.number}`).catch((e) => console.error("Tolak draft pembelian gagal:", e));
         } catch (e) {
           return errMsg(e);
         }
@@ -439,7 +501,7 @@ const purchase: FlowDef = {
   },
   async finish(_ctx, s) {
     const lines = getLines(s);
-    return { text: `✅ <b>Pembelian ${esc(String(s.data.number))} tercatat</b>${s.data.term === "LUNAS" ? " (lunas)" : " (ada hutang)"}\n${esc(String(s.data.supName))}\n${linesText(lines)}\nStok sudah masuk gudang bahan baku.`, buttons: [[{ text: "🛒 Pembelian lain", callback_data: "f:start:beli" }, ...menuBtn]] };
+    return { text: `✅ <b>Pembelian ${esc(String(s.data.number))} tercatat</b>${s.data.term === "LUNAS" ? " (lunas)" : " (ada hutang)"}\n${esc(String(s.data.supName))}\n${linesText(lines)}\nStok sudah masuk ${s.data.locName ? esc(String(s.data.locName)) : "gudang bahan baku"}.`, buttons: [[{ text: "🛒 Pembelian lain", callback_data: "f:start:beli" }, ...menuBtn]] };
   },
 };
 
@@ -907,7 +969,7 @@ const payDebt: FlowDef = {
       d.date && d.date !== todayStr() ? `Tanggal: ${fmtDate(dateOnly(String(d.date)))}` : "",
       d.tx ? "<i>Dikenali dari pesan/bukti transfer sebagai pembayaran hutang.</i>" : "",
     ].filter(Boolean).join("\n");
-    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan bayar hutang, catat transaksi biasa", callback_data: "f:plain" }]] : [];
+    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan bayar hutang, catat transaksi biasa", callback_data: "f:plain" }], [{ text: "✏️ Ubah jenis", callback_data: "f:jns" }]] : [];
     switch (s.step) {
       case "pick": {
         const cands: string[] = d.cands ? JSON.parse(String(d.cands)) : [];
@@ -1036,7 +1098,7 @@ const reserveFromProof: FlowDef = {
   async prompt(s) {
     const d = s.data;
     const opts: ReserveOpt[] = JSON.parse(String(d.opts ?? "[]"));
-    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan sisihan, catat transaksi biasa", callback_data: "f:plain" }]] : [];
+    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan sisihan, catat transaksi biasa", callback_data: "f:plain" }], [{ text: "✏️ Ubah jenis", callback_data: "f:jns" }]] : [];
     const head = `<b>🏦 Dana sisihan</b>\nBukti transfer ${idr(opts[0]?.amount ?? 0)}${d.proofPath ? " (foto dilampirkan)" : ""}`;
     if (s.step === "pick") {
       return { text: `${head}\n\nNominal ini cocok dengan beberapa dana sisihan. Untuk dana yang mana?`, buttons: [...opts.map((o, k) => [{ text: `${o.label} (${o.dates.map((x) => x.slice(8)).join(",")})`.slice(0, 60), callback_data: `f:o${k}` }]), ...plainRow, cancelRow] };
@@ -1253,4 +1315,27 @@ const draftDup: FlowDef = {
   },
 };
 
-export const T3_FLOWS: Record<string, FlowDef> = { trx: draftDup, kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, tlg: talangan, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay, gaji: gajiFlow, wsp: workshopFlow, amb: ambilFlow, ...SALES_FLOWS };
+// =====================================================================
+// Pilihan jenis (pesan bebas yang ragu / "✏️ Ubah jenis"): tombol f:jns:<JENIS> ditangani di bot.ts (mengarahkan ke alur yang sesuai)
+// =====================================================================
+const pickKind: FlowDef = {
+  async start() {
+    return "Pilihan jenis dimulai dari pesan transaksi";
+  },
+  async prompt(s) {
+    const kinds: IntakeKind[] = JSON.parse(String(s.data.kinds ?? "[]"));
+    const head = String(s.data.head ?? "");
+    return {
+      text: `<b>❓ Ini jenis transaksi apa?</b>\n${head}\n\n${s.data.hint ? esc(String(s.data.hint)) : "Pilih jenis, bot langsung mengisi yang sudah terbaca dari pesan dan hanya menanyakan yang kurang."}`,
+      buttons: [...chunk(kinds.map((k) => ({ text: KIND_LABEL[k], callback_data: `f:jns:${k}` })), 1), [{ text: "📝 Transaksi biasa (draft)", callback_data: "f:jns:DRAFT" }], cancelRow],
+    };
+  },
+  async answer() {
+    return "Pilih jenis dengan tombol di atas";
+  },
+  async finish() {
+    return { text: "Selesai.", buttons: [menuBtn] };
+  },
+};
+
+export const T3_FLOWS: Record<string, FlowDef> = { trx: draftDup, kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, tlg: talangan, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay, gaji: gajiFlow, jns: pickKind, wsp: workshopFlow, amb: ambilFlow, ...SALES_FLOWS };

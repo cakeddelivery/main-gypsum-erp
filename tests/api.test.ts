@@ -186,6 +186,7 @@ describe("Webhook Telegram", () => {
     await msg("3");
     await msg("90rb");
     await cb("f:done");
+    await cb("f:def"); // lokasi penerima: gudang bahan baku bawaan
     await cb("f:full");
     await cb(`f:${bank.id}`);
     await cb("f:skip");

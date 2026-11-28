@@ -1,5 +1,5 @@
 import { prisma } from "./db";
-import { type SplitInput, createTransaction, missingFields, splitIssues, STATUS_LABEL } from "./finance";
+import { type SplitInput, createTransaction, missingFields, splitIssues, stockIssues, STATUS_LABEL } from "./finance";
 import { matchStore } from "./extract";
 import { originLabel } from "./txMirror";
 import type { CatSuggestion } from "./categorySuggest";
@@ -95,7 +95,8 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
   if (t.status === "DIBUKUKAN" || t.status === "DITOLAK" || t.status === "DIBATALKAN") return { text: lines.join("\n"), buttons };
   if (t.status === "DALAM_PROSES") return { text: lines.join("\n"), buttons: [[{ text: "💰 Uang diterima", callback_data: `wr:${t.id}` }]] };
   const issues = splitIssues(t.amount, t.direction, t.splits);
-  const missing = [...missingFields(t), ...issues];
+  const needStock = await stockIssues(prisma, t, t.splits);
+  const missing = [...missingFields(t), ...issues, ...needStock];
   const splitSum = t.splits.reduce((a, x) => a + Number(x.amount), 0);
   if (t.splits.length && splitSum !== Number(t.amount)) lines.push(`\n⚠️ Total rincian ${idr(splitSum)} tidak sama dengan nominal ${idr(t.amount)}.`);
   const noCat = t.splits.findIndex((x) => !x.categoryId && !x.itemId);
@@ -144,6 +145,11 @@ export async function draftMessage(txId: string, pick?: Pick): Promise<{ text: s
   if (pick) {
     buttons.push([{ text: "◀ Kembali", callback_data: `back:${t.id}` }]);
     return { text: lines.join("\n"), buttons };
+  }
+  // Kategori berakun Persediaan tanpa rincian barang: tidak boleh dibukukan (stok & buku besar harus cocok). Catat sebagai Pembelian dengan barang & qty.
+  if (needStock.length && !t.duplicateOfId && !pick) {
+    lines.push("\n🛒 <b>Perlu dilengkapi: barang & qty.</b> Pembelian bahan baku wajib dicatat dengan barang, jumlah, supplier, dan cara bayar (stok masuk + jurnal otomatis). Belum tahu barangnya? Biarkan draft ini; ia tidak diposting ke persediaan dan muncul di daftar tugas Finance. Bukan pembelian bahan (LPG / konsumsi / ongkir)? Ganti kategori ke kategori beban.");
+    buttons.push([{ text: "🛒 Isi barang & qty (Pembelian)", callback_data: `bp:${t.id}` }]);
   }
   if (t.duplicateOfId) {
     lines.push("\nApakah ini transaksi yang sama (terkirim dua kali)?");
