@@ -4,6 +4,7 @@ import { requirePerm } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { fmtDateTime, fmtDay } from "@/lib/time";
 import { STAGE_LABEL, locationSettings, qtyAt } from "@/lib/stock";
+import { divisionLocationId, isKering } from "@/lib/ambilStok";
 import { flowLines, isTemplate, plannedFlow, toEntries, type StockCountRow, type WorkData } from "@/lib/shiftReport";
 import { refreshDraftChecklists } from "@/lib/shiftReportChecklist";
 import { boronganLines } from "@/lib/shiftReportBorongan";
@@ -105,9 +106,10 @@ export default async function ReportDetail({ params, searchParams }: { params: P
   const places = await resultPlaces(rItems);
   // Stok sistem per kolom hitung (untuk bagian "stok 0 opsional" & konfirmasi 0 yang tak tersentuh)
   const locs = await locationSettings(prisma);
+  const divLoc = await divisionLocationId(prisma, r.division.reportTemplate);
   const systemQty: Record<string, number> = {};
   for (const i of rItems) {
-    const loc = i.type === "BARANG_JADI" ? locs.finished : i.type === "BARANG_DALAM_PROSES" ? locs.wip : null;
+    const loc = i.type === "BARANG_JADI" ? locs.finished : i.type === "BARANG_DALAM_PROSES" ? (divLoc && isKering(i.sku) ? divLoc : locs.wip) : null;
     if (loc) systemQty[`rc.${i.id}`] = Math.round((await qtyAt(prisma, i.id, loc)) * 1000) / 1000;
   }
   if (locs.raw) for (const row of editStock) systemQty[`s.${row.itemId}`] = Math.round((await qtyAt(prisma, row.itemId, locs.raw)) * 1000) / 1000;
@@ -195,6 +197,7 @@ export default async function ReportDetail({ params, searchParams }: { params: P
                   catalogs={catalogs}
                   mixDefault={mixDefault}
                   systemQty={systemQty}
+                  jadiKeys={rItems.filter((i) => i.type === "BARANG_JADI").map((i) => i.id)}
                   resultCount={[...rItems].sort((a, b) => (places.get(a.id)?.order ?? 0) - (places.get(b.id)?.order ?? 0)).map((i) => { const pl = places.get(i.id); return { key: i.id, label: i.name, unit: i.unit, qty: rv[i.id] ?? null, limit: Number(i.minStock), group: pl?.group, sub: pl?.sub, col: pl?.col }; })}
                   flow={flowOn && template ? flow : null}
                   sent={r.workPostedVersion > 0 || r.status !== "DRAFT"}
