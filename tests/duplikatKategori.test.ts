@@ -192,10 +192,12 @@ describe("Cek transaksi mirip", () => {
     const msg = `beli kardus uji dobel 50 pcs ${amt} dari seabank`;
     await say(msg);
     expect((await session())?.flow).toBe("beli");
+    await tap("f:def");
     await tap("f:ok");
     const count = await prisma.purchase.count();
 
     await say(msg);
+    await tap("f:def");
     await tap("f:ok");
     expect(sent.at(-1)!.text).toContain("Mirip transaksi yang sudah ada");
     expect(btns()).toEqual(expect.arrayContaining(["f:dupok", "f:dupno", "f:dupv"]));
@@ -210,6 +212,7 @@ describe("Cek transaksi mirip", () => {
     expect(await session()).toBeNull();
 
     await say(msg);
+    await tap("f:def");
     await tap("f:ok");
     expect((await session())?.step).toBe("dup");
     await tap("f:dupok");
@@ -226,7 +229,7 @@ describe("Cek transaksi mirip", () => {
     expect(btns()).toEqual(expect.arrayContaining(["f:resume", "f:x"]));
     await tap("f:resume");
     expect(sent.at(-1)!.text).toContain("Pembelian");
-    expect((await session())?.step).toBe("confirm");
+    expect((await session())?.step).toBe("loc");
   });
 
   it("kartu draft: pembuat bisa menyatakan berbeda; sisihan/talangan yang belum dibukukan tidak buntu", async () => {

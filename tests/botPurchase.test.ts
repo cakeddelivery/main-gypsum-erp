@@ -47,8 +47,10 @@ describe("Bot: pembelian bahan baku dari pesan", () => {
     expect(await prisma.financeTransaction.count()).toBe(before);
     const s = await prisma.botSession.findUniqueOrThrow({ where: { chatId: String(TG) } });
     expect(s.flow).toBe("beli");
-    expect(s.step).toBe("confirm");
-    const d = s.data as Record<string, string>;
+    expect(s.step).toBe("loc"); // lokasi penerima barang ditanyakan dulu
+    await tap("f:def");
+    expect((await prisma.botSession.findUniqueOrThrow({ where: { chatId: String(TG) } })).step).toBe("confirm");
+    const d = (await prisma.botSession.findUniqueOrThrow({ where: { chatId: String(TG) } })).data as Record<string, string>;
     expect(JSON.parse(d.lines)).toEqual([expect.objectContaining({ itemId, qty: 2000, amount: 450000 })]);
     expect(d.supName).toBe("Toko Uji Plastik");
     expect(sent.at(-1)?.text).toContain("Pembelian bahan baku");
@@ -171,7 +173,9 @@ describe("Rincian: satu transfer untuk beberapa keperluan", () => {
     const msg = sent.at(-1)!;
     expect(msg.text).toContain("Rincian (3)");
     // Barang zeta belum berkategori -> tombol pilihan kategori rincian 2
-    const sc = msg.buttons!.flat().find((b) => b.callback_data.startsWith(`sc:${t.id}:1:`));
+    // Rincian tanpa barang tidak boleh berkategori Persediaan (wajib barang & qty): pilih kategori beban
+    const inv = (await prisma.txCategory.findMany({ where: { coaAccount: { code: { in: ["1-1401", "1-1402", "1-1403"] } } }, select: { id: true } })).map((c) => c.id.slice(-12));
+    const sc = msg.buttons!.flat().find((b) => b.callback_data.startsWith(`sc:${t.id}:1:`) && !inv.some((x) => b.callback_data.endsWith(`:${x}`)));
     expect(sc).toBeTruthy();
     await tap(sc!.callback_data);
     const t2 = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: t.id } });
