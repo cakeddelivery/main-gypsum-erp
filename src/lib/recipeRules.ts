@@ -57,7 +57,7 @@ export async function recipeDuplicateErrors(db: DB, r: RecipeCheckInput): Promis
   return [...new Set(errors)];
 }
 
-export type AuditFinding = { owner: "Produk" | "Setengah jadi"; ownerId: string; name: string; kind: "DOBEL_UPAH" | "DOBEL_OVERHEAD" | "UPAH_MANUAL" | "BIAYA_MANUAL_LAMA" | "FAKTOR_OVERHEAD"; detail: string; proposal: string; amount: number };
+export type AuditFinding = { owner: "Produk" | "Setengah jadi"; ownerId: string; name: string; kind: "DOBEL_UPAH" | "DOBEL_OVERHEAD" | "UPAH_MANUAL" | "BIAYA_MANUAL_LAMA" | "FAKTOR_OVERHEAD"; detail: string; proposal: string; amount: number; /** Baris resep (RecipeLabor / RecipeOverhead) penyebab temuan dobel: dipakai skrip perbaiki:resep-dobel */ rowId?: string; row?: "labor" | "overhead" };
 
 /** Audit semua resep (HANYA MEMBACA): upah/overhead dobel antar tahap, upah manual, biaya manual lama produk, faktor overhead ≠ 1 */
 export async function auditRecipes(db: DB = prisma): Promise<AuditFinding[]> {
@@ -70,12 +70,12 @@ export async function auditRecipes(db: DB = prisma): Promise<AuditFinding[]> {
     const cov = await coverageOf(db, compIds);
     for (const l of labor) {
       const from = l.taskId ? cov.tasks.get(l.taskId) : undefined;
-      if (from) out.push({ owner, ownerId: id, name, kind: "DOBEL_UPAH", detail: `Upah "${l.name}" Rp${Number(l.rate).toLocaleString("id-ID")} juga ada di setengah jadi "${from}"`, proposal: "Hapus baris upah ini dari resep (sudah terhitung di setengah jadi)", amount: Number(l.rate) });
+      if (from) out.push({ owner, ownerId: id, name, kind: "DOBEL_UPAH", rowId: l.id, row: "labor", detail: `Upah "${l.name}" Rp${Number(l.rate).toLocaleString("id-ID")} juga ada di setengah jadi "${from}"`, proposal: "Hapus baris upah ini dari resep (sudah terhitung di setengah jadi)", amount: Number(l.rate) });
       if (l.override || !l.taskId) out.push({ owner, ownerId: id, name, kind: "UPAH_MANUAL", detail: `Upah "${l.name}" Rp${Number(l.rate).toLocaleString("id-ID")} diketik manual (bukan dari Tugas & Tarif)`, proposal: l.taskId ? "Kembalikan ke tarif Tugas & Tarif (hapus override) kecuali Owner menyetujui" : "Buat Tugas & Tarif untuk pekerjaan ini lalu pilih di resep", amount: 0 });
     }
     for (const o of oh) {
       const from = cov.overheads.get(o.overheadId);
-      if (from) out.push({ owner, ownerId: id, name, kind: "DOBEL_OVERHEAD", detail: `Overhead "${o.overhead.name}" juga ada di setengah jadi "${from}"`, proposal: "Hapus overhead ini dari resep (sudah terhitung di tahap sebelumnya)", amount: 0 });
+      if (from) out.push({ owner, ownerId: id, name, kind: "DOBEL_OVERHEAD", rowId: o.id, row: "overhead", detail: `Overhead "${o.overhead.name}" juga ada di setengah jadi "${from}"`, proposal: "Hapus overhead ini dari resep (sudah terhitung di tahap sebelumnya)", amount: 0 });
       if (Number(o.factor) !== 1) out.push({ owner, ownerId: id, name, kind: "FAKTOR_OVERHEAD", detail: `Overhead "${o.overhead.name}" faktor ${Number(o.factor)} (bukan 1)`, proposal: "Setel faktor 1 kecuali Owner menetapkan khusus", amount: 0 });
     }
   };

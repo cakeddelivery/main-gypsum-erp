@@ -1,5 +1,5 @@
 /*
- * Revaluasi harga rata-rata (avgCost) barang setengah jadi / jadi yang masih Rp 0 menjadi harga resep (bahan + upah borongan, tanpa overhead).
+ * Revaluasi harga rata-rata (avgCost) barang setengah jadi / jadi yang masih Rp 0 menjadi harga resep (bahan + upah borongan + overhead resep, sama dengan HPP di Produk & HPP).
  * Selisih nilai persediaan dijurnal ke Beban Selisih Persediaan (6-1800), satu transaksi, idempoten, ada audit.
  *   npm run hpp:revaluasi                              -> pratinjau (barang, harga lama → baru, qty, selisih Rp)
  *   npm run hpp:revaluasi -- --jalankan                -> menyimpan (jalankan `npm run backup` dulu)
