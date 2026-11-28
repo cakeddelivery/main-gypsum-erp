@@ -539,7 +539,7 @@ async function finish(ctx: Ctx, s: Session) {
   return present(ctx, { text: `✅ <b>Mutasi stok tercatat</b>\n${MOVEMENT_LABEL[d.type as MovementType]} · ${esc(String(d.itemName))} ${fmtQty(Number(d.qty))} ${esc(String(d.unit))}\n\n${await stockSummary(String(d.itemId))}`, buttons: again("mut", "🔁 Mutasi lagi") });
 }
 
-async function start(ctx: Ctx, flow: string) {
+export async function startFlow(ctx: Ctx, flow: string) {
   const { i, chatId } = ctx;
   let r: Session | string | Prompt;
   if (flow === "stok") return present(ctx, stockMenu(i));
@@ -609,7 +609,7 @@ export async function handleFlowCallback(i: BotIdent, cbId: string, chatId: stri
   if (a === "start") {
     await answerCallback(cbId, "");
     await clearSession(chatId, i.userId);
-    return start(ctx, b);
+    return startFlow(ctx, b);
   }
   if (a === "x") {
     const s = await getSession(chatId, owner);

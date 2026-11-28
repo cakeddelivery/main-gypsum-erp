@@ -124,6 +124,22 @@ export async function findDuplicate(tx: Tx | typeof prisma, input: { direction: 
   return hits[0] ?? null;
 }
 
+/** Akun persediaan: debit ke akun ini WAJIB disertai stok masuk (barang & qty) */
+const INVENTORY_ACCOUNT_CODES = ["1-1401", "1-1402", "1-1403"];
+
+/**
+ * Pembelian bahan baku harus dicatat dengan barang & qty (Stok → Pembelian / Barang masuk, atau rincian dengan barang) supaya stok dan buku
+ * besar cocok. Transaksi pengeluaran yang kategorinya berakun Persediaan tanpa rincian barang TIDAK boleh dibukukan (tidak ada debit
+ * persediaan tanpa stok). Bayar hutang (payableId), baris tertaut menu lain (origin), dan kategori beban tidak terkena.
+ */
+export async function stockIssues(db: Tx | typeof prisma, t: { direction: TxDirection; categoryId?: string | null; payableId?: string | null; origin?: string | null }, splits: { categoryId?: string | null; itemId?: string | null }[] = []): Promise<string[]> {
+  if (t.direction !== "KELUAR" || t.origin) return [];
+  const ids = splits.length ? splits.filter((x) => !x.itemId && x.categoryId).map((x) => x.categoryId!) : t.payableId || !t.categoryId ? [] : [t.categoryId];
+  if (!ids.length) return [];
+  const n = await db.txCategory.count({ where: { id: { in: ids }, coaAccount: { code: { in: INVENTORY_ACCOUNT_CODES } } } });
+  return n ? ["barang & qty pembelian bahan (kategori berakun Persediaan: catat lewat Pembelian / rincian dengan barang, atau pilih kategori beban)"] : [];
+}
+
 export function missingFields(t: { direction: TxDirection; amount: number | bigint; accountId?: string | null; toAccountId?: string | null; categoryId?: string | null; storeId?: string | null; payableId?: string | null }) {
   const m: string[] = [];
   if (!t.amount || Number(t.amount) <= 0) m.push("nominal");
@@ -171,7 +187,7 @@ export async function createTransaction(input: TxInput, source: TxSource, actor:
       input.categoryId = null;
     } else input.payableId = null;
     const dup = await findDuplicate(tx, input, undefined, input.dupAckIds ?? []);
-    const missing = [...missingFields(input), ...splitIssues(input.amount, input.direction, splits)];
+    const missing = [...missingFields(input), ...splitIssues(input.amount, input.direction, splits), ...(await stockIssues(tx, { direction: input.direction, categoryId: input.categoryId, payableId: input.payableId }, splits))];
     let status: TxStatus = "DRAFT";
     if (source !== "MANUAL" || opts.submit) status = dup || missing.length ? "PERLU_DITINJAU" : "MENUNGGU_KONFIRMASI";
     const number = await nextTxNumber(tx, input.date);
@@ -278,7 +294,8 @@ export async function submitForConfirmation(id: string, actor: Actor, note?: str
   return prisma.$transaction(async (tx) => {
     const cur = await tx.financeTransaction.findUniqueOrThrow({ where: { id } });
     if (cur.status !== "DRAFT" && cur.status !== "PERLU_DITINJAU") throw new FinanceError("Status transaksi tidak dapat diajukan");
-    const missing = [...missingFields({ ...cur }), ...splitIssues(cur.amount, cur.direction, await tx.financeTxSplit.findMany({ where: { transactionId: id } }))];
+    const sp0 = await tx.financeTxSplit.findMany({ where: { transactionId: id } });
+    const missing = [...missingFields({ ...cur }), ...splitIssues(cur.amount, cur.direction, sp0), ...(await stockIssues(tx, cur, sp0))];
     if (missing.length) throw new FinanceError(`Lengkapi data dahulu: ${missing.join(", ")}`);
     const t = await tx.financeTransaction.update({ where: { id }, data: { status: "MENUNGGU_KONFIRMASI" } });
     await tx.approvalLog.create({ data: { transactionId: id, action: cur.status === "DRAFT" ? "DIAJUKAN" : "DITINJAU", fromStatus: cur.status, toStatus: "MENUNGGU_KONFIRMASI", actorUserId: actor.id, actorName: actor.name, viaTelegramId: actor.telegramId ?? null, note: note ?? null } });
@@ -432,7 +449,7 @@ async function bookInTx(tx: Tx, id: string, actor: Actor & { id: string }, note?
     if (cur.status === "DALAM_PROSES") throw new FinanceError("Withdraw ini masih Dalam Proses: tekan \"Uang diterima\" setelah uangnya masuk rekening");
     if (cur.status !== "MENUNGGU_KONFIRMASI") throw new FinanceError("Hanya transaksi berstatus Menunggu Konfirmasi yang dapat dibukukan");
     const splits = await tx.financeTxSplit.findMany({ where: { transactionId: id }, orderBy: { sortOrder: "asc" } });
-    const missing = [...missingFields(cur), ...splitIssues(cur.amount, cur.direction, splits)];
+    const missing = [...missingFields(cur), ...splitIssues(cur.amount, cur.direction, splits), ...(await stockIssues(tx, cur, splits))];
     if (missing.length) throw new FinanceError(`Data belum lengkap: ${missing.join(", ")}`);
     // Setoran BPJS Ketenagakerjaan wajib menyebut karyawan yang dibayarkan (satu atau beberapa)
     const catIds = [cur.categoryId, ...splits.map((x) => x.categoryId)].filter((x): x is string => !!x);
