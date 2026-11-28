@@ -1,43 +1,48 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { COA, defaultStoreId, postJournal } from "./accounting";
-import { itemCosts, laborRate } from "./hpp";
+import { itemCosts, laborRate, overheadUnitCost } from "./hpp";
 import { INVENTORY_COA, itemQty } from "./stock";
 import { bomLineCost, latestCost, recipeUnit } from "./unitcost";
 
 /**
- * Harga pokok barang setengah jadi & jadi (bahan + upah borongan, TANPA overhead bulanan) dari resep:
+ * Harga pokok barang setengah jadi & jadi dari resep (bahan + upah borongan + overhead resep, mis. penyusutan alat/cetakan, LPG oven) — sama dengan itemCosts().cur:
  * resep barang (ItemRecipeLine + upah) bila ada, kalau tidak resep produk (BOM + upah) untuk barang jadi produk.
  */
 type Db = PrismaClient | Prisma.TransactionClient;
 
-export type CostTarget = { mat: number; labor: number; total: number; source: "RESEP_BARANG" | "BOM_PRODUK" };
+export type CostTarget = { mat: number; labor: number; overhead: number; total: number; source: "RESEP_BARANG" | "BOM_PRODUK" };
 
 export async function costTargets(db: Db): Promise<Map<string, CostTarget>> {
   const costs = await itemCosts(db as never);
+  const cap = Number((await db.setting.findUnique({ where: { key: "overhead_capacity_pcs" } }))?.value ?? 0) || 0;
   const out = new Map<string, CostTarget>();
   for (const [id, c] of costs) {
     if (!c.fromRecipe) continue;
     const mat = Math.round(c.mat);
     const labor = Math.round(c.labor ?? 0);
-    if (mat + labor > 0) out.set(id, { mat, labor, total: mat + labor, source: "RESEP_BARANG" });
+    const overhead = Math.round(c.overhead ?? 0);
+    if (mat + labor + overhead > 0) out.set(id, { mat, labor, overhead, total: mat + labor + overhead, source: "RESEP_BARANG" });
   }
   const prods = await db.product.findMany({
     where: { finishedItemId: { not: null }, active: true },
-    select: { finishedItemId: true, extraPackaging: true, laborCost: true, bom: { include: { item: true } }, recipeLabor: { include: { task: { select: { ratePerPcs: true } } } } },
+    select: { finishedItemId: true, extraPackaging: true, laborCost: true, overheadCost: true, bom: { include: { item: true } }, recipeLabor: { include: { task: { select: { ratePerPcs: true } } } }, recipeOverhead: { include: { overhead: true } } },
   });
   for (const p of prods) {
     const id = p.finishedItemId!;
     if (out.has(id) || costs.get(id)?.fromRecipe) continue;
     let mat = Number(p.extraPackaging);
     let labor = p.recipeLabor.reduce((s, r) => s + laborRate(r), 0) + Number(p.laborCost);
+    let overhead = p.recipeOverhead.reduce((s, r) => s + overheadUnitCost(r.overhead, cap) * Number(r.factor), 0) + Number(p.overheadCost);
     for (const b of p.bom) {
       const c = costs.get(b.itemId);
       mat += bomLineCost(b.qty, b.item, c?.mat ?? latestCost(b.item));
       labor += bomLineCost(b.qty, b.item, c?.labor ?? 0);
+      overhead += bomLineCost(b.qty, b.item, c?.overhead ?? 0);
     }
     mat = Math.round(mat);
     labor = Math.round(labor);
-    if (mat + labor > 0) out.set(id, { mat, labor, total: mat + labor, source: "BOM_PRODUK" });
+    overhead = Math.round(overhead);
+    if (mat + labor + overhead > 0) out.set(id, { mat, labor, overhead, total: mat + labor + overhead, source: "BOM_PRODUK" });
   }
   return out;
 }
@@ -148,7 +153,7 @@ export async function revaluasiAvgCost(db: PrismaClient, apply: boolean, opts: {
     const total = lines.reduce((s, l) => s + (l.debit ?? 0) - (l.credit ?? 0), 0);
     if (lines.length) {
       const j = await postJournal(tx, {
-        date: new Date(), storeId: await defaultStoreId(tx), description: `Revaluasi harga pokok barang (${fresh.length} barang, harga resep: bahan + upah)`,
+        date: new Date(), storeId: await defaultStoreId(tx), description: `Revaluasi harga pokok barang (${fresh.length} barang, harga resep: bahan + upah + overhead)`,
         source: "REVALUASI_HPP", sourceId: new Date().toISOString(), actor: { id: "system", name: "skrip hpp:revaluasi" },
         lines: [...lines, ...(total > 0 ? [{ accountCode: COA.BEBAN_SELISIH_PERSEDIAAN, credit: total }] : total < 0 ? [{ accountCode: COA.BEBAN_SELISIH_PERSEDIAAN, debit: -total }] : [])],
       });

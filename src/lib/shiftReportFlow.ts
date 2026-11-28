@@ -118,7 +118,7 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
   for (const id of new Set(itemIds)) costs.set(id, await recipeMaterialCost(id, allCosts));
   // Setengah jadi (patung kering/cetak) yang punya resep (bahan + upah): masuk stok bernilai resep, bukan Rp 0
   const { costTargets } = await import("./hppNilai");
-  const wipTargets = itemIds.length ? await costTargets(prisma) : new Map<string, { mat: number; labor: number; total: number }>();
+  const wipTargets = itemIds.length ? await costTargets(prisma) : new Map<string, { mat: number; labor: number; overhead: number; total: number }>();
   const wipLabor = new Map<string, number>(); // upah milik resep barang itu sendiri (yang belum dibukukan sebagai persediaan)
   for (const id of new Set(itemIds)) {
     if (!wipTargets.has(id)) continue;
@@ -138,7 +138,7 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
     const note = `Laporan shift ${r.division.name} ${r.shift.name}`;
     let toInventory = 0;
     // Setengah jadi bernilai resep: Dr Persediaan BDP (nilai masuk) − Cr BDP (nilai setengah jadi yang dikonsumsi) − Cr Beban Gaji Produksi (upah resep,
-    // sudah dibebankan saat dibayar) − sisanya Cr HPP Pemakaian Bahan Baku (bahan sudah dibebankan lewat stock opname)
+    // sudah dibebankan saat dibayar) − sisanya (bahan + overhead resep) Cr HPP Pemakaian Bahan Baku
     let wipIn = 0;
     let wipOut = 0;
     let wipWage = 0;

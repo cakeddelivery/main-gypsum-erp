@@ -4,11 +4,12 @@
  *   npm run hitung:biaya-oven -- --pasang              -> pratinjau pemasangan resep
  *   npm run hitung:biaya-oven -- --pasang --jalankan   -> menyimpan (jalankan `npm run backup` dulu)
  *   --gypsum=<SKU>                                     -> pilih barang gypsum bila ada beberapa
+ *   --aset=<regex>                                     -> pilih aset tetap alat produksi/cetakan (bawaan: cetakan|alat|mesin|produksi, tanpa oven)
  * Patung cetak = 30 g gypsum; patung kering = 1 patung cetak + biaya oven per pcs (overhead LPG di resep, tanpa model baru).
  * Biaya LPG per pcs = biaya LPG (isi ulang tabung dari laporan Oven yang dipasangkan ke transaksi Finance) ÷ panen patung kering laporan Oven.
  */
 import { PrismaClient } from "@prisma/client";
-import { GYPSUM_GRAM_PER_PCS, biayaGypsum, biayaLpgPerPeriode, overheadTerkait, pasangBiayaOven } from "../src/lib/biayaOven";
+import { GYPSUM_GRAM_PER_PCS, biayaGypsum, biayaLpgPerPeriode, overheadTerkait, pasangBiayaOven, penyusutanAset } from "../src/lib/biayaOven";
 
 const prisma = new PrismaClient();
 const argv = process.argv;
@@ -27,14 +28,21 @@ async function main() {
   if (!gy.length) console.log("  tidak ada barang bahan baku bernama gypsum");
   for (const g of gy) console.log(`  ${g.sku} ${g.name}: ${rp(g.hargaStok)}/${g.unit} (${g.sumber}), 1 ${g.unit} = ${g.factor.toLocaleString("id-ID")} ${g.hppUnit} → ${g.perGram == null ? `satuan "${g.hppUnit}" bukan gram/kg` : `${rp(g.perGram, 4)}/g × ${GYPSUM_GRAM_PER_PCS} g = ${rp(g.per30g)}/pcs`}`);
   const oh = await overheadTerkait(prisma, per[per.length - 1].panen.bagus);
-  console.log("\nOVERHEAD terkait (penyusutan alat produksi/cetakan dll.; TIDAK ikut harga persediaan):");
+  const aset = argv.find((a) => a.startsWith("--aset="))?.slice(7);
+  const pola = aset ? new RegExp(aset, "i") : undefined;
+  const dep = await penyusutanAset(prisma, { pola });
+  console.log("\nPENYUSUTAN alat produksi & cetakan (modul Aset tetap) per pcs patung cetak — ikut HPP sebagai overhead resep Patung Cetak:");
+  if (!dep.aset.length) console.log("  tidak ada aset tetap aktif yang cocok (cetakan/alat/mesin/produksi; ubah dengan --aset=<regex>)");
+  for (const a of dep.aset) console.log(`  ${a.nama}: ${rp(a.perBulan)}/bulan`);
+  if (dep.aset.length) console.log(`  total ${rp(dep.perBulan)}/bulan ÷ ${dep.produksiCetak.toLocaleString("id-ID")} pcs (${dep.sumberProduksi}) = ${rp(dep.perPcs, 2)}/pcs`);
+  console.log("\nOVERHEAD terkait (overhead master/aset lain):");
   if (!oh.length) console.log("  tidak ada");
   for (const o of oh) console.log(`  [${o.sumber}] ${o.nama}: ${rp(o.perBulan)}/bulan${o.perPcs != null ? ` · ${rp(o.perPcs, 2)}/pcs` : ""}${o.catatan ? ` (${o.catatan})` : ""}`);
 
   if (argv.includes("--pasang")) {
     const apply = argv.includes("--jalankan");
     const gypsumSku = argv.find((a) => a.startsWith("--gypsum="))?.slice(9);
-    const plan = await pasangBiayaOven(prisma, apply, { gypsumSku });
+    const plan = await pasangBiayaOven(prisma, apply, { gypsumSku, poolAset: pola });
     console.log(`\n${apply ? "DISIMPAN" : "PRATINJAU PASANG (belum disimpan)"}:`);
     for (const b of plan.baris) console.log(`  ${b}`);
     for (const d of plan.ditunda) console.log(`  ! ${d}`);

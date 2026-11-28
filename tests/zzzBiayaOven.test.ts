@@ -1,7 +1,8 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
-import { biayaGypsum, biayaLpgPerPeriode, pasangBiayaOven, periodes, rencanaPasang } from "@/lib/biayaOven";
+import { ASET_NAMA_OVERHEAD, biayaGypsum, penyusutanAset, biayaLpgPerPeriode, pasangBiayaOven, periodes, rencanaPasang } from "@/lib/biayaOven";
 import { perbaikiResepDobel, rencanaResepDobel } from "@/lib/perbaikiResepDobel";
+import { costTargets } from "@/lib/hppNilai";
 import { auditRecipes } from "@/lib/recipeRules";
 
 const tag = `BO${Date.now().toString(36).toUpperCase()}`;
@@ -55,7 +56,16 @@ describe("Biaya oven (LPG) & gypsum per pcs", () => {
     created.items.push(cetak.id, kering.id, manual.id);
     const gyp = (await prisma.item.findFirstOrThrow({ where: { sku: `${tag}-GYP` } })).id;
     await prisma.itemRecipeLine.create({ data: { itemId: manual.id, componentId: gyp, qty: 7, useUnit: "gram" } }); // resep manual: tidak ditimpa
-    const opts = { gypsumSku: `${tag}-GYP`, now };
+    // Aset alat produksi/cetakan Rp12 jt / 12 bln = Rp1 jt/bln; "Perlengkapan Produksi" Rp1,05 jt/bln di resep cetak ≈ sama → diganti
+    const store = await prisma.store.findFirstOrThrow();
+    await prisma.fixedAsset.create({ data: { name: `Cetakan uji ${tag}`, storeId: store.id, acquiredAt: new Date(`${year}-01-01T00:00:00Z`), cost: 12_000_000n, usefulLifeMonths: 12 } });
+    const perl = await prisma.overhead.create({ data: { category: "Perlengkapan Produksi", name: `Perlengkapan Produksi ${tag}`, monthlyAmount: 1_050_000n, outputPerMonth: 600 } });
+    await prisma.recipeOverhead.create({ data: { itemId: cetak.id, overheadId: perl.id, factor: 1 } });
+    const poolAset = new RegExp(tag);
+    const dep = await penyusutanAset(prisma, { now, pola: poolAset });
+    expect(dep).toMatchObject({ perBulan: 1_000_000, produksiCetak: 600 });
+    expect(dep.perPcs).toBeCloseTo(1666.67, 2);
+    const opts = { gypsumSku: `${tag}-GYP`, now, poolAset };
 
     const prev = await pasangBiayaOven(prisma, false, opts);
     expect(prev.baris.join("\n")).toMatch(new RegExp(`SJ-CTK-${v}.*× 30 gram`));
@@ -73,6 +83,13 @@ describe("Biaya oven (LPG) & gypsum per pcs", () => {
     const again = await rencanaPasang(prisma, opts);
     expect(again.aksi.filter((a) => "itemId" in a && [cetak.id, kering.id].includes(a.itemId))).toHaveLength(0);
     expect(await prisma.auditLog.count({ where: { action: "PASANG_BIAYA_OVEN" } })).toBeGreaterThan(0);
+    // Penyusutan aset masuk resep cetak; "Perlengkapan Produksi" yang setara dilepas (tidak dobel); revaluasi/HPP konsisten dengan overhead resep
+    const ohC = await prisma.recipeOverhead.findMany({ where: { itemId: cetak.id }, include: { overhead: true } });
+    expect(ohC.map((x) => x.overhead.name)).toEqual([ASET_NAMA_OVERHEAD]);
+    const t = (await costTargets(prisma)).get(kering.id)!;
+    expect(t.overhead).toBeGreaterThan(1600); // penyusutan aset di cetak + LPG oven di kering
+    expect(t.total).toBe(t.mat + t.labor + t.overhead);
+    expect(t.mat).toBe(150); // gypsum 30 g × Rp5/g
   });
 });
 

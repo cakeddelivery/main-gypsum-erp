@@ -107,13 +107,37 @@ export async function overheadTerkait(db: Db, panen30: number): Promise<Overhead
   return out;
 }
 
+export const ASET_ALAT_DEFAULT = /cetakan|alat|mesin|produksi/i;
+export const ASET_NAMA_OVERHEAD = "Penyusutan alat produksi & cetakan (aset)";
+
+export type PenyusutanAset = { aset: { id: string; nama: string; perBulan: number }[]; perBulan: number; produksiCetak: number; sumberProduksi: string; perPcs: number | null };
+
+/**
+ * Penyusutan bulanan aset alat produksi & cetakan (modul Aset tetap: (harga − sisa) ÷ umur bulan, oven tidak ikut) dibagi produksi
+ * patung cetak 30 hari terakhir (hasil cetak laporan Cetak/Oven; bila kosong memakai panen patung kering) = per pcs patung cetak.
+ */
+export async function penyusutanAset(db: Db, opts: { now?: Date; pola?: RegExp } = {}): Promise<PenyusutanAset> {
+  const pola = opts.pola ?? ASET_ALAT_DEFAULT;
+  const assets = (await db.fixedAsset.findMany({ where: { active: true }, orderBy: { name: "asc" } })).filter((a) => pola.test(a.name) && !/oven/i.test(a.name));
+  const aset = assets.map((a) => ({ id: a.id, nama: a.name, perBulan: a.usefulLifeMonths > 0 ? Math.round((Number(a.cost) - Number(a.residual)) / a.usefulLifeMonths) : 0 }));
+  const perBulan = aset.reduce((s, a) => s + a.perBulan, 0);
+  const win = periodes(opts.now)[6];
+  const reports = await db.shiftReport.findMany({ where: { status: { in: ["TERKIRIM", "DIREVISI"] }, division: { reportTemplate: { in: ["CETAK", "PRODUKSI"] } } }, select: { date: true, work: true } });
+  const inWin = reports.filter((x) => { const d = new Date(`${x.date.toISOString().slice(0, 10)}T00:00:00+07:00`); return d >= win.from && d < win.to; });
+  const sumRows = (work: unknown, key: string) => { const rows = (work as Record<string, { v?: (number | null)[] }[] | undefined> | null)?.[key]; return Array.isArray(rows) ? rows.reduce((a, r) => a + (r.v ?? []).reduce<number>((q, x) => q + (Number(x) || 0), 0), 0) : 0; };
+  const cetak = inWin.reduce((a, x) => a + sumRows(x.work, "cetakSeries"), 0);
+  const panen = inWin.reduce((a, x) => a + sumRows(x.work, "panen"), 0);
+  const produksiCetak = cetak > 0 ? cetak : panen;
+  return { aset, perBulan, produksiCetak, sumberProduksi: cetak > 0 ? "hasil cetak laporan Cetak (30 hari)" : panen > 0 ? "panen patung kering laporan Oven (30 hari; hasil cetak belum ada)" : "tidak ada data produksi", perPcs: perBulan > 0 && produksiCetak > 0 ? Math.round((perBulan / produksiCetak) * 100) / 100 : null };
+}
+
 // ---------------- --pasang ----------------
 
 export type PasangPlan = { baris: string[]; ditunda: string[]; ok: boolean; rate: { total: number; panen: number; perPcs: number } | null; gypsum: GypsumInfo | null };
 
 const VAR = (sku: string, prefix: string) => sku.slice(prefix.length);
 
-export async function rencanaPasang(db: Db, opts: { gypsumSku?: string; now?: Date } = {}): Promise<PasangPlan & { aksi: Aksi[] }> {
+export async function rencanaPasang(db: Db, opts: { gypsumSku?: string; now?: Date; poolAset?: RegExp } = {}): Promise<PasangPlan & { aksi: Aksi[] }> {
   const baris: string[] = [];
   const ditunda: string[] = [];
   const aksi: Aksi[] = [];
@@ -162,6 +186,26 @@ export async function rencanaPasang(db: Db, opts: { gypsumSku?: string; now?: Da
     aksi.push({ kind: "OVERHEAD_PASANG", itemId: it.id });
     baris.push(`+ ${it.sku} ${it.name}: overhead LPG oven${ohLpg ? ` (${ohLpg.name}: Rp${Number(ohLpg.monthlyAmount).toLocaleString("id-ID")}/bln, ${ohLpg.outputPerMonth} pcs; TIDAK diubah)` : ""}`);
   }
+  // Penyusutan alat produksi & cetakan (data aset) → overhead di resep Patung Cetak. "Perlengkapan Produksi" yang sama dengan penyusutan alat diganti.
+  const dep = await penyusutanAset(db, { now: opts.now, pola: opts.poolAset });
+  if (!dep.aset.length || dep.perPcs == null) ditunda.push(`Penyusutan aset alat produksi/cetakan: ${!dep.aset.length ? "tidak ada aset tetap aktif bernama cetakan/alat/mesin/produksi (pola bisa diubah: --aset=<regex>)" : "tidak ada data produksi patung cetak 30 hari terakhir"}`);
+  else {
+    baris.push(`i Penyusutan aset (${dep.aset.map((a) => `${a.nama} Rp${a.perBulan.toLocaleString("id-ID")}`).join(", ")}) = Rp${dep.perBulan.toLocaleString("id-ID")}/bln ÷ ${dep.produksiCetak.toLocaleString("id-ID")} pcs (${dep.sumberProduksi}) = Rp${dep.perPcs}/pcs`);
+    const ohAset = await db.overhead.findFirst({ where: { name: ASET_NAMA_OVERHEAD, active: true } });
+    if (!ohAset) aksi.push({ kind: "OVERHEAD_ASET_BARU", monthlyAmount: dep.perBulan, outputPerMonth: dep.produksiCetak });
+    else baris.push(`= Overhead "${ASET_NAMA_OVERHEAD}" sudah ada (Rp${Number(ohAset.monthlyAmount).toLocaleString("id-ID")}/bln, ${ohAset.outputPerMonth} pcs): TIDAK diubah`);
+    for (const it of cetak) {
+      const d = await desc(it.id);
+      if (!d.o.some((x) => x.overhead.name === ASET_NAMA_OVERHEAD)) { aksi.push({ kind: "OVERHEAD_ASET_PASANG", itemId: it.id }); baris.push(`+ ${it.sku} ${it.name}: overhead ${ASET_NAMA_OVERHEAD}${ohAset ? "" : ` (Rp${dep.perPcs}/pcs)`}`); }
+      for (const x of d.o.filter((y) => y.overhead.category === "Perlengkapan Produksi" || /perlengkapan produksi/i.test(y.overhead.name))) {
+        const m = Number(x.overhead.monthlyAmount);
+        const sama = dep.perBulan > 0 && Math.abs(m - dep.perBulan) / dep.perBulan <= 0.15;
+        if (sama) { aksi.push({ kind: "OVERHEAD_LEPAS", rowId: x.id }); baris.push(`- ${it.sku} ${it.name}: overhead "${x.overhead.name}" (Rp${m.toLocaleString("id-ID")}/bln) ≈ penyusutan aset Rp${dep.perBulan.toLocaleString("id-ID")}/bln → DILEPAS dari resep ini (diganti yang dari data aset)`); }
+        else baris.push(`! ${it.sku} ${it.name}: overhead "${x.overhead.name}" Rp${m.toLocaleString("id-ID")}/bln TIDAK sama dengan penyusutan aset Rp${dep.perBulan.toLocaleString("id-ID")}/bln → dibiarkan (cek apakah dobel)`);
+      }
+      for (const x of d.o.filter((y) => y.overhead.name !== ASET_NAMA_OVERHEAD && /^penyusutan (cetakan|oven)$/i.test(y.overhead.category))) baris.push(`! ${it.sku} ${it.name}: sudah ada overhead "${x.overhead.name}" (${x.overhead.category}); cek dobel dengan penyusutan aset`);
+    }
+  }
   if (ohLpg && rate) baris.push(`i Overhead LPG yang ada "${ohLpg.name}": Rp${(overheadUnitCost(ohLpg) || 0).toLocaleString("id-ID")}/pcs; hasil hitung 30 hari: Rp${rate.perPcs}/pcs (tidak ditimpa)`);
   return { baris, ditunda, ok: aksi.length > 0, rate, gypsum: g ?? null, aksi };
 }
@@ -169,9 +213,12 @@ export async function rencanaPasang(db: Db, opts: { gypsumSku?: string; now?: Da
 export type Aksi =
   | { kind: "RESEP"; itemId: string; componentId: string; qty: number; useUnit: string }
   | { kind: "OVERHEAD_BARU"; monthlyAmount: number; outputPerMonth: number }
-  | { kind: "OVERHEAD_PASANG"; itemId: string };
+  | { kind: "OVERHEAD_PASANG"; itemId: string }
+  | { kind: "OVERHEAD_ASET_BARU"; monthlyAmount: number; outputPerMonth: number }
+  | { kind: "OVERHEAD_ASET_PASANG"; itemId: string }
+  | { kind: "OVERHEAD_LEPAS"; rowId: string };
 
-export async function pasangBiayaOven(db: PrismaClient, apply: boolean, opts: { gypsumSku?: string; now?: Date } = {}) {
+export async function pasangBiayaOven(db: PrismaClient, apply: boolean, opts: { gypsumSku?: string; now?: Date; poolAset?: RegExp } = {}) {
   const plan = await rencanaPasang(db, opts);
   if (!apply || !plan.aksi.length) return plan;
   await db.$transaction(async (tx) => {
@@ -179,7 +226,12 @@ export async function pasangBiayaOven(db: PrismaClient, apply: boolean, opts: { 
     for (const a of plan.aksi) {
       if (a.kind === "RESEP") await tx.itemRecipeLine.upsert({ where: { itemId_componentId: { itemId: a.itemId, componentId: a.componentId } }, create: { itemId: a.itemId, componentId: a.componentId, qty: a.qty, useUnit: a.useUnit }, update: {} });
       else if (a.kind === "OVERHEAD_BARU") ohId = (await tx.overhead.create({ data: { category: "LPG", name: LPG_OVERHEAD_NAME, monthlyAmount: BigInt(a.monthlyAmount), outputPerMonth: a.outputPerMonth, note: "Dihitung npm run hitung:biaya-oven --pasang (biaya LPG ÷ panen patung kering, 30 hari terakhir); perbarui bila perlu" } })).id;
-      else if (ohId) { if (!(await tx.recipeOverhead.findFirst({ where: { itemId: a.itemId, overheadId: ohId } }))) await tx.recipeOverhead.create({ data: { itemId: a.itemId, overheadId: ohId, factor: 1 } }); }
+      else if (a.kind === "OVERHEAD_PASANG") { if (ohId && !(await tx.recipeOverhead.findFirst({ where: { itemId: a.itemId, overheadId: ohId } }))) await tx.recipeOverhead.create({ data: { itemId: a.itemId, overheadId: ohId, factor: 1 } }); }
+      else if (a.kind === "OVERHEAD_ASET_BARU") await tx.overhead.create({ data: { category: "Penyusutan Cetakan", name: ASET_NAMA_OVERHEAD, monthlyAmount: BigInt(a.monthlyAmount), outputPerMonth: a.outputPerMonth, note: "Penyusutan bulanan aset alat produksi & cetakan (modul Aset tetap) ÷ produksi patung cetak 30 hari; dihitung hitung:biaya-oven --pasang, perbarui bila perlu" } });
+      else if (a.kind === "OVERHEAD_ASET_PASANG") {
+        const o = await tx.overhead.findFirst({ where: { name: ASET_NAMA_OVERHEAD, active: true } });
+        if (o && !(await tx.recipeOverhead.findFirst({ where: { itemId: a.itemId, overheadId: o.id } }))) await tx.recipeOverhead.create({ data: { itemId: a.itemId, overheadId: o.id, factor: 1 } });
+      } else await tx.recipeOverhead.deleteMany({ where: { id: a.rowId } });
     }
     await tx.auditLog.create({ data: { actorName: "skrip hitung:biaya-oven", action: "PASANG_BIAYA_OVEN", entity: "Item", entityId: "massal", data: { baris: plan.baris } as unknown as Prisma.InputJsonValue } });
   }, { isolationLevel: "Serializable", timeout: 60000 });
