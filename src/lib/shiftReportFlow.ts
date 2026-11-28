@@ -70,7 +70,7 @@ async function reverseVersion(tx: Tx, reportId: string, v: number, actor: Actor)
   const moves = await tx.stockMovement.findMany({ where: { ref }, select: { id: true } });
   await reverseMovementsByRef(tx, ref, `BATAL-${ref}`, "Revisi laporan shift (hasil kerja)", actor, { keepDate: true });
   const journals = await tx.journal.findMany({
-    where: { reversalOfId: null, OR: [{ source: FLOW_SOURCE, sourceId: `${reportId}:${v}` }, { source: "STOK", sourceId: { in: moves.map((m) => m.id) } }] },
+    where: { reversalOfId: null, OR: [{ source: FLOW_SOURCE, sourceId: { in: [`${reportId}:${v}`, `${reportId}:${v}:wip`] } }, { source: "STOK", sourceId: { in: moves.map((m) => m.id) } }] },
   });
   for (const j of journals) await reverseJournal(tx, j.id, await reversalDate(tx, j.date), actor, "Revisi laporan shift");
 }
@@ -116,6 +116,15 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
   });
   const allCosts = itemIds.length ? await (await import("./hpp")).itemCosts() : undefined;
   for (const id of new Set(itemIds)) costs.set(id, await recipeMaterialCost(id, allCosts));
+  // Setengah jadi (patung kering/cetak) yang punya resep (bahan + upah): masuk stok bernilai resep, bukan Rp 0
+  const { costTargets } = await import("./hppNilai");
+  const wipTargets = itemIds.length ? await costTargets(prisma) : new Map<string, { mat: number; labor: number; total: number }>();
+  const wipLabor = new Map<string, number>(); // upah milik resep barang itu sendiri (yang belum dibukukan sebagai persediaan)
+  for (const id of new Set(itemIds)) {
+    if (!wipTargets.has(id)) continue;
+    const own = await prisma.recipeLabor.findMany({ where: { itemId: id }, include: { task: { select: { ratePerPcs: true } } } });
+    wipLabor.set(id, own.reduce((a, r) => a + (r.task && !r.override ? Number(r.task.ratePerPcs) : Number(r.rate)), 0));
+  }
 
   let posted = 0;
   await prisma.$transaction(async (tx) => {
@@ -128,16 +137,24 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
     const ref = `LPH:${r.id}:${v}`;
     const note = `Laporan shift ${r.division.name} ${r.shift.name}`;
     let toInventory = 0;
+    // Setengah jadi bernilai resep: Dr Persediaan BDP (nilai masuk) − Cr BDP (nilai setengah jadi yang dikonsumsi) − Cr Beban Gaji Produksi (upah resep,
+    // sudah dibebankan saat dibayar) − sisanya Cr HPP Pemakaian Bahan Baku (bahan sudah dibebankan lewat stock opname)
+    let wipIn = 0;
+    let wipOut = 0;
+    let wipWage = 0;
     for (const [i, s] of steps.entries()) {
       const itemId = itemIds[i];
       const wipKind = s.kind === "kering" || s.kind === "basah";
       const loc = wipKind ? wip : finished;
       if (s.dir === "in") {
-        const unitCost = wipKind ? undefined : costs.get(itemId) ?? 0;
+        const wipCost = wipKind ? wipTargets.get(itemId)?.total : undefined;
+        const unitCost = wipKind ? wipCost : costs.get(itemId) ?? 0;
         await recordMovement(tx, { type: "HASIL_PRODUKSI", itemId, qty: s.qty, toLocationId: loc, unitCost, ref, note, date: at }, actor);
-        if (unitCost) toInventory += unitCost * s.qty;
+        if (wipKind && wipCost) { wipIn += Math.round(wipCost * s.qty); wipWage += Math.round((wipLabor.get(itemId) ?? 0) * s.qty); }
+        else if (unitCost) toInventory += unitCost * s.qty;
       } else if (wipKind) {
-        await recordMovement(tx, { type: "KONSUMSI_PRODUKSI", itemId, qty: s.qty, fromLocationId: loc, allowNegative: true, ref, note, date: at }, actor);
+        const mv = await recordMovement(tx, { type: "KONSUMSI_PRODUKSI", itemId, qty: s.qty, fromLocationId: loc, allowNegative: true, ref, note, date: at }, actor);
+        wipOut += Math.round(s.qty * Number(mv.unitCost));
       } else {
         const fb = costs.get(itemId) ?? 0;
         await recordMovement(tx, { type: "PENGELUARAN", itemId, qty: s.qty, fromLocationId: loc, allowNegative: true, fallbackUnitCost: fb > 0 ? { value: fb, note: "harga pokok dari resep" } : null, ref, note, date: at }, actor);
@@ -149,6 +166,19 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
       await postJournal(tx, {
         date: at, storeId, description: `${note}: barang jadi (nilai bahan dari resep)`, source: FLOW_SOURCE, sourceId: `${r.id}:${v}`, actor,
         lines: [{ accountCode: COA.PERSEDIAAN_JADI, debit: Math.round(toInventory) }, { accountCode: await usageAccountCode(tx), credit: Math.round(toInventory) }],
+      });
+    }
+    if (wipIn > 0) {
+      const wage = Math.min(wipWage, Math.max(0, wipIn - wipOut));
+      const usage = wipIn - wipOut - wage;
+      await postJournal(tx, {
+        date: at, storeId, description: `${note}: setengah jadi bernilai resep (bahan + upah)`, source: FLOW_SOURCE, sourceId: `${r.id}:${v}:wip`, actor,
+        lines: [
+          { accountCode: COA.PERSEDIAAN_BDP, debit: wipIn },
+          ...(wipOut > 0 ? [{ accountCode: COA.PERSEDIAAN_BDP, credit: wipOut }] : []),
+          ...(wage > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, credit: wage, memo: "Upah resep dikapitalisasi" }] : []),
+          ...(usage > 0 ? [{ accountCode: await usageAccountCode(tx), credit: usage }] : usage < 0 ? [{ accountCode: await usageAccountCode(tx), debit: -usage }] : []),
+        ],
       });
     }
     await tx.shiftReport.update({ where: { id: r.id }, data: { workPostedVersion: v } });

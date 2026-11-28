@@ -32,6 +32,8 @@
     "koreksi:tipe-hasil-cat": "tsx scripts/koreksi-tipe-hasil-cat.ts",
     "reset:kiriman": "tsx scripts/reset-kiriman-penerimaan.ts",
     "koreksi:divisi-hasil": "tsx scripts/koreksi-divisi-hasil.ts",
+    "hpp:resep-dari-tugas": "tsx scripts/hpp-resep-dari-tugas.ts",
+    "hpp:revaluasi": "tsx scripts/hpp-revaluasi.ts",
     "diagnosa:selisih-harian": "tsx scripts/diagnosa-selisih-harian.ts",
     "audit:produksi": "bash tests/global-reset.sh && vitest run tests/zzAuditProduksi.test.ts --reporter=verbose",
     "koreksi:saldo-nov": "tsx scripts/koreksi-saldo-nov.ts",

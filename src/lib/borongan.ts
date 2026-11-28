@@ -410,13 +410,22 @@ export async function postResultTx(tx: Tx, p: PostResult, actor: Actor) {
     byType.set(inp.item.type, (byType.get(inp.item.type) ?? 0) + v - vRej);
     if (vRej > 0) rejByType.set(inp.item.type, (rejByType.get(inp.item.type) ?? 0) + vRej);
   }
+  // Upah borongan setoran ini (pekerja + koordinator → beban gaji produksi, driver → beban transport) ikut nilai barang hasil:
+  // dibebankan saat dibayar (Bayar Upah / klaim), jadi di sini dikreditkan balik agar tidak terhitung dua kali
+  const sh = resultShares(qty, Object.fromEntries(Object.entries(ratesFor(task, p.coordinatorId)).map(([k, v]) => [k, Number(v)])) as Split);
+  const wageGaji = task.outputItemId && qty > 0 ? Math.round(sh.worker + sh.coordinator) : 0;
+  const wageTransport = task.outputItemId && qty > 0 && p.driverId ? Math.round(sh.driver) : 0;
+  const wage = wageGaji + wageTransport;
   if (task.outputItemId && qty > 0) {
-    await recordMovement(tx, { type: "HASIL_PRODUKSI", itemId: task.outputItemId, qty, toLocationId: point.locationId, unitCost: Math.round(material / qty), ref: `HSB:${r.id}`, note: `${task.name} ${worker.name}`, date: when }, actor);
+    await recordMovement(tx, { type: "HASIL_PRODUKSI", itemId: task.outputItemId, qty, toLocationId: point.locationId, unitCost: Math.round((material + wage) / qty), ref: `HSB:${r.id}`, note: `${task.name} ${worker.name}`, date: when }, actor);
   }
   // Nilai bahan pindah dari akun persediaan bahan ke akun persediaan barang hasil; bahan reject jadi beban
   const lines = [
     ...[...byType].filter(([t, v]) => t !== outType && v > 0).flatMap(([t, v]) => [{ accountCode: INVENTORY_COA[outType], debit: v }, { accountCode: INVENTORY_COA[t], credit: v }]),
     ...[...rejByType].flatMap(([t, v]) => [{ accountCode: COA.BEBAN_SELISIH_PERSEDIAAN, debit: v, memo: `Reject borongan ${reject} pcs` }, { accountCode: INVENTORY_COA[t], credit: v }]),
+    ...(wage > 0 ? [{ accountCode: INVENTORY_COA[outType], debit: wage, memo: "Upah borongan masuk nilai barang hasil" }] : []),
+    ...(wageGaji > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, credit: wageGaji, memo: "Upah borongan dikapitalisasi ke persediaan" }] : []),
+    ...(wageTransport > 0 ? [{ accountCode: COA.BEBAN_TRANSPORT, credit: wageTransport, memo: "Jatah driver dikapitalisasi ke persediaan" }] : []),
   ];
   if (lines.length) {
     await postJournal(tx, { date: when, storeId: await defaultStore(tx), description: `Borongan ${point.name}: ${task.name} × ${qty}${reject ? ` + reject ${reject}` : ""} (${worker.name})`, source: "BORONGAN", sourceId: r.id, actor, lines });
