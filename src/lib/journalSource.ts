@@ -75,6 +75,8 @@ export function sourceHref(source: string, sourceId: string | null, docId?: stri
     case "STOK":
     case "BB":
       return "/stok/mutasi";
+    case "WORKSHOP":
+      return "/stok/workshop";
     case "STOK_AWAL":
       return "/stok/awal";
     case "KOMPLAIN":
