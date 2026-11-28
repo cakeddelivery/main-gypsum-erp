@@ -3319,3 +3319,18 @@ model MarketplaceWithdrawLink {
 
   @@index([storeId, channel])
 }
+
+/// Pasangan temuan "kandidat dobel" yang sudah dinyatakan BUKAN dobel (permanen; audit-duplikat-keuangan tidak melaporkannya lagi).
+/// keyA < keyB (urutan nomor) agar satu pasangan hanya satu baris.
+model DuplicateDismissal {
+  id        String   @id @default(cuid())
+  /// FINANCE_TX = dua transaksi keuangan (nomor TRX-...)
+  kind      String
+  keyA      String
+  keyB      String
+  reason    String?
+  createdBy String
+  createdAt DateTime @default(now())
+
+  @@unique([kind, keyA, keyB])
+}

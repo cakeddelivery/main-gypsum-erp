@@ -10,6 +10,7 @@
  * Keluar dengan kode 1 bila ada temuan, 0 bila bersih.
  */
 import { PrismaClient } from "@prisma/client";
+import { kandidatTransaksiKembar } from "../src/lib/bukanDobel";
 
 const prisma = new PrismaClient();
 const ALL = process.argv.includes("--semua");
@@ -61,14 +62,10 @@ async function main() {
   await check("No. referensi withdraw sama di >1 transaksi aktif", "withdraw tercatat 2x (calon unique index tahap 2)", q`
     SELECT "withdrawRef" ref, COUNT(*)::int n, STRING_AGG(number, ', ') nums FROM "FinanceTransaction"
     WHERE "withdrawRef" IS NOT NULL AND "withdrawRef"<>'' AND status NOT IN ('DITOLAK','DIBATALKAN') AND "deletedAt" IS NULL GROUP BY "withdrawRef" HAVING COUNT(*)>1`, (r) => `ref ${r.ref} ×${r.n}: ${r.nums}`);
-  await check("Transfer antar rekening kembar (rekening, nominal sama, <3 menit)", "transfer/withdraw dobel", q`
-    SELECT a.id, a.number, b.number n2, a.amount::text amt FROM "FinanceTransaction" a JOIN "FinanceTransaction" b ON b.id>a.id AND b.direction=a.direction AND b."accountId"=a."accountId" AND b."toAccountId" IS NOT DISTINCT FROM a."toAccountId" AND b.amount=a.amount
-      AND ABS(EXTRACT(EPOCH FROM (b.date-a.date)))<180
-    WHERE a.direction='TRANSFER' AND a.status NOT IN ('DITOLAK','DIBATALKAN') AND b.status NOT IN ('DITOLAK','DIBATALKAN') AND a."deletedAt" IS NULL AND b."deletedAt" IS NULL LIMIT 500`, (r) => `${r.number} & ${r.n2}: ${idr(r.amt)}`);
-  await check("Transaksi dibukukan dobel (sidik jari sama, <3 menit, catatan sama)", "kemungkinan input ganda", q`
-    SELECT a.id, a.number, b.number n2, a.amount::text amt FROM "FinanceTransaction" a JOIN "FinanceTransaction" b ON b.id>a.id AND b.fingerprint=a.fingerprint AND b.note IS NOT DISTINCT FROM a.note AND b."createdBy"=a."createdBy"
-      AND ABS(EXTRACT(EPOCH FROM (b."createdAt"-a."createdAt")))<180
-    WHERE a.direction<>'TRANSFER' AND a.status='DIBUKUKAN' AND b.status='DIBUKUKAN' AND a."deletedAt" IS NULL AND b."deletedAt" IS NULL LIMIT 500`, (r) => `${r.number} & ${r.n2}: ${idr(r.amt)}`);
+  // Pasangan yang sudah dinyatakan BUKAN dobel (npm run tandai:bukan-dobel) tidak dilaporkan lagi
+  const kembar = await kandidatTransaksiKembar(prisma);
+  await check("Transfer antar rekening kembar (rekening, nominal sama, <3 menit)", "transfer/withdraw dobel (pasangan yang ditandai bukan dobel dikecualikan)", Promise.resolve(kembar.filter((k) => k.kind === "TRANSFER_KEMBAR") as unknown as Row[]), (r) => `${r.a} & ${r.b}: ${idr(r.amount)}`);
+  await check("Transaksi dibukukan dobel (sidik jari sama, <3 menit, catatan sama)", "kemungkinan input ganda (pasangan yang ditandai bukan dobel dikecualikan)", Promise.resolve(kembar.filter((k) => k.kind === "DIBUKUKAN_DOBEL") as unknown as Row[]), (r) => `${r.a} & ${r.b}: ${idr(r.amount)}`);
   await check("Satu jurnal FINANCE dipakai >1 transaksi", "tautan jurnal ganda", q`
     SELECT "journalId" id, COUNT(*)::int n, STRING_AGG(number, ', ') nums FROM "FinanceTransaction" WHERE "journalId" IS NOT NULL AND status IN ('DIBUKUKAN','DALAM_PROSES') GROUP BY "journalId" HAVING COUNT(*)>1`, (r) => `jurnal ${r.id}: ${r.nums}`);
 
