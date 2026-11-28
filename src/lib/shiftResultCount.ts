@@ -1,3 +1,4 @@
+import { divisionLocationId, isKering } from "./ambilStok";
 import { Prisma, type ItemType } from "@prisma/client";
 import { prisma } from "./db";
 import { fmtDay } from "./time";
@@ -68,7 +69,9 @@ export function parseResultCount(itemIds: string[], get: (k: string) => string |
 
 export type ResultRow = { itemId: string; name: string; unit: string; counted: number; system: number; diff: number; big: boolean };
 
-function locOf(type: ItemType, locs: { wip: string | null; finished: string | null }) {
+function locOf(type: ItemType, locs: { wip: string | null; finished: string | null }, sku?: string, divLoc?: string | null) {
+  // Patung kering milik divisi Assembling/Giftbox dihitung di lokasi stok divisinya (hasil "Ambil stok")
+  if (type === "BARANG_DALAM_PROSES" && divLoc && sku && isKering(sku)) return divLoc;
   return type === "BARANG_DALAM_PROSES" ? locs.wip : type === "BARANG_JADI" ? locs.finished : null;
 }
 
@@ -78,11 +81,12 @@ export async function resultCountStatus(reportId: string, now: Date = new Date()
   const counts = await prisma.$transaction((tx) => storedCounts(r.work as WorkData, r.division.reportTemplate, tx));
   if (!counts.size) return null;
   const locs = await locationSettings(prisma);
-  const items = await prisma.item.findMany({ where: { id: { in: [...counts.keys()] } }, select: { id: true, name: true, unit: true, type: true } });
+  const items = await prisma.item.findMany({ where: { id: { in: [...counts.keys()] } }, select: { id: true, name: true, unit: true, type: true, sku: true } });
+  const divLoc = await divisionLocationId(prisma, r.division.reportTemplate);
   const at = shiftEndAt(r.date, r.shift, now);
   const rows: ResultRow[] = [];
   for (const it of items) {
-    const loc = locOf(it.type, locs);
+    const loc = locOf(it.type, locs, it.sku, divLoc);
     if (!loc) continue;
     const c = counts.get(it.id)!;
     const system = Math.round((await qtyAt(prisma, it.id, loc, at)) * 1000) / 1000;
@@ -129,7 +133,8 @@ export async function applyResultCount(reportId: string, actor: Actor, now: Date
   });
   if (newer) return { adjusted: 0, skipped: `Stok hasil tidak diubah: sudah ada laporan lebih baru (${fmtDay(newer.date)} · ${newer.shift.name})` };
   const at = shiftEndAt(r.date, r.shift, now);
-  const items = await prisma.item.findMany({ where: { id: { in: [...counts.keys()] } }, select: { id: true, type: true } });
+  const items = await prisma.item.findMany({ where: { id: { in: [...counts.keys()] } }, select: { id: true, type: true, sku: true } });
+  const divLoc = await divisionLocationId(prisma, r.division.reportTemplate);
   let n = 0;
   await prisma.$transaction(async (tx) => {
     // Kunci laporan & baca ulang hitungan yang sudah diterapkan (cegah selisih dibukukan dua kali saat Kirim ganda)
@@ -138,7 +143,7 @@ export async function applyResultCount(reportId: string, actor: Actor, now: Date
     const prev = new Map(((fresh.resultApplied as { itemId: string; qty: number }[] | null) ?? []).map((x) => [x.itemId, x.qty]));
     const snapshot = new Map(prev);
     for (const it of items) {
-      const loc = locOf(it.type, locs);
+      const loc = locOf(it.type, locs, it.sku, divLoc);
       if (!loc) continue;
       const c = counts.get(it.id)!;
       const before = prev.get(it.id);

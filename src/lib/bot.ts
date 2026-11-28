@@ -2,6 +2,7 @@ import { resignEffective } from "./time";
 import { prisma } from "./db";
 import { effectivePermissions } from "./rbac";
 import { DEFAULT_MANAGER_NAMES, detectManagerLoan, extractDate, extractTransaction, hasExplicitAmount, matchStore, mergeReceipt, suggestCategory } from "./extract";
+import { ambilFromText } from "./botAmbil";
 import { KIND_DIRECTION, KIND_LABEL, classifyIntake, loadClassifyContext, type IntakeKind } from "./botClassify";
 import { readReceipt, type ReceiptRead } from "./receipt";
 import { ocrImageText, ocrReceipt } from "./ocrReceipt";
@@ -263,6 +264,8 @@ async function handleMessage(u: TgUpdate) {
   }
   // Pesan bebas tanpa menu: jenis dikenali dari kata kunci + master data (barang, supplier, karyawan/pengelola, utang terbuka).
   // Yang jelas langsung diarahkan; ragu (skor rendah / dua jenis mungkin) → pilihan jenis dengan tombol, bukan menebak.
+  const ambilSession = text && !photo ? await ambilFromText({ i: ident, chatId }, text) : null;
+  if (ambilSession) return startPrefilledFlow({ i: ident, chatId }, ambilSession);
   const clsBasis = [text, receipt?.counterparty].filter(Boolean).join(" ");
   const cls = !splits.length && !loan && clsBasis && (ident.perms.has("finance.approve") || ident.perms.has("payroll.approve") || ident.perms.has("borongan.manage"))
     ? classifyIntake(clsBasis, { direction: ex.direction, amount: ex.amount }, await loadClassifyContext(await managerNames()))
