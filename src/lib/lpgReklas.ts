@@ -21,7 +21,7 @@ export type ReklasPlan = { rows: ReklasRow[]; manual: ReklasManual[] };
  *  - dikurangi LPG yang sudah ada di leg persediaan jurnal itu (itu urusan cek:rekonsiliasi-persediaan, bukan reklas beban)
  *  - leg beban sumber ≥ nominal; bila ada beberapa leg beban, dipakai yang nilainya persis sama, kalau tidak ada → cek manual
  */
-export async function planLpgReklasFull(db: Db): Promise<ReklasPlan> {
+export async function planLpgReklasFull(db: Db, opt: { hargaTabung?: number } = {}): Promise<ReklasPlan> {
   const word = (f: string) => [{ [f]: { contains: "lpg", mode: "insensitive" as const } }, { [f]: { contains: "elpiji", mode: "insensitive" as const } }];
   const txs = await db.financeTransaction.findMany({
     where: { direction: "KELUAR", status: "DIBUKUKAN", deletedAt: null, origin: null, journalId: { not: null }, OR: [...word("note"), ...word("rawText"), ...word("counterparty"), { splits: { some: { OR: word("note") } } }] },
@@ -41,26 +41,42 @@ export async function planLpgReklasFull(db: Db): Promise<ReklasPlan> {
     if (t.splits.length) {
       // rincian barang (itemId) masuk persediaan, bukan beban; hanya rincian beban bernada LPG
       for (const x of t.splits.filter((x) => !x.itemId)) {
-        const sh = lpgShare(x.note, Number(x.amount));
+        const sh = lpgShare(x.note, Number(x.amount), opt);
         if (sh.mode === "penuh" || sh.mode === "baris") amount += sh.mode === "penuh" ? Number(x.amount) : sh.amount;
         else if (sh.mode === "tidak-terparse") unclear = true;
       }
     } else {
-      const sh = lpgShare(teks, total);
+      const sh = lpgShare(teks, total, opt);
       if (sh.mode === "penuh" || sh.mode === "baris") amount = sh.amount;
       else if (sh.mode === "tidak-terparse") unclear = true;
     }
     const legs = lines.filter((l) => l.journalId === t.journalId);
     if (unclear && !(amount > 0)) { manual.push({ txId: t.id, number: t.number, teks, alasan: "ada baris LPG tetapi nominalnya tidak terbaca dari teks" }); continue; }
     if (!(amount > 0)) continue;
-    // LPG yang sudah ada di leg persediaan (1-14xx) tidak direklas dari beban
-    const inv = legs.filter((l) => l.account.type === "ASET" && l.account.code.startsWith("1-14")).reduce((a, l) => a + Number(l.debit), 0);
-    const remaining = amount - Math.min(amount, inv);
-    if (!(remaining > 0)) continue;
     const exp = legs.filter((l) => l.account.type === "BEBAN" && l.account.code !== COA.BEBAN_LPG_PRODUKSI);
-    if (!exp.length) continue; // sudah di 6-1310 atau bukan beban
-    let leg = exp.length === 1 ? exp[0] : exp.filter((l) => Number(l.debit) === remaining).length === 1 ? exp.find((l) => Number(l.debit) === remaining)! : null;
-    if (!leg) { manual.push({ txId: t.id, number: t.number, teks, alasan: `LPG Rp${remaining.toLocaleString("id-ID")} tetapi ada ${exp.length} leg beban (${exp.map((l) => `${l.account.code} Rp${Number(l.debit).toLocaleString("id-ID")}`).join(", ")}) dan tidak ada yang persis sama` }); continue; }
+    // 1) Leg beban yang nilainya PERSIS sama dengan nominal LPG: itu leg LPG-nya. Bila ada beberapa, akun gas (6-1300 Listrik, Air & Gas) didahulukan
+    const exact = exp.filter((l) => Number(l.debit) === amount);
+    let leg: (typeof legs)[number] | null = null;
+    let remaining = amount;
+    const invTotal = legs.filter((l) => l.account.type === "ASET" && l.account.code.startsWith("1-14")).reduce((a, l) => a + Number(l.debit), 0);
+    if (exact.length && invTotal >= amount) {
+      // LPG sama besar dengan leg beban DAN leg persediaan: tidak bisa dipastikan mana LPG-nya
+      manual.push({ txId: t.id, number: t.number, teks, alasan: `LPG Rp${amount.toLocaleString("id-ID")} cocok dengan leg beban (${exact.map((l) => l.account.code).join(", ")}) sekaligus leg persediaan Rp${invTotal.toLocaleString("id-ID")}` });
+      continue;
+    }
+    if (exact.length) {
+      const gas = exact.filter((l) => l.account.code === "6-1300");
+      leg = gas.length === 1 ? gas[0] : exact.length === 1 ? exact[0] : null;
+      if (!leg) { manual.push({ txId: t.id, number: t.number, teks, alasan: `LPG Rp${amount.toLocaleString("id-ID")} cocok dengan ${exact.length} leg beban (${exact.map((l) => l.account.code).join(", ")}), akun gas (6-1300) tidak tunggal` }); continue; }
+    } else {
+      // 2) Tidak ada leg beban yang persis: LPG yang sudah ada di leg persediaan (1-14xx) tidak direklas dari beban (urusan cek:rekonsiliasi-persediaan)
+      const inv = legs.filter((l) => l.account.type === "ASET" && l.account.code.startsWith("1-14")).reduce((a, l) => a + Number(l.debit), 0);
+      remaining = amount - Math.min(amount, inv);
+      if (!(remaining > 0)) continue;
+      if (!exp.length) continue; // sudah di 6-1310 atau bukan beban
+      leg = exp.length === 1 ? exp[0] : null;
+      if (!leg) { manual.push({ txId: t.id, number: t.number, teks, alasan: `LPG Rp${remaining.toLocaleString("id-ID")} tetapi ada ${exp.length} leg beban (${exp.map((l) => `${l.account.code} Rp${Number(l.debit).toLocaleString("id-ID")}`).join(", ")}) dan tidak ada yang persis sama` }); continue; }
+    }
     if (Number(leg.debit) < remaining) { manual.push({ txId: t.id, number: t.number, teks, alasan: `leg beban ${leg.account.code} Rp${Number(leg.debit).toLocaleString("id-ID")} lebih kecil dari LPG Rp${remaining.toLocaleString("id-ID")}` }); continue; }
     rows.push({ txId: t.id, number: t.number, date: t.date, amount: remaining, akun: leg.account.code, akunNama: leg.account.name, teks });
   }
@@ -71,8 +87,8 @@ export async function planLpgReklas(db: Db): Promise<ReklasRow[]> {
   return (await planLpgReklasFull(db)).rows;
 }
 
-export async function lpgReklas(db: PrismaClient, apply: boolean) {
-  const { rows, manual } = await planLpgReklasFull(db);
+export async function lpgReklas(db: PrismaClient, apply: boolean, opt: { hargaTabung?: number } = {}) {
+  const { rows, manual } = await planLpgReklasFull(db, opt);
   const target = await db.coaAccount.findUnique({ where: { code: COA.BEBAN_LPG_PRODUKSI }, select: { id: true } });
   if (!apply || !rows.length || !target) return { rows, manual, journals: 0, gagal: [] as string[], akunAda: !!target };
   const gagal: string[] = [];

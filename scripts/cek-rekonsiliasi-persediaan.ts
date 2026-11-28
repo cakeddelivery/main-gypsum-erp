@@ -5,7 +5,7 @@
  * beserta usulan koreksi, dan sisa yang belum terjelaskan. Koreksi: npm run koreksi:rekonsiliasi-persediaan (pratinjau dulu).
  */
 import { prisma } from "../src/lib/db";
-import { diagnosaSisa, rekonPersediaan } from "../src/lib/rekonPersediaan";
+import { diagnosaBarang, diagnosaSisa, rekonPersediaan, rincianJurnal } from "../src/lib/rekonPersediaan";
 import { planLpgReklasFull } from "../src/lib/lpgReklas";
 
 const rp = (n: number) => `${n < 0 ? "-" : ""}Rp ${Math.abs(Math.round(n)).toLocaleString("id-ID")}`;
@@ -35,6 +35,23 @@ const day = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "-");
   console.log(`  Bagian TERBUKTI (1-1401 terlalu tinggi & 1-1403 terlalu rendah pada jenis referensi yang sama): ${rp(d.antar.total)} · sudah dikoreksi ${rp(d.antar.sudah)} · sisa ${rp(d.antar.sisa)}`);
   for (const g of d.antar.perGrup.slice(0, 10)) console.log(`     ${g.group}: ${rp(g.amount)}`);
   if (d.antar.sisa > 1000) console.log("  Usulan (pratinjau dulu): npm run koreksi:rekonsiliasi-persediaan -- --sisa=reklas-antar-persediaan   (Cr 1-1401 / Dr 1-1403)");
+  // Rincian grup jurnal tanpa mutasi stok yang besar (mis. J:UTANG): jurnal per jurnal, hanya menampilkan (tidak mengoreksi)
+  for (const g of new Set(d.rows.filter((x) => x.group.startsWith("J:") && x.mutasi === 0 && Math.abs(x.jurnal) > 1000).map((x) => x.group))) {
+    const detail = await rincianJurnal(prisma, g.slice(2));
+    console.log(`\nRINCIAN ${g} (jurnal menyentuh akun persediaan, tanpa mutasi stok): ${detail.length} baris`);
+    for (const x of detail.slice(0, 40)) console.log(`   ${x.number} (${day(x.date)}) ${x.account} ${rp(x.amount)} · ${x.pihak ? `${x.pihak} · ` : ""}${x.description.slice(0, 50)} · lawan ${x.lawan.slice(0, 60)}`);
+    if (detail.length > 40) console.log(`   … ${detail.length - 40} baris lainnya`);
+  }
+  // Barang bernilai/qty negatif & selisih valuasi per barang (harga rata-rata kini vs harga mutasi)
+  const db = await diagnosaBarang(prisma);
+  console.log(`\nBARANG QTY / NILAI NEGATIF (${db.negatif.length}):`);
+  for (const x of db.negatif.slice(0, 40)) console.log(`   ${x.sku} ${x.name.slice(0, 40)} [${x.account}] qty ${x.qty} × Rp${x.avgCost.toLocaleString("id-ID")} = ${rp(x.nilaiStok)}${x.lokasiNegatif.length ? ` · negatif di ${x.lokasiNegatif.map((l) => `${l.lokasi} ${l.qty}`).join(", ")}` : ""}`);
+  console.log("\nSELISIH VALUASI per barang (nilai mutasi − nilai stok = qty × harga rata-rata; dominan dari pergeseran harga rata-rata / stok minus), 15 terbesar per akun:");
+  for (const [acc, list] of Object.entries(db.perAkun)) {
+    if (!list.length) continue;
+    console.log(`  ${acc}`);
+    for (const x of list) console.log(`     ${x.sku} ${x.name.slice(0, 36)}: mutasi ${rp(x.nilaiMutasi)} − stok ${rp(x.nilaiStok)} = ${rp(x.selisihValuasi)} (qty ${x.qty}, rata-rata Rp${x.avgCost.toLocaleString("id-ID")})`);
+  }
   const { rows: lpg, manual } = await planLpgReklasFull(prisma);
   for (const m of manual) console.log(`\n⚠ LPG perlu cek manual ${m.number}: ${m.alasan}`);
   if (lpg.length) {

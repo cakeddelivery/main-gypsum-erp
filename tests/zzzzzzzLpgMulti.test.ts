@@ -58,7 +58,8 @@ describe("Reklas LPG multi-item: hanya leg LPG yang dipindah", () => {
     expect(row(a)).toBeUndefined(); // LPG 40.000 ada di persediaan
     expect(man(b)).toBeTruthy(); // nominal tak terbaca
     expect(row(b)).toBeUndefined();
-    expect(row(c)).toBeUndefined(); // LPG 60.000 sudah di leg persediaan 60.000
+    expect(row(c)).toBeUndefined(); // LPG 60.000 cocok dengan leg beban DAN leg persediaan → tidak ditebak
+    expect(man(c)).toBeTruthy();
     expect(row(d)).toMatchObject({ amount: 60_000, akun: "6-1300" }); // bukan 72.000
     expect(row(e)).toMatchObject({ amount: 60_000, akun: "6-1300" });
     expect(row(f)).toBeUndefined();
@@ -92,5 +93,60 @@ describe("Diagnosis sisa per jenis referensi", () => {
     expect(line).toMatchObject({ account: "1-1401", counter: "1-1403" });
     expect(line.amount).toBe(d.antar.sisa);
     expect((await rencanaKoreksi(prisma, {})).lines.some((l) => l.kelompok === "SISA_ANTAR")).toBe(false);
+  });
+});
+
+import { lpgReklas } from "@/lib/lpgReklas";
+import { diagnosaBarang, rekonPersediaan, rincianJurnal } from "@/lib/rekonPersediaan";
+import { locationSettings, recordMovement } from "@/lib/stock";
+
+describe("Pratinjau produksi #206: leg LPG persis, harga tabung, kunci grup", () => {
+  it("TRX seperti 0238: leg 6-1300 60.000 persis (persediaan 5.000 = kardus bukan LPG) → reklas 60.000 dari 6-1300; rekon tidak menandai LPG Rp5.000", async () => {
+    const text = "Kopi A 60rb\nJasa angkut 10rb\nTeajus 14rb\nKardus bekas 5rb\nBeli LPG 3 tabung 60rb";
+    const n = await mkTx("G", text, [{ code: "6-1250", debit: 60_000 }, { code: "6-1200", debit: 10_000 }, { code: "6-1250", debit: 14_000 }, { code: "6-1300", debit: 60_000 }, { code: "1-1401", debit: 5_000 }]);
+    const plan = await planLpgReklasFull(prisma);
+    expect(plan.rows.find((r) => r.number === n)).toMatchObject({ amount: 60_000, akun: "6-1300" });
+    const rekon = await rekonPersediaan(prisma);
+    const row = rekon.rows.find((r) => r.ref === n && r.account === "1-1401");
+    expect(row?.gap).toBe(5_000);
+    expect(row?.lpgPart).toBeUndefined(); // 5.000 ≠ nominal LPG 60rb dari teks
+  });
+
+  it("TRX seperti 0192: tanpa opsi → cek manual; dengan --harga-tabung=20000 → 3 × 20.000 = 60.000 dari 6-1200", async () => {
+    const n = await mkTx("H", "Beli Lpg 3 tabung dan bensin grand", [{ code: "6-1200", debit: 72_000 }]);
+    const tanpa = await planLpgReklasFull(prisma);
+    expect(tanpa.manual.some((m) => m.number === n)).toBe(true);
+    expect(tanpa.rows.some((r) => r.number === n)).toBe(false);
+    const dengan = await planLpgReklasFull(prisma, { hargaTabung: 20_000 });
+    expect(dengan.rows.find((r) => r.number === n)).toMatchObject({ amount: 60_000, akun: "6-1200" });
+    // pratinjau tidak menyimpan; harga tabung tidak mengubah teks yang nominalnya sudah tertulis
+    expect(lpgShare("Beli LPG 3 tabung 60rb, spidol 15rb", 75_000, { hargaTabung: 20_000 })).toMatchObject({ mode: "baris", amount: 60_000 });
+    expect(lpgShare("Beli Lpg 3 tabung dan bensin 12rb", 72_000, { hargaTabung: 20_000 })).toMatchObject({ mode: "baris", amount: 60_000 });
+    expect((await lpgReklas(prisma, false, { hargaTabung: 20_000 })).rows.some((r) => r.number === n)).toBe(true);
+    expect(await prisma.journal.count({ where: { source: "REKLAS_LPG" } })).toBeGreaterThanOrEqual(0);
+  });
+
+  it("diagnosis: PEMBELIAN↔PBL, FINANCE↔TRX, STOK_AWAL↔CUTOVER/AWAL; pembalik ikut grup asal; rincian J:<sumber> dan barang negatif", async () => {
+    const date = new Date(`${year}-09-01T05:00:00Z`);
+    const locs = await locationSettings(prisma);
+    const item = await prisma.item.create({ data: { sku: `LMN-${tag}`, name: `Uji negatif ${tag}`, type: "BAHAN_BAKU", unit: "pcs" } as never });
+    const source = `UJI${tag}Z`;
+    await prisma.$transaction(async (tx) => {
+      const store = await tx.store.findFirstOrThrow();
+      await postJournal(tx, { date, storeId: store.id, description: `Uji ${tag}`, source: "STOK_AWAL", sourceId: `${tag}`, actor, lines: [{ accountCode: "1-1401", debit: 2_222 }, { accountCode: "3-1000", credit: 2_222 }] }).catch(async () => postJournal(tx, { date, storeId: store.id, description: `Uji ${tag}`, source: "STOK_AWAL", sourceId: `${tag}`, actor, lines: [{ accountCode: "1-1401", debit: 2_222 }, { accountCode: "1-1100", credit: 2_222 }] }));
+      await postJournal(tx, { date, storeId: store.id, description: `Uji rinci ${tag}`, source, sourceId: tag, actor, lines: [{ accountCode: "1-1401", debit: 3_333 }, { accountCode: "1-1100", credit: 3_333 }] });
+      // stok minus: keluar tanpa stok → barang negatif
+      await recordMovement(tx, { type: "PENGELUARAN", itemId: item.id, qty: 4, fromLocationId: locs.raw!, allowNegative: true, ref: `CUTOVER-${tag}`, date, fallbackUnitCost: { value: 100, note: "uji" } }, actor);
+    });
+    const d = await (await import("@/lib/rekonPersediaan")).diagnosaSisa(prisma);
+    expect(d.rows.some((r) => r.group === "J:FINANCE" || r.group === "J:PEMBELIAN" || r.group === "J:PEMBALIK")).toBe(false);
+    expect(d.rows.some((r) => r.group === "STOK_AWAL" && r.account === "1-1401")).toBe(true);
+    const rinci = await rincianJurnal(prisma, source);
+    expect(rinci).toHaveLength(1);
+    expect(rinci[0]).toMatchObject({ account: "1-1401", amount: 3_333 });
+    const bar = await diagnosaBarang(prisma);
+    const neg = bar.negatif.find((x) => x.sku === `LMN-${tag}`);
+    expect(neg?.qty).toBe(-4);
+    expect(neg?.lokasiNegatif[0].qty).toBe(-4);
   });
 });
