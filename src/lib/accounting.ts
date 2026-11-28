@@ -36,6 +36,8 @@ export const COA = {
   BEBAN_SELISIH_PERSEDIAAN: "6-1800",
   BEBAN_REJECT_PRODUKSI: "6-1830",
   BEBAN_PROMOSI_SAMPLE: "6-1840",
+  /** Kontra beban: overhead resep yang dikapitalisasi ke persediaan (full costing); beban aslinya tetap di akunnya */
+  OVERHEAD_DIBEBANKAN: "6-1850",
   BEBAN_BUNGA: "6-1950",
   BEBAN_LAIN: "6-9000",
 } as const;

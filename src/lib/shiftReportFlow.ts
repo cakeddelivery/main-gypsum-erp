@@ -2,6 +2,7 @@ import type { Prisma, ProductVariant } from "@prisma/client";
 import { prisma } from "./db";
 import { COA, postJournal, reverseJournal, reversalDate } from "./accounting";
 import { locationSettings, recordMovement, reverseMovementsByRef, usageAccountCode } from "./stock";
+import { applyOwnOverhead, overheadCreditLines } from "./overheadFullCost";
 import { isTemplate, plannedFlow, shiftEndAt, type FlowStep, type WorkData } from "./shiftReport";
 
 type Tx = Prisma.TransactionClient;
@@ -138,20 +139,27 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
     const note = `Laporan shift ${r.division.name} ${r.shift.name}`;
     let toInventory = 0;
     // Setengah jadi bernilai resep: Dr Persediaan BDP (nilai masuk) − Cr BDP (nilai setengah jadi yang dikonsumsi) − Cr Beban Gaji Produksi (upah resep,
-    // sudah dibebankan saat dibayar) − sisanya (bahan + overhead resep) Cr HPP Pemakaian Bahan Baku
+    // sudah dibebankan saat dibayar) − Cr 6-1850 Overhead Pabrik Dibebankan (overhead resep sendiri, dibatasi beban aktual bulan itu), sisanya (bahan) Cr HPP Pemakaian Bahan Baku
     let wipIn = 0;
     let wipOut = 0;
     let wipWage = 0;
+    const wipOh: { overheadId: string; name: string; amount: number }[] = [];
     for (const [i, s] of steps.entries()) {
       const itemId = itemIds[i];
       const wipKind = s.kind === "kering" || s.kind === "basah";
       const loc = wipKind ? wip : finished;
       if (s.dir === "in") {
         const wipCost = wipKind ? wipTargets.get(itemId)?.total : undefined;
-        const unitCost = wipKind ? wipCost : costs.get(itemId) ?? 0;
+        // Overhead resep milik barang ini sendiri dikapitalisasi sebatas beban aktual bulan itu (sisanya tetap beban periode)
+        const oh = wipKind && wipCost ? await applyOwnOverhead(tx, itemId, s.qty, at) : null;
+        const inValue = wipKind && wipCost ? Math.round(wipCost * s.qty) - (oh ? oh.wanted - oh.total : 0) : 0;
+        const unitCost = wipKind ? (wipCost ? Math.round(inValue / s.qty) : undefined) : costs.get(itemId) ?? 0;
         await recordMovement(tx, { type: "HASIL_PRODUKSI", itemId, qty: s.qty, toLocationId: loc, unitCost, ref, note, date: at }, actor);
-        if (wipKind && wipCost) { wipIn += Math.round(wipCost * s.qty); wipWage += Math.round((wipLabor.get(itemId) ?? 0) * s.qty); }
-        else if (unitCost) toInventory += unitCost * s.qty;
+        if (wipKind && wipCost) {
+          wipIn += Math.round((unitCost ?? 0) * s.qty);
+          wipWage += Math.round((wipLabor.get(itemId) ?? 0) * s.qty);
+          if (oh) wipOh.push(...oh.lines);
+        } else if (unitCost) toInventory += unitCost * s.qty;
       } else if (wipKind) {
         const mv = await recordMovement(tx, { type: "KONSUMSI_PRODUKSI", itemId, qty: s.qty, fromLocationId: loc, allowNegative: true, ref, note, date: at }, actor);
         wipOut += Math.round(s.qty * Number(mv.unitCost));
@@ -170,13 +178,15 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
     }
     if (wipIn > 0) {
       const wage = Math.min(wipWage, Math.max(0, wipIn - wipOut));
-      const usage = wipIn - wipOut - wage;
+      const ohTotal = wipOh.reduce((a, l) => a + l.amount, 0);
+      const usage = wipIn - wipOut - wage - ohTotal;
       await postJournal(tx, {
         date: at, storeId, description: `${note}: setengah jadi bernilai resep (bahan + upah)`, source: FLOW_SOURCE, sourceId: `${r.id}:${v}:wip`, actor,
         lines: [
           { accountCode: COA.PERSEDIAAN_BDP, debit: wipIn },
           ...(wipOut > 0 ? [{ accountCode: COA.PERSEDIAAN_BDP, credit: wipOut }] : []),
           ...(wage > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, credit: wage, memo: "Upah resep dikapitalisasi" }] : []),
+          ...overheadCreditLines({ lines: wipOh, total: ohTotal, wanted: ohTotal }),
           ...(usage > 0 ? [{ accountCode: await usageAccountCode(tx), credit: usage }] : usage < 0 ? [{ accountCode: await usageAccountCode(tx), debit: -usage }] : []),
         ],
       });

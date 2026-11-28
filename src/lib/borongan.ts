@@ -6,6 +6,7 @@ import { nextNumber } from "./numbering";
 import { INVENTORY_COA, StockError, locationSettings, qtyAt, recordMovement, reverseMovementsByRef } from "./stock";
 import { bomStockQty } from "./unitcost";
 import { pointConfig } from "./boronganSetup";
+import { applyOwnOverhead, overheadCreditLines } from "./overheadFullCost";
 
 type Tx = Prisma.TransactionClient;
 type DB = Tx | typeof prisma;
@@ -416,14 +417,17 @@ export async function postResultTx(tx: Tx, p: PostResult, actor: Actor) {
   const wageGaji = task.outputItemId && qty > 0 ? Math.round(sh.worker + sh.coordinator) : 0;
   const wageTransport = task.outputItemId && qty > 0 && p.driverId ? Math.round(sh.driver) : 0;
   const wage = wageGaji + wageTransport;
+  // Full costing: overhead resep barang hasil itu sendiri (penyusutan, LPG, dll.; dibatasi beban aktual bulan itu) ikut nilai barang
+  const oh = task.outputItemId && qty > 0 ? await applyOwnOverhead(tx, task.outputItemId, qty, when) : null;
   if (task.outputItemId && qty > 0) {
-    await recordMovement(tx, { type: "HASIL_PRODUKSI", itemId: task.outputItemId, qty, toLocationId: point.locationId, unitCost: Math.round((material + wage) / qty), ref: `HSB:${r.id}`, note: `${task.name} ${worker.name}`, date: when }, actor);
+    await recordMovement(tx, { type: "HASIL_PRODUKSI", itemId: task.outputItemId, qty, toLocationId: point.locationId, unitCost: Math.round((material + wage + (oh?.total ?? 0)) / qty), ref: `HSB:${r.id}`, note: `${task.name} ${worker.name}`, date: when }, actor);
   }
   // Nilai bahan pindah dari akun persediaan bahan ke akun persediaan barang hasil; bahan reject jadi beban
   const lines = [
     ...[...byType].filter(([t, v]) => t !== outType && v > 0).flatMap(([t, v]) => [{ accountCode: INVENTORY_COA[outType], debit: v }, { accountCode: INVENTORY_COA[t], credit: v }]),
     ...[...rejByType].flatMap(([t, v]) => [{ accountCode: COA.BEBAN_SELISIH_PERSEDIAAN, debit: v, memo: `Reject borongan ${reject} pcs` }, { accountCode: INVENTORY_COA[t], credit: v }]),
     ...(wage > 0 ? [{ accountCode: INVENTORY_COA[outType], debit: wage, memo: "Upah borongan masuk nilai barang hasil" }] : []),
+    ...(oh && oh.total > 0 ? [{ accountCode: INVENTORY_COA[outType], debit: oh.total, memo: "Overhead resep masuk nilai barang hasil" }, ...overheadCreditLines(oh)] : []),
     ...(wageGaji > 0 ? [{ accountCode: COA.BEBAN_GAJI_PRODUKSI, credit: wageGaji, memo: "Upah borongan dikapitalisasi ke persediaan" }] : []),
     ...(wageTransport > 0 ? [{ accountCode: COA.BEBAN_TRANSPORT, credit: wageTransport, memo: "Jatah driver dikapitalisasi ke persediaan" }] : []),
   ];
