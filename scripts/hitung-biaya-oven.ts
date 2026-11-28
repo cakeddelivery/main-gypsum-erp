@@ -34,7 +34,7 @@ async function main() {
   console.log("\nPENYUSUTAN alat produksi & cetakan (modul Aset tetap) per pcs patung cetak — ikut HPP sebagai overhead resep Patung Cetak:");
   if (!dep.aset.length) console.log("  tidak ada aset tetap aktif yang cocok (cetakan/alat/mesin/produksi; ubah dengan --aset=<regex>)");
   for (const a of dep.aset) console.log(`  ${a.nama}: ${rp(a.perBulan)}/bulan`);
-  if (dep.aset.length) console.log(`  total ${rp(dep.perBulan)}/bulan ÷ ${dep.produksiCetak.toLocaleString("id-ID")} pcs (${dep.sumberProduksi}) = ${rp(dep.perPcs, 2)}/pcs`);
+  if (dep.aset.length) console.log(`  total ${rp(dep.perBulan)}/bulan ÷ ${dep.produksiCetak.toLocaleString("id-ID")} pcs (${dep.sumberProduksi}) = ${rp(dep.perPcs, 2)}/pcs  [pembanding 30 hari: ${dep.produksi30.toLocaleString("id-ID")} pcs]`);
   console.log("\nOVERHEAD terkait (overhead master/aset lain):");
   if (!oh.length) console.log("  tidak ada");
   for (const o of oh) console.log(`  [${o.sumber}] ${o.nama}: ${rp(o.perBulan)}/bulan${o.perPcs != null ? ` · ${rp(o.perPcs, 2)}/pcs` : ""}${o.catatan ? ` (${o.catatan})` : ""}`);

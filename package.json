@@ -36,6 +36,7 @@
     "hpp:revaluasi": "tsx scripts/hpp-revaluasi.ts",
     "hitung:biaya-oven": "tsx scripts/hitung-biaya-oven.ts",
     "perbaiki:resep-dobel": "tsx scripts/perbaiki-resep-dobel.ts",
+    "cek:overhead-bulanan": "tsx scripts/cek-overhead-bulanan.ts",
     "diagnosa:selisih-harian": "tsx scripts/diagnosa-selisih-harian.ts",
     "audit:produksi": "bash tests/global-reset.sh && vitest run tests/zzAuditProduksi.test.ts --reporter=verbose",
     "koreksi:saldo-nov": "tsx scripts/koreksi-saldo-nov.ts",

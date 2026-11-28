@@ -55,6 +55,7 @@ const COA: [string, string, AccountType, boolean?][] = [
   ["6-1810", "Kerugian Barang Retur Rusak", "BEBAN"],
   ["6-1830", "Beban Reject Produksi", "BEBAN"],
   ["6-1840", "Beban Promosi & Sample Affiliator", "BEBAN"],
+  ["6-1850", "Overhead Pabrik Dibebankan (kontra beban)", "BEBAN"],
   ["6-1820", "Beban Garansi & Penggantian Barang", "BEBAN"],
   ["6-1350", "Beban Kebersihan & Iuran Lingkungan", "BEBAN"],
   ["6-1900", "Beban Ongkos Kirim", "BEBAN"],
