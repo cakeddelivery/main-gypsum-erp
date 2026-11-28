@@ -35,6 +35,71 @@ export async function lpgExpenseAccount(db: Db): Promise<{ code: string; name: s
   return acc ? { code: acc.code, name: acc.name } : null;
 }
 
+/** Jenis referensi stok dari ref mutasi: "BATAL KRM:x" → KRM; "LPH:abc:1" → LPH; tanpa ref → "(tanpa ref)" */
+export const refGroup = (ref: string | null | undefined) => (ref ? /^[A-Za-z]+/.exec(ref.replace(/^BATAL[ -]/i, ""))?.[0]?.toUpperCase() ?? "(lain)" : "(tanpa ref)");
+const JOURNAL_GROUP: Record<string, string> = { LAPORAN_SHIFT: "LPH", REKON_PERSEDIAAN: "REKON", REVALUASI_HPP: "REVALUASI", PRODUKSI: "PRD", PEMBELIAN: "PEMBELIAN", PENJUALAN: "JUAL", BORONGAN: "BORONGAN(jurnal)" };
+
+export type DiagRow = { account: string; group: string; mutasi: number; jurnal: number; selisih: number };
+export type Diagnosa = { rows: DiagRow[]; /** Σ nilai mutasi stok − nilai stok (Σ qty × harga rata-rata sekarang): pergeseran harga rata-rata, dll. */ nilaiStokVsMutasi: Record<string, number>; /** Bagian terbukti 1-1401 terlalu tinggi & 1-1403 terlalu rendah pada jenis referensi yang sama */ antar: { total: number; sudah: number; sisa: number; perGrup: { group: string; amount: number }[] } };
+
+/**
+ * Diagnosis sisa per jenis referensi stok untuk tiap akun persediaan: nilai mutasi stok (qty × harga mutasi, masuk +, keluar −, transfer 0)
+ * vs nilai jurnal pada akun itu. Jurnal dikelompokkan ke jenis referensi lewat mutasi yang terhubung (StockMovement.journalId) atau sumber jurnalnya.
+ * Selisih = jurnal − mutasi: positif = buku besar lebih tinggi dari stok untuk jenis referensi itu.
+ */
+export async function diagnosaSisa(db: Db): Promise<Diagnosa> {
+  const accs = await db.coaAccount.findMany({ where: { code: { in: [...ACCOUNTS] } }, select: { id: true, code: true } });
+  const codeOfId = new Map(accs.map((a) => [a.id, a.code]));
+  const mvs = await db.stockMovement.findMany({ select: { ref: true, qty: true, unitCost: true, fromLocationId: true, toLocationId: true, journalId: true, item: { select: { type: true } } } });
+  const mutasi = new Map<string, number>();
+  const groupOfJournal = new Map<string, string>();
+  for (const m of mvs) {
+    const g = refGroup(m.ref);
+    if (m.journalId && !groupOfJournal.has(m.journalId)) groupOfJournal.set(m.journalId, g);
+    const sign = m.toLocationId && !m.fromLocationId ? 1 : m.fromLocationId && !m.toLocationId ? -1 : 0;
+    if (!sign) continue;
+    const k = `${INVENTORY_COA[m.item.type]}|${g}`;
+    mutasi.set(k, (mutasi.get(k) ?? 0) + sign * Math.round(Number(m.qty) * Number(m.unitCost)));
+  }
+  const lines = await db.journalLine.findMany({ where: { accountId: { in: accs.map((a) => a.id) } }, select: { accountId: true, debit: true, credit: true, journal: { select: { id: true, source: true, sourceId: true } } } });
+  const jurnal = new Map<string, number>();
+  for (const l of lines) {
+    const j = l.journal;
+    const g = groupOfJournal.get(j.id) ?? (j.source === "WORKSHOP" ? refGroup(j.sourceId) : JOURNAL_GROUP[j.source] ?? `J:${j.source}`);
+    const k = `${codeOfId.get(l.accountId)}|${g}`;
+    jurnal.set(k, (jurnal.get(k) ?? 0) + Number(l.debit) - Number(l.credit));
+  }
+  const keys = new Set([...mutasi.keys(), ...jurnal.keys()]);
+  const rows: DiagRow[] = [...keys].map((k) => {
+    const [account, group] = [k.slice(0, k.indexOf("|")), k.slice(k.indexOf("|") + 1)];
+    const mu = mutasi.get(k) ?? 0, jr = jurnal.get(k) ?? 0;
+    return { account, group, mutasi: mu, jurnal: jr, selisih: jr - mu };
+  }).filter((r) => Math.abs(r.mutasi) > 0 || Math.abs(r.jurnal) > 0).sort((a, b) => a.account.localeCompare(b.account) || Math.abs(b.selisih) - Math.abs(a.selisih));
+  const val = await inventoryValuation(db as never);
+  const nilaiStokVsMutasi: Record<string, number> = {};
+  for (const a of ACCOUNTS) nilaiStokVsMutasi[a] = Math.round([...mutasi].filter(([k]) => k.startsWith(`${a}|`)).reduce((x, [, v]) => x + v, 0) - val.byType[TYPE_OF[a]]);
+  // Bagian terbukti: jenis referensi (selain REKON) yang membuat 1-1401 terlalu tinggi DAN 1-1403 terlalu rendah sekaligus
+  const perGrup: { group: string; amount: number }[] = [];
+  for (const g of new Set(rows.map((r) => r.group))) {
+    if (g === "REKON") continue;
+    const a = rows.find((r) => r.account === COA.PERSEDIAAN_BAHAN && r.group === g)?.selisih ?? 0;
+    const c = rows.find((r) => r.account === COA.PERSEDIAAN_JADI && r.group === g)?.selisih ?? 0;
+    const amount = Math.round(Math.min(Math.max(a, 0), Math.max(-c, 0)));
+    if (amount > TOLERANSI) perGrup.push({ group: g, amount });
+  }
+  const total = perGrup.reduce((x, r) => x + r.amount, 0);
+  const sudah = await antarSudah(db);
+  return { rows, nilaiStokVsMutasi, antar: { total, sudah, sisa: Math.max(0, total - sudah), perGrup: perGrup.sort((a, b) => b.amount - a.amount) } };
+}
+
+/** Reklas antar persediaan yang sudah dibukukan (Cr 1-1401 memo REKON:ANTAR) */
+async function antarSudah(db: Db): Promise<number> {
+  const acc = await db.coaAccount.findUnique({ where: { code: COA.PERSEDIAAN_BAHAN }, select: { id: true } });
+  if (!acc) return 0;
+  const ls = await db.journalLine.findMany({ where: { accountId: acc.id, memo: { startsWith: "REKON:ANTAR" }, journal: { source: REKON_SOURCE } }, select: { debit: true, credit: true } });
+  return Math.round(ls.reduce((x, l) => x + Number(l.credit) - Number(l.debit), 0));
+}
+
 const memoOf = (k: Kelompok | "SISA", ref: string) => `REKON:${k}:${ref}`;
 
 /** Yang sudah dikoreksi sebelumnya per memo (debit − kredit baris akun persediaan pada jurnal REKON_PERSEDIAAN) */
@@ -155,6 +220,8 @@ export type Keputusan = {
   penerimaanTanpaJurnal?: "saldo-awal" | "selisih";
   /** Sisa selisih akun yang belum terjelaskan → Beban Selisih Persediaan (6-1800) */
   sisa?: "selisih";
+  /** Pindahkan hanya bagian terbukti (jenis referensi yang sama) dari 1-1401 (terlalu tinggi) ke 1-1403 (terlalu rendah): Cr 1-1401 / Dr 1-1403 */
+  sisaAntar?: "reklas-antar-persediaan";
 };
 
 export type RencanaKoreksi = { lines: { account: string; counter: string; amount: number; memo: string; kelompok: string; ref: string }[]; belumDiputuskan: Kelompok[]; result: RekonResult };
@@ -180,7 +247,15 @@ export async function rencanaKoreksi(db: Db, k: Keputusan): Promise<RencanaKorek
     if (!counter) { belum.add(r.kelompok); continue; }
     lines.push({ account: r.account, counter, amount: gap, memo: memoOf(r.kelompok, r.ref), kelompok: r.kelompok, ref: r.ref });
   }
-  if (k.sisa === "selisih") for (const a of result.accounts) {
+  let antar = 0;
+  if (k.sisaAntar === "reklas-antar-persediaan") {
+    antar = (await diagnosaSisa(db)).antar.sisa;
+    if (antar > TOLERANSI) lines.push({ account: COA.PERSEDIAAN_BAHAN, counter: COA.PERSEDIAAN_JADI, amount: antar, memo: "REKON:ANTAR:1-1401", kelompok: "SISA_ANTAR", ref: "1-1401→1-1403" });
+    else antar = 0;
+  }
+  if (k.sisa === "selisih") for (const a0 of result.accounts) {
+    // Reklas antar-persediaan (bila dipilih) mengurangi sisa 1-1401 dan menambah sisa 1-1403 dengan jumlah yang sama
+    const a = { ...a0, sisa: a0.sisa + (a0.code === COA.PERSEDIAAN_BAHAN ? -antar : a0.code === COA.PERSEDIAAN_JADI ? antar : 0) };
     // Sisa dihitung dengan kelompok yang BELUM diputuskan tetap dianggap terjelaskan (tidak ikut dikoreksi sebagai sisa)
     if (Math.abs(a.sisa) > TOLERANSI) lines.push({ account: a.code, counter: COA.BEBAN_SELISIH_PERSEDIAAN, amount: a.sisa, memo: memoOf("SISA" as never, a.code), kelompok: "SISA", ref: a.code });
   }

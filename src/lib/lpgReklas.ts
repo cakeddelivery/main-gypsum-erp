@@ -12,35 +12,69 @@ export const REKLAS_SOURCE = "REKLAS_LPG";
 
 export type ReklasRow = { txId: string; number: string; date: Date; amount: number; akun: string; akunNama: string; teks: string };
 
-export async function planLpgReklas(db: Db): Promise<ReklasRow[]> {
+export type ReklasManual = { txId: string; number: string; teks: string; alasan: string };
+export type ReklasPlan = { rows: ReklasRow[]; manual: ReklasManual[] };
+
+/**
+ * Rencana reklas LPG per transaksi. Hanya nominal LPG yang dipindah:
+ *  - nominal LPG dari teks (bagian LPG-nya saja; tidak terbaca → "perlu cek manual", bukan ditebak)
+ *  - dikurangi LPG yang sudah ada di leg persediaan jurnal itu (itu urusan cek:rekonsiliasi-persediaan, bukan reklas beban)
+ *  - leg beban sumber ≥ nominal; bila ada beberapa leg beban, dipakai yang nilainya persis sama, kalau tidak ada → cek manual
+ */
+export async function planLpgReklasFull(db: Db): Promise<ReklasPlan> {
   const word = (f: string) => [{ [f]: { contains: "lpg", mode: "insensitive" as const } }, { [f]: { contains: "elpiji", mode: "insensitive" as const } }];
   const txs = await db.financeTransaction.findMany({
     where: { direction: "KELUAR", status: "DIBUKUKAN", deletedAt: null, origin: null, journalId: { not: null }, OR: [...word("note"), ...word("rawText"), ...word("counterparty"), { splits: { some: { OR: word("note") } } }] },
     include: { splits: true }, orderBy: { date: "asc" },
   });
-  if (!txs.length) return [];
+  if (!txs.length) return { rows: [], manual: [] };
   const done = new Set((await db.journal.findMany({ where: { source: REKLAS_SOURCE, sourceId: { in: txs.map((t) => t.id) }, reversalOfId: null }, select: { id: true, sourceId: true } })).map((j) => j.sourceId!));
-  const lines = await db.journalLine.findMany({ where: { journalId: { in: txs.map((t) => t.journalId!) }, debit: { gt: 0 }, account: { type: "BEBAN" } }, select: { journalId: true, debit: true, account: { select: { code: true, name: true } } } });
-  const out: ReklasRow[] = [];
+  const lines = await db.journalLine.findMany({ where: { journalId: { in: txs.map((t) => t.journalId!) }, debit: { gt: 0 } }, select: { journalId: true, debit: true, account: { select: { code: true, name: true, type: true } } } });
+  const rows: ReklasRow[] = [];
+  const manual: ReklasManual[] = [];
   for (const t of txs) {
     if (done.has(t.id)) continue;
     const total = Number(t.amount);
     const teks = [t.note, t.rawText, t.counterparty].filter(Boolean).join(" · ");
     let amount = 0;
-    if (t.splits.length) amount = t.splits.filter((x) => lpgShare(x.note, Number(x.amount)).mode !== "tidak-lpg").reduce((a, x) => a + Number(x.amount), 0);
-    else { const sh = lpgShare(teks, total); amount = sh.mode === "penuh" || sh.mode === "baris" ? sh.amount : 0; }
+    let unclear = false;
+    if (t.splits.length) {
+      // rincian barang (itemId) masuk persediaan, bukan beban; hanya rincian beban bernada LPG
+      for (const x of t.splits.filter((x) => !x.itemId)) {
+        const sh = lpgShare(x.note, Number(x.amount));
+        if (sh.mode === "penuh" || sh.mode === "baris") amount += sh.mode === "penuh" ? Number(x.amount) : sh.amount;
+        else if (sh.mode === "tidak-terparse") unclear = true;
+      }
+    } else {
+      const sh = lpgShare(teks, total);
+      if (sh.mode === "penuh" || sh.mode === "baris") amount = sh.amount;
+      else if (sh.mode === "tidak-terparse") unclear = true;
+    }
+    const legs = lines.filter((l) => l.journalId === t.journalId);
+    if (unclear && !(amount > 0)) { manual.push({ txId: t.id, number: t.number, teks, alasan: "ada baris LPG tetapi nominalnya tidak terbaca dari teks" }); continue; }
     if (!(amount > 0)) continue;
-    const dl = lines.filter((l) => l.journalId === t.journalId && l.account.code !== COA.BEBAN_LPG_PRODUKSI).sort((a, b) => Number(b.debit) - Number(a.debit))[0];
-    if (!dl) continue; // bukan beban (mis. persediaan: dikoreksi lewat koreksi:rekonsiliasi-persediaan) atau sudah di 6-1310
-    out.push({ txId: t.id, number: t.number, date: t.date, amount: Math.min(amount, Number(dl.debit)), akun: dl.account.code, akunNama: dl.account.name, teks });
+    // LPG yang sudah ada di leg persediaan (1-14xx) tidak direklas dari beban
+    const inv = legs.filter((l) => l.account.type === "ASET" && l.account.code.startsWith("1-14")).reduce((a, l) => a + Number(l.debit), 0);
+    const remaining = amount - Math.min(amount, inv);
+    if (!(remaining > 0)) continue;
+    const exp = legs.filter((l) => l.account.type === "BEBAN" && l.account.code !== COA.BEBAN_LPG_PRODUKSI);
+    if (!exp.length) continue; // sudah di 6-1310 atau bukan beban
+    let leg = exp.length === 1 ? exp[0] : exp.filter((l) => Number(l.debit) === remaining).length === 1 ? exp.find((l) => Number(l.debit) === remaining)! : null;
+    if (!leg) { manual.push({ txId: t.id, number: t.number, teks, alasan: `LPG Rp${remaining.toLocaleString("id-ID")} tetapi ada ${exp.length} leg beban (${exp.map((l) => `${l.account.code} Rp${Number(l.debit).toLocaleString("id-ID")}`).join(", ")}) dan tidak ada yang persis sama` }); continue; }
+    if (Number(leg.debit) < remaining) { manual.push({ txId: t.id, number: t.number, teks, alasan: `leg beban ${leg.account.code} Rp${Number(leg.debit).toLocaleString("id-ID")} lebih kecil dari LPG Rp${remaining.toLocaleString("id-ID")}` }); continue; }
+    rows.push({ txId: t.id, number: t.number, date: t.date, amount: remaining, akun: leg.account.code, akunNama: leg.account.name, teks });
   }
-  return out;
+  return { rows, manual };
+}
+
+export async function planLpgReklas(db: Db): Promise<ReklasRow[]> {
+  return (await planLpgReklasFull(db)).rows;
 }
 
 export async function lpgReklas(db: PrismaClient, apply: boolean) {
-  const rows = await planLpgReklas(db);
+  const { rows, manual } = await planLpgReklasFull(db);
   const target = await db.coaAccount.findUnique({ where: { code: COA.BEBAN_LPG_PRODUKSI }, select: { id: true } });
-  if (!apply || !rows.length || !target) return { rows, journals: 0, gagal: [] as string[], akunAda: !!target };
+  if (!apply || !rows.length || !target) return { rows, manual, journals: 0, gagal: [] as string[], akunAda: !!target };
   const gagal: string[] = [];
   let journals = 0;
   for (const r of rows) {
@@ -58,5 +92,5 @@ export async function lpgReklas(db: PrismaClient, apply: boolean) {
       gagal.push(`${r.number}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  return { rows, journals, gagal, akunAda: true };
+  return { rows, manual, journals, gagal, akunAda: true };
 }
