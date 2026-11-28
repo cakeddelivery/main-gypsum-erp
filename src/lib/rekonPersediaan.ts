@@ -26,6 +26,9 @@ export type RekonResult = { accounts: RekonAccount[]; rows: RekonRow[]; lpgAccou
 
 /** Akun beban LPG: akun kategori transaksi bernama LPG/gas, atau akun BEBAN bernama LPG; null bila belum ada */
 export async function lpgExpenseAccount(db: Db): Promise<{ code: string; name: string } | null> {
+  // 6-1310 Beban LPG Produksi (Oven) — BOP didahulukan; kategori/akun bernama LPG lain hanya cadangan
+  const bop = await db.coaAccount.findUnique({ where: { code: COA.BEBAN_LPG_PRODUKSI }, select: { code: true, name: true, active: true } });
+  if (bop?.active) return { code: bop.code, name: bop.name };
   const cat = await db.txCategory.findFirst({ where: { name: { contains: "lpg", mode: "insensitive" }, direction: "KELUAR" }, include: { coaAccount: true } });
   if (cat && cat.coaAccount.type === "BEBAN") return { code: cat.coaAccount.code, name: cat.coaAccount.name };
   const acc = await db.coaAccount.findFirst({ where: { type: "BEBAN", active: true, OR: [{ name: { contains: "lpg", mode: "insensitive" } }, { name: { contains: "elpiji", mode: "insensitive" } }] }, orderBy: { code: "asc" } });

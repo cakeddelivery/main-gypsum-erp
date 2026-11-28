@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { latestCost } from "./unitcost";
 import { overheadUnitCost } from "./hpp";
 import { lpgShare } from "./lpgText";
+import { COA } from "./accounting";
 
 /**
  * Biaya oven & gypsum per patung (HANYA MEMBACA kecuali pasangBiayaOven):
@@ -35,8 +36,8 @@ export function periodes(now: Date = new Date()): Periode[] {
   return out;
 }
 
-export type LpgFinanceBaris = { number: string; date: Date; amount: number; total: number; mode: "penuh" | "baris" | "rincian"; teks: string };
-export type LpgSumber = { financeLpg: number; financeBaris: LpgFinanceBaris[]; isiUlangDibayar: number; isiUlangTabungDibayar: number; isiUlangMenunggu: number; estimasiMenunggu: number; pembelianItem: number; dipakai: number; catatan: string[] };
+export type LpgFinanceBaris = { number: string; date: Date; amount: number; total: number; mode: "penuh" | "baris" | "rincian"; teks: string; /** Akun beban tempat transaksi terposting (bila sudah dibukukan) */ akun?: string | null; txId?: string; journalId?: string | null };
+export type LpgSumber = { bopLpg: number; financeLpg: number; financeBaris: LpgFinanceBaris[]; isiUlangDibayar: number; isiUlangTabungDibayar: number; isiUlangMenunggu: number; estimasiMenunggu: number; pembelianItem: number; dipakai: number; catatan: string[] };
 export type PeriodeBiaya = { label: string; lpg: LpgSumber; panen: { bagus: number; laporan: number }; lpgPerPcs: number | null };
 
 const sumPanen = (work: unknown) => {
@@ -44,14 +45,9 @@ const sumPanen = (work: unknown) => {
   return Array.isArray(rows) ? rows.reduce((a, r) => a + (r.v ?? []).reduce<number>((s, x) => s + (Number(x) || 0), 0), 0) : 0;
 };
 
-export async function biayaLpgPerPeriode(db: Db, now: Date = new Date()): Promise<PeriodeBiaya[]> {
-  const refills = await db.lpgRefill.findMany();
-  const paid = refills.filter((r) => r.status === "DIPASANGKAN" && r.amount != null && r.pricePerTabung != null);
-  const lastPrice = paid.length ? Number([...paid].sort((a, b) => b.physicalDate.getTime() - a.physicalDate.getTime())[0].pricePerTabung) : 0;
-  const lpgItems = await db.item.findMany({ where: { OR: [{ name: { contains: "lpg", mode: "insensitive" } }, { name: { contains: "elpiji", mode: "insensitive" } }, { name: { contains: "gas ", mode: "insensitive" } }] }, select: { id: true, name: true } });
-  const lpgItemIds = lpgItems.filter((i) => LPG_WORDS.test(i.name)).map((i) => i.id);
-  const lines = lpgItemIds.length ? await db.purchaseLine.findMany({ where: { itemId: { in: lpgItemIds } }, select: { amount: true, purchase: { select: { date: true } } } }) : [];
-  const reports = await db.shiftReport.findMany({ where: { status: { in: ["TERKIRIM", "DIREVISI"] }, division: { reportTemplate: "PRODUKSI" } }, select: { date: true, work: true } });
+/** Pembelian LPG yang tercatat sebagai transaksi Finance biasa + LPG di buku besar 6-1310 (tanpa dobel) */
+export async function collectFinanceLpg(db: Db) {
+  const refills = await db.lpgRefill.findMany({ select: { transactionId: true } });
   // Pembelian LPG yang dicatat sebagai transaksi Finance biasa (kategori mis. Pembelian Bahan Baku / Konsumsi): dikenali dari deskripsinya.
   // Yang sudah dipasangkan ke isi ulang tabung (LpgRefill.transactionId) tidak dihitung lagi.
   const linkedTx = new Set(refills.map((r) => r.transactionId).filter((x): x is string => !!x));
@@ -60,10 +56,24 @@ export async function biayaLpgPerPeriode(db: Db, now: Date = new Date()): Promis
     where: { direction: "KELUAR", status: { in: ["DIBUKUKAN", "DALAM_PROSES"] }, deletedAt: null, origin: null, OR: [...word("note"), ...word("rawText"), ...word("counterparty"), { splits: { some: { OR: word("note") } } }] },
     include: { splits: true }, orderBy: { date: "asc" },
   });
+  // Buku besar 6-1310 Beban LPG Produksi (BOP): transaksi berkategori "LPG Oven" sudah tercatat di sini. Transaksi yang tertaut ke isi ulang
+  // tabung (sudah dihitung di isi ulang dibayar) dikeluarkan agar tidak dobel; jurnal pembalik dihitung ke transaksi aslinya.
+  const bopAcc = await db.coaAccount.findUnique({ where: { code: COA.BEBAN_LPG_PRODUKSI }, select: { id: true } });
+  const bopLines = bopAcc ? await db.journalLine.findMany({ where: { accountId: bopAcc.id }, select: { debit: true, credit: true, journal: { select: { date: true, sourceId: true, reversalOfId: true } } } }) : [];
+  const revOrig = bopLines.map((l) => l.journal.reversalOfId).filter((x): x is string => !!x);
+  const origSrc = new Map((revOrig.length ? await db.journal.findMany({ where: { id: { in: revOrig } }, select: { id: true, sourceId: true } }) : []).map((j) => [j.id, j.sourceId]));
+  const bopTxIds = new Set<string>(); // transaksi Finance yang jurnalnya mengenai 6-1310 (tidak dihitung lagi lewat deteksi deskripsi)
+  const bopRows: { date: Date; net: number }[] = [];
+  for (const l of bopLines) {
+    const src = l.journal.reversalOfId ? origSrc.get(l.journal.reversalOfId) ?? null : l.journal.sourceId;
+    if (src) bopTxIds.add(src);
+    if (src && linkedTx.has(src)) continue;
+    bopRows.push({ date: l.journal.date, net: Number(l.debit) - Number(l.credit) });
+  }
   const fin: LpgFinanceBaris[] = [];
   const peringatan: string[] = [];
   for (const t of fTx) {
-    if (linkedTx.has(t.id)) continue;
+    if (linkedTx.has(t.id) || bopTxIds.has(t.id)) continue;
     const total = Number(t.amount);
     const teks = [t.note, t.rawText, t.counterparty].filter(Boolean).join(" · ");
     const sp = t.splits.filter((x) => lpgShare(x.note, Number(x.amount)).mode !== "tidak-lpg");
@@ -77,6 +87,28 @@ export async function biayaLpgPerPeriode(db: Db, now: Date = new Date()): Promis
     if (sh.mode === "penuh" || sh.mode === "baris") fin.push({ number: t.number, date: t.date, amount: sh.amount, total, mode: sh.mode, teks });
     else if (sh.mode === "tidak-terparse") peringatan.push(`${t.number}: deskripsi campur dan nominal baris LPG tidak terbaca (Rp${total.toLocaleString("id-ID")}; "${sh.lines.join(" / ").slice(0, 80)}"), tidak dihitung — cek manual`);
   }
+  // Akun beban tempat transaksi terposting (info: LPG yang masuk 6-1300 beban umum dapat direklas ke 6-1310)
+  const jIds = fTx.filter((t) => fin.some((f) => f.number === t.number) && t.journalId).map((t) => t.journalId!);
+  const dl = jIds.length ? await db.journalLine.findMany({ where: { journalId: { in: jIds }, debit: { gt: 0 }, account: { type: "BEBAN" } }, select: { journalId: true, debit: true, account: { select: { code: true } } } }) : [];
+  for (const f of fin) {
+    const t = fTx.find((x) => x.number === f.number);
+    const lines = dl.filter((l) => l.journalId === t?.journalId);
+    f.akun = lines.sort((a, c) => Number(c.debit) - Number(a.debit))[0]?.account.code ?? null;
+    f.txId = t?.id;
+    f.journalId = t?.journalId ?? null;
+  }
+  return { fin, peringatan, bopRows };
+}
+
+export async function biayaLpgPerPeriode(db: Db, now: Date = new Date()): Promise<PeriodeBiaya[]> {
+  const refills = await db.lpgRefill.findMany();
+  const paid = refills.filter((r) => r.status === "DIPASANGKAN" && r.amount != null && r.pricePerTabung != null);
+  const lastPrice = paid.length ? Number([...paid].sort((a, b) => b.physicalDate.getTime() - a.physicalDate.getTime())[0].pricePerTabung) : 0;
+  const lpgItems = await db.item.findMany({ where: { OR: [{ name: { contains: "lpg", mode: "insensitive" } }, { name: { contains: "elpiji", mode: "insensitive" } }, { name: { contains: "gas ", mode: "insensitive" } }] }, select: { id: true, name: true } });
+  const lpgItemIds = lpgItems.filter((i) => LPG_WORDS.test(i.name)).map((i) => i.id);
+  const lines = lpgItemIds.length ? await db.purchaseLine.findMany({ where: { itemId: { in: lpgItemIds } }, select: { amount: true, purchase: { select: { date: true } } } }) : [];
+  const reports = await db.shiftReport.findMany({ where: { status: { in: ["TERKIRIM", "DIREVISI"] }, division: { reportTemplate: "PRODUKSI" } }, select: { date: true, work: true } });
+  const { fin, peringatan, bopRows } = await collectFinanceLpg(db);
   return periodes(now).map((p) => {
     const inP = (d: Date) => d >= p.from && d < p.to;
     const r = refills.filter((x) => inP(new Date(`${x.physicalDate.toISOString().slice(0, 10)}T00:00:00+07:00`)));
@@ -90,10 +122,11 @@ export async function biayaLpgPerPeriode(db: Db, now: Date = new Date()): Promis
     const financeLpg = financeBaris.reduce((a, x) => a + x.amount, 0);
     // Aktual dipakai bila ada (isi ulang dipasangkan + transaksi Finance LPG); estimasi isi ulang yang belum dipasangkan HANYA bila tidak ada transaksi
     // Finance LPG (transaksi itulah pembayaran isi ulang yang belum dipasangkan → tidak dobel). Pembelian barang LPG hanya bila semuanya kosong.
-    const aktual = isiUlangDibayar + financeLpg;
-    const refillTotal = financeLpg > 0 ? aktual : aktual + estimasiMenunggu;
+    const bopLpg = bopRows.filter((x) => inP(x.date)).reduce((a, x) => a + x.net, 0);
+    const aktual = isiUlangDibayar + financeLpg + bopLpg;
+    const refillTotal = financeLpg > 0 || bopLpg > 0 ? aktual : aktual + estimasiMenunggu;
     const dipakai = refillTotal > 0 ? refillTotal : pembelianItem;
-    if (financeLpg > 0 && estimasiMenunggu > 0) catatan.push(`estimasi isi ulang belum dipasangkan Rp${estimasiMenunggu.toLocaleString("id-ID")} TIDAK dijumlahkan (sudah ada transaksi Finance LPG Rp${financeLpg.toLocaleString("id-ID")} = aktual)`);
+    if ((financeLpg > 0 || bopLpg > 0) && estimasiMenunggu > 0) catatan.push(`estimasi isi ulang belum dipasangkan Rp${estimasiMenunggu.toLocaleString("id-ID")} TIDAK dijumlahkan (sudah ada aktual: transaksi Finance LPG Rp${financeLpg.toLocaleString("id-ID")} + buku besar 6-1310 Rp${bopLpg.toLocaleString("id-ID")})`);
     for (const w of peringatan) catatan.push(`⚠ ${w}`);
     if (refillTotal > 0 && pembelianItem > 0) catatan.push(`pembelian barang LPG Rp${pembelianItem.toLocaleString("id-ID")} tidak dijumlahkan (kemungkinan dobel dengan isi ulang)`);
     if (waiting.length) catatan.push(`${waiting.length} isi ulang belum dipasangkan ke transaksi Finance (estimasi ${waiting.reduce((a, x) => a + x.tabung, 0)} tabung × Rp${lastPrice.toLocaleString("id-ID")})`);
@@ -101,7 +134,7 @@ export async function biayaLpgPerPeriode(db: Db, now: Date = new Date()): Promis
     const bagus = rep.reduce((a, x) => a + sumPanen(x.work), 0);
     return {
       label: p.label,
-      lpg: { financeLpg, financeBaris, isiUlangDibayar, isiUlangTabungDibayar: rp.reduce((a, x) => a + x.tabung, 0), isiUlangMenunggu: waiting.length, estimasiMenunggu, pembelianItem, dipakai, catatan },
+      lpg: { bopLpg, financeLpg, financeBaris, isiUlangDibayar, isiUlangTabungDibayar: rp.reduce((a, x) => a + x.tabung, 0), isiUlangMenunggu: waiting.length, estimasiMenunggu, pembelianItem, dipakai, catatan },
       panen: { bagus, laporan: rep.length },
       lpgPerPcs: bagus > 0 && dipakai > 0 ? Math.round((dipakai / bagus) * 100) / 100 : null,
     };

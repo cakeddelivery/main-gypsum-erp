@@ -21,8 +21,8 @@ async function main() {
   console.log("BIAYA OVEN (LPG) PER PCS PATUNG KERING\n");
   for (const p of per) {
     console.log(`${p.label}: LPG ${rp(p.lpg.dipakai)} ÷ panen ${p.panen.bagus.toLocaleString("id-ID")} pcs (${p.panen.laporan} laporan Oven) = ${rp(p.lpgPerPcs, 2)}/pcs`);
-    console.log(`   sumber: isi ulang dibayar ${rp(p.lpg.isiUlangDibayar)} (${p.lpg.isiUlangTabungDibayar} tabung) · transaksi Finance LPG ${rp(p.lpg.financeLpg)} · estimasi isi ulang belum dipasangkan ${rp(p.lpg.estimasiMenunggu)} · pembelian barang LPG ${rp(p.lpg.pembelianItem)}`);
-    for (const b of p.lpg.financeBaris) console.log(`      Finance ${b.number} (${b.date.toISOString().slice(0, 10)}): ${rp(b.amount)}${b.mode === "penuh" ? "" : ` dari ${rp(b.total)} [${b.mode === "baris" ? "baris LPG diparse" : "baris rincian LPG"}]`} · ${b.teks.slice(0, 80)}`);
+    console.log(`   sumber: isi ulang dibayar ${rp(p.lpg.isiUlangDibayar)} (${p.lpg.isiUlangTabungDibayar} tabung) · buku besar 6-1310 LPG Oven ${rp(p.lpg.bopLpg)} · transaksi Finance LPG (deskripsi, belum di 6-1310) ${rp(p.lpg.financeLpg)} · estimasi isi ulang belum dipasangkan ${rp(p.lpg.estimasiMenunggu)} · pembelian barang LPG ${rp(p.lpg.pembelianItem)}`);
+    for (const b of p.lpg.financeBaris) console.log(`      Finance ${b.number} (${b.date.toISOString().slice(0, 10)}): ${rp(b.amount)}${b.mode === "penuh" ? "" : ` dari ${rp(b.total)} [${b.mode === "baris" ? "baris LPG diparse" : "baris rincian LPG"}]`}${b.akun && b.akun !== "6-1310" ? ` · terposting ke ${b.akun}${b.akun === "6-1300" ? " (beban umum, bukan BOP)" : ""}` : ""} · ${b.teks.slice(0, 80)}`);
     for (const c of p.lpg.catatan) console.log(`   ⚠ ${c}`);
   }
   const gy = await biayaGypsum(prisma);
