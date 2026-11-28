@@ -24,7 +24,7 @@ export function classifyMovement(m: MoveLite, loc: string, reportId: string): { 
   if (into) {
     if (p === "KRM" || p === "BGI" || p === "PND" || p === "AMB" || p === "SRT" || p === "PNR") return { dir: "in", kind: "borongan" };
     if (m.type === "HASIL_PRODUKSI" || p === "LPH" || p === "PRD") return { dir: "in", kind: "produksi" };
-    if (m.type === "PENERIMAAN" || p === "RTR") return { dir: "in", kind: "masuk" };
+    if (m.type === "PENERIMAAN" || p === "RTR" || p === "AMBIL") return { dir: "in", kind: "masuk" };
     return { dir: "in", kind: "lain" };
   }
   if (p === "RJK") return { dir: "out", kind: "reject" };

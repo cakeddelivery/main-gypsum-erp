@@ -49,7 +49,7 @@ export async function getStaleSession(chatId: string, userId: string): Promise<S
   return { ...s, chatId: chatOfKey(s.chatId), data: (s.data ?? {}) as Data };
 }
 
-const FLOW_NAME: Record<string, string> = { wsp: "produksi workshop", prod: "input produksi", absen: "absen", mut: "mutasi stok", req: "permintaan stok", cek: "cek stok", kas: "kasbon", ksb: "kasbon", beli: "pembelian", utang: "bayar hutang/cicilan", sish: "dana sisihan", tlg: "pengembalian talangan", bbay: "bayar upah borongan", jnew: "penjualan", jcil: "cicilan piutang", trx: "transaksi" };
+const FLOW_NAME: Record<string, string> = { wsp: "produksi workshop", amb: "ambil stok", prod: "input produksi", absen: "absen", mut: "mutasi stok", req: "permintaan stok", cek: "cek stok", kas: "kasbon", ksb: "kasbon", beli: "pembelian", utang: "bayar hutang/cicilan", sish: "dana sisihan", tlg: "pengembalian talangan", bbay: "bayar upah borongan", jnew: "penjualan", jcil: "cicilan piutang", trx: "transaksi" };
 
 function resumePrompt(s: Session): Prompt {
   return { text: `⏰ Isian <b>${esc(FLOW_NAME[s.flow] ?? s.flow)}</b> sempat terhenti lebih dari ${FLOW_TTL_MIN} menit. Data yang sudah diisi masih tersimpan.

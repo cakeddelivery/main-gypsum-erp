@@ -65,11 +65,16 @@ describe("Retur diperiksa per pcs (paket Single Pack)", () => {
       const l = await prisma.returnLine.findUniqueOrThrow({ where: { id: line }, include: { pieces: true } });
       expect([l.pieceMode, l.goodQty, l.damagedQty, Number(l.lossValue)]).toEqual([true, 10, 2, 2000]);
       expect(l.pieces).toHaveLength(2);
+      // Catatan reject sumber "Retur" (laporan reject) tanpa jurnal baru: satu-satunya jalur bongkar retur = periksa retur
+      const rej = await prisma.productionReject.findMany({ where: { stage: "RETUR", reportId: `${r.number}-P1` } });
+      expect(rej.map((x) => [x.itemId, Number(x.qty)])).toEqual([[hewan, 2]]);
+      expect(await prisma.journal.count({ where: { source: "RETUR", sourceId: { startsWith: r.number } } })).toBe(1);
 
       // Periksa ulang: semua baik → paket utuh kembali ke stok paket, pcs sebelumnya dibalik
       await inspectReturn(r.id, [{ lineId: line, goodQty: 0, damagedQty: 0, pieces: [{ itemId: hewan, goodQty: 6, damagedQty: 0 }, { itemId: cowok, goodQty: 6, damagedQty: 0 }] }], actor);
       expect(await qtyAt(prisma, hewan, wip)).toBe(before.h);
       expect(await qtyAt(prisma, pack.id, finished)).toBe(before.p + 1);
+      expect(await prisma.productionReject.count({ where: { stage: "RETUR", reportId: { startsWith: r.number } } })).toBe(0); // periksa ulang: catatan lama dihapus, tidak dobel
     });
   });
 });

@@ -1,3 +1,4 @@
+import { divisionLocationId, splitConsumption } from "./ambilStok";
 import type { Prisma, ProductVariant } from "@prisma/client";
 import { prisma } from "./db";
 import { COA, postJournal, reverseJournal, reversalDate } from "./accounting";
@@ -127,6 +128,7 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
     wipLabor.set(id, own.reduce((a, r) => a + (r.task && !r.override ? Number(r.task.ratePerPcs) : Number(r.rate)), 0));
   }
 
+  const divLoc = await divisionLocationId(prisma, template);
   let posted = 0;
   await prisma.$transaction(async (tx) => {
     // Kunci laporan & baca ulang versinya: klik Kirim dua kali bersamaan tidak boleh memposting hasil kerja dua kali
@@ -161,8 +163,12 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
           if (oh) wipOh.push(...oh.lines);
         } else if (unitCost) toInventory += unitCost * s.qty;
       } else if (wipKind) {
-        const mv = await recordMovement(tx, { type: "KONSUMSI_PRODUKSI", itemId, qty: s.qty, fromLocationId: loc, allowNegative: true, ref, note, date: at }, actor);
-        wipOut += Math.round(s.qty * Number(mv.unitCost));
+        // Patung kering dipakai Assembling/Giftbox: ambil dulu dari stok divisi (hasil "Ambil stok"), sisanya dari gudang setengah jadi
+        const parts = s.kind === "kering" ? await splitConsumption(tx, itemId, s.qty, divLoc, loc) : [{ loc, qty: s.qty }];
+        for (const part of parts) {
+          const mv = await recordMovement(tx, { type: "KONSUMSI_PRODUKSI", itemId, qty: part.qty, fromLocationId: part.loc, allowNegative: true, ref, note, date: at }, actor);
+          wipOut += Math.round(part.qty * Number(mv.unitCost));
+        }
       } else {
         const fb = costs.get(itemId) ?? 0;
         await recordMovement(tx, { type: "PENGELUARAN", itemId, qty: s.qty, fromLocationId: loc, allowNegative: true, fallbackUnitCost: fb > 0 ? { value: fb, note: "harga pokok dari resep" } : null, ref, note, date: at }, actor);
