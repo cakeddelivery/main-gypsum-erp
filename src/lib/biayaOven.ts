@@ -108,6 +108,8 @@ export async function overheadTerkait(db: Db, panen30: number): Promise<Overhead
 }
 
 export const ASET_ALAT_DEFAULT = /cetakan|alat|mesin|produksi/i;
+/** Bukan alat/cetakan: sewa/bangunan sudah ada sebagai overhead "Sewa Tempat"; oven punya penyusutan sendiri */
+export const ASET_KECUALI = /sewa|rumah|bangunan|gedung|tanah|kendaraan|oven/i;
 export const ASET_NAMA_OVERHEAD = "Penyusutan alat produksi & cetakan (aset)";
 
 export type PenyusutanAset = { aset: { id: string; nama: string; perBulan: number }[]; perBulan: number; produksiCetak: number; produksi30: number; sumberProduksi: string; bulanTerhitung: number; perPcs: number | null };
@@ -119,7 +121,7 @@ export type PenyusutanAset = { aset: { id: string; nama: string; perBulan: numbe
  */
 export async function penyusutanAset(db: Db, opts: { now?: Date; pola?: RegExp } = {}): Promise<PenyusutanAset> {
   const pola = opts.pola ?? ASET_ALAT_DEFAULT;
-  const assets = (await db.fixedAsset.findMany({ where: { active: true }, orderBy: { name: "asc" } })).filter((a) => pola.test(a.name) && !/oven/i.test(a.name));
+  const assets = (await db.fixedAsset.findMany({ where: { active: true }, orderBy: { name: "asc" } })).filter((a) => pola.test(a.name) && !ASET_KECUALI.test(a.name));
   const aset = assets.map((a) => ({ id: a.id, nama: a.name, perBulan: a.usefulLifeMonths > 0 ? Math.round((Number(a.cost) - Number(a.residual)) / a.usefulLifeMonths) : 0 }));
   const perBulan = aset.reduce((s, a) => s + a.perBulan, 0);
   const per = periodes(opts.now);
@@ -148,7 +150,7 @@ export type PasangPlan = { baris: string[]; ditunda: string[]; ok: boolean; rate
 
 const VAR = (sku: string, prefix: string) => sku.slice(prefix.length);
 
-export async function rencanaPasang(db: Db, opts: { gypsumSku?: string; now?: Date; poolAset?: RegExp } = {}): Promise<PasangPlan & { aksi: Aksi[] }> {
+export async function rencanaPasang(db: Db, opts: { gypsumSku?: string; now?: Date; poolAset?: RegExp; gramPerUnit?: number } = {}): Promise<PasangPlan & { aksi: Aksi[] }> {
   const baris: string[] = [];
   const ditunda: string[] = [];
   const aksi: Aksi[] = [];
@@ -174,12 +176,31 @@ export async function rencanaPasang(db: Db, opts: { gypsumSku?: string; now?: Da
     ]);
     return { r, l, o, text: [...r.map((x) => `${x.component.name} × ${Number(x.qty)}`), ...l.map((x) => `upah ${x.name}`), ...o.map((x) => `overhead ${x.overhead.name}`)].join("; ") };
   };
-  if (g && g.perGram != null) {
+  // Target gypsum per patung cetak dalam SATUAN RESEP item (gram → 30; kg → 0,03; satuan lain mis. sak → 30 ÷ gram per satuan via --gram-per-unit)
+  // Kolom qty resep hanya 4 desimal: dibulatkan di sini supaya angka yang ditampilkan = yang tersimpan
+  const rawTarget = g ? (g.perGram != null ? qtyGypsum : opts.gramPerUnit && opts.gramPerUnit > 0 ? GYPSUM_GRAM_PER_PCS / opts.gramPerUnit : null) : null;
+  const targetQty = rawTarget == null ? null : Math.round(rawTarget * 1e4) / 1e4;
+  const presisi = rawTarget != null && Math.abs(targetQty! - rawTarget) / rawTarget > 0.005 ? `  ⚠ presisi resep 4 desimal: dibulatkan jadi ${targetQty} (≈ ${Math.round(targetQty! * (opts.gramPerUnit ?? 1))} g); lebih akurat bila satuan resep gypsum di Master data diset gram (satuan resep gram, 1 ${g?.unit} = ${opts.gramPerUnit ?? "N"} gram)` : "";
+  const biayaPerUnitResep = g ? g.hargaStok / g.factor : 0;
+  if (g && targetQty == null) ditunda.push(`Gypsum ${g.sku}: satuan resep "${g.hppUnit}" bukan gram/kg; tambahkan --gram-per-unit=<gram per ${g.hppUnit}> (mis. 18000 per sak) agar bisa dipasang/dikoreksi ke ${GYPSUM_GRAM_PER_PCS} g`);
+  if (g && targetQty != null) {
+    const rpPcs = (q: number) => `Rp${Math.round(q * biayaPerUnitResep).toLocaleString("id-ID")}/pcs`;
     for (const it of cetak) {
       const d = await desc(it.id);
-      if (d.r.length) { baris.push(`= ${it.sku} ${it.name}: sudah punya resep (${d.text}), TIDAK diubah`); continue; }
-      aksi.push({ kind: "RESEP", itemId: it.id, componentId: g.itemId, qty: qtyGypsum, useUnit: g.hppUnit });
-      baris.push(`+ ${it.sku} ${it.name}: ${g.name} × ${qtyGypsum} ${g.hppUnit} (= Rp${g.per30g?.toLocaleString("id-ID")}/pcs)${d.text ? ` · tetap: ${d.text}` : ""}`);
+      const gl = d.r.find((x) => x.componentId === g.itemId);
+      if (gl) {
+        const q = Number(gl.qty);
+        if (Math.abs(q - targetQty) < 1e-9) baris.push(`= ${it.sku} ${it.name}: gypsum sudah ${GYPSUM_GRAM_PER_PCS} g (${rpPcs(q)})`);
+        else {
+          aksi.push({ kind: "RESEP_KOREKSI", lineId: gl.id, qty: targetQty });
+          const salahSatuan = q > targetQty * 5;
+          baris.push(`~ ${it.sku} ${it.name}: ${g.name} × ${q} ${g.hppUnit} (${rpPcs(q)}) → × ${targetQty} ${g.hppUnit} = ${GYPSUM_GRAM_PER_PCS} g (${rpPcs(targetQty)})${salahSatuan ? "  ⚠ qty jauh di atas 30 g: kemungkinan salah satuan (sak/kg bukan gram)" : ""}${presisi}`);
+        }
+        continue;
+      }
+      if (d.r.length) { baris.push(`= ${it.sku} ${it.name}: sudah punya resep tanpa ${g.name} (${d.text}), TIDAK diubah`); continue; }
+      aksi.push({ kind: "RESEP", itemId: it.id, componentId: g.itemId, qty: targetQty, useUnit: g.hppUnit });
+      baris.push(`+ ${it.sku} ${it.name}: ${g.name} × ${targetQty} ${g.hppUnit} (= ${rpPcs(targetQty)})${presisi}${d.text ? ` · tetap: ${d.text}` : ""}`);
     }
   }
   const ohLpg = await db.overhead.findFirst({ where: { category: "LPG", active: true }, orderBy: { createdAt: "asc" } });
@@ -197,9 +218,26 @@ export async function rencanaPasang(db: Db, opts: { gypsumSku?: string; now?: Da
     aksi.push({ kind: "OVERHEAD_PASANG", itemId: it.id });
     baris.push(`+ ${it.sku} ${it.name}: overhead LPG oven${ohLpg ? ` (${ohLpg.name}: Rp${Number(ohLpg.monthlyAmount).toLocaleString("id-ID")}/bln, ${ohLpg.outputPerMonth} pcs; TIDAK diubah)` : ""}`);
   }
-  // Penyusutan alat produksi & cetakan (data aset) → overhead di resep Patung Cetak. "Perlengkapan Produksi" yang sama dengan penyusutan alat diganti.
+  // Penyusutan alat produksi & cetakan (data aset) → overhead di resep Patung Cetak, KECUALI penyusutan sudah tercakup oleh overhead master
+  // "Penyusutan Cetakan"/"Penyusutan Oven" di resep (tidak dobel). Sewa/bangunan bukan alat (sudah overhead "Sewa Tempat"). "Perlengkapan Produksi" yang sama diganti.
   const dep = await penyusutanAset(db, { now: opts.now, pola: opts.poolAset });
-  if (!dep.aset.length || dep.perPcs == null) ditunda.push(`Penyusutan aset alat produksi/cetakan: ${!dep.aset.length ? "tidak ada aset tetap aktif bernama cetakan/alat/mesin/produksi (pola bisa diubah: --aset=<regex>)" : "tidak ada data produksi patung cetak 30 hari terakhir"}`);
+  const tercakup = (o: { overhead: { category: string } }) => /^penyusutan (cetakan|oven)$/i.test(o.overhead.category);
+  const butuh: typeof cetak = [];
+  for (const it of cetak) {
+    const d = await desc(it.id);
+    const t = d.o.filter(tercakup);
+    if (t.length) baris.push(`i ${it.sku} ${it.name}: penyusutan sudah tercakup oleh overhead ${t.map((x) => `"${x.overhead.name}" (${x.overhead.category}) Rp${Number(x.overhead.monthlyAmount).toLocaleString("id-ID")}/bln`).join(", ")} → penyusutan aset TIDAK ditambahkan`);
+    else butuh.push(it);
+  }
+  const ohOvenAset = (await db.fixedAsset.findMany({ where: { active: true } })).filter((a) => /oven/i.test(a.name) && !/sewa|rumah|bangunan/i.test(a.name));
+  const ovenPerBulan = ohOvenAset.reduce((a, x) => a + (x.usefulLifeMonths > 0 ? Math.round((Number(x.cost) - Number(x.residual)) / x.usefulLifeMonths) : 0), 0);
+  for (const it of kering) {
+    const t = (await desc(it.id)).o.filter((x) => /^penyusutan oven$/i.test(x.overhead.category));
+    if (t.length) baris.push(`i ${it.sku}: penyusutan oven sudah ada di resep ("${t[0].overhead.name}" Rp${Number(t[0].overhead.monthlyAmount).toLocaleString("id-ID")}/bln${ovenPerBulan ? `; aset oven ${ohOvenAset.map((a) => a.name).join(", ")} Rp${ovenPerBulan.toLocaleString("id-ID")}/bln` : ""}) → TIDAK ditambah`);
+  }
+  if (!dep.aset.length) baris.push(`i Aset alat produksi/cetakan: tidak ada aset tetap aktif yang cocok (sewa/bangunan/oven dikecualikan; pola bisa diubah: --aset=<regex>) → overhead penyusutan aset TIDAK dibuat/dipasang`);
+  else if (dep.perPcs == null) ditunda.push("Penyusutan aset alat produksi/cetakan: tidak ada data produksi patung cetak");
+  else if (!butuh.length) baris.push(`i Penyusutan aset (${dep.aset.map((a) => a.nama).join(", ")}) tidak dipasang: semua resep patung cetak sudah punya penyusutan`);
   else {
     baris.push(`i Penyusutan aset (${dep.aset.map((a) => `${a.nama} Rp${a.perBulan.toLocaleString("id-ID")}`).join(", ")}) = Rp${dep.perBulan.toLocaleString("id-ID")}/bln ÷ ${dep.produksiCetak.toLocaleString("id-ID")} pcs (${dep.sumberProduksi}) = Rp${dep.perPcs}/pcs`);
     const ohAset = await db.overhead.findFirst({ where: { name: ASET_NAMA_OVERHEAD, active: true } });
@@ -208,7 +246,7 @@ export async function rencanaPasang(db: Db, opts: { gypsumSku?: string; now?: Da
       aksi.push({ kind: "OVERHEAD_ASET_PERBARUI", overheadId: ohAset.id, monthlyAmount: dep.perBulan, outputPerMonth: dep.produksiCetak });
       baris.push(`~ Overhead "${ASET_NAMA_OVERHEAD}": Rp${Number(ohAset.monthlyAmount).toLocaleString("id-ID")}/bln ÷ ${ohAset.outputPerMonth} pcs → Rp${dep.perBulan.toLocaleString("id-ID")}/bln ÷ ${dep.produksiCetak} pcs (kapasitas normal)`);
     } else baris.push(`= Overhead "${ASET_NAMA_OVERHEAD}" sudah sesuai kapasitas normal`);
-    for (const it of cetak) {
+    for (const it of butuh) {
       const d = await desc(it.id);
       if (!d.o.some((x) => x.overhead.name === ASET_NAMA_OVERHEAD)) { aksi.push({ kind: "OVERHEAD_ASET_PASANG", itemId: it.id }); baris.push(`+ ${it.sku} ${it.name}: overhead ${ASET_NAMA_OVERHEAD}${ohAset ? "" : ` (Rp${dep.perPcs}/pcs)`}`); }
       for (const x of d.o.filter((y) => y.overhead.category === "Perlengkapan Produksi" || /perlengkapan produksi/i.test(y.overhead.name))) {
@@ -217,7 +255,6 @@ export async function rencanaPasang(db: Db, opts: { gypsumSku?: string; now?: Da
         if (sama) { aksi.push({ kind: "OVERHEAD_LEPAS", rowId: x.id }); baris.push(`- ${it.sku} ${it.name}: overhead "${x.overhead.name}" (Rp${m.toLocaleString("id-ID")}/bln) ≈ penyusutan aset Rp${dep.perBulan.toLocaleString("id-ID")}/bln → DILEPAS dari resep ini (diganti yang dari data aset)`); }
         else baris.push(`! ${it.sku} ${it.name}: overhead "${x.overhead.name}" Rp${m.toLocaleString("id-ID")}/bln TIDAK sama dengan penyusutan aset Rp${dep.perBulan.toLocaleString("id-ID")}/bln → dibiarkan (cek apakah dobel)`);
       }
-      for (const x of d.o.filter((y) => y.overhead.name !== ASET_NAMA_OVERHEAD && /^penyusutan (cetakan|oven)$/i.test(y.overhead.category))) baris.push(`! ${it.sku} ${it.name}: sudah ada overhead "${x.overhead.name}" (${x.overhead.category}); cek dobel dengan penyusutan aset`);
     }
   }
   if (ohLpg && rate) baris.push(`i Overhead LPG yang ada "${ohLpg.name}": Rp${(overheadUnitCost(ohLpg) || 0).toLocaleString("id-ID")}/pcs; hasil hitung 30 hari: Rp${rate.perPcs}/pcs (tidak ditimpa)`);
@@ -226,6 +263,7 @@ export async function rencanaPasang(db: Db, opts: { gypsumSku?: string; now?: Da
 
 export type Aksi =
   | { kind: "RESEP"; itemId: string; componentId: string; qty: number; useUnit: string }
+  | { kind: "RESEP_KOREKSI"; lineId: string; qty: number }
   | { kind: "OVERHEAD_BARU"; monthlyAmount: number; outputPerMonth: number }
   | { kind: "OVERHEAD_PASANG"; itemId: string }
   | { kind: "OVERHEAD_ASET_BARU"; monthlyAmount: number; outputPerMonth: number }
@@ -233,13 +271,14 @@ export type Aksi =
   | { kind: "OVERHEAD_ASET_PERBARUI"; overheadId: string; monthlyAmount: number; outputPerMonth: number }
   | { kind: "OVERHEAD_LEPAS"; rowId: string };
 
-export async function pasangBiayaOven(db: PrismaClient, apply: boolean, opts: { gypsumSku?: string; now?: Date; poolAset?: RegExp } = {}) {
+export async function pasangBiayaOven(db: PrismaClient, apply: boolean, opts: { gypsumSku?: string; now?: Date; poolAset?: RegExp; gramPerUnit?: number } = {}) {
   const plan = await rencanaPasang(db, opts);
   if (!apply || !plan.aksi.length) return plan;
   await db.$transaction(async (tx) => {
     let ohId = (await tx.overhead.findFirst({ where: { category: "LPG", active: true }, orderBy: { createdAt: "asc" } }))?.id ?? null;
     for (const a of plan.aksi) {
-      if (a.kind === "RESEP") await tx.itemRecipeLine.upsert({ where: { itemId_componentId: { itemId: a.itemId, componentId: a.componentId } }, create: { itemId: a.itemId, componentId: a.componentId, qty: a.qty, useUnit: a.useUnit }, update: {} });
+      if (a.kind === "RESEP_KOREKSI") await tx.itemRecipeLine.update({ where: { id: a.lineId }, data: { qty: a.qty } });
+      else if (a.kind === "RESEP") await tx.itemRecipeLine.upsert({ where: { itemId_componentId: { itemId: a.itemId, componentId: a.componentId } }, create: { itemId: a.itemId, componentId: a.componentId, qty: a.qty, useUnit: a.useUnit }, update: {} });
       else if (a.kind === "OVERHEAD_BARU") ohId = (await tx.overhead.create({ data: { category: "LPG", name: LPG_OVERHEAD_NAME, monthlyAmount: BigInt(a.monthlyAmount), outputPerMonth: a.outputPerMonth, note: "Dihitung npm run hitung:biaya-oven --pasang (biaya LPG ÷ panen patung kering, 30 hari terakhir); perbarui bila perlu" } })).id;
       else if (a.kind === "OVERHEAD_PASANG") { if (ohId && !(await tx.recipeOverhead.findFirst({ where: { itemId: a.itemId, overheadId: ohId } }))) await tx.recipeOverhead.create({ data: { itemId: a.itemId, overheadId: ohId, factor: 1 } }); }
       else if (a.kind === "OVERHEAD_ASET_BARU") await tx.overhead.create({ data: { category: "Penyusutan Cetakan", name: ASET_NAMA_OVERHEAD, monthlyAmount: BigInt(a.monthlyAmount), outputPerMonth: a.outputPerMonth, note: "Penyusutan bulanan aset alat produksi & cetakan (modul Aset tetap) ÷ produksi patung cetak 30 hari; dihitung hitung:biaya-oven --pasang, perbarui bila perlu" } });
