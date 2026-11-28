@@ -71,7 +71,7 @@ export function parseResultCount(itemIds: string[], get: (k: string) => string |
   return out;
 }
 
-export type ResultRow = { itemId: string; name: string; unit: string; counted: number; system: number; diff: number; big: boolean };
+export type ResultRow = { itemId: string; name: string; unit: string; counted: number; system: number; diff: number; big: boolean; /** Barang divisi yang TIDAK ada di hitungan laporan (bukan angka 0): tampil sebagai "belum dihitung", tidak menyesuaikan stok */ notCounted?: boolean };
 
 function locOf(type: ItemType, locs: { wip: string | null; finished: string | null }, sku?: string, divLoc?: string | null) {
   // Patung kering milik divisi Assembling/Giftbox dihitung di lokasi stok divisinya (hasil "Ambil stok")
@@ -98,7 +98,17 @@ export async function resultCountStatus(reportId: string, now: Date = new Date()
     rows.push({ itemId: it.id, name: it.name, unit: it.unit, counted: c, system, diff, big: bigDiff(diff, system) });
   }
   rows.sort((a, b) => a.name.localeCompare(b.name));
-  return { title: RESULT_TITLE, rows, applies: await flowEnabled() };
+  // Semua barang divisi harus terlihat di laporan: yang tidak ada di hitungan tampil "belum dihitung" bersama stok sistemnya (termasuk yang minus), bukan hilang
+  const mine = (await resultItems(r.divisionId)).filter((i) => !counts.has(i.id));
+  const extra: ResultRow[] = [];
+  for (const it of mine) {
+    const loc = locOf(it.type, locs, it.sku, divLoc);
+    if (!loc) continue;
+    const system = Math.round((await qtyAt(prisma, it.id, loc, at)) * 1000) / 1000;
+    extra.push({ itemId: it.id, name: it.name, unit: it.unit, counted: 0, system, diff: 0, big: false, notCounted: true });
+  }
+  extra.sort((a, b) => a.name.localeCompare(b.name));
+  return { title: RESULT_TITLE, rows: [...rows, ...extra], applies: await flowEnabled() };
 }
 
 /** Baris teks selisih hitungan vs sistem untuk pesan laporan (tanda untuk Owner) */
@@ -108,8 +118,10 @@ export function resultLines(s: NonNullable<Awaited<ReturnType<typeof resultCount
   return [
     s.title.toUpperCase(),
     // Barang 0 yang sesuai sistem dirangkum satu baris (laporan tidak memanjang oleh puluhan baris "0 ✓")
-    ...s.rows.filter((r) => r.counted > 0 || r.diff !== 0 || r.system > 0).map((r) => `${r.name}: ${f(r.counted)} ${r.unit}${r.diff === 0 ? " ✓ sesuai sistem" : ` ⚠ sistem ${f(r.system)} (selisih ${r.diff > 0 ? "+" : ""}${f(r.diff)})${r.big ? " ‼ SELISIH BESAR" : ""}`}`),
-    ...(s.rows.some((r) => r.counted === 0 && r.diff === 0 && r.system === 0) ? [`${s.rows.filter((r) => r.counted === 0 && r.diff === 0 && r.system === 0).length} item lain: 0, sesuai sistem`] : []),
+    ...s.rows.filter((r) => !r.notCounted && (r.counted > 0 || r.diff !== 0 || r.system > 0)).map((r) => `${r.name}: ${f(r.counted)} ${r.unit}${r.diff === 0 ? " ✓ sesuai sistem" : ` ⚠ sistem ${f(r.system)} (selisih ${r.diff > 0 ? "+" : ""}${f(r.diff)})${r.big ? " ‼ SELISIH BESAR" : ""}`}`),
+    ...(s.rows.some((r) => !r.notCounted && r.counted === 0 && r.diff === 0 && r.system === 0) ? [`${s.rows.filter((r) => !r.notCounted && r.counted === 0 && r.diff === 0 && r.system === 0).length} item lain: 0, sesuai sistem`] : []),
+    ...s.rows.filter((r) => r.notCounted && r.system !== 0).map((r) => `${r.name}: belum dihitung ⚠ stok sistem ${f(r.system)} ${r.unit}`),
+    ...(s.rows.some((r) => r.notCounted && r.system === 0) ? [`${s.rows.filter((r) => r.notCounted && r.system === 0).length} item belum dihitung (stok sistem 0)`] : []),
     ...(s.rows.some((r) => r.diff !== 0) ? [s.applies ? "Stok sistem disamakan dengan hitungan (selisih persediaan)." : "Selisih hanya ditandai; stok sistem belum diubah (sakelar Hasil kerja → stok belum menyala)."] : []),
   ];
 }
