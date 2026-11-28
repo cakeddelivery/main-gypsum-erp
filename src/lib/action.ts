@@ -66,6 +66,9 @@ export function action(perms: Permission | Permission[], fn: (fd: FormData, user
 
 const isRedirect = (e: unknown) => typeof (e as { digest?: unknown })?.digest === "string" && /^NEXT_REDIRECT/.test((e as { digest: string }).digest);
 
+/** Batas panjang pesan Error biasa yang boleh tampil ke pengguna */
+export const MAX_USER_MESSAGE = 600;
+
 export function friendly(e: unknown): string {
   if (e instanceof ForbiddenError || e instanceof AccountingError || e instanceof FinanceError || e instanceof StockError || e instanceof PayrollError || e instanceof EmailError || e instanceof RegistrationError || e instanceof FieldError) return e.message;
   if (e instanceof ZodError) return e.issues.map((i) => `${i.path.join(".") || "input"}: ${i.message}`).join("; ");
@@ -76,7 +79,9 @@ export function friendly(e: unknown): string {
   }
   if (e instanceof Error && /append-only|tidak dapat diubah/.test(e.message)) return e.message;
   console.error(e);
-  return e instanceof Error && e.message.length < 200 ? e.message : "Terjadi kesalahan. Silakan coba lagi.";
+  // Pesan sengaja untuk pengguna (mis. daftar stok akhir yang belum diisi bisa >200 huruf) tetap ditampilkan; pesan internal (Prisma/stack) disembunyikan
+  if (e instanceof Error && e.message.length < MAX_USER_MESSAGE && !/Invalid `|prisma|\n\s+at /i.test(e.message)) return e.message;
+  return "Terjadi kesalahan. Silakan coba lagi.";
 }
 
 // ---------- helper parsing FormData ----------
