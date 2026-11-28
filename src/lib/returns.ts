@@ -192,6 +192,15 @@ const reverseDate = (tx: Tx, date: Date, now: Date) => assertPeriodOpen(tx, date
 async function undoInspection(tx: Tx, r: { number: string; inspectJournalId: string | null; inspectRef: string | null; inspectedAt: Date | null }, actor: Actor, why: string, now: Date) {
   if (r.inspectJournalId) await reverseJournal(tx, r.inspectJournalId, await reverseDate(tx, r.inspectedAt ?? now, now), actor, `${why} ${r.number}`.slice(0, 150));
   if (r.inspectRef) await reverseMovementsByRef(tx, r.inspectRef, `BATAL ${r.inspectRef}`, `${why} ${r.number}`, actor);
+  if (r.inspectRef) await tx.productionReject.deleteMany({ where: { reportId: r.inspectRef } }); // catatan reject turunan; diisi ulang oleh periksa berikutnya
+}
+
+/** Catatan reject sumber "Retur" (laporan reject): hanya catatan, TANPA jurnal/mutasi (kerugiannya sudah di jurnal periksa → 6-1810) */
+async function noteReturnReject(tx: Tx, ref: string, r: { number: string; trackingNo: string | null }, itemId: string, qty: number, unitCost: number, actor: Actor) {
+  if (!(qty > 0)) return;
+  const item = await tx.item.findUniqueOrThrow({ where: { id: itemId }, select: { divisionId: true } });
+  const divisionId = item.divisionId ?? (await tx.division.findFirst({ where: { reportTemplate: "PACKING" }, select: { id: true } }))?.id ?? (await tx.division.findFirstOrThrow({ select: { id: true } })).id;
+  await tx.productionReject.create({ data: { reportId: ref, divisionId, stage: "RETUR", itemId, qty, reason: "LAINNYA", note: `Retur ${r.number}${r.trackingNo ? ` resi ${r.trackingNo}` : ""}`.slice(0, 200), posted: true, ref, unitCost: BigInt(Math.round(unitCost)), createdBy: actor.name } });
 }
 
 /**
@@ -228,6 +237,7 @@ export async function inspectReturn(id: string, rows: InspectRow[], actor: Actor
     const ref = `${r.number}-P${gen}`;
     for (const x of lines) {
       if (x.goodQty > 0) await recordMovement(tx, { type: "PENERIMAAN", itemId: x.l.itemId!, qty: x.goodQty, toLocationId: finished, unitCost: x.unitCost, ref, note: `Retur barang baik ${r.trackingNo}`, date: now }, actor);
+      await noteReturnReject(tx, ref, r, x.l.itemId!, x.damagedQty, x.unitCost, actor);
       await tx.returnLine.update({ where: { id: x.l.id }, data: { goodQty: x.goodQty, damagedQty: x.damagedQty, unitCost: BigInt(Math.round(x.unitCost)), note: clean(x.row.note, 200), pieceMode: false, goodValue: 0n, lossValue: 0n } });
       await tx.returnPiece.deleteMany({ where: { lineId: x.l.id } });
     }
@@ -251,6 +261,7 @@ export async function inspectReturn(id: string, rows: InspectRow[], actor: Actor
         unitCost = Math.round(packCost);
       } else {
         for (const d of detail) if (d.goodQty > 0) await recordMovement(tx, { type: "PENERIMAAN", itemId: d.itemId, qty: d.goodQty, toLocationId: wipLoc!, unitCost: d.unitCost, ref, note: `Retur pcs baik ${r.trackingNo}`, date: now }, actor);
+        for (const d of detail) await noteReturnReject(tx, ref, r, d.itemId, d.damagedQty, d.unitCost, actor);
         goodBdp += pv.good;
         v.good += pv.good;
         v.loss += pv.loss;
