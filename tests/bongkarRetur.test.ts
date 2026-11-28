@@ -55,12 +55,14 @@ describe("Bongkar retur", () => {
     expect(await qtyAt(prisma, paket, fin)).toBe(f0 - 2);
     expect(await qtyAt(prisma, patung, wip)).toBe(p0 + 3);
     expect(await qtyAt(prisma, opp, wip)).toBe(o0 + 2);
-    expect(await jsum(r.number, "6-1800", "debit")).toBe(r.rejectValue);
+    expect(await jsum(r.number, "6-1810", "debit")).toBe(r.rejectValue);
     expect(await jsum(r.number, "1-1403", "credit")).toBe(4400);
     const all = await prisma.journalLine.findMany({ where: { journal: { source: "BONGKAR_RETUR", sourceId: r.number } } });
     expect(all.reduce((a, l) => a + Number(l.debit) - Number(l.credit), 0)).toBe(0);
     const rej = await prisma.productionReject.findMany({ where: { reportId: r.ref } });
     expect(rej).toHaveLength(1);
+    expect(rej[0].stage).toBe("RETUR");
+    expect(await jsum(r.number, "6-1800", "debit")).toBe(0);
     expect(Number(rej[0].qty)).toBe(1);
     await expect(bongkarRetur({ itemId: paket, qty: 1, damaged: { [patung]: 5 } }, actor)).rejects.toBeInstanceOf(StockError);
     await expect(bongkarRetur({ itemId: paket, qty: 1000 }, actor)).rejects.toBeInstanceOf(StockError); // melebihi stok retur

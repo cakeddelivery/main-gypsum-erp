@@ -82,7 +82,7 @@ export default async function Kebocoran({ searchParams }: { searchParams: Promis
       <Card title="Reject per tahap (30 hari)">
         {!rejRows.length ? <Empty title="Belum ada reject yang dilaporkan" /> : (
           <div className="table-wrap"><table className="tbl"><thead><tr><th>Tahap</th><th>Alasan</th><th className="num">Jumlah</th><th className="num">Nilai</th></tr></thead>
-            <tbody>{rejRows.map((r) => <tr key={`${r.stage}${r.reason}`}><td>{REJECT_STAGE_LABEL[r.stage as keyof typeof REJECT_STAGE_LABEL] ?? r.stage}</td><td>{REJECT_REASONS[r.reason] ?? r.reason}</td><td className="num">{Number(r.qty.toFixed(2)).toLocaleString("id-ID")}</td><td className="num">{idr(r.value)}</td></tr>)}</tbody></table></div>
+            <tbody>{rejRows.map((r) => <tr key={`${r.stage}${r.reason}`}><td>{r.stage === "RETUR" ? "Retur" : REJECT_STAGE_LABEL[r.stage as keyof typeof REJECT_STAGE_LABEL] ?? r.stage}</td><td>{REJECT_REASONS[r.reason] ?? r.reason}</td><td className="num">{Number(r.qty.toFixed(2)).toLocaleString("id-ID")}</td><td className="num">{idr(r.value)}</td></tr>)}</tbody></table></div>
         )}
       </Card>
       {lpg && (

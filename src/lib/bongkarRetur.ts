@@ -6,13 +6,14 @@ import { nextNumber } from "./numbering";
 import { INVENTORY_COA, StockError, locationSettings, recordMovement, reverseMovementsByRef } from "./stock";
 import { bomStockQty } from "./unitcost";
 import { recipeOf } from "./produksiWorkshop";
+import { COA_RETUR_RUSAK } from "./returns";
 
 /**
  * BONGKAR RETUR (komponen): barang retur yang sudah diperiksa (Single Pack / paket, stoknya di WIP atau gudang barang jadi) dibongkar ke isi BOM-nya.
  * Pengguna menandai jumlah RUSAK per komponen (mis. paket 12: 2 patung pecah, 1 plastik OPP sobek). Posting (satu jurnal, ref `BRT:<nomor>`):
  *  - barang retur keluar dari stoknya (KONSUMSI_PRODUKSI, nilai = harga rata-rata)
  *  - komponen LAYAK masuk stok sesuai tipenya (HASIL_PRODUKSI) dengan nilai proporsional
- *  - komponen RUSAK = reject: Dr Beban Reject & Selisih Persediaan (6-1800), tercatat di catatan reject (ProductionReject, tampil di laporan reject)
+ *  - komponen RUSAK: Dr 6-1810 Kerugian Barang Retur Rusak (terpisah dari reject produksi 6-1800), dicatat di laporan reject sebagai sumber "Retur" (tanpa jurnal ganda)
  * Tidak menjurnal ulang retur penjualan (RTR): jurnal periksa retur tetap milik modul Retur; ini hanya memindah nilai antar persediaan & reject.
  */
 type Actor = { id: string; name: string };
@@ -76,14 +77,14 @@ export async function bongkarRetur(input: BongkarInput, actor: Actor) {
       }
       if (bad > 0) {
         rejectValue += badValue;
-        await tx.productionReject.create({ data: { reportId: ref, divisionId: comps.find((c) => c.id === l.itemId)?.divisionId ?? division ?? plan.item.id, stage: "PACKING", itemId: l.itemId, qty: bad, reason: input.reason && ["RETAK", "PECAH", "GOSONG", "CACAT_CAT", "SALAH_CETAK", "RUSAK_ALAT", "LAINNYA"].includes(input.reason) ? input.reason : "PECAH", note: `Bongkar retur ${number}${input.returnNumber ? ` (${input.returnNumber})` : ""}`.slice(0, 200), posted: true, ref, unitCost: BigInt(Math.round(badValue / bad)), createdBy: actor.name } });
+        await tx.productionReject.create({ data: { reportId: ref, divisionId: comps.find((c) => c.id === l.itemId)?.divisionId ?? division ?? plan.item.id, stage: "RETUR", itemId: l.itemId, qty: bad, reason: input.reason && ["RETAK", "PECAH", "GOSONG", "CACAT_CAT", "SALAH_CETAK", "RUSAK_ALAT", "LAINNYA"].includes(input.reason) ? input.reason : "PECAH", note: `Bongkar retur ${number}${input.returnNumber ? ` (${input.returnNumber})` : ""}`.slice(0, 200), posted: true, ref, unitCost: BigInt(Math.round(badValue / bad)), createdBy: actor.name } });
       }
     }
     const j = await postJournal(tx, {
       date, storeId: await defaultStoreId(tx), description: `${note} (${number})`, source: BONGKAR_SOURCE, sourceId: number, actor,
       lines: [
         ...[...invDebit].filter(([, v]) => v > 0).map(([t, v]) => ({ accountCode: INVENTORY_COA[t], debit: v })),
-        ...(rejectValue > 0 ? [{ accountCode: COA.BEBAN_SELISIH_PERSEDIAAN, debit: rejectValue, memo: "Komponen retur rusak (reject)" }] : []),
+        ...(rejectValue > 0 ? [{ accountCode: COA_RETUR_RUSAK, debit: rejectValue, memo: "Komponen retur rusak" }] : []),
         { accountCode: INVENTORY_COA[plan.item.type], credit: totalValue },
       ],
     });

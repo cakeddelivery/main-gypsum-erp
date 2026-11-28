@@ -49,7 +49,7 @@ export default async function BongkarPage({ searchParams }: { searchParams: Prom
               <Field label="Tanggal"><input type="date" name="date" defaultValue={todayStr()} className="input" /></Field>
               <Field label="Catatan"><input name="note" className="input" /></Field>
             </div>
-            <p className="text-xs text-slate-500">Barang retur keluar dari stoknya; komponen layak masuk stok (nilai proporsional); komponen rusak jadi reject (Beban Reject 6-1800, tampil di laporan reject). Jurnal retur penjualan (RTR) tidak diubah.</p>
+            <p className="text-xs text-slate-500">Barang retur keluar dari stoknya; komponen layak masuk stok (nilai proporsional); komponen rusak jadi Kerugian Barang Retur Rusak (6-1810), tampil di laporan reject sebagai "Retur". Jurnal retur penjualan (RTR) tidak diubah.</p>
             <Submit>Simpan bongkar</Submit>
           </ActionForm>
         </Card>
