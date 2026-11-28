@@ -481,7 +481,7 @@ export function ReportForm(p: Props) {
             <h3 className="font-semibold text-slate-800">{p.resultTitle}</h3>
             <span className="shrink-0 text-xs font-medium text-slate-500 tabular-nums">{rcFilled}/{p.resultCount.length} terisi</span>
           </div>
-          <p className="mb-3 text-xs text-slate-500">Hitung fisik barang setengah jadi / produk jadi tanggung jawab divisi ini di gudang, setelah hasil kerja dihitung. Kosongkan bila tidak dihitung.</p>
+          <p className="mb-3 text-xs text-slate-500">Hitung fisik barang setengah jadi / produk jadi tanggung jawab divisi ini di gudang, setelah hasil kerja dihitung. WAJIB diisi untuk semua barang (angka 0 boleh, tapi harus diisi) sebelum laporan bisa dikirim.</p>
           {p.resultCount.length > 12 && (
             <input type="search" value={rcQuery} onChange={(e) => setRcQuery(e.target.value)} placeholder="Cari barang…" aria-label="Cari barang" data-raw className="input mb-2 py-1.5" />
           )}
@@ -518,7 +518,7 @@ export function ReportForm(p: Props) {
                             <div className="keep-cols grid grid-cols-2 gap-2">
                               {cells.map((r) => (
                                 <label key={r.key} className={`block min-w-0 ${matches(r.label) ? "" : "hidden"}`}>
-                                  <span className="block break-words text-xs leading-tight text-slate-500">{r.col || r.label}</span>
+                                  <span className={`block break-words text-xs leading-tight ${(rc[r.key] ?? "") !== "" && needsOrder({ qty: Number(rc[r.key]), limit: r.limit ?? 0 }) ? "font-medium text-amber-700" : "text-slate-500"}`}>{(rc[r.key] ?? "") !== "" && needsOrder({ qty: Number(rc[r.key]), limit: r.limit ?? 0 }) && "⚠ "}{r.col || r.label}{(r.limit ?? 0) > 0 && <span className="font-normal text-slate-400"> · limit {fmt(r.limit ?? 0)}</span>}</span>
                                   <input name={`rc.${r.key}`} inputMode="numeric" value={rc[r.key] ?? ""} onChange={(e) => setRc((x) => ({ ...x, [r.key]: e.target.value }))} className={`input py-1.5 text-right ${rc[r.key] ? "border-brand-400 bg-brand-50" : ""}`} placeholder="0" aria-label={r.label} />
                                 </label>
                               ))}
@@ -533,7 +533,9 @@ export function ReportForm(p: Props) {
                         <CountRow
                           key={r.key}
                           hidden={!matches(r.label)}
-                          name={r.label}
+                          name={<>{(rc[r.key] ?? "") !== "" && needsOrder({ qty: Number(rc[r.key]), limit: r.limit ?? 0 }) && "⚠ "}{r.label}</>}
+                          warn={(rc[r.key] ?? "") !== "" && needsOrder({ qty: Number(rc[r.key]), limit: r.limit ?? 0 })}
+                          sub={(r.limit ?? 0) > 0 ? `limit ${fmt(r.limit ?? 0)} ${r.unit}` : undefined}
                           unit={r.unit}
                           inputName={`rc.${r.key}`}
                           inputMode="numeric"

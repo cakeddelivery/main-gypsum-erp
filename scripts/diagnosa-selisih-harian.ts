@@ -4,7 +4,9 @@
  * Per divisi × barang pada tanggal itu: stok awal hari (saldo sebelum 00.00 WIB) + saldo awal reset (SALDO-AWAL-…), mutasi hari itu per jenis
  * (ref: KRM kiriman, BGI pembagian, AMB ambil, HSB hasil titik, PND penerimaan divisi, RJP reject saat diterima divisi, LPH hasil laporan shift, LPS opname laporan, PRD produksi,
  * JUAL penjualan, dst.), lalu stok akhir hitungan laporan shift 1 & 2 vs stok sistem pada jam selesai shift. Bila ada selisih, baris mutasi
- * penyebabnya ditampilkan (waktu, jenis, ref, jumlah, catatan). Memakai stockGapReport (sama dengan cek:selisih-stok / menu Stok › Selisih).
+ * penyebabnya ditampilkan (waktu, jenis, ref, jumlah, catatan).
+ * Baris LPS = penyesuaian otomatis stok akhir laporan (selisih sesudah LPS selalu 0), maka dianggap "SELISIH TIDAK TERJELASKAN":
+ * ringkasan di atas per divisi, urut nilai terbesar (qty & Rp), dan ditandai ⚠ di baris mutasinya. Memakai stockGapReport (sama dengan cek:selisih-stok / menu Stok › Selisih).
  */
 import { prisma } from "../src/lib/db";
 import { kindLabel, stockGapReport } from "../src/lib/stockGap";
@@ -30,8 +32,47 @@ async function main() {
   const items = await prisma.item.findMany({ where: { id: { in: [...new Set(rows.map((r) => r.itemId))] } }, select: { id: true, name: true, unit: true } });
   const byDivision = new Map<string, typeof rows>();
   for (const r of rows) byDivision.set(r.division, [...(byDivision.get(r.division) ?? []), r]);
+
+  // Shift yang dijadwalkan per divisi (Division.shiftCount): shift yang tidak dijadwalkan (mis. malam di Oven/Assembling/Giftbox/Packing) bukan "hilang"
+  const shifts = await prisma.shift.findMany({ orderBy: { code: "asc" }, select: { code: true } });
+  const divs = await prisma.division.findMany({ where: { name: { in: [...byDivision.keys()] } }, select: { id: true, name: true, shiftCount: true } });
+  const reps = await prisma.shiftReport.findMany({ where: { date: new Date(`${tanggal}T00:00:00Z`), divisionId: { in: divs.map((d) => d.id) }, status: { in: ["TERKIRIM", "DIREVISI"] } }, select: { divisionId: true, shift: { select: { code: true } } } });
+  const shiftInfo = new Map(divs.map((d) => [d.name, { scheduled: shifts.slice(0, Math.max(1, d.shiftCount)).map((x) => x.code), sent: [...new Set(reps.filter((r) => r.divisionId === d.id).map((r) => r.shift.code))].sort() }]));
+
+  // Selisih tidak terjelaskan = penyesuaian otomatis LPS (stok akhir laporan) per divisi × barang
+  const lpsMoves = rows.length ? await prisma.stockMovement.findMany({ where: { itemId: { in: items.map((i) => i.id) }, date: { gte: start, lt: end }, ref: { startsWith: "LPS" }, OR: [{ toLocationId: { in: locIds } }, { fromLocationId: { in: locIds } }] } }) : [];
+  const sgn = (m: { toLocationId: string | null; fromLocationId: string | null; qty: unknown }) => (m.toLocationId && locIds.includes(m.toLocationId) ? Number(m.qty) : 0) - (m.fromLocationId && locIds.includes(m.fromLocationId) ? Number(m.qty) : 0);
+  const unexplained: { division: string; name: string; unit: string; qty: number; rp: number }[] = [];
+  for (const [division, list] of byDivision) {
+    for (const itemId of new Set(list.map((r) => r.itemId))) {
+      const ms = lpsMoves.filter((m) => m.itemId === itemId);
+      if (!ms.length) continue;
+      const qty = ms.reduce((a, m) => a + sgn(m), 0);
+      const rp = ms.reduce((a, m) => a + sgn(m) * Number(m.unitCost), 0);
+      const it = items.find((i) => i.id === itemId);
+      if (qty !== 0 || rp !== 0) unexplained.push({ division, name: it?.name ?? itemId, unit: it?.unit ?? "", qty, rp });
+    }
+  }
+  const rp = (n: number) => `${n < 0 ? "-" : n > 0 ? "+" : ""}Rp ${Math.abs(Math.round(n)).toLocaleString("id-ID")}`;
+  const unexplainedKey = new Set(unexplained.map((u) => `${u.division}|${u.name}`));
+  if (unexplained.length) {
+    console.log("⚠ SELISIH TIDAK TERJELASKAN (penyesuaian otomatis stok akhir laporan / LPS), per divisi, terbesar dulu:");
+    const byDiv = new Map<string, typeof unexplained>();
+    for (const u of unexplained) byDiv.set(u.division, [...(byDiv.get(u.division) ?? []), u]);
+    const sum = (l: typeof unexplained) => l.reduce((a, u) => a + Math.abs(u.rp), 0);
+    for (const [d, l] of [...byDiv].sort((a, b) => sum(b[1]) - sum(a[1]))) {
+      console.log(`  ${d}: ${l.length} barang · total |Rp| ${rp(sum(l)).replace(/^\+/, "")}`);
+      for (const u of l.sort((a, b) => Math.abs(b.rp) - Math.abs(a.rp) || Math.abs(b.qty) - Math.abs(a.qty))) console.log(`     ${u.name}: ${u.qty > 0 ? "+" : ""}${f(u.qty)} ${u.unit} · ${rp(u.rp)}`);
+    }
+    console.log("");
+  } else if (rows.length) console.log("Tidak ada selisih tidak terjelaskan (tidak ada penyesuaian LPS hari itu).\n");
   for (const [division, list] of [...byDivision].sort((a, b) => a[0].localeCompare(b[0], "id"))) {
     console.log(`== ${division} ==`);
+    const sc = shiftInfo.get(division);
+    if (sc) {
+      const missing = sc.scheduled.filter((c) => !sc.sent.includes(c));
+      console.log(`  Shift dijadwalkan: ${sc.scheduled.join(", ")} · laporan terkirim: ${sc.sent.join(", ") || "-"}${missing.length ? ` · ⚠ belum ada laporan: ${missing.join(", ")}` : ""}${sc.scheduled.length < 2 ? " (divisi ini tanpa shift malam; shift 2 tidak dianggap hilang)" : ""}`);
+    }
     for (const itemId of [...new Set(list.map((r) => r.itemId))]) {
       const it = items.find((i) => i.id === itemId);
       const open = await prisma.$queryRaw<{ qty: number }[]>`
@@ -46,7 +87,7 @@ async function main() {
         const cur = kinds.get(k) ?? { n: 0, net: 0 };
         kinds.set(k, { n: cur.n + 1, net: cur.net + signed(m) });
       }
-      console.log(`  ${it?.name ?? itemId} (${it?.unit ?? ""})`);
+      console.log(`  ${it?.name ?? itemId} (${it?.unit ?? ""})${unexplainedKey.has(`${division}|${it?.name ?? itemId}`) ? "  ⚠ ada SELISIH TIDAK TERJELASKAN (LPS)" : ""}`);
       console.log(`     stok awal hari (sebelum 00.00 WIB): ${f(open[0]?.qty ?? 0)}${saldoAwal.length ? ` · saldo awal reset: ${f(saldoAwal.reduce((a, m) => a + signed(m), 0))} (${saldoAwal.length} mutasi, ${wib(saldoAwal[0].date)})` : ""}`);
       for (const [k, v] of [...kinds].sort()) console.log(`     mutasi ${k === "SALDO-AWAL" ? "Saldo awal reset" : kindLabel(k)}: ${v.n}× · bersih ${v.net > 0 ? "+" : ""}${f(v.net)}`);
       for (const r of list.filter((x) => x.itemId === itemId)) {
@@ -54,7 +95,7 @@ async function main() {
       }
       if (list.some((x) => x.itemId === itemId && x.diff !== 0)) {
         console.log("     → baris mutasi hari itu (penyebab selisih):");
-        for (const m of moves) console.log(`        ${wib(m.date)} · ${m.type} · ${m.ref ?? "(tanpa ref)"} · ${signed(m) > 0 ? "+" : ""}${f(signed(m))}${m.note ? ` · ${m.note.slice(0, 80)}` : ""}`);
+        for (const m of moves) console.log(`        ${kindOf(m.ref) === "LPS" ? "⚠ SELISIH TIDAK TERJELASKAN · " : ""}${wib(m.date)} · ${m.type} · ${m.ref ?? "(tanpa ref)"} · ${signed(m) > 0 ? "+" : ""}${f(signed(m))}${m.note ? ` · ${m.note.slice(0, 80)}` : ""}`);
       }
     }
     console.log("");
