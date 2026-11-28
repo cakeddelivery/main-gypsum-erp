@@ -26,15 +26,43 @@ export type LpgShare =
   | { mode: "baris"; amount: number; lines: string[] }
   | { mode: "tidak-terparse"; lines: string[] };
 
-/** Bagian LPG dari satu transaksi bernominal `total` berdasarkan deskripsinya (baris dipisah baris baru, ';', ',' atau ' + ') */
+/** Akhir sebuah nominal di teks: "60rb", "1,5jt", "= 40.000", "Rp 40.000", "40.000", "40000" */
+const AMOUNT_END = /(\d+(?:[.,]\d+)?\s*(?:jt|juta|rb|ribu|k)\b|(?:rp\.?\s*|=\s*)\d[\d.]*|\b\d{1,3}(?:\.\d{3})+\b|\b\d{4,}\b)/gi;
+
+/**
+ * Pecah deskripsi campur jadi bagian-bagian: pemisah baris baru, ';', ',', ' / ', ' + ', ' & ', ' dan ', ' serta ';
+ * lalu tiap potongan dipecah lagi setelah setiap nominalnya ("Kopi 60rb Kardus 5rb Beli LPG 3 tabung 60rb" → 3 bagian), agar nominal
+ * baris LPG diambil dari bagian LPG-nya sendiri, bukan dari angka bagian lain.
+ */
+export function splitParts(text: string): { text: string; amount: number | null }[] {
+  const out: { text: string; amount: number | null }[] = [];
+  for (const rough of text.split(/\r?\n|;|,|\s\/\s|\s\+\s|\s&\s|\sdan\s|\sserta\s/i).map((x) => x.trim()).filter(Boolean)) {
+    let last = 0;
+    for (const m of rough.matchAll(AMOUNT_END)) {
+      const end = (m.index ?? 0) + m[0].length;
+      const part = rough.slice(last, end).trim();
+      if (part) out.push({ text: part, amount: parseRupiah(part) });
+      last = end;
+    }
+    const rest = rough.slice(last).trim();
+    if (rest) out.push({ text: rest, amount: null });
+  }
+  return out;
+}
+
+/**
+ * Bagian LPG dari satu transaksi bernominal `total` berdasarkan deskripsinya:
+ *  - satu bagian saja / semua bagian LPG → penuh
+ *  - bagian LPG bernominal → jumlah nominal bagian LPG itu saja (≤ total)
+ *  - bagian LPG tanpa nominal sendiri → tidak-terparse (perlu cek manual; tidak ditebak dari total − bagian lain)
+ */
 export function lpgShare(text: string | null | undefined, total: number): LpgShare {
   const s = (text ?? "").trim();
   if (!isLpgText(s)) return { mode: "tidak-lpg" };
-  const lines = s.split(/\r?\n|;|,|\s\+\s/).map((x) => x.trim()).filter(Boolean);
-  const lpg = lines.filter(isLpgText);
-  if (lines.length <= 1 || lpg.length === lines.length) return { mode: "penuh", amount: total };
-  const parsed = lpg.map(parseRupiah);
-  if (parsed.some((x) => x == null)) return { mode: "tidak-terparse", lines: lpg };
-  const amount = Math.min(total, parsed.reduce<number>((a, b) => a + (b ?? 0), 0));
-  return { mode: "baris", amount, lines: lpg };
+  const parts = splitParts(s);
+  const lpg = parts.filter((x) => isLpgText(x.text));
+  if (parts.length <= 1 || lpg.length === parts.length) return { mode: "penuh", amount: total };
+  const lines = lpg.map((x) => x.text);
+  if (lpg.every((x) => x.amount != null)) return { mode: "baris", amount: Math.min(total, lpg.reduce((a, x) => a + (x.amount ?? 0), 0)), lines };
+  return { mode: "tidak-terparse", lines };
 }
