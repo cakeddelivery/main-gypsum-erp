@@ -150,3 +150,39 @@ describe("Pratinjau produksi #206: leg LPG persis, harga tabung, kunci grup", ()
     expect(neg?.lokasiNegatif[0].qty).toBe(-4);
   });
 });
+
+describe("Regresi pratinjau produksi #208", () => {
+  it("TRX seperti 0192 dengan catatan = teks mentah (+ pihak): --harga-tabung → 3 × 20.000 = 60.000, bukan 72.000 (teks tidak dihitung dua kali)", async () => {
+    const teks = "Beli Lpg 3 tabung dan bensin grand";
+    const n = await mkTx("R1", teks, [{ code: "6-1200", debit: 72_000 }]);
+    await prisma.financeTransaction.update({ where: { number: n }, data: { rawText: teks, counterparty: "Grand" } });
+    const { analysisText } = await import("@/lib/lpgText");
+    expect(analysisText([teks, teks, "Grand"])).toBe(teks); // pihak yang sudah termuat di teks tidak diulang
+    const dengan = await planLpgReklasFull(prisma, { hargaTabung: 20_000 });
+    expect(dengan.rows.find((r) => r.number === n)).toMatchObject({ amount: 60_000, akun: "6-1200" });
+    expect(lpgShare(analysisText([teks, teks]), 72_000, { hargaTabung: 20_000 })).toMatchObject({ mode: "baris", amount: 60_000 });
+  });
+
+  it("TRX seperti 0238 berbentuk rincian (split): leg persediaan 5.000 = kardus bukan LPG; rekon tidak menulis LPG; rincian LPG berkategori gas direklas 60.000 dari 6-1300", async () => {
+    const cat = async (name: string) => (await prisma.txCategory.findFirstOrThrow({ where: { name } })).id;
+    const [gas, bahan, trans] = [await cat("Listrik, Air & Gas"), await cat("Pembelian Bahan Baku"), await cat("Transport")];
+    const number = `TRX-${tag}-R2`;
+    const date = new Date(`${year}-07-11T05:00:00Z`);
+    const t = await prisma.financeTransaction.create({ data: { number, direction: "KELUAR", amount: 149_000n, date, status: "DIBUKUKAN", source: "MANUAL", fingerprint: `fp-${number}`, createdBy: "uji", note: "Kopi 60rb\nKardus bekas 5rb\nBeli LPG 3 tabung 60rb", splits: { create: [
+      { amount: 60_000n, note: "Kopi", sortOrder: 0 }, { amount: 10_000n, note: "Jasa angkut", categoryId: trans, sortOrder: 1 }, { amount: 14_000n, note: "Teajus", sortOrder: 2 },
+      { amount: 60_000n, note: "Beli LPG 3 tabung", categoryId: gas, sortOrder: 3 }, { amount: 5_000n, note: "Kardus bekas", categoryId: bahan, sortOrder: 4 },
+    ] } } });
+    await prisma.$transaction(async (tx) => {
+      const store = await tx.store.findFirstOrThrow();
+      const j = await postJournal(tx, { date, storeId: store.id, description: `Uji ${tag}`, source: "FINANCE", sourceId: t.id, actor, lines: [{ accountCode: "6-1250", debit: 60_000 }, { accountCode: "6-1200", debit: 10_000 }, { accountCode: "6-1250", debit: 14_000 }, { accountCode: "6-1300", debit: 60_000 }, { accountCode: "1-1401", debit: 5_000 }, { accountCode: "1-1100", credit: 149_000 }] });
+      await tx.financeTransaction.update({ where: { id: t.id }, data: { journalId: j.id } });
+    });
+    const rekon = await rekonPersediaan(prisma);
+    const row = rekon.rows.find((r) => r.ref === number && r.account === "1-1401");
+    expect(row?.gap).toBe(5_000);
+    expect(row?.lpgPart).toBeUndefined();
+    expect(row?.usul ?? "").not.toMatch(/LPG/);
+    const plan = await planLpgReklasFull(prisma);
+    expect(plan.rows.find((r) => r.number === number)).toMatchObject({ amount: 60_000, akun: "6-1300" });
+  });
+});

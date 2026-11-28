@@ -369,6 +369,12 @@ export async function finishedGoodsOpname(rows: OpnameRow[], date: Date, actor: 
   });
 }
 
+/**
+ * SATU lokasi per barang menurut JENISNYA (bukan menurut langkah/alur): bahan baku → gudang bahan, setengah jadi (termasuk Single Pack bertipe
+ * setengah jadi) → gudang setengah jadi, barang jadi → gudang barang jadi. Semua jalur (penerimaan divisi, LPH, LPS, retur, ambil stok, workshop) memakai aturan ini.
+ */
+export const locationOfType = (type: string, l: { raw: string | null; wip: string | null; finished: string | null }) => (type === "BAHAN_BAKU" ? l.raw : type === "BARANG_DALAM_PROSES" ? l.wip : l.finished);
+
 export async function locationSettings(db: DB) {
   const s = await db.setting.findMany({ where: { key: { in: ["loc_raw", "loc_wip", "loc_finished"] } } });
   const g = (k: string) => s.find((x) => x.key === k)?.value ?? null;

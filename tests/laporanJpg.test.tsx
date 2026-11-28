@@ -7,7 +7,7 @@ import type { ChecklistEntry } from "@/lib/shiftReport";
 
 const lh = { name: "Main Gypsum", tagline: "Perlengkapan", address: "Alamat contoh", phone: "0800-0000", city: "Kota", email: "", website: "" } as never;
 const rr = (n: number, counted: number, system: number): ResultRow => ({ itemId: `i${n}`, name: `Giftbox contoh ${n}`, unit: "box", counted, system, diff: counted - system, big: Math.abs(counted - system) > 20 });
-const rows: ResultRow[] = [rr(1, 12, 12), rr(2, 5, 9), ...Array.from({ length: 41 }, (_, i) => rr(i + 3, 0, 0)), rr(50, 0, 3)];
+const rows: ResultRow[] = [rr(1, 12, 12), rr(2, 5, 9), ...Array.from({ length: 41 }, (_, i) => rr(i + 3, 0, 0)), rr(50, 0, 3), { itemId: "nc", name: "Single Pack contoh", unit: "pcs", counted: 0, system: -692, diff: 0, big: false, notCounted: true }, { itemId: "nc0", name: "Item tak dihitung 0", unit: "pcs", counted: 0, system: 0, diff: 0, big: false, notCounted: true }];
 const checklist: ChecklistEntry[] = Array.from({ length: 7 }, (_, i) => ({ label: `Tugas penutupan ${i + 1}`, done: i < 6 })) as never;
 
 const sheet = () => renderToStaticMarkup(
@@ -30,6 +30,10 @@ describe("JPG Laporan Penutup Shift", () => {
     expect(html).toContain("Giftbox contoh 50<"); // sistem ada tapi fisik 0 → selisih
     expect(html).not.toContain("Giftbox contoh 20<"); // 0 & sesuai sistem → dirangkum
     expect(html).toContain("41 item lain: 0, sesuai sistem");
+    // barang divisi yang tidak dihitung tetap tampil dengan stok sistemnya (minus) dan rangkuman terpisah
+    expect(html).toContain("Single Pack contoh<");
+    expect(html).toContain("belum dihitung");
+    expect(html).toContain("1 item belum dihitung (stok sistem 0)");
     expect(html.match(/✓ sesuai sistem/g)).toBeNull();
     // bahan di bawah limit ditandai merah + order ringkas
     expect(html).toContain("⚠ Lem contoh");

@@ -4,7 +4,7 @@ import { autoLinkReturn, duplicateFor } from "./marketplace/link";
 import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } from "./accounting";
 import { nextNumber } from "./numbering";
 import { audit } from "./audit";
-import { locationSettings, recordMovement, reverseMovementsByRef, StockError } from "./stock";
+import { locationOfType, locationSettings, recordMovement, reverseMovementsByRef, StockError } from "./stock";
 import { recipeMaterialCost } from "./hpp";
 import type { Permission } from "./rbac";
 
@@ -170,15 +170,15 @@ export async function sendReplacement(id: string, actor: Actor, now: Date = new 
     if (c.solution !== "KIRIM_GANTI") throw new StockError("Bukan komplain kirim ganti");
     if (c.status !== "DIAJUKAN") throw new StockError(`${c.number} sudah ${COMPLAINT_STATUS[c.status].label.toLowerCase()}`);
     await assertPeriodOpen(tx, now);
-    const { finished } = await locationSettings(tx);
-    if (!finished) throw new StockError("Lokasi gudang barang jadi belum diatur di Pengaturan");
+    const locs = await locationSettings(tx);
+    if (!locs.finished) throw new StockError("Lokasi gudang barang jadi belum diatur di Pengaturan");
     const lines = await tx.complaintLine.findMany({ where: { complaintId: id, itemId: { not: null }, sendQty: { gt: 0 } }, include: { item: true } });
     if (!lines.length) throw new StockError("Tidak ada barang pengganti");
     const ref = `${c.number}-KIRIM`;
     let value = 0;
     for (const l of lines) {
       const fallback = Number(l.item!.avgCost) > 0 ? null : { value: await recipeMaterialCost(l.itemId!), note: "harga pokok dari resep" };
-      const mv = await recordMovement(tx, { type: "PENGELUARAN", itemId: l.itemId!, qty: l.sendQty, fromLocationId: finished, ref, note: `Pengganti komplain ${c.number}`, date: now, allowNegative: true, noJournal: true, fallbackUnitCost: fallback }, actor);
+      const mv = await recordMovement(tx, { type: "PENGELUARAN", itemId: l.itemId!, qty: l.sendQty, fromLocationId: locationOfType(l.item!.type, locs) ?? locs.finished, ref, note: `Pengganti komplain ${c.number}`, date: now, allowNegative: true, noJournal: true, fallbackUnitCost: fallback }, actor);
       const unit = Number(mv.unitCost);
       value += Math.round(unit * l.sendQty);
       await tx.complaintLine.update({ where: { id: l.id }, data: { unitCost: BigInt(unit) } });

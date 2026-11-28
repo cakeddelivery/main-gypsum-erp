@@ -49,8 +49,9 @@ export function ReportSheet(p: Props) {
   );
   // Stok akhir setengah jadi / jadi: hanya yang ada stoknya atau berselisih; sisanya (0 & sesuai sistem) dirangkum satu baris
   const rr = p.resultRows ?? [];
-  const rrShown = rr.filter((r) => r.counted > 0 || r.diff !== 0 || r.system > 0);
-  const rrHidden = rr.length - rrShown.length;
+  const rrShown = rr.filter((r) => r.notCounted ? r.system !== 0 : r.counted > 0 || r.diff !== 0 || r.system > 0);
+  const rrHidden = rr.filter((r) => !r.notCounted).length - rrShown.filter((r) => !r.notCounted).length;
+  const rrUncounted0 = rr.filter((r) => r.notCounted && r.system === 0).length;
   // wide = versi JPG (lebar 1080px, font dasar ≥ 28px agar terbaca di HP tanpa zoom); di layar versi ringkas
   const body = (wide: boolean) => {
     const z = wide
@@ -79,15 +80,16 @@ export function ReportSheet(p: Props) {
                 {rrShown.map((r) => (
                   <tr key={r.itemId} className="border-t border-[#e5e7eb]">
                     <td className="px-2 py-1 break-words">{r.name}</td>
-                    <td className="whitespace-nowrap px-2 py-1 text-right font-bold tabular-nums">{fmt(r.counted)}</td>
+                    <td className="whitespace-nowrap px-2 py-1 text-right font-bold tabular-nums">{r.notCounted ? "—" : fmt(r.counted)}</td>
                     <td className="whitespace-nowrap px-2 py-1 text-right tabular-nums text-[#6b7280]">{fmt(r.system)}</td>
-                    <td className={`whitespace-nowrap px-2 py-1 text-right font-bold tabular-nums ${r.diff === 0 ? "text-[#059669]" : r.big ? "text-[#b91c1c]" : "text-[#c2410c]"}`}>{r.diff === 0 ? "✓" : `${r.diff > 0 ? "+" : ""}${fmt(r.diff)}`}</td>
+                    <td className={`whitespace-nowrap px-2 py-1 text-right font-bold tabular-nums ${r.notCounted ? "text-[#c2410c]" : r.diff === 0 ? "text-[#059669]" : r.big ? "text-[#b91c1c]" : "text-[#c2410c]"}`}>{r.notCounted ? "belum dihitung" : r.diff === 0 ? "✓" : `${r.diff > 0 ? "+" : ""}${fmt(r.diff)}`}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
             {rrShown.length === 0 && <div className={`px-2 ${z.small} text-[#6b7280]`}>Tidak ada stok.</div>}
             {rrHidden > 0 && <div className={`px-2 ${z.small} text-[#6b7280]`}>{rrHidden} item lain: 0, sesuai sistem</div>}
+            {rrUncounted0 > 0 && <div className={`px-2 ${z.small} text-[#6b7280]`}>{rrUncounted0} item belum dihitung (stok sistem 0)</div>}
           </>
         )}
 

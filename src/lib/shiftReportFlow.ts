@@ -129,6 +129,7 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
   }
 
   const divLoc = await divisionLocationId(prisma, template);
+  const itemTypes = new Map((await prisma.item.findMany({ where: { id: { in: itemIds } }, select: { id: true, type: true } })).map((i) => [i.id, i.type]));
   let posted = 0;
   await prisma.$transaction(async (tx) => {
     // Kunci laporan & baca ulang versinya: klik Kirim dua kali bersamaan tidak boleh memposting hasil kerja dua kali
@@ -149,7 +150,8 @@ export async function postShiftWork(reportId: string, actor: Actor, now: Date = 
     for (const [i, s] of steps.entries()) {
       const itemId = itemIds[i];
       const wipKind = s.kind === "kering" || s.kind === "basah";
-      const loc = wipKind ? wip : finished;
+      // Lokasi menurut JENIS barang: Single Pack bertipe setengah jadi tetap di gudang setengah jadi walau langkahnya "jadi" (penerimaan divisi memakai aturan yang sama)
+      const loc = wipKind || itemTypes.get(itemId) === "BARANG_DALAM_PROSES" ? wip : finished;
       if (s.dir === "in") {
         const wipCost = wipKind ? wipTargets.get(itemId)?.total : undefined;
         // Overhead resep milik barang ini sendiri dikapitalisasi sebatas beban aktual bulan itu (sisanya tetap beban periode)

@@ -4,7 +4,7 @@ import { assertPeriodOpen, postJournal, reverseJournal, COA, type LineInput } fr
 import { nextNumber } from "./numbering";
 import { lockKey } from "./actionToken";
 import { audit } from "./audit";
-import { locationSettings, recordMovement, reverseMovementsByRef, StockError } from "./stock";
+import { locationOfType, locationSettings, recordMovement, reverseMovementsByRef, StockError } from "./stock";
 import { recipeMaterialCost } from "./hpp";
 import { packComponents, pieceInspection, type PieceInput } from "./returnPieces";
 import { autoLinkReturn, duplicateFor } from "./marketplace/link";
@@ -218,7 +218,8 @@ export async function inspectReturn(id: string, rows: InspectRow[], actor: Actor
     const missing = r.lines.filter((l) => !l.itemId);
     if (missing.length) throw new StockError(`Pilih barang ERP untuk: ${missing.map((l) => l.labelSku ?? l.labelName).join(", ")} (Ubah data retur)`);
     await assertPeriodOpen(tx, now);
-    const { finished } = await locationSettings(tx);
+    const locs = await locationSettings(tx);
+    const finished = locs.finished;
     if (!finished) throw new StockError("Lokasi gudang barang jadi belum diatur di Pengaturan");
     if (r.status === "DIPERIKSA") await undoInspection(tx, r, actor, "Periksa ulang", now);
     // Baris paket Single Pack diperiksa per pcs; selain itu per barang seperti biasa
@@ -236,7 +237,7 @@ export async function inspectReturn(id: string, rows: InspectRow[], actor: Actor
     const gen = r.inspectRef ? Number(r.inspectRef.split("-P").pop()) + 1 || 2 : 1;
     const ref = `${r.number}-P${gen}`;
     for (const x of lines) {
-      if (x.goodQty > 0) await recordMovement(tx, { type: "PENERIMAAN", itemId: x.l.itemId!, qty: x.goodQty, toLocationId: finished, unitCost: x.unitCost, ref, note: `Retur barang baik ${r.trackingNo}`, date: now }, actor);
+      if (x.goodQty > 0) await recordMovement(tx, { type: "PENERIMAAN", itemId: x.l.itemId!, qty: x.goodQty, toLocationId: locationOfType(x.l.item!.type, locs) ?? finished, unitCost: x.unitCost, ref, note: `Retur barang baik ${r.trackingNo}`, date: now }, actor);
       await noteReturnReject(tx, ref, r, x.l.itemId!, x.damagedQty, x.unitCost, actor);
       await tx.returnLine.update({ where: { id: x.l.id }, data: { goodQty: x.goodQty, damagedQty: x.damagedQty, unitCost: BigInt(Math.round(x.unitCost)), note: clean(x.row.note, 200), pieceMode: false, goodValue: 0n, lossValue: 0n } });
       await tx.returnPiece.deleteMany({ where: { lineId: x.l.id } });

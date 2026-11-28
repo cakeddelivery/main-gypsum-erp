@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { COA, reverseJournal, reversalDate } from "./accounting";
 import { flowEnabled } from "./shiftReportFlow";
-import { locationSettings, recordMovement, reverseMovementsByRef, StockError } from "./stock";
+import { locationOfType, locationSettings, recordMovement, reverseMovementsByRef, StockError } from "./stock";
 import { recipeMaterialCost } from "./hpp";
 import { shiftEndAt } from "./shiftReport";
 import { addDays, dateOnly, todayStr } from "./time";
@@ -45,7 +45,7 @@ export async function applyReportSamples(reportId: string, actor: Actor, now: Da
   const r = await prisma.shiftReport.findUniqueOrThrow({ where: { id: reportId }, include: { shift: true, division: true } });
   const entries = isSampleTemplate(r.division.reportTemplate) ? storedSamples(r.work) : [];
   const on = await flowEnabled();
-  const { finished } = await locationSettings(prisma);
+  const locs = await locationSettings(prisma);
   const at = shiftEndAt(r.date, r.shift, now);
   let posted = 0;
   await prisma.$transaction(async (tx) => {
@@ -63,9 +63,10 @@ export async function applyReportSamples(reportId: string, actor: Actor, now: Da
       let unitCost = Number(item.avgCost);
       let didPost = false;
       if (on) {
-        if (!finished) throw new StockError("Lokasi gudang barang jadi belum diatur di Pengaturan");
+        const fromLoc = locationOfType(item.type, locs);
+        if (!fromLoc) throw new StockError("Lokasi gudang barang jadi belum diatur di Pengaturan");
         const fb = unitCost > 0 ? 0 : await recipeMaterialCost(item.id);
-        const mv = await recordMovement(tx, { type: "PENYESUAIAN", itemId: item.id, qty: e.qty, fromLocationId: finished, increase: false, allowNegative: true, expenseCode: COA.BEBAN_PROMOSI_SAMPLE, fallbackUnitCost: fb > 0 ? { value: fb, note: "harga pokok dari resep" } : null, ref, note: `Sample affiliator ${SAMPLE_PLATFORMS[e.platform]} · ${storeName.get(e.storeId) ?? "toko"}`, date: at }, actor);
+        const mv = await recordMovement(tx, { type: "PENYESUAIAN", itemId: item.id, qty: e.qty, fromLocationId: fromLoc, increase: false, allowNegative: true, expenseCode: COA.BEBAN_PROMOSI_SAMPLE, fallbackUnitCost: fb > 0 ? { value: fb, note: "harga pokok dari resep" } : null, ref, note: `Sample affiliator ${SAMPLE_PLATFORMS[e.platform]} · ${storeName.get(e.storeId) ?? "toko"}`, date: at }, actor);
         unitCost = Number(mv.unitCost);
         didPost = true;
         posted++;
