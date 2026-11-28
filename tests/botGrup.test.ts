@@ -98,6 +98,9 @@ describe("Bot di grup Telegram", () => {
     expect(JSON.parse(String((sc.data as Record<string, unknown>).lines))[0].amount).toBe(63_000);
     expect(await prisma.botSession.findUnique({ where: { chatId: String(G) } })).toBeNull();
 
+    // Lokasi penerima barang (bawaan) dipilih dulu oleh pemilik masing-masing kartu
+    await tap(A, "f:def", A);
+    await tap(C, "f:def", C);
     // Admin menekan kartu milik Edy → ditolak
     const before = await prisma.purchase.count();
     await tap(B, "f:ok", A);

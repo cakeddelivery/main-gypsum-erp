@@ -235,8 +235,16 @@ export function interestKind(text: string): "BUNGA" | "PAJAK" | null {
   return "BUNGA";
 }
 
+/** LPG / elpiji / tabung gas: bahan bakar oven (produksi), lebih spesifik daripada kategori umum "Listrik, Air & Gas" yang juga berkata kunci gas/elpiji */
+const LPG_TEXT_RE = /\b(lpg|elpiji|tabung gas|gas melon|isi ulang gas)\b/;
+
 export function suggestCategory(text: string, direction: string | null, categories: ExtractCategory[]): string | null {
   const t = text.toLowerCase().replace(BUSINESS_NAMES, " ");
+  // Prioritas spesifik: teks LPG → kategori bernama LPG (bila ada) menang atas kategori umum bernuansa gas/listrik
+  if (LPG_TEXT_RE.test(t) && (!direction || direction === "KELUAR")) {
+    const lpg = categories.find((c) => c.direction === "KELUAR" && /\blpg\b/i.test(c.name));
+    if (lpg) return lpg.id;
+  }
   let best: { id: string; score: number } | null = null;
   for (const c of categories) {
     if (direction && c.direction !== direction) continue;

@@ -30,6 +30,8 @@ export type PurchaseInput = {
   inTransit?: boolean;
   /** Bayar di tempat saat barang datang (hanya untuk barang dalam pengiriman) */
   cod?: boolean;
+  /** Lokasi penerima stok; kosong = gudang bahan baku bawaan (hanya pembelian yang barangnya langsung diterima) */
+  locationId?: string | null;
 };
 
 export const TERM_LABEL: Record<PaymentTerm, string> = { LUNAS: "Bayar di depan (lunas)", BERTAHAP: "Bertahap (DP + cicilan)", TEMPO: "Tempo (bayar nanti)" };
@@ -83,8 +85,10 @@ export async function createPurchase(input: PurchaseInput, actor: Actor) {
     const supplier = await resolveSupplier(tx, { supplierId: input.supplierId, name: input.newSupplierName || input.vendor }, actor, "pembelian");
     const vendor = supplier?.name || input.vendor;
     if (!vendor) throw new StockError("Supplier wajib diisi");
-    const { raw } = await locationSettings(tx);
-    if (!raw) throw new StockError("Lokasi gudang bahan baku belum diatur di Pengaturan");
+    const { raw: rawDefault } = await locationSettings(tx);
+    if (!rawDefault) throw new StockError("Lokasi gudang bahan baku belum diatur di Pengaturan");
+    if (input.locationId && !(await tx.location.findUnique({ where: { id: input.locationId }, select: { id: true } }))) throw new StockError("Lokasi penerima barang tidak ditemukan");
+    const raw = input.inTransit ? rawDefault : (input.locationId ?? rawDefault);
     const number = await nextNumber(tx, "PBL", input.date);
     const bank = paid > 0 ? await tx.bankAccount.findUniqueOrThrow({ where: { id: input.bankAccountId! } }) : null;
     if (input.inTransit) {

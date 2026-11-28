@@ -8,7 +8,7 @@ import { dateStr, fmtDate, fmtDateTime, jakartaParts, nowTimeStr, todayStr } fro
 import { describeParts, parseLink, reserveOptions } from "@/lib/reserveSync";
 import { walletForMarketplace } from "@/lib/extract";
 import Link from "next/link";
-import { STATUS_LABEL, WD_RECEIVED_SOURCE, missingFields, splitIssues } from "@/lib/finance";
+import { STATUS_LABEL, WD_RECEIVED_SOURCE, missingFields, splitIssues, stockIssues } from "@/lib/finance";
 import { MIRROR_SOURCES, originHref, originLabel } from "@/lib/txMirror";
 import { Badge, Card, ErrorBox, Field, PageHeader } from "@/components/ui";
 import { ActionForm, Submit } from "@/components/ActionForm";
@@ -44,7 +44,7 @@ export default async function TxDetail({ params, searchParams }: { params: Promi
   const reclassable = own && t.status === "DIBUKUKAN" && t.direction !== "TRANSFER" && !t.splits.length && user.can("finance.approve");
   const openPay = reclassable && t.direction === "KELUAR" ? (await prisma.payable.findMany({ orderBy: { date: "desc" }, include: { supplier: { select: { name: true } } } })).filter((x) => x.paid < x.amount || x.id === t.payableId) : [];
   const editable = ["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"].includes(t.status);
-  const missing = [...missingFields(t), ...splitIssues(t.amount, t.direction, t.splits)];
+  const missing = [...missingFields(t), ...splitIssues(t.amount, t.direction, t.splits), ...(await stockIssues(prisma, t, t.splits))];
   const p = jakartaParts(t.date);
   const suggested = categories.find((c) => c.id === t.suggestedCategoryId);
   const ai = t.aiExtraction as { confidence?: number; missing?: string[] } | null;

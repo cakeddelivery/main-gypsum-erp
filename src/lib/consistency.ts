@@ -87,6 +87,17 @@ const staleDrafts: Check = async (c) => {
     rows.map((r) => ({ label: r.number, detail: `${r.status.replace(/_/g, " ").toLowerCase()} · ${dateStr(r.date)} · ${idr(Number(r.amount))}`, href: `/finance/${r.id}` })));
 };
 
+/** Draft pembelian bahan (kategori berakun Persediaan) yang belum diisi barang & qty: tidak diposting ke persediaan, perlu dilengkapi Finance/Supervisor */
+const draftPembelianTanpaBarang: Check = async () => {
+  const invCats = (await prisma.txCategory.findMany({ where: { coaAccount: { code: { in: ["1-1401", "1-1402", "1-1403"] } } }, select: { id: true } })).map((c) => c.id);
+  const rows = await prisma.financeTransaction.findMany({
+    where: { status: { in: ["DRAFT", "PERLU_DITINJAU"] }, deletedAt: null, direction: "KELUAR", origin: null, payableId: null, splits: { none: {} }, categoryId: { in: invCats } },
+    orderBy: { date: "asc" }, select: { id: true, number: true, amount: true, date: true, note: true },
+  });
+  return issue("draft-pembelian-tanpa-barang", "BARANG", "SEDANG", "Draft pembelian bahan belum diisi barang & qty", "Kategori berakun Persediaan tidak boleh dibukukan tanpa stok masuk. Buka draft di bot (🛒 Isi barang & qty) atau catat lewat Stok → Pembelian lalu tolak draftnya; atau ganti ke kategori beban bila bukan bahan baku.",
+    rows.map((r) => ({ label: r.number, detail: `${dateStr(r.date)} · ${idr(Number(r.amount))}${r.note ? ` · ${r.note.slice(0, 50)}` : ""}`, href: `/finance/${r.id}` })));
+};
+
 const staleWdProcess: Check = async (c) => {
   const rows = await prisma.financeTransaction.findMany({ where: { status: "DALAM_PROSES", date: { lt: daysAgo(c, STALE.wdProcess) } }, select: { id: true, number: true, amount: true, date: true } });
   return issue("wd-proses-lama", "UANG", "SEDANG", `Withdraw Dalam Proses lebih dari ${STALE.wdProcess} hari`, "Uang WD biasanya masuk 1–3 hari. Tekan \"Uang diterima\" bila sudah masuk, atau cek ke marketplace.",
@@ -482,7 +493,7 @@ const pendingRegistrations: Check = async (c) => {
 
 export const CHECKS: Check[] = [
   unbalancedJournals, duplicateJournals, bookedWithoutJournal, cancelledNotReversed, cancelledDocsNotReversed, bankNegative, transitBalance, salesPaid,
-  payablesVsLedger, receivablesVsLedger, prepaidVsLedger, advances, reserveFunds, reserveMissing, talanganOpen, mirrorOfReversed, staleDrafts, staleWdProcess, purchaseIssues, depreciationGaps,
+  payablesVsLedger, receivablesVsLedger, prepaidVsLedger, advances, reserveFunds, reserveMissing, talanganOpen, mirrorOfReversed, staleDrafts, draftPembelianTanpaBarang, staleWdProcess, purchaseIssues, depreciationGaps,
   inventoryVsLedger, flowSwitch, negative, unlinkedReceipts, handovers, stockRequests, unpaidBorongan, movementsWithoutRef, manualBorongan, manualReceipts,
   missingPayroll, doublePay, manualPayrollExpense, payrollAccruals, unvalidatedAttendance, missingAttendance,
   staleReturns, failedReturnVideos, returnsWithoutVideo, staleComplaints, approvedRefundsUnpaid,
