@@ -20,6 +20,7 @@ import { SALES_FLOWS, salesMenuRows } from "./botSales";
 import { createDraft, draftMessage, type DraftInput } from "./botDraft";
 import { ackIds, guardDup } from "./botDup";
 import { gajiFlow } from "./botGaji";
+import { KIND_LABEL, type IntakeKind } from "./botClassify";
 
 /**
  * Isian bot Telegram Tahap 3: kasbon, pembelian bahan baku, dan borongan tetangga
@@ -295,7 +296,7 @@ const purchase: FlowDef = {
     ].filter(Boolean).join("\n");
     const page = Number(d.page ?? 0);
     // Pesan yang dikenali sebagai pembelian: tetap bisa dicatat sebagai transaksi biasa
-    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan pembelian, catat transaksi biasa", callback_data: "f:plain" }]] : [];
+    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan pembelian, catat transaksi biasa", callback_data: "f:plain" }], [{ text: "✏️ Ubah jenis", callback_data: "f:jns" }]] : [];
     const others: { id: string; name: string }[] = d.others ? JSON.parse(String(d.others)) : [];
     switch (s.step) {
       case "sup": {
@@ -964,7 +965,7 @@ const payDebt: FlowDef = {
       d.date && d.date !== todayStr() ? `Tanggal: ${fmtDate(dateOnly(String(d.date)))}` : "",
       d.tx ? "<i>Dikenali dari pesan/bukti transfer sebagai pembayaran hutang.</i>" : "",
     ].filter(Boolean).join("\n");
-    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan bayar hutang, catat transaksi biasa", callback_data: "f:plain" }]] : [];
+    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan bayar hutang, catat transaksi biasa", callback_data: "f:plain" }], [{ text: "✏️ Ubah jenis", callback_data: "f:jns" }]] : [];
     switch (s.step) {
       case "pick": {
         const cands: string[] = d.cands ? JSON.parse(String(d.cands)) : [];
@@ -1093,7 +1094,7 @@ const reserveFromProof: FlowDef = {
   async prompt(s) {
     const d = s.data;
     const opts: ReserveOpt[] = JSON.parse(String(d.opts ?? "[]"));
-    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan sisihan, catat transaksi biasa", callback_data: "f:plain" }]] : [];
+    const plainRow: InlineButton[][] = d.tx ? [[{ text: "📝 Bukan sisihan, catat transaksi biasa", callback_data: "f:plain" }], [{ text: "✏️ Ubah jenis", callback_data: "f:jns" }]] : [];
     const head = `<b>🏦 Dana sisihan</b>\nBukti transfer ${idr(opts[0]?.amount ?? 0)}${d.proofPath ? " (foto dilampirkan)" : ""}`;
     if (s.step === "pick") {
       return { text: `${head}\n\nNominal ini cocok dengan beberapa dana sisihan. Untuk dana yang mana?`, buttons: [...opts.map((o, k) => [{ text: `${o.label} (${o.dates.map((x) => x.slice(8)).join(",")})`.slice(0, 60), callback_data: `f:o${k}` }]), ...plainRow, cancelRow] };
@@ -1310,4 +1311,27 @@ const draftDup: FlowDef = {
   },
 };
 
-export const T3_FLOWS: Record<string, FlowDef> = { trx: draftDup, kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, tlg: talangan, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay, gaji: gajiFlow, ...SALES_FLOWS };
+// =====================================================================
+// Pilihan jenis (pesan bebas yang ragu / "✏️ Ubah jenis"): tombol f:jns:<JENIS> ditangani di bot.ts (mengarahkan ke alur yang sesuai)
+// =====================================================================
+const pickKind: FlowDef = {
+  async start() {
+    return "Pilihan jenis dimulai dari pesan transaksi";
+  },
+  async prompt(s) {
+    const kinds: IntakeKind[] = JSON.parse(String(s.data.kinds ?? "[]"));
+    const head = String(s.data.head ?? "");
+    return {
+      text: `<b>❓ Ini jenis transaksi apa?</b>\n${head}\n\n${s.data.hint ? esc(String(s.data.hint)) : "Pilih jenis, bot langsung mengisi yang sudah terbaca dari pesan dan hanya menanyakan yang kurang."}`,
+      buttons: [...chunk(kinds.map((k) => ({ text: KIND_LABEL[k], callback_data: `f:jns:${k}` })), 1), [{ text: "📝 Transaksi biasa (draft)", callback_data: "f:jns:DRAFT" }], cancelRow],
+    };
+  },
+  async answer() {
+    return "Pilih jenis dengan tombol di atas";
+  },
+  async finish() {
+    return { text: "Selesai.", buttons: [menuBtn] };
+  },
+};
+
+export const T3_FLOWS: Record<string, FlowDef> = { trx: draftDup, kas: kasbon, ksb: giveKasbon, beli: purchase, utang: payDebt, sish: reserveFromProof, tlg: talangan, bor: boronganMenu, bter: receive, bset: result, bkir: sendGoods, bupah: unpaid, bbay: pay, gaji: gajiFlow, jns: pickKind, ...SALES_FLOWS };

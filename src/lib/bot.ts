@@ -1,7 +1,8 @@
 import { resignEffective } from "./time";
 import { prisma } from "./db";
 import { effectivePermissions } from "./rbac";
-import { DEFAULT_MANAGER_NAMES, detectManagerLoan, extractDate, extractTransaction, hasExplicitAmount, matchStore, mergeReceipt } from "./extract";
+import { DEFAULT_MANAGER_NAMES, detectManagerLoan, extractDate, extractTransaction, hasExplicitAmount, matchStore, mergeReceipt, suggestCategory } from "./extract";
+import { KIND_DIRECTION, KIND_LABEL, classifyIntake, loadClassifyContext, type IntakeKind } from "./botClassify";
 import { readReceipt, type ReceiptRead } from "./receipt";
 import { ocrImageText, ocrReceipt } from "./ocrReceipt";
 import { receiptFromOcrText } from "./ocrReceiptText";
@@ -13,7 +14,7 @@ import { idr } from "./money";
 import { addDays, fmtDate, fmtDateTime, jakartaDateTime, jakartaParts, todayStr, txTime } from "./time";
 import { dailyRecapText } from "./jobs";
 import { handleMenuCallback, handleMenuCommand, MENU_TEXT } from "./botMenu";
-import { clearSession, getSession, handleFlowCallback, handleFlowLocation, handleFlowText, retryRows, startPrefilledFlow, type TgLocation } from "./botFlow";
+import { clearSession, getSession, handleFlowCallback, handleFlowLocation, handleFlowText, retryRows, startFlow, startPrefilledFlow, type TgLocation } from "./botFlow";
 import { detectPurchase, expenseCategoryFor, extractSplits, isExpenseText, rawMaterials } from "./botPurchase";
 import { prefilledPayablePayment, prefilledPurchase, prefilledPurchaseUnknown, prefilledReserve, prefilledTalangan, talanganPhoto } from "./botFlow3";
 import { talanganSummary } from "./talangan";
@@ -260,6 +261,22 @@ async function handleMessage(u: TgUpdate) {
       ex.toAccountId = null;
     }
   }
+  // Pesan bebas tanpa menu: jenis dikenali dari kata kunci + master data (barang, supplier, karyawan/pengelola, utang terbuka).
+  // Yang jelas langsung diarahkan; ragu (skor rendah / dua jenis mungkin) → pilihan jenis dengan tombol, bukan menebak.
+  const clsBasis = [text, receipt?.counterparty].filter(Boolean).join(" ");
+  const cls = !splits.length && !loan && clsBasis && (ident.perms.has("finance.approve") || ident.perms.has("payroll.approve") || ident.perms.has("borongan.manage"))
+    ? classifyIntake(clsBasis, { direction: ex.direction, amount: ex.amount }, await loadClassifyContext(await managerNames()))
+    : null;
+  if (cls?.top && !cls.ambiguous) {
+    // "gaji borongan minggu ini": upah titik borongan yang belum dibayar (tanpa nominal)
+    if (cls.top.kind === "GAJI" && cls.top.borongan && !ex.amount && ident.perms.has("borongan.manage")) return startFlow({ i: ident, chatId }, "bupah");
+    // Jenis jelas tetapi arah belum terbaca ("lpg 2 tabung 40rb", "kompensasi edy 500rb"): arah mengikuti jenisnya
+    if (!ex.direction) ex.direction = KIND_DIRECTION[cls.top.kind];
+  }
+  if (cls?.ambiguous && ex.amount && cls.ranked.length) {
+    const intake: Intake = { text, counterparty: receipt?.counterparty ?? null, amount: ex.amount, direction: ex.direction, date: ex.date ?? todayStr(), time: txTime(ex.date ?? todayStr(), ex.time), accountId: ex.accountId, toAccountId: ex.toAccountId, categoryId: ex.categoryId, proofPath, messageId: String(msg.message_id), note: ex.note ?? null };
+    return presentKindChooser({ i: ident, chatId }, intake, cls.ranked.slice(0, 4).map((c) => c.kind), banks.find((b) => b.id === ex.accountId)?.name ?? null);
+  }
   // "Gaji/upah <nama>": bayar slip gaji yang sudah disetujui langsung dari bot (pelunasan Hutang Gaji, bukan draft beban)
   const gajiCase = !!text && PAY_WORDS.test(text) && !loan && !splits.length && (ex.direction === "KELUAR" || !ex.direction) && ident.perms.has("payroll.approve");
   const gajiPrefill = (tx: unknown) => ({ text: [text, receipt?.counterparty].filter(Boolean).join(" "), amount: ex.amount ?? null, bankId: ex.accountId ?? null, date: ex.date ?? null, time: ex.date ? txTime(ex.date, ex.time) : null, proofPath, messageId: String(msg.message_id), tx });
@@ -377,6 +394,68 @@ async function handleMessage(u: TgUpdate) {
   await startDraft(ctx, draft);
 }
 
+// ---------- Pilihan jenis transaksi (pesan bebas ragu / "✏️ Ubah jenis") ----------
+type Intake = { text: string; counterparty: string | null; amount: number; direction: "MASUK" | "KELUAR" | "TRANSFER" | null; date: string; time: string; accountId: string | null; toAccountId: string | null; categoryId: string | null; proofPath: string | null; messageId: string; note: string | null };
+type BotCtx = { i: NonNullable<Awaited<ReturnType<typeof identityOf>>>; chatId: string };
+const ALL_KINDS: IntakeKind[] = ["PEMBELIAN", "BAYAR_HUTANG", "GAJI", "KOMPENSASI", "BEBAN", "PENJUALAN"];
+
+async function presentKindChooser(ctx: BotCtx, k: Intake, kinds: IntakeKind[], bankName: string | null, all = false) {
+  const list = all ? [...new Set([...kinds, ...ALL_KINDS])] : kinds;
+  const head = `${idr(k.amount)}${bankName ? ` · ${esc(bankName)}` : ""}${k.text ? `\n<i>${esc(k.text.slice(0, 160))}</i>` : ""}`;
+  const s: Session = { chatId: ctx.chatId, userId: ctx.i.userId, flow: "jns", step: "pick", data: { kinds: JSON.stringify(list), head, intake: JSON.stringify(k), hint: all ? "Pilih jenis yang benar; isian sebelumnya dibatalkan, yang terbaca dari pesan dipakai lagi." : "Saya ragu jenisnya, pilih yang sesuai." } };
+  return startPrefilledFlow(ctx, s);
+}
+
+/** Arahkan ke alur sesuai jenis: field yang terbaca dari pesan sudah terisi, bot hanya menanyakan yang kurang */
+async function routeKind(ctx: BotCtx, kind: IntakeKind, k: Intake) {
+  const { i: ident, chatId } = ctx;
+  const basis = [k.text, k.counterparty].filter(Boolean).join(" ");
+  const dir = KIND_DIRECTION[kind];
+  const draft: DraftInput = { direction: dir, amount: k.amount, date: jakartaDateTime(k.date, k.time).toISOString(), accountId: k.accountId, toAccountId: dir === "TRANSFER" ? k.toAccountId : null, categoryId: dir === "TRANSFER" ? null : k.categoryId, note: k.note?.slice(0, 500) ?? (k.text.slice(0, 500) || null), rawText: k.text, proofPath: k.proofPath, aiExtraction: { forcedKind: kind }, messageId: k.messageId };
+  const cats = await prisma.txCategory.findMany({ where: { active: true } });
+  const inv = new Set((await prisma.txCategory.findMany({ where: { coaAccount: { code: { in: ["1-1401", "1-1402", "1-1403"] } } }, select: { id: true } })).map((c) => c.id));
+  switch (kind) {
+    case "PEMBELIAN": {
+      const hit = detectPurchase(basis, await rawMaterials(), "KELUAR");
+      const supplier = await matchSupplier(basis);
+      const session = hit
+        ? await prefilledPurchase(ctx, { item: hit.item, others: hit.others.map((o) => ({ id: o.id, name: o.name })), qty: hit.qty, amount: k.amount, bankId: k.accountId, supplier, date: k.date, time: k.time, note: k.text || null, proofPath: k.proofPath, tx: draft })
+        : await prefilledPurchaseUnknown(ctx, { amount: k.amount, bankId: k.accountId, supplier, date: k.date, time: k.time, note: k.text || null, proofPath: k.proofPath, tx: draft });
+      if (session) return startPrefilledFlow(ctx, session);
+      break;
+    }
+    case "BAYAR_HUTANG": {
+      const hit = detectPayablePayment(basis, await openPayables(), "KELUAR", k.amount);
+      const session = await prefilledPayablePayment(ctx, { candidates: hit?.matches.map((p) => p.id) ?? [], amount: k.amount, bankId: k.accountId, date: k.date, time: k.time, note: k.text || null, proofPath: k.proofPath, tx: draft });
+      if (session) return startPrefilledFlow(ctx, session);
+      break;
+    }
+    case "GAJI": {
+      if (/\bborongan\b/i.test(basis) && ident.perms.has("borongan.manage")) return startFlow(ctx, "bupah");
+      const session = await prefilledGaji(ctx, { text: basis, amount: k.amount, bankId: k.accountId, date: k.date, time: k.time, proofPath: k.proofPath, messageId: k.messageId, tx: draft });
+      if (session?.step === "used") return sendTelegram(chatId, usedGajiText(session));
+      if (session) return startPrefilledFlow(ctx, session);
+      break;
+    }
+    case "KOMPENSASI": {
+      const intent = reserveIntent(basis) ?? "OWNER";
+      const r = await intentReserve(prisma, intent, k.amount, extractDate(k.text) ?? k.date);
+      if (r) {
+        const session = await prefilledReserve(ctx, { options: [r.option], sure: true, proofPath: k.proofPath, tx: { ...draft, direction: "TRANSFER", accountId: r.fromBankId, toAccountId: r.toBankId, categoryId: null } });
+        if (session) return startPrefilledFlow(ctx, session);
+      }
+      return startDraft(ctx, { ...draft, direction: "TRANSFER", categoryId: null });
+    }
+    case "BEBAN":
+      return startDraft(ctx, { ...draft, categoryId: expenseCategoryFor(basis, cats, inv) });
+    case "PENJUALAN": {
+      const guess = suggestCategory(basis, "MASUK", cats);
+      return startDraft(ctx, { ...draft, categoryId: guess });
+    }
+  }
+  return startDraft(ctx, draft);
+}
+
 /**
  * Catat draft transaksi biasa. Bila ada transaksi mirip (nominal & tanggal sama, termasuk dari menu lain), bot
  * bertanya dulu lewat isian "trx" (kartu konfirmasi) dan tidak langsung menyimpan.
@@ -421,6 +500,34 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>, flowO
       await answerCallback(cb.id, "");
       await editTelegram(chatId, cb.message.message_id, "Dicatat sebagai transaksi biasa.", []).catch(() => {});
       return startDraft({ i: ident, chatId }, JSON.parse(String(s.data.tx)) as DraftInput);
+    }
+    if (cb.data === "f:jns" || cb.data?.startsWith("f:jns:")) {
+      const s = await getSession(chatId, ident.userId);
+      if (!s || s.userId !== ident.userId) return answerCallback(cb.id, "Isian sudah kedaluwarsa, kirim ulang pesannya");
+      const ctxB = { i: ident, chatId };
+      if (cb.data === "f:jns") {
+        // ✏️ Ubah jenis dari kartu konfirmasi: isian dibatalkan, pilih jenis lain (pesan asli dipakai lagi)
+        if (!s.data.tx) return answerCallback(cb.id, "Tidak ada pesan asal untuk diubah jenisnya");
+        const tx = JSON.parse(String(s.data.tx)) as DraftInput;
+        const jp = jakartaParts(new Date(tx.date));
+        const k: Intake = { text: tx.rawText ?? "", counterparty: null, amount: tx.amount, direction: tx.direction, date: todayStr(new Date(tx.date)), time: `${String(jp.hour).padStart(2, "0")}:${String(jp.minute).padStart(2, "0")}`, accountId: tx.accountId, toAccountId: tx.toAccountId, categoryId: tx.categoryId, proofPath: tx.proofPath, messageId: tx.messageId, note: tx.note };
+        const rank = classifyIntake(k.text, { direction: k.direction, amount: k.amount }, await loadClassifyContext(await managerNames())).ranked.map((c) => c.kind);
+        await clearSession(chatId, ident.userId);
+        await answerCallback(cb.id, "");
+        return presentKindChooser(ctxB, k, rank, null, true);
+      }
+      if (s.flow !== "jns") return answerCallback(cb.id, "Isian sudah berganti, kirim ulang pesannya");
+      const kind = cb.data.slice("f:jns:".length);
+      const k = JSON.parse(String(s.data.intake)) as Intake;
+      await clearSession(chatId, ident.userId);
+      await answerCallback(cb.id, "");
+      if (kind === "DRAFT") {
+        await editTelegram(chatId, cb.message.message_id, "Dicatat sebagai transaksi biasa (draft).", []).catch(() => {});
+        return startDraft(ctxB, { direction: k.direction ?? "KELUAR", amount: k.amount, date: jakartaDateTime(k.date, k.time).toISOString(), accountId: k.accountId, toAccountId: k.toAccountId, categoryId: k.categoryId, note: k.note?.slice(0, 500) ?? (k.text.slice(0, 500) || null), rawText: k.text, proofPath: k.proofPath, aiExtraction: {}, messageId: k.messageId });
+      }
+      if (!(ALL_KINDS as string[]).includes(kind)) return;
+      await editTelegram(chatId, cb.message.message_id, `Dicatat sebagai: ${KIND_LABEL[kind as IntakeKind]}`, []).catch(() => {});
+      return routeKind(ctxB, kind as IntakeKind, k);
     }
     if (cb.data === "f:unk") {
       // Belum tahu barangnya: simpan sebagai draft "perlu dilengkapi" (tanpa posting ke persediaan); muncul di daftar tugas Finance

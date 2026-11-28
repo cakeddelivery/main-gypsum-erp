@@ -15,7 +15,7 @@ import type { FlowDef } from "./botFlow3";
 export const PAY_WORDS = /\b(gaji|gajian|upah|bayaran|slip)\b/i;
 const head = "💰 <b>Bayar gaji karyawan</b>";
 const menuBtn: InlineButton[] = [{ text: MENU_TEXT, callback_data: "m:home" }];
-const plainRow: InlineButton[] = [{ text: "📝 Bukan gaji slip (catat beban biasa)", callback_data: "f:plain" }];
+const plainRow: InlineButton[] = [{ text: "📝 Bukan gaji slip (catat beban biasa)", callback_data: "f:plain" }, { text: "✏️ Ubah jenis", callback_data: "f:jns" }];
 
 export type GajiPrefill = { text: string; amount: number | null; bankId: string | null; date: string | null; time: string | null; proofPath: string | null; messageId: string; tx: unknown };
 
