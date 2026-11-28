@@ -9,7 +9,7 @@ import { parseIDR } from "./money";
 export type PurchaseItem = { id: string; sku: string; name: string; unit: string; supplierId: string | null };
 export type PurchaseHit = { item: PurchaseItem; qty: number | null; others: PurchaseItem[] };
 
-const BUY_WORDS = /\b(beli|membeli|pembelian|belanja|kulakan|order|restock|stok masuk)\b/;
+export const BUY_WORDS = /\b(beli|membeli|pembelian|belanja|kulakan|order|restock|stok masuk)\b/;
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const STOP = new Set(["bahan", "baku", "warna", "ukuran", "isi", "per", "dan", "untuk", "the"]);
 
@@ -115,7 +115,7 @@ const LINE_AMOUNT = /^(.*?)[\s:=-]*\b(?:rp\.?\s*)?(\d[\d.,]*\s*(?:k|rb|ribu|jt|j
  * Minimal 2 baris bernominal. Baris yang menyebut bahan baku + jumlahnya ("kardus 50 pcs 100rb") menjadi stok masuk;
  * baris lain diberi kategori dari kata kuncinya (null = ditanyakan ke pengguna).
  */
-export function extractSplits(text: string, categories: ExtractCategory[], items: PurchaseItem[], direction: string | null): SplitGuess[] {
+export function extractSplits(text: string, categories: ExtractCategory[], items: PurchaseItem[], direction: string | null, inventoryIds: Set<string> = new Set()): SplitGuess[] {
   if (direction === "TRANSFER" || direction === "MASUK") return [];
   const rows = text.split(/\n|;|,(?!\d{3})/).map((x) => x.trim()).filter(Boolean);
   const out: SplitGuess[] = [];
@@ -130,7 +130,21 @@ export function extractSplits(text: string, categories: ExtractCategory[], items
     const label = m[1].replace(/^(beli|bayar|untuk|buat)\s+/i, "").trim() || row;
     const qty = extractQty(m[1]);
     const item = qty ? matchItem(m[1], items) : null;
-    out.push({ label: label.slice(0, 80), amount, categoryId: suggestCategory(m[1], "KELUAR", categories), itemId: item?.id ?? null, qty: item ? qty : null });
+    // Rincian tanpa barang & qty tidak boleh berkategori Persediaan (stok & buku besar harus cocok): ongkir/LPG/konsumsi dst. → kategori beban
+    const guess = suggestCategory(m[1], "KELUAR", categories);
+    const categoryId = item ? guess : guess && inventoryIds.has(guess) ? expenseCategoryFor(m[1], categories, inventoryIds) : guess;
+    out.push({ label: label.slice(0, 80), amount, categoryId, itemId: item?.id ?? null, qty: item ? qty : null });
   }
   return out.length >= 2 ? out : [];
+}
+
+
+// ---------- Bukan pembelian bahan baku: LPG / konsumsi / ongkir → kategori beban ----------
+/** LPG, konsumsi, ongkir/ekspedisi/angkut dan sejenisnya selalu beban (bukan persediaan), walau kalimatnya "beli ..." */
+const EXPENSE_WORDS = /\b(lpg|elpiji|gas|konsumsi|makan|minum|kopi|snack|snek|nasi|galon|ongkir|ongkos kirim|ongkos|kurir|ekspedisi|angkut|angkutan|bensin|pertamax|solar|parkir|tol)\b/i;
+export const isExpenseText = (text: string) => EXPENSE_WORDS.test(text);
+
+/** Kategori beban terbaik untuk teks bukan-bahan: hanya kategori yang BUKAN berakun persediaan */
+export function expenseCategoryFor(text: string, cats: ExtractCategory[], inventoryIds: Set<string>): string | null {
+  return suggestCategory(text, "KELUAR", cats.filter((c) => !inventoryIds.has(c.id)));
 }

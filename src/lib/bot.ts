@@ -6,16 +6,16 @@ import { readReceipt, type ReceiptRead } from "./receipt";
 import { ocrImageText, ocrReceipt } from "./ocrReceipt";
 import { receiptFromOcrText } from "./ocrReceiptText";
 import { parseSellerWithdrawal } from "./wdProof";
-import { type SplitInput, splitIssues, createTransaction, FinanceError, rejectTransaction, STATUS_LABEL, submitForConfirmation, updateTransaction, missingFields } from "./finance";
+import { type SplitInput, splitIssues, stockIssues, createTransaction, FinanceError, rejectTransaction, STATUS_LABEL, submitForConfirmation, updateTransaction, missingFields } from "./finance";
 import { answerCallback, chatAction, downloadTelegramFile, editTelegram, esc, sendTelegram, withReplyTo, type InlineButton } from "./telegram";
 import { saveProof } from "./storage";
 import { idr } from "./money";
-import { addDays, fmtDate, fmtDateTime, jakartaDateTime, todayStr, txTime } from "./time";
+import { addDays, fmtDate, fmtDateTime, jakartaDateTime, jakartaParts, todayStr, txTime } from "./time";
 import { dailyRecapText } from "./jobs";
 import { handleMenuCallback, handleMenuCommand, MENU_TEXT } from "./botMenu";
 import { clearSession, getSession, handleFlowCallback, handleFlowLocation, handleFlowText, retryRows, startPrefilledFlow, type TgLocation } from "./botFlow";
-import { detectPurchase, extractSplits, rawMaterials } from "./botPurchase";
-import { prefilledPayablePayment, prefilledPurchase, prefilledReserve, prefilledTalangan, talanganPhoto } from "./botFlow3";
+import { detectPurchase, expenseCategoryFor, extractSplits, isExpenseText, rawMaterials } from "./botPurchase";
+import { prefilledPayablePayment, prefilledPurchase, prefilledPurchaseUnknown, prefilledReserve, prefilledTalangan, talanganPhoto } from "./botFlow3";
 import { talanganSummary } from "./talangan";
 import { salePaymentPhoto } from "./botSales";
 import { detectPayablePayment } from "./botPurchase";
@@ -223,7 +223,8 @@ async function handleMessage(u: TgUpdate) {
   // Nominal dari caption hanya dipercaya bila ditulis jelas (Rp/rb/jt); angka lain bisa jumlah barang atau tahun
   // Rincian per baris ("dus bekas 5k / galon 20k / ongkir 10k"): nominal total diambil dari bukti transfer
   const materials = await rawMaterials();
-  let splits = extractSplits(text, cats, materials, ex.direction);
+  const invCatIds = new Set((await prisma.txCategory.findMany({ where: { coaAccount: { code: { in: ["1-1401", "1-1402", "1-1403"] } } }, select: { id: true } })).map((c) => c.id));
+  let splits = extractSplits(text, cats, materials, ex.direction, invCatIds);
   if (photo && (splits.length || !hasExplicitAmount(text) || !ex.direction || !ex.accountId)) {
     await chatAction(chatId, "typing").catch(() => {});
     // Batasi waktu baca AI agar balasan tidak tertahan (Nginx/Telegram memutus permintaan yang terlalu lama)
@@ -242,7 +243,7 @@ async function handleMessage(u: TgUpdate) {
   }
   ex = mergeReceipt(ex, text, receipt, banks, cats);
   if (splits.length) {
-    splits = extractSplits(text, cats, materials, ex.direction ?? "KELUAR");
+    splits = extractSplits(text, cats, materials, ex.direction ?? "KELUAR", invCatIds);
     if (splits.length) {
       ex.direction = ex.direction ?? "KELUAR";
       ex.amount = receipt?.amount ?? splits.reduce((t, x) => t + x.amount, 0);
@@ -300,6 +301,10 @@ async function handleMessage(u: TgUpdate) {
     splits: splits.length ? splits.map((x) => ({ categoryId: x.itemId ? null : x.categoryId, amount: x.amount, note: x.label, itemId: x.itemId, qty: x.qty })) : undefined,
   };
   const ctx = { i: ident, chatId };
+  // LPG / konsumsi / ongkir lewat bot = kategori BEBAN, bukan persediaan (walau kalimatnya "beli ..."); kategori berakun Persediaan diganti
+  if (!splits.length && ex.direction === "KELUAR" && isExpenseText([text, receipt?.counterparty].filter(Boolean).join(" ")) && (!draft.categoryId || invCatIds.has(draft.categoryId))) {
+    draft.categoryId = expenseCategoryFor([text, receipt?.counterparty].filter(Boolean).join(" "), cats, invCatIds);
+  }
   if (gajiCase) {
     const session = await prefilledGaji(ctx, gajiPrefill(draft));
     // Bukti/pesan yang sama sudah membayar slip: cukup beri tahu, tanpa isian & tanpa draft
@@ -362,6 +367,13 @@ async function handleMessage(u: TgUpdate) {
       if (session) return startPrefilledFlow({ i: ident, chatId }, session);
     }
   }
+  // Kategori Pembelian Bahan Baku (berakun Persediaan) tanpa barang yang dikenali: bot MEMINTA barang, qty, supplier, lokasi, harga & cara bayar
+  // (fungsi Pembelian yang sama); bila belum tahu barangnya → draft "perlu dilengkapi" yang tidak diposting ke persediaan
+  if (!loan && !splits.length && ex.direction === "KELUAR" && ident.perms.has("finance.approve") && draft.categoryId && invCatIds.has(draft.categoryId) && !isExpenseText(basis)) {
+    const supplier = await matchSupplier(basis);
+    const session = await prefilledPurchaseUnknown({ i: ident, chatId }, { amount: ex.amount, bankId: ex.accountId, supplier, date: ex.date, time: txTime(ex.date!, ex.time), note: text || null, proofPath, tx: draft });
+    if (session) return startPrefilledFlow({ i: ident, chatId }, session);
+  }
   await startDraft(ctx, draft);
 }
 
@@ -410,6 +422,15 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>, flowO
       await editTelegram(chatId, cb.message.message_id, "Dicatat sebagai transaksi biasa.", []).catch(() => {});
       return startDraft({ i: ident, chatId }, JSON.parse(String(s.data.tx)) as DraftInput);
     }
+    if (cb.data === "f:unk") {
+      // Belum tahu barangnya: simpan sebagai draft "perlu dilengkapi" (tanpa posting ke persediaan); muncul di daftar tugas Finance
+      const s = await getSession(chatId, ident.userId);
+      if (!s?.data.tx || s.userId !== ident.userId) return answerCallback(cb.id, "Isian sudah kedaluwarsa, kirim ulang pesannya");
+      await clearSession(chatId, ident.userId);
+      await answerCallback(cb.id, "");
+      await editTelegram(chatId, cb.message.message_id, "Disimpan sebagai draft perlu dilengkapi (barang & qty belum diisi, belum diposting ke persediaan).", []).catch(() => {});
+      return startDraft({ i: ident, chatId }, JSON.parse(String(s.data.tx)) as DraftInput);
+    }
     try {
       return await handleFlowCallback(ident, cb.id, chatId, cb.message.message_id, cb.data!, flowOwner ?? ident.userId);
     } catch (e) {
@@ -433,6 +454,19 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>, flowO
   const canReview = ident.perms.has("finance.review") || ident.perms.has("finance.approve");
   if (["acc", "to", "cat", "st", "dt", "no", "chg", "sc", "sa", "sx"].includes(action) && !ident.canSubmit && !canReview) return answerCallback(cb.id, "Anda tidak berwenang mengubah transaksi");
   // Tombol ganti (🏦 / 🏷️ / 🏪) / ◀ Kembali: hanya mengganti tampilan pilihan, belum mengubah data
+  if (action === "bp") {
+    // Draft kategori Persediaan → isi barang & qty lewat fungsi Pembelian; draft ditolak setelah pembelian tersimpan (satu dokumen)
+    if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan sudah tidak tersedia");
+    if (!ident.perms.has("finance.approve")) return answerCallback(cb.id, "Hanya penyetuju keuangan yang dapat mencatat pembelian");
+    const t = await prisma.financeTransaction.findUnique({ where: { id: txId } });
+    if (!t || t.direction !== "KELUAR" || !["DRAFT", "PERLU_DITINJAU", "MENUNGGU_KONFIRMASI"].includes(t.status)) return answerCallback(cb.id, "Draft ini tidak bisa diganti pembelian");
+    const sup = await matchSupplier([t.note, t.rawText, t.counterparty].filter(Boolean).join(" "));
+    const jp = jakartaParts(t.date);
+    const session = await prefilledPurchaseUnknown({ i: ident, chatId }, { amount: Number(t.amount), bankId: t.accountId, supplier: sup, date: `${jp.year}-${String(jp.month).padStart(2, "0")}-${String(jp.day).padStart(2, "0")}`, time: `${String(jp.hour).padStart(2, "0")}:${String(jp.minute).padStart(2, "0")}`, note: t.note, proofPath: t.proofPath, tx: null, draftId: t.id });
+    if (!session) return answerCallback(cb.id, "Tidak berwenang");
+    await answerCallback(cb.id, "");
+    return startPrefilledFlow({ i: ident, chatId }, session);
+  }
   if (action === "kn" || action === "ka" || action === "kr") {
     if (!chatId || !cb.message) return answerCallback(cb.id, "Pesan sudah tidak tersedia");
     try {
@@ -528,7 +562,7 @@ async function handleCallback(cb: NonNullable<TgUpdate["callback_query"]>, flowO
     if (["acc", "to", "cat", "st", "dt", "rev", "sc", "sa", "sx"].includes(action)) {
       const t = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: txId } });
       const sp = await prisma.financeTxSplit.findMany({ where: { transactionId: txId } });
-      if (t.status === "PERLU_DITINJAU" && !t.duplicateOfId && missingFields(t).length === 0 && splitIssues(t.amount, t.direction, sp).length === 0) await submitForConfirmation(txId, actor, "Dilengkapi via Telegram");
+      if (t.status === "PERLU_DITINJAU" && !t.duplicateOfId && missingFields(t).length === 0 && splitIssues(t.amount, t.direction, sp).length === 0 && !(await stockIssues(prisma, t, sp)).length) await submitForConfirmation(txId, actor, "Dilengkapi via Telegram");
     }
     const m = await draftMessage(txId);
     if (chatId && cb.message) await editTelegram(chatId, cb.message.message_id, m.text, m.buttons);
@@ -578,7 +612,7 @@ async function categoryCallback(ident: Ident, cbId: string, chatId: string, mess
     await updateTransaction(t.id, { categoryId: r.categoryId }, { id: ident.userId, name: ident.user.name, telegramId: ident.telegramUserId });
     const u = await prisma.financeTransaction.findUniqueOrThrow({ where: { id: t.id } });
     const sp = await prisma.financeTxSplit.findMany({ where: { transactionId: t.id } });
-    if (u.status === "PERLU_DITINJAU" && !u.duplicateOfId && missingFields(u).length === 0 && splitIssues(u.amount, u.direction, sp).length === 0) await submitForConfirmation(t.id, { id: ident.userId, name: ident.user.name }, "Kategori baru disetujui");
+    if (u.status === "PERLU_DITINJAU" && !u.duplicateOfId && missingFields(u).length === 0 && splitIssues(u.amount, u.direction, sp).length === 0 && !(await stockIssues(prisma, u, sp)).length) await submitForConfirmation(t.id, { id: ident.userId, name: ident.user.name }, "Kategori baru disetujui");
     const m = await draftMessage(t.id);
     await sendTelegram(r.proposal.chatId ?? chatId, `🏷️ Kategori <b>${esc(r.proposal.name)}</b> disetujui dan dipakai.\n\n${m.text}`, { buttons: m.buttons, type: "DRAFT" });
   }
