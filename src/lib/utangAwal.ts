@@ -3,7 +3,7 @@ import { COA, defaultStoreId, postJournal } from "./accounting";
 import { REKON_SOURCE } from "./rekonPersediaan";
 
 /**
- * UTANG supplier yang dicatat Dr persediaan / Cr Hutang Usaha tanpa stok masuk (pratinjau produksi: JU-0086/0088/0090 = 8.421.950, sama dengan sisa 1-1401).
+ * UTANG supplier yang dicatat Dr persediaan / Cr Hutang Usaha tanpa stok masuk (jurnal utang awal dari data lama).
  * Dugaan: saldo utang awal sebelum ERP, barangnya sudah masuk stok awal (CUTOVER) sehingga persediaan terhitung dua kali. DI BALIK FLAG, pratinjau dulu:
  *  - utangAwal "ekuitas": per jurnal utang Dr 3-9000 Saldo Awal Ekuitas / Cr akun persediaan (memo REKON:UTANG-AWAL:<UTG>)
  *  - angsuran "ya": Finance (cicilan/angsuran/pelunasan) ke supplier yang punya UTG, yang mendebit persediaan: Dr 2-1100 / Cr persediaan (memo REKON:UTANG-ANGSURAN:<TRX>)
