@@ -26,7 +26,7 @@ export async function resultItems(divisionId: string, db: Tx | typeof prisma = p
   return db.item.findMany({
     where: { divisionId, active: true, type: { in: ["BARANG_DALAM_PROSES", "BARANG_JADI"] } },
     orderBy: [{ type: "asc" }, { sortOrder: "asc" }, { name: "asc" }],
-    select: { id: true, name: true, unit: true, type: true, minStock: true },
+    select: { id: true, sku: true, name: true, unit: true, type: true, minStock: true },
   });
 }
 
