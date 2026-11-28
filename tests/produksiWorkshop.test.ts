@@ -96,6 +96,15 @@ describe("Produksi workshop (tanpa borongan)", () => {
     void ohId;
   });
 
+  it("rakit ulang (RAS): komponen resep dipakai, hasil kembali ke stok, tanpa upah; nomor RAS", async () => {
+    const o0 = await qtyAt(prisma, cat, wip);
+    const r = await recordWorkshop({ outputItemId: cat, qty: 4, kind: "RAS" }, actor);
+    expect(r.number).toMatch(/^RAS/);
+    expect(r.ref).toMatch(/^RAS:/);
+    expect(await qtyAt(prisma, cat, wip)).toBe(o0 + 4);
+    expect(await prisma.journalLine.count({ where: { journal: { source: "WORKSHOP", sourceId: r.number }, account: { code: "6-1100" } } })).toBe(0);
+  });
+
   it("izin: Operator/Kapten/Supervisor/Admin/Owner boleh (stock.produce); Driver tidak", () => {
     for (const r of ["OPERATOR", "KAPTEN_DIVISI", "SUPERVISOR", "ADMIN", "OWNER"] as const) expect(effectivePermissions(r, []).has("stock.produce")).toBe(true);
     expect(effectivePermissions("DRIVER", []).has("stock.produce")).toBe(false);
