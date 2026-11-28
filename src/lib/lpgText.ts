@@ -71,3 +71,12 @@ export function lpgShare(text: string | null | undefined, total: number, opt: { 
   }
   return { mode: "tidak-terparse", lines };
 }
+
+/**
+ * Teks analisis dari beberapa kolom transaksi (catatan, teks mentah, pihak): nilai kosong dibuang, dan nilai yang sudah termuat di nilai lain
+ * (mis. catatan sama dengan teks mentah) tidak diulang, supaya satu baris LPG tidak terhitung dua kali ("3 tabung" + "3 tabung" = 6). Dipisah baris baru.
+ */
+export function analysisText(values: (string | null | undefined)[]): string {
+  const vs = [...new Set(values.map((v) => (v ?? "").trim()).filter(Boolean))];
+  return vs.filter((v, i) => !vs.some((o, j) => j !== i && (o.length > v.length || (o.length === v.length && j < i)) && o.toLowerCase().includes(v.toLowerCase()))).join("\n");
+}

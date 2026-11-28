@@ -42,6 +42,7 @@
     "koreksi:rekonsiliasi-persediaan": "tsx scripts/koreksi-rekonsiliasi-persediaan.ts",
     "koreksi:lpg-reklas": "tsx scripts/koreksi-lpg-reklas.ts",
     "cek:stok-akhir-divisi": "tsx scripts/cek-stok-akhir-divisi.ts",
+    "koreksi:utang-awal": "tsx scripts/koreksi-utang-awal.ts",
     "diagnosa:selisih-harian": "tsx scripts/diagnosa-selisih-harian.ts",
     "audit:produksi": "bash tests/global-reset.sh && vitest run tests/zzAuditProduksi.test.ts --reporter=verbose",
     "koreksi:saldo-nov": "tsx scripts/koreksi-saldo-nov.ts",

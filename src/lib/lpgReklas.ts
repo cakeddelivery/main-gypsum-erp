@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { COA, defaultStoreId, postJournal } from "./accounting";
-import { lpgShare } from "./lpgText";
+import { analysisText, lpgShare } from "./lpgText";
 
 /**
  * LPG oven = Biaya Overhead Pabrik (6-1310), bukan beban umum (6-1300 Listrik, Air & Gas). Transaksi lama berdeskripsi LPG yang sudah
@@ -46,7 +46,7 @@ export async function planLpgReklasFull(db: Db, opt: { hargaTabung?: number } = 
         else if (sh.mode === "tidak-terparse") unclear = true;
       }
     } else {
-      const sh = lpgShare(teks, total, opt);
+      const sh = lpgShare(analysisText([t.note, t.rawText, t.counterparty]), total, opt);
       if (sh.mode === "penuh" || sh.mode === "baris") amount = sh.amount;
       else if (sh.mode === "tidak-terparse") unclear = true;
     }

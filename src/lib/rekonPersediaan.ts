@@ -1,7 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { COA, defaultStoreId, postJournal } from "./accounting";
 import { INVENTORY_COA, inventoryValuation, usageAccountCode } from "./stock";
-import { lpgShare } from "./lpgText";
+import { analysisText, lpgShare } from "./lpgText";
 
 /**
  * Rekonsiliasi persediaan: saldo buku besar 1-1401/1-1402/1-1403 vs nilai stok (Σ qty × avgCost per tipe barang).
@@ -133,7 +133,7 @@ export async function rekonPersediaan(db: Db): Promise<RekonResult> {
   const rows: RekonRow[] = [];
 
   // --- FINANCE_TANPA_STOK ---
-  const fin = await db.financeTransaction.findMany({ where: { origin: null, journalId: { not: null } }, select: { id: true, number: true, date: true, amount: true, note: true, rawText: true, counterparty: true, categoryId: true, splits: { select: { note: true, amount: true, itemId: true } } } });
+  const fin = await db.financeTransaction.findMany({ where: { origin: null, journalId: { not: null } }, select: { id: true, number: true, date: true, amount: true, note: true, rawText: true, counterparty: true, categoryId: true, splits: { select: { note: true, amount: true, itemId: true, categoryId: true } } } });
   const finById = new Map(fin.map((t) => [t.id, t]));
   const js = await db.journal.findMany({ where: { source: "FINANCE", sourceId: { in: fin.map((t) => t.id) } }, select: { id: true, sourceId: true } });
   const revs = js.length ? await db.journal.findMany({ where: { reversalOfId: { in: js.map((j) => j.id) } }, select: { id: true, reversalOfId: true } }) : [];
@@ -157,7 +157,8 @@ export async function rekonPersediaan(db: Db): Promise<RekonResult> {
     const k = `${num}|${code}`;
     mvByTx.set(k, (mvByTx.get(k) ?? 0) + sign * Math.round(Number(m.qty) * Number(m.unitCost)));
   }
-  const cats = await db.txCategory.findMany({ where: { id: { in: fin.map((t) => t.categoryId).filter((x): x is string => !!x) } }, select: { id: true, name: true } });
+  const cats = await db.txCategory.findMany({ where: { id: { in: [...new Set(fin.flatMap((t) => [t.categoryId, ...t.splits.map((x) => x.categoryId)]).filter((x): x is string => !!x))] } }, select: { id: true, name: true, coaAccount: { select: { code: true } } } });
+  const catCoa = new Map(cats.map((c) => [c.id, c.coaAccount.code]));
   const catName = new Map(cats.map((c) => [c.id, c.name]));
   for (const [k, g] of glByTx) {
     const [txId, code] = k.split("|");
@@ -172,9 +173,11 @@ export async function rekonPersediaan(db: Db): Promise<RekonResult> {
     let lpgPart = 0;
     let lpgNote: string | undefined;
     if (gap > 0) {
-      if (t.splits.length) lpgPart = t.splits.filter((x) => !x.itemId && lpgShare(x.note, Number(x.amount)).mode !== "tidak-lpg").reduce((a, x) => a + Number(x.amount), 0);
+      // Rincian (split): hanya rincian LPG yang kategorinya berakun persediaan ini yang menjadi bagian LPG dari selisih akun ini
+      // (rincian LPG berkategori beban punya leg sendiri; leg persediaan Rp5.000 kardus bukan LPG walau rincian LPG lain bernilai Rp60.000)
+      if (t.splits.length) lpgPart = t.splits.filter((x) => !x.itemId && lpgShare(x.note, Number(x.amount)).mode !== "tidak-lpg" && catCoa.get(x.categoryId ?? t.categoryId ?? "") === code).reduce((a, x) => a + Number(x.amount), 0);
       else {
-        const sh = lpgShare(teks, Number(t.amount));
+        const sh = lpgShare(analysisText([t.note, t.rawText, t.counterparty]), Number(t.amount));
         // Mode "baris": hanya LPG bila leg persediaan sebesar nominal LPG dari teks (leg 5.000 kardus bekas bukan LPG 60rb); "penuh": seluruh transaksi LPG
         if (sh.mode === "penuh") lpgPart = sh.amount;
         else if (sh.mode === "baris") lpgPart = gap >= sh.amount - TOLERANSI ? sh.amount : 0;
